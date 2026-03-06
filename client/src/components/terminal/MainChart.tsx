@@ -104,8 +104,20 @@ export function MainChart() {
             labelBackgroundColor: "#000",
           },
         },
-        handleScroll: true,
-        handleScale: true,
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: true,
+        },
+        handleScale: {
+          mouseWheel: true,
+          pinch: true,
+          axisPressedMouseMove: {
+            price: true,
+            time: true,
+          },
+        },
       });
 
       const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -163,6 +175,7 @@ export function MainChart() {
 
   useEffect(() => {
     if (candleSeriesRef.current && candles) {
+      // Only set data, do not force range or fitContent
       candleSeriesRef.current.setData(candles);
       
       const lastCandle = candles[candles.length - 1];
@@ -265,22 +278,18 @@ export function MainChart() {
 
       if (toggles.flip && market?.gammaFlip) {
         addLevel(market.gammaFlip, "#eab308", "FLIP", LineStyle.LargeDashed, 2);
-        activeLevels.push(market.gammaFlip);
       }
 
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
         addZone(market.transitionZoneStart, market.transitionZoneEnd, "rgba(255, 255, 255, 0.05)", "TRANSITION");
-        activeLevels.push(market.transitionZoneStart, market.transitionZoneEnd);
       }
 
       if (toggles.walls) {
         if (positioning?.callWall) {
           addLevel(positioning.callWall, "#ef4444", "CALL WALL", LineStyle.Solid, 2);
-          activeLevels.push(positioning.callWall);
         }
         if (positioning?.putWall) {
           addLevel(positioning.putWall, "#22c55e", "PUT WALL", LineStyle.Solid, 2);
-          activeLevels.push(positioning.putWall);
         }
       }
 
@@ -298,31 +307,25 @@ export function MainChart() {
         grouped.forEach((group, i) => {
           const avg = group.reduce((a, b) => a + b, 0) / group.length;
           addLevel(avg, "rgba(59, 130, 246, 0.3)", group.length > 1 ? `MAGNETS (${group.length})` : "MAGNET", LineStyle.Solid, 1);
-          activeLevels.push(avg);
         });
       }
 
       if (toggles.pockets && levels) {
         if (levels.shortGammaPocketStart && levels.shortGammaPocketEnd) {
           addZone(levels.shortGammaPocketStart, levels.shortGammaPocketEnd, "rgba(249, 115, 22, 0.08)", "SHORT GAMMA POCKET");
-          activeLevels.push(levels.shortGammaPocketStart, levels.shortGammaPocketEnd);
         }
         if (levels.deepRiskPocketStart && levels.deepRiskPocketEnd) {
           addZone(levels.deepRiskPocketStart, levels.deepRiskPocketEnd, "rgba(168, 85, 247, 0.08)", "DEEP RISK POCKET");
-          activeLevels.push(levels.deepRiskPocketStart, levels.deepRiskPocketEnd);
         }
       }
 
       if (toggles.dealer && positioning?.dealerPivot) {
         addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.5)", "DEALER PIVOT", LineStyle.Dotted, 2);
-        activeLevels.push(positioning.dealerPivot);
       }
 
       // Standard free navigation behavior
-      candleSeries.applyOptions({
-        autoscaleInfoProvider: undefined,
-      });
-
+      // Removed any logic that calls setVisibleRange or autoscaleInfoProvider forcing
+      
       chartRef.current.priceScale("right").applyOptions({
         autoScale: true,
       });

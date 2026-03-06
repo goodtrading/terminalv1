@@ -1,0 +1,62 @@
+Fix the chart so the right price scale behaves like TradingView and does not keep snapping back to a constrained range.
+
+IMPORTANT:
+Do NOT modify backend.
+Do NOT remove overlays.
+Do NOT change the chart library.
+Keep using TradingView Lightweight Charts.
+
+CURRENT ISSUE
+The chart still remains locked to a constrained vertical scale.
+Even after removing structural autoscale forcing, the user still cannot freely zoom out above or below the visible range.
+
+GOAL
+Make the right price axis behave as close as possible to TradingView:
+- zoom vertically by dragging the right price axis
+- move the visible vertical range more freely
+- prevent constant snapping back to a fixed/constrained range
+
+REQUIRED CHECKS
+
+1. Inspect chart creation options and ensure:
+- handleScale.axisPressedMouseMove.price = true
+- handleScale.mouseWheel = true
+- handleScale.pinch = true
+- handleScroll.pressedMouseMove = true
+- handleScroll.mouseWheel = true
+
+2. Inspect rightPriceScale options and ensure:
+- autoScale is not constantly forcing a reset after user interaction
+- mode is set appropriately for normal price behavior
+- no fixed minimum/maximum range is being reapplied
+
+3. Search the chart code for any repeated calls after render/update such as:
+- fitContent()
+- applyOptions(...) resetting price scale
+- priceScale().applyOptions(...)
+- setVisibleRange(...)
+- any function that re-syncs the chart height/range every refresh
+
+If any of these are running on every data refresh, stop them from resetting the vertical scale after user interaction.
+
+4. Make sure overlays update without forcing chart rescale.
+
+5. If needed, set right price scale options explicitly like:
+rightPriceScale: {
+  autoScale: true,
+  scaleMargins: {
+    top: 0.1,
+    bottom: 0.1
+  },
+  borderVisible: true
+}
+
+6. Add a temporary flag so the chart does not auto-fit again after the first initialization.
+Example idea:
+- allow initial fit only once
+- after that, preserve user-controlled scale
+
+SUCCESS CRITERIA
+The chart must stop snapping back to a constrained vertical range.
+The user must be able to drag/zoom the right axis more freely like TradingView.
+Overlays should remain visible when in range, but must not constantly reset the scale.
