@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createChart, ColorType, ISeriesApi, CandlestickData, LineData } from "lightweight-charts";
+import { createChart, ColorType, ISeriesApi, version, LineStyle, CandlestickSeries } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels } from "@shared/schema";
 
@@ -30,7 +30,7 @@ export function MainChart() {
       const res = await fetch("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=300");
       const data = await res.json();
       return data.map((d: any) => ({
-        time: d[0] / 1000,
+        time: (d[0] / 1000) as any,
         open: parseFloat(d[1]),
         high: parseFloat(d[2]),
         low: parseFloat(d[3]),
@@ -43,129 +43,150 @@ export function MainChart() {
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: "#000000" },
-        textColor: "#d1d4dc",
-      },
-      grid: {
-        vertLines: { color: "#1a1a1a" },
-        horzLines: { color: "#1a1a1a" },
-      },
-      width: chartContainerRef.current.clientWidth,
-      height: chartContainerRef.current.clientHeight,
-      timeScale: {
-        borderColor: "#222",
-        timeVisible: true,
-        secondsVisible: false,
-      },
-      rightPriceScale: {
-        borderColor: "#222",
-      },
-      crosshair: {
-        mode: 0,
-        vertLine: {
-          color: "#758696",
-          width: 1,
-          style: 1,
-          labelBackgroundColor: "#000",
+    console.log("[MainChart] Initializing Lightweight Charts v" + version());
+
+    try {
+      const chart = createChart(chartContainerRef.current, {
+        layout: {
+          background: { type: ColorType.Solid, color: "#000000" },
+          textColor: "#d1d4dc",
         },
-        horzLine: {
-          color: "#758696",
-          width: 1,
-          style: 1,
-          labelBackgroundColor: "#000",
+        grid: {
+          vertLines: { color: "#1a1a1a" },
+          horzLines: { color: "#1a1a1a" },
         },
-      },
-    });
+        width: chartContainerRef.current.clientWidth,
+        height: chartContainerRef.current.clientHeight,
+        timeScale: {
+          borderColor: "#222",
+          timeVisible: true,
+          secondsVisible: false,
+        },
+        rightPriceScale: {
+          borderColor: "#222",
+        },
+        crosshair: {
+          mode: 0,
+          vertLine: {
+            color: "#758696",
+            width: 1,
+            style: 1,
+            labelBackgroundColor: "#000",
+          },
+          horzLine: {
+            color: "#758696",
+            width: 1,
+            style: 1,
+            labelBackgroundColor: "#000",
+          },
+        },
+      });
 
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      borderVisible: false,
-      wickUpColor: "#22c55e",
-      wickDownColor: "#ef4444",
-    });
+      console.log("[MainChart] Chart instance created");
 
-    chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
+      // In v5, use addSeries(CandlestickSeries, options)
+      const candleSeries = chart.addSeries(CandlestickSeries, {
+        upColor: "#22c55e",
+        downColor: "#ef4444",
+        borderVisible: false,
+        wickUpColor: "#22c55e",
+        wickDownColor: "#ef4444",
+      });
+      
+      console.log("[MainChart] Candlestick series created");
 
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ 
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight 
-        });
-      }
-    };
+      chartRef.current = chart;
+      candleSeriesRef.current = candleSeries;
 
-    window.addEventListener("resize", handleResize);
+      const handleResize = () => {
+        if (chartContainerRef.current && chartRef.current) {
+          chartRef.current.applyOptions({ 
+            width: chartContainerRef.current.clientWidth,
+            height: chartContainerRef.current.clientHeight 
+          });
+        }
+      };
 
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      chart.remove();
-    };
+      window.addEventListener("resize", handleResize);
+
+      return () => {
+        window.removeEventListener("resize", handleResize);
+        if (chartRef.current) {
+          chartRef.current.remove();
+          chartRef.current = null;
+          candleSeriesRef.current = null;
+        }
+      };
+    } catch (error) {
+      console.error("[MainChart] Chart initialization failed:", error);
+    }
   }, []);
 
   useEffect(() => {
     if (candleSeriesRef.current && candles) {
-      candleSeriesRef.current.setData(candles);
+      try {
+        candleSeriesRef.current.setData(candles);
+      } catch (err) {
+        console.error("[MainChart] Failed to set candle data:", err);
+      }
     }
   }, [candles]);
 
   // Update Overlays
   useEffect(() => {
-    if (!chartRef.current) return;
+    if (!candleSeriesRef.current) return;
 
-    // Clear existing price lines (Simplified for Fast mode - in real app we'd track and remove individual lines)
-    // Lightweight-charts doesn't have a simple "clear all lines" from a series easily, 
-    // so we re-apply or manage them. For this turn, we'll focus on the primary ones.
+    try {
+      // Clear previous price lines if needed (though createPriceLine is usually used once)
+      
+      if (market?.gammaFlip) {
+        candleSeriesRef.current.createPriceLine({
+          price: market.gammaFlip,
+          color: "#eab308",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dotted,
+          axisLabelVisible: true,
+          title: "Flip",
+        });
+      }
 
-    if (market?.gammaFlip) {
-      candleSeriesRef.current?.createPriceLine({
-        price: market.gammaFlip,
-        color: "#eab308",
-        lineWidth: 1,
-        lineStyle: 1, // Dotted
-        axisLabelVisible: true,
-        title: "Flip",
+      if (positioning?.callWall) {
+        candleSeriesRef.current.createPriceLine({
+          price: positioning.callWall,
+          color: "#ef4444",
+          lineWidth: 1,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: "Call Wall",
+        });
+      }
+
+      if (positioning?.putWall) {
+        candleSeriesRef.current.createPriceLine({
+          price: positioning.putWall,
+          color: "#22c55e",
+          lineWidth: 1,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: "Put Wall",
+        });
+      }
+
+      levels?.gammaMagnets?.forEach(m => {
+        candleSeriesRef.current?.createPriceLine({
+          price: m,
+          color: "#3b82f6",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: "Magnet",
+        });
       });
+    } catch (err) {
+      console.error("[MainChart] Overlay update failed:", err);
     }
 
-    if (positioning?.callWall) {
-      candleSeriesRef.current?.createPriceLine({
-        price: positioning.callWall,
-        color: "#ef4444",
-        lineWidth: 1,
-        lineStyle: 0, // Solid
-        axisLabelVisible: true,
-        title: "Call Wall",
-      });
-    }
-
-    if (positioning?.putWall) {
-      candleSeriesRef.current?.createPriceLine({
-        price: positioning.putWall,
-        color: "#22c55e",
-        lineWidth: 1,
-        lineStyle: 0, // Solid
-        axisLabelVisible: true,
-        title: "Put Wall",
-      });
-    }
-
-    levels?.gammaMagnets?.forEach(m => {
-      candleSeriesRef.current?.createPriceLine({
-        price: m,
-        color: "#3b82f6",
-        lineWidth: 1,
-        lineStyle: 2, // Dashed
-        axisLabelVisible: true,
-        title: "Magnet",
-      });
-    });
-
-  }, [market, positioning, levels]);
+  }, [market, positioning, levels, candles]);
 
   const currentPrice = candles?.[candles.length - 1]?.close || 0;
   const priceChange = candles && candles.length > 1 
@@ -174,7 +195,6 @@ export function MainChart() {
 
   return (
     <TerminalPanel className="flex-1 mb-2 border border-terminal-border relative" noPadding>
-      {/* Chart Header Overlay */}
       <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start z-10 pointer-events-none">
         <div className="flex flex-col">
           <div className="flex items-baseline space-x-3">
@@ -199,7 +219,6 @@ export function MainChart() {
 
       <div ref={chartContainerRef} className="w-full h-full" />
       
-      {/* Center Watermark */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.01] z-0">
         <span className="text-[12rem] font-bold tracking-tighter italic font-mono uppercase">QUANTUM</span>
       </div>
