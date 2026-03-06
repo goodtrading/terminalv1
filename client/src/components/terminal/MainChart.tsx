@@ -12,6 +12,8 @@ export function MainChart() {
   const priceLinesRef = useRef<any[]>([]);
   const livePriceLineRef = useRef<any>(null);
 
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+
   const [toggles, setToggles] = useState({
     price: true,
     flip: true,
@@ -20,6 +22,13 @@ export function MainChart() {
     pockets: true,
     dealer: true,
   });
+
+  const resetScale = () => {
+    if (!chartRef.current) return;
+    chartRef.current.priceScale("right").applyOptions({ autoScale: true });
+    setIsInitialLoad(true);
+  };
+
 
   const { data: positioning } = useQuery<OptionsPositioning>({ 
     queryKey: ["/api/options-positioning"],
@@ -177,6 +186,18 @@ export function MainChart() {
     if (candleSeriesRef.current && candles) {
       // Only set data, do not force range or fitContent
       candleSeriesRef.current.setData(candles);
+      
+      if (isInitialLoad && candles.length > 0) {
+        chartRef.current.priceScale("right").applyOptions({ autoScale: true });
+        chartRef.current.timeScale().fitContent();
+        setIsInitialLoad(false);
+        // After fitting, disable autoscale to allow free movement
+        setTimeout(() => {
+          if (chartRef.current) {
+            chartRef.current.priceScale("right").applyOptions({ autoScale: false });
+          }
+        }, 100);
+      }
       
       const lastCandle = candles[candles.length - 1];
       const isUp = lastCandle.close >= lastCandle.open;
@@ -393,6 +414,12 @@ export function MainChart() {
             ))}
           </div>
           <div className="flex flex-wrap justify-end gap-1 max-w-[200px]">
+            <button 
+              onClick={resetScale}
+              className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/20 border-terminal-accent text-white hover:bg-terminal-accent/40"
+            >
+              Reset Scale
+            </button>
             {Object.entries(toggles).map(([key, val]) => (
               <button 
                 key={key} 
