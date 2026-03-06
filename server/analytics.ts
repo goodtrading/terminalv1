@@ -12,77 +12,121 @@ export interface OptionsEntry {
 function normalizeHeader(header: string): string {
   const h = header.toLowerCase().trim();
   // Mapping Spanish/Deribit headers to standard names
-  if (h.includes('instrumento')) return 'instrument';
-  if (h.includes('gamma')) return 'gamma';
-  if (h.includes('abrir')) return 'open_interest'; // User requirement: Map ABRIR to Open Interest
-  if (h.includes('iv bid') || h.includes('iv ask')) return 'implied_volatility';
-  if (h.includes('instrumento')) return 'instrument';
+  if (h === 'instrumento') return 'instrument';
+  if (h === 'gamma') return 'gamma';
+  if (h === 'abrir') return 'open_interest'; 
+  if (h === 'iv bid') return 'iv_bid';
+  if (h === 'iv ask') return 'iv_ask';
+  if (h.includes('vega')) return 'vega';
+  if (h.includes('theta')) return 'theta';
+  if (h.includes('rho')) return 'rho';
   return h;
 }
 
 export function parseOptionsCSV(filePath: string): OptionsEntry[] {
   console.log(`[Analytics] Using file path: ${filePath}`);
+  
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Critical: Deribit CSV file not found at ${filePath}`);
+  }
+
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
-  if (lines.length < 2) throw new Error("CSV file is empty or missing data");
+  
+  if (lines.length < 2) {
+    throw new Error("Critical: CSV file is empty or missing data rows");
+  }
   
   const rawHeaders = lines[0].split(',').map(h => h.trim());
   const headers = rawHeaders.map(normalizeHeader);
+  
   console.log(`[Analytics] Column names detected: ${rawHeaders.join(', ')}`);
-  console.log(`[Analytics] Mapped Open Interest column: ${rawHeaders[headers.indexOf('open_interest')]}`);
+
+  const instrumentIdx = headers.indexOf('instrument');
+  const gammaIdx = headers.indexOf('gamma');
+  const oiIdx = headers.indexOf('open_interest');
+  const ivBidIdx = headers.indexOf('iv_bid');
+  const ivAskIdx = headers.indexOf('iv_ask');
+
+  if (instrumentIdx === -1) throw new Error("Parser Error: Missing 'Instrumento' column");
+  if (gammaIdx === -1) throw new Error("Parser Error: Missing 'Gamma' column");
+  if (oiIdx === -1) throw new Error("Parser Error: Missing 'Abrir' (Open Interest) column");
+
+  console.log(`[Analytics] Mapped Open Interest column: ${rawHeaders[oiIdx]}`);
 
   const data: OptionsEntry[] = [];
-  lines.slice(1).forEach((line) => {
+  let callCount = 0;
+  let putCount = 0;
+
+  lines.slice(1).forEach((line, lineIdx) => {
     const values = line.split(',').map(v => v.trim());
-    const instrument = values[headers.indexOf('instrument')];
+    const instrument = values[instrumentIdx];
+    
     if (!instrument) return;
 
     // Extract strike and type from instrument string e.g., "BTC-7MAR26-59000-C"
     const parts = instrument.split('-');
-    if (parts.length < 4) return;
+    if (parts.length < 4) {
+      console.warn(`[Analytics] Warning: Skipping malformed instrument at line ${lineIdx + 2}: ${instrument}`);
+      return;
+    }
     
     const strike = parseFloat(parts[2]);
-    const type = parts[3] === 'C' ? 'CALL' : 'PUT';
-    const expiration = parts[1]; // e.g. 7MAR26
+    const type = parts[3].toUpperCase() === 'C' ? 'CALL' : 'PUT';
+    const expiration = parts[1];
 
-    const gammaStr = values[headers.indexOf('gamma')];
+    if (isNaN(strike)) {
+       console.warn(`[Analytics] Warning: Invalid strike at line ${lineIdx + 2}: ${parts[2]}`);
+       return;
+    }
+
+    const gammaStr = values[gammaIdx];
     const gamma = (gammaStr === '-' || !gammaStr) ? 0 : parseFloat(gammaStr);
     
-    const oiStr = values[headers.indexOf('open_interest')];
+    const oiStr = values[oiIdx];
     const openInterest = (oiStr === '-' || !oiStr) ? 0 : parseFloat(oiStr);
 
-    const ivBid = parseFloat(values[headers.indexOf('iv bid')] || '0');
-    const ivAsk = parseFloat(values[headers.indexOf('iv ask')] || '0');
-    const iv = (ivBid + ivAsk) / 2 || 0.5; // fallback to 0.5 if no IV
+    const ivBid = ivBidIdx !== -1 ? parseFloat(values[ivBidIdx] || '0') : 0;
+    const ivAsk = ivAskIdx !== -1 ? parseFloat(values[ivAskIdx] || '0') : 0;
+    const iv = (isNaN(ivBid) ? 0 : ivBid + (isNaN(ivAsk) ? 0 : ivAsk)) / 2 || 0.5;
 
     data.push({
       strike,
       gamma,
       open_interest: openInterest,
-      implied_volatility: iv / 100, // percentage to decimal
+      implied_volatility: iv / 100,
       option_type: type,
       expiration
     });
+
+    if (type === 'CALL') callCount++;
+    else putCount++;
   });
 
   console.log(`[Analytics] Loaded ${data.length} rows from CSV`);
+  console.log(`[Analytics] Calls: ${callCount}, Puts: ${putCount}`);
   
+  if (data.length === 0) {
+    throw new Error("Parser Error: No valid option rows were parsed from the CSV");
+  }
+
   // Top 5 by OI
   const topOI = [...data].sort((a, b) => b.open_interest - a.open_interest).slice(0, 5);
   console.log("[Analytics] Top 5 strikes by Open Interest:");
   topOI.forEach(s => console.log(`  Strike: ${s.strike}, OI: ${s.open_interest}`));
 
-  // Top 5 by GEX (estimated for log)
-  const spotPlaceholder = 68000; 
+  // Top 5 by GEX (using a spot placeholder of 68250 for logging)
+  const spotLog = 68250; 
   const topGEX = [...data].sort((a, b) => {
-    const gexA = Math.abs(a.gamma * a.open_interest * Math.pow(spotPlaceholder, 2));
-    const gexB = Math.abs(b.gamma * b.open_interest * Math.pow(spotPlaceholder, 2));
+    const gexA = Math.abs(a.gamma * a.open_interest * Math.pow(spotLog, 2));
+    const gexB = Math.abs(b.gamma * b.open_interest * Math.pow(spotLog, 2));
     return gexB - gexA;
   }).slice(0, 5);
+  
   console.log("[Analytics] Top 5 strikes by Gamma Exposure:");
   topGEX.forEach(s => {
-    const gex = s.gamma * s.open_interest * Math.pow(spotPlaceholder, 2);
-    console.log(`  Strike: ${s.strike}, GEX: ${(gex/1e6).toFixed(2)}M`);
+    const gexValue = s.gamma * s.open_interest * Math.pow(spotLog, 2);
+    console.log(`  Strike: ${s.strike}, GEX: ${(gexValue/1e6).toFixed(2)}M`);
   });
 
   return data;
