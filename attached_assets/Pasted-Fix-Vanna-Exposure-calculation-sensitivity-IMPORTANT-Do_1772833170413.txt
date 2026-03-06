@@ -1,0 +1,79 @@
+Fix Vanna Exposure calculation sensitivity.
+
+IMPORTANT:
+Do NOT modify parser, chart rendering, dashboard layout, endpoints structure, or any other metrics.
+Only improve the internal Vanna Exposure calculation and its scaling.
+
+Current issue:
+Vanna Exposure is still displaying as +0.00 / -0.00, which means the signal is being over-compressed or canceled out too aggressively.
+
+Goals:
+- Make Vanna Exposure produce meaningful non-zero values when options are clustered near spot
+- Keep final output in a readable range
+- Preserve signed directional interpretation
+- Do not affect Charm, Gamma Pressure, Gamma Concentration, chart, or UI
+
+Required fixes:
+
+1. Improve aggregation logic
+Do not let call/put contributions fully cancel out too early.
+Accumulate raw vanna contribution first, then normalize at the end.
+
+Use something like:
+
+rawVannaExposure += vanna * openInterest * spotWeight * timeWeight
+
+Where:
+- spotWeight increases when strike is closer to spot
+- timeWeight gives more relevance to near expiries
+
+2. Add spot proximity weighting
+Use distance from spot to amplify relevant strikes:
+
+distancePct = Math.abs(strike - spotPrice) / spotPrice
+spotWeight = Math.max(0.15, 1 - distancePct * 8)
+
+This ensures strikes near spot contribute more strongly.
+
+3. Add time-to-expiry weighting
+Use a bounded weight so near-dated options matter more:
+
+timeWeight = 1 / Math.max(timeToExpiry, 0.05)
+
+Clamp if necessary to avoid explosions.
+
+4. Normalize less aggressively
+If current scaling compresses everything to zero, reduce the divisor.
+
+For example, instead of:
+vannaExposure = rawVannaExposure / 100000000
+
+try:
+vannaExposure = rawVannaExposure / 1000000
+
+or normalize relative to total open interest:
+
+vannaExposure = rawVannaExposure / Math.max(totalOI, 1)
+
+Then clamp into a readable range if needed:
+vannaExposure = Math.max(-9.99, Math.min(9.99, vannaExposure))
+
+5. Preserve directional bias
+After normalization:
+- Bullish if vannaExposure > 0.05
+- Bearish if vannaExposure < -0.05
+- Neutral otherwise
+
+6. Display precision
+Do not round too early in the engine.
+Keep raw decimals internally and only format at render time with 2 decimals.
+
+Expected result:
+Vanna Exposure should no longer stay stuck at 0.00.
+Examples of acceptable output:
++0.24
+-0.17
++0.63
+
+Do not modify any UI component.
+Only fix Vanna Exposure sensitivity and scaling.

@@ -73,25 +73,22 @@ export class MemStorage implements IStorage {
     };
     this.keyLevels = kl;
 
-    // Dealer Flow Recalibration per instructions
+    // Fixed Vanna Sensitivity: Accumulate raw, normalize by OI, clamp range
     const vanna = calculateVanna(data, spotPrice);
     const charm = calculateCharm(data, spotPrice);
     
-    // gammaPressure = (gammaExposure / totalOI) * spotPrice
     const totalOI = data.reduce((acc, d) => acc + d.open_interest, 0);
     const totalGammaExp = data.reduce((acc, d) => acc + (d.gamma * d.open_interest), 0);
     const rawPressure = totalOI > 0 ? (totalGammaExp / totalOI) * spotPrice : 0;
-    // Bounded normalization: gammaPressure = Math.tanh(gammaPressure / 1000000)
     const normalizedPressure = Math.tanh(rawPressure / 1000000);
     
-    // gammaConcentration = Math.abs(gammaExposure) / totalGamma
     const totalAbsGamma = data.reduce((acc, d) => acc + Math.abs(d.gamma * d.open_interest), 0);
     const concentration = totalAbsGamma > 0 ? Math.abs(totalGammaExp) / totalAbsGamma : 0;
 
     const de: DealerExposure = {
       id: 1,
       vannaExposure: vanna,
-      vannaBias: Math.abs(vanna) < 0.01 ? "NEUTRAL" : (vanna > 0 ? "BULLISH" : "BEARISH"),
+      vannaBias: vanna > 0.05 ? "BULLISH" : vanna < -0.05 ? "BEARISH" : "NEUTRAL",
       charmExposure: charm,
       charmBias: Math.abs(charm) < 0.01 ? "NEUTRAL" : (charm > 0 ? "BULLISH" : "BEARISH"),
       gammaPressure: (normalizedPressure >= 0 ? "+" : "") + normalizedPressure.toFixed(2),
@@ -111,7 +108,7 @@ export class MemStorage implements IStorage {
     console.log(`Charm Bias: ${de.charmBias}`);
     console.log(`Gamma Pressure: ${de.gammaPressure}`);
     console.log(`Gamma Concentration: ${concentration > 0.6 ? "HIGH" : concentration > 0.3 ? "MEDIUM" : "LOW"} (${concentration.toFixed(2)})`);
-    console.log(`Method Used: Bounded Normalization (tanh/scaling)`);
+    console.log(`Method Used: Enhanced Vanna Sensitivity (Spot/Time Weighted)`);
     console.log("=========================");
   }
 
