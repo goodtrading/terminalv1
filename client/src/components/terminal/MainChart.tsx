@@ -269,7 +269,7 @@ export function MainChart() {
 
     try {
       if (toggles.flip && market?.gammaFlip) {
-        addLevel(market.gammaFlip, "#eab308", "GAMMA FLIP", LineStyle.LargeDashed, 2);
+        addLevel(market.gammaFlip, "#eab308", "FLIP", LineStyle.LargeDashed, 2);
       }
 
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
@@ -299,21 +299,21 @@ export function MainChart() {
 
         grouped.forEach((group, i) => {
           const avg = group.reduce((a, b) => a + b, 0) / group.length;
-          addLevel(avg, "rgba(59, 130, 246, 0.5)", group.length > 1 ? `MAGNETS (${group.length})` : "MAGNET");
+          addLevel(avg, "rgba(59, 130, 246, 0.3)", group.length > 1 ? `MAGNETS (${group.length})` : "MAGNET", LineStyle.Solid, 1);
         });
       }
 
       if (toggles.pockets && levels) {
         if (levels.shortGammaPocketStart && levels.shortGammaPocketEnd) {
-          addZone(levels.shortGammaPocketStart, levels.shortGammaPocketEnd, "rgba(249, 115, 22, 0.1)", "SHORT GAMMA POCKET");
+          addZone(levels.shortGammaPocketStart, levels.shortGammaPocketEnd, "rgba(249, 115, 22, 0.08)", "SHORT GAMMA POCKET");
         }
         if (levels.deepRiskPocketStart && levels.deepRiskPocketEnd) {
-          addZone(levels.deepRiskPocketStart, levels.deepRiskPocketEnd, "rgba(168, 85, 247, 0.1)", "DEEP RISK POCKET");
+          addZone(levels.deepRiskPocketStart, levels.deepRiskPocketEnd, "rgba(168, 85, 247, 0.08)", "DEEP RISK POCKET");
         }
       }
 
       if (toggles.dealer && positioning?.dealerPivot) {
-        addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.6)", "DEALER PIVOT", LineStyle.Dotted);
+        addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.5)", "DEALER PIVOT", LineStyle.Dotted, 2);
       }
     } catch (err) {
       console.error("[MainChart] Overlay update failed:", err);

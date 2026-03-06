@@ -1,0 +1,140 @@
+Add a Gamma Liquidity Map overlay to the main chart using the existing chart engine.
+
+IMPORTANT:
+Do NOT modify parser.
+Do NOT modify backend calculations.
+Do NOT modify layout.
+Do NOT replace the chart library.
+Keep using the existing TradingView Lightweight Charts implementation.
+Do NOT remove any existing overlays.
+
+Only add a clean institutional overlay layer to the main chart.
+
+====================================================
+GOAL
+====================================================
+
+Visually render the key options/gamma structure levels directly on the chart:
+
+1. Gamma Flip
+2. Transition Zone
+3. Dealer Pivot
+4. Call Wall
+5. Put Wall
+6. Gamma Magnets
+7. Short Gamma Pocket
+8. Deep Risk Pocket
+
+The overlay should feel like an institutional options map, similar to SpotGamma / Laevitas style.
+
+====================================================
+DATA SOURCES
+====================================================
+
+Use the existing frontend query/state data already available from:
+
+- /api/market-state
+- /api/options-positioning
+- /api/key-levels
+
+Relevant fields include:
+- gammaFlip
+- transitionZoneStart
+- transitionZoneEnd
+- dealerPivot
+- callWall
+- putWall
+- gammaMagnets
+- shortGammaPocketStart
+- shortGammaPocketEnd
+- deepRiskPocketStart
+- deepRiskPocketEnd
+
+====================================================
+VISUAL REQUIREMENTS
+====================================================
+
+1. Gamma Flip
+- Draw a single horizontal dashed line
+- Label: FLIP
+- Neutral institutional style
+
+2. Transition Zone
+- Draw as a shaded horizontal band between:
+  transitionZoneStart and transitionZoneEnd
+- Label: TRANSITION
+- Subtle opacity
+
+3. Dealer Pivot
+- Draw a clear horizontal line
+- Label: DEALER PIVOT
+- Make it visually distinct from Call/Put walls
+
+4. Call Wall
+- Horizontal line
+- Label: CALL WALL
+- Resistance style
+
+5. Put Wall
+- Horizontal line
+- Label: PUT WALL
+- Support style
+
+6. Gamma Magnets
+- Draw each magnet as a lighter horizontal guide
+- Label only the nearest / most relevant ones if needed to avoid clutter
+
+7. Short Gamma Pocket
+- Draw as a shaded risk zone band
+- Label: SHORT GAMMA POCKET
+
+8. Deep Risk Pocket
+- Draw as another shaded band
+- Label: DEEP RISK POCKET
+
+====================================================
+IMPLEMENTATION STYLE
+====================================================
+
+Use the existing Lightweight Charts overlay approach already in the project.
+Prefer line series / price lines / custom overlay primitives if already supported.
+
+If labels are implemented via custom absolutely-positioned DOM elements, keep them aligned with the chart price scale.
+
+Do not clutter the chart.
+Prioritize readability and hierarchy.
+
+====================================================
+DISPLAY PRIORITY
+====================================================
+
+Highest priority:
+- Gamma Flip
+- Dealer Pivot
+- Call Wall
+- Put Wall
+
+Medium priority:
+- Transition Zone
+- Short Gamma Pocket
+
+Lower priority:
+- Deep Risk Pocket
+- Gamma Magnets
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+The chart must visibly show:
+- Flip
+- Transition Zone
+- Dealer Pivot
+- Call Wall
+- Put Wall
+- Gamma Magnets
+- Short Gamma Pocket
+- Deep Risk Pocket
+
+Do not redesign the whole chart.
+Only add the Gamma Liquidity Map overlay layer in a clean institutional style.
