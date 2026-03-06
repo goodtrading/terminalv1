@@ -31,5 +31,10 @@ export async function registerRoutes(
     res.json(data);
   });
 
+  app.get("/api/dealer-hedging-flow", async (_req, res) => {
+    const data = await storage.getDealerHedgingFlow();
+    res.json(data);
+  });
+
   return httpServer;
 }

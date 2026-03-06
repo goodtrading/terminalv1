@@ -1,0 +1,108 @@
+Recalibrate Gamma Pressure so it produces meaningful non-zero values.
+
+IMPORTANT:
+Do NOT modify parser.
+Do NOT modify chart rendering.
+Do NOT modify layout or styling.
+Do NOT remove any existing metrics.
+Do NOT break Dealer Hedging Flow.
+
+Only improve the backend calculation and frontend display consistency of:
+
+GAMMA PRESSURE
+
+====================================================
+CURRENT ISSUE
+====================================================
+
+Gamma Pressure is currently stuck near +0.00, which means the calculation is over-compressed or not sensitive enough.
+
+We need Gamma Pressure to become a meaningful signed metric that reflects whether gamma positioning is likely to create supportive or suppressive pressure around spot.
+
+====================================================
+GOAL
+====================================================
+
+Gamma Pressure should output readable values such as:
+
++0.34
+-0.27
++0.61
+
+instead of always:
++0.00
+
+====================================================
+CALCULATION LOGIC
+====================================================
+
+Compute Gamma Pressure using:
+
+1. net gamma exposure
+2. total open interest
+3. distance from spot to dominant gamma strikes
+4. concentration of gamma near spot
+
+Suggested model:
+
+A) Start with a raw pressure term:
+
+rawGammaPressure += gamma * openInterest * spotWeight
+
+Where:
+- spotWeight increases when strike is closer to spot
+
+Use:
+
+distancePct = Math.abs(strike - spotPrice) / spotPrice
+spotWeight = Math.max(0.15, 1 - distancePct * 10)
+
+B) Sum across strikes to build rawGammaPressure.
+
+C) Normalize using total open interest or total absolute gamma:
+
+gammaPressure = rawGammaPressure / Math.max(totalOI, 1)
+
+or
+
+gammaPressure = rawGammaPressure / Math.max(totalAbsGamma, 1)
+
+D) Then apply bounded normalization:
+
+gammaPressure = Math.tanh(gammaPressure / 1000)
+
+Adjust divisor if needed so the final values are readable and not collapsed to zero.
+
+E) Preserve sign:
+- positive gamma pressure = supportive / stabilizing
+- negative gamma pressure = suppressive / destabilizing
+
+====================================================
+DISPLAY
+====================================================
+
+Return numeric value between roughly:
+-1.00 and +1.00
+
+Display with 2 decimals and sign:
++0.34
+-0.27
+
+Do not convert Gamma Pressure into HIGH/LOW text.
+Keep it numeric.
+
+====================================================
+API / UI
+====================================================
+
+Ensure /api/dealer-exposure returns numeric gammaPressure.
+
+Ensure the sidebar displays that exact numeric value with sign formatting.
+
+Expected examples:
++0.24
+-0.18
++0.56
+
+Do not change layout.
+Only improve Gamma Pressure sensitivity and scaling.

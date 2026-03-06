@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel, TerminalValue } from "./TerminalPanel";
-import { MarketState, DealerExposure, OptionsPositioning, KeyLevels } from "@shared/schema";
+import { MarketState, DealerExposure, OptionsPositioning, KeyLevels, DealerHedgingFlow } from "@shared/schema";
 
 export function LeftSidebar() {
   const { data: market } = useQuery<MarketState>({ 
@@ -10,6 +10,11 @@ export function LeftSidebar() {
   
   const { data: dealer } = useQuery<DealerExposure>({ 
     queryKey: ["/api/dealer-exposure"],
+    refetchInterval: 5000 
+  });
+
+  const { data: flow } = useQuery<DealerHedgingFlow>({ 
+    queryKey: ["/api/dealer-hedging-flow"],
     refetchInterval: 5000 
   });
 
@@ -45,6 +50,14 @@ export function LeftSidebar() {
         <TerminalValue label="Charm Bias" value={dealer?.charmBias ?? "--"} trend={dealer?.charmBias === "BULLISH" ? "positive" : "negative"} isBadge />
         <TerminalValue label="Gamma Pressure" value={dealer?.gammaPressure ?? "--"} />
         <TerminalValue label="Gamma Concen." value={dealer ? dealer.gammaConcentration.toFixed(2) : "--"} />
+      </TerminalPanel>
+
+      <TerminalPanel title="DEALER HEDGING FLOW">
+        <TerminalValue label="Flow Bias" value={flow?.hedgeFlowBias ?? "--"} trend={flow?.hedgeFlowBias === "BUYING" ? "positive" : flow?.hedgeFlowBias === "SELLING" ? "negative" : "neutral"} />
+        <TerminalValue label="Intensity" value={flow?.hedgeFlowIntensity ?? "--"} />
+        <TerminalValue label="Acceleration Risk" value={flow?.accelerationRisk ?? "--"} trend={flow?.accelerationRisk === "HIGH" ? "negative" : "positive"} />
+        <TerminalValue label="Trigger Up" value={flow?.flowTriggerUp ? Math.round(flow.flowTriggerUp).toLocaleString() : "--"} />
+        <TerminalValue label="Trigger Down" value={flow?.flowTriggerDown ? Math.round(flow.flowTriggerDown).toLocaleString() : "--"} />
       </TerminalPanel>
 
       <TerminalPanel title="OPTIONS POSITIONING">

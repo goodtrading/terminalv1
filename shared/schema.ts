@@ -66,12 +66,23 @@ export const optionsData = pgTable("options_data", {
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
+export const dealerHedgingFlow = pgTable("dealer_hedging_flow", {
+  id: serial("id").primaryKey(),
+  hedgeFlowBias: text("hedge_flow_bias").notNull(), // "BUYING" | "SELLING" | "NEUTRAL"
+  hedgeFlowIntensity: text("hedge_flow_intensity").notNull(), // "LOW" | "MEDIUM" | "HIGH"
+  accelerationRisk: text("acceleration_risk").notNull(), // "LOW" | "HIGH"
+  flowTriggerUp: doublePrecision("flow_trigger_up").notNull(),
+  flowTriggerDown: doublePrecision("flow_trigger_down").notNull(),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
 export const insertMarketStateSchema = createInsertSchema(marketState).omit({ id: true, timestamp: true });
 export const insertDealerExposureSchema = createInsertSchema(dealerExposure).omit({ id: true, timestamp: true });
 export const insertOptionsPositioningSchema = createInsertSchema(optionsPositioning).omit({ id: true, timestamp: true });
 export const insertKeyLevelsSchema = createInsertSchema(keyLevels).omit({ id: true, timestamp: true });
 export const insertTradingScenariosSchema = createInsertSchema(tradingScenarios).omit({ id: true, timestamp: true });
 export const insertOptionsDataSchema = createInsertSchema(optionsData).omit({ id: true, timestamp: true });
+export const insertDealerHedgingFlowSchema = createInsertSchema(dealerHedgingFlow).omit({ id: true, timestamp: true });
 
 export type MarketState = typeof marketState.$inferSelect;
 export type DealerExposure = typeof dealerExposure.$inferSelect;
@@ -79,3 +90,4 @@ export type OptionsPositioning = typeof optionsPositioning.$inferSelect;
 export type KeyLevels = typeof keyLevels.$inferSelect;
 export type TradingScenario = typeof tradingScenarios.$inferSelect;
 export type OptionData = typeof optionsData.$inferSelect;
+export type DealerHedgingFlow = typeof dealerHedgingFlow.$inferSelect;

@@ -1,6 +1,6 @@
 import { 
-  marketState, dealerExposure, optionsPositioning, keyLevels, tradingScenarios, optionsData,
-  type MarketState, type DealerExposure, type OptionsPositioning, type KeyLevels, type TradingScenario, type OptionData
+  marketState, dealerExposure, optionsPositioning, keyLevels, tradingScenarios, optionsData, dealerHedgingFlow,
+  type MarketState, type DealerExposure, type OptionsPositioning, type KeyLevels, type TradingScenario, type OptionData, type DealerHedgingFlow
 } from "@shared/schema";
 import { parseOptionsCSV, calculateGEX, findGammaFlip, calculateVanna, calculateCharm, detectWalls, calculateKeyLevels, calculateAcceleration } from "./analytics";
 import { generateDynamicScenarios } from "./scenarios";
@@ -13,6 +13,7 @@ export interface IStorage {
   getKeyLevels(): Promise<KeyLevels | undefined>;
   getTradingScenarios(): Promise<TradingScenario[]>;
   getOptionsData(): Promise<OptionData[]>;
+  getDealerHedgingFlow(): Promise<DealerHedgingFlow | undefined>;
   recomputeAll(csvPath: string): Promise<void>;
 }
 
@@ -23,6 +24,7 @@ export class MemStorage implements IStorage {
   private keyLevels: KeyLevels | undefined;
   private tradingScenarios: TradingScenario[] = [];
   private optionsData: OptionData[] = [];
+  private dealerHedgingFlow: DealerHedgingFlow | undefined;
 
   constructor() {
     const csvPath = path.resolve(process.cwd(), "data", "deribit_options.csv");
@@ -77,12 +79,19 @@ export class MemStorage implements IStorage {
     const vanna = calculateVanna(data, spotPrice);
     const charm = calculateCharm(data, spotPrice);
     
+    let rawGammaPressure = 0;
+    data.forEach(d => {
+      const distancePct = Math.abs(d.strike - spotPrice) / spotPrice;
+      const spotWeight = Math.max(0.15, 1 - distancePct * 10);
+      rawGammaPressure += d.gamma * d.open_interest * spotWeight;
+    });
+
+    const totalAbsGamma = data.reduce((acc, d) => acc + Math.abs(d.gamma * d.open_interest), 0);
+    const gammaPressureValue = totalAbsGamma > 0 ? (rawGammaPressure / totalAbsGamma) : 0;
+    const normalizedPressure = Math.tanh(gammaPressureValue * 5); // Increased sensitivity
+    
     const totalOI = data.reduce((acc, d) => acc + d.open_interest, 0);
     const totalGammaExp = data.reduce((acc, d) => acc + (d.gamma * d.open_interest), 0);
-    const rawPressure = totalOI > 0 ? (totalGammaExp / totalOI) * spotPrice : 0;
-    const normalizedPressure = Math.tanh(rawPressure / 1000000);
-    
-    const totalAbsGamma = data.reduce((acc, d) => acc + Math.abs(d.gamma * d.open_interest), 0);
     const concentration = totalAbsGamma > 0 ? Math.abs(totalGammaExp) / totalAbsGamma : 0;
 
     const de: DealerExposure = {
@@ -96,6 +105,34 @@ export class MemStorage implements IStorage {
       timestamp: new Date()
     };
     this.dealerExposure = de;
+
+    // DEALER HEDGING FLOW CALCULATION
+    const hedgeFlowBias = (ms.gammaRegime === "LONG GAMMA") 
+      ? (de.vannaBias === "BULLISH" || de.charmBias === "BULLISH" ? "BUYING" : "NEUTRAL")
+      : (de.vannaBias === "BEARISH" || de.charmBias === "BEARISH" ? "SELLING" : "NEUTRAL");
+
+    const flowIntensityScore = Math.abs(de.vannaExposure) + Math.abs(de.charmExposure);
+    const hedgeFlowIntensity = flowIntensityScore > 1.0 ? "HIGH" : flowIntensityScore > 0.4 ? "MEDIUM" : "LOW";
+
+    const accelerationRisk = (ms.gammaRegime === "SHORT GAMMA" && (de.vannaBias === "BEARISH" || de.charmBias === "BEARISH")) ? "HIGH" : "LOW";
+
+    const flowTriggerUp = [op.dealerPivot, ms.gammaFlip, op.callWall]
+      .filter(l => l > spotPrice)
+      .sort((a, b) => a - b)[0] || op.callWall;
+
+    const flowTriggerDown = [op.dealerPivot, ms.gammaFlip, op.putWall]
+      .filter(l => l < spotPrice)
+      .sort((a, b) => b - a)[0] || op.putWall;
+
+    this.dealerHedgingFlow = {
+      id: 1,
+      hedgeFlowBias,
+      hedgeFlowIntensity,
+      accelerationRisk,
+      flowTriggerUp,
+      flowTriggerDown,
+      timestamp: new Date()
+    };
 
     this.tradingScenarios = generateDynamicScenarios(ms, op, kl, de);
 
@@ -118,6 +155,7 @@ export class MemStorage implements IStorage {
   async getKeyLevels() { return this.keyLevels; }
   async getTradingScenarios() { return this.tradingScenarios; }
   async getOptionsData() { return this.optionsData; }
+  async getDealerHedgingFlow() { return this.dealerHedgingFlow; }
 }
 
 export const storage = new MemStorage();

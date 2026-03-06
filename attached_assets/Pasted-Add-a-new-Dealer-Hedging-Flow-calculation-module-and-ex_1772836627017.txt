@@ -1,0 +1,181 @@
+Add a new Dealer Hedging Flow calculation module and expose it in the dashboard.
+
+IMPORTANT:
+Do NOT modify parser.
+Do NOT modify chart rendering.
+Do NOT break the existing layout.
+Do NOT remove any current metrics.
+
+Only add:
+1. backend calculation for dealer hedging flow
+2. API endpoint for it
+3. a simple new sidebar panel to display the results
+
+====================================================
+GOAL
+====================================================
+
+We already have:
+- gamma regime
+- gamma flip
+- transition zone
+- vanna exposure / bias
+- charm exposure / bias
+- call wall / put wall / dealer pivot
+
+Now add a new derived metric block called:
+
+DEALER HEDGING FLOW
+
+This should estimate whether dealer hedging behavior is likely to create:
+- stabilizing flow
+- accelerating flow
+- upside hedge pressure
+- downside hedge pressure
+
+====================================================
+CALCULATION MODEL
+====================================================
+
+Create a new backend calculation that derives:
+
+1. hedgeFlowBias
+Possible values:
+- BUYING
+- SELLING
+- NEUTRAL
+
+2. hedgeFlowIntensity
+Possible values:
+- LOW
+- MEDIUM
+- HIGH
+
+3. accelerationRisk
+Possible values:
+- LOW
+- HIGH
+
+4. flowTriggerUp
+Numeric level
+
+5. flowTriggerDown
+Numeric level
+
+Use the following simplified logic:
+
+A) Gamma regime effect
+- If gammaRegime is LONG GAMMA:
+  dealers are stabilizing
+  -> buying dips / selling rips
+- If gammaRegime is SHORT GAMMA:
+  dealers are accelerating
+  -> buying strength / selling weakness
+
+B) Vanna / Charm contribution
+- bullish vanna adds upside hedge support
+- bearish vanna adds downside hedge pressure
+- bullish charm adds supportive flow
+- bearish charm adds defensive/selling flow
+
+C) Distance / structure effect
+Use:
+- gammaFlip
+- transitionZoneStart
+- transitionZoneEnd
+- callWall
+- putWall
+- dealerPivot
+
+D) Trigger levels
+Use:
+flowTriggerUp = nearest important upside level
+Priority:
+dealerPivot if above spot
+then gammaFlip if above spot
+then callWall
+
+flowTriggerDown = nearest important downside level
+Priority:
+dealerPivot if below spot
+then gammaFlip if below spot
+then putWall
+
+E) Bias logic
+Examples:
+- LONG GAMMA + bullish vanna + bullish charm => BUYING or NEUTRAL with stabilizing support
+- LONG GAMMA + bearish charm + bearish vanna => SELLING or NEUTRAL with defensive hedging
+- SHORT GAMMA + bearish positioning => SELLING + HIGH acceleration risk
+- SHORT GAMMA + bullish positioning => BUYING + HIGH acceleration risk
+
+F) Intensity logic
+Base intensity on:
+- absolute vannaExposure
+- absolute charmExposure
+- distance to flip
+- whether spot is near dealerPivot / callWall / putWall
+
+Use simple thresholds.
+Readable output is more important than mathematical perfection.
+
+====================================================
+API
+====================================================
+
+Create a new endpoint:
+
+/api/dealer-hedging-flow
+
+Return JSON like:
+
+{
+  "hedgeFlowBias": "BUYING",
+  "hedgeFlowIntensity": "MEDIUM",
+  "accelerationRisk": "LOW",
+  "flowTriggerUp": 71000,
+  "flowTriggerDown": 67000,
+  "timestamp": "..."
+}
+
+====================================================
+UI
+====================================================
+
+Add a new simple sidebar panel below DEALER EXPOSURE or OPTIONS POSITIONING:
+
+Title:
+DEALER HEDGING FLOW
+
+Fields:
+- Flow Bias
+- Intensity
+- Acceleration Risk
+- Trigger Up
+- Trigger Down
+
+Use existing TerminalPanel and TerminalValue components.
+Do not redesign the UI.
+Do not add charts yet.
+
+====================================================
+FORMATTING
+====================================================
+
+- Bias and risk values should be uppercase text
+- Trigger levels should be numeric and readable
+- If data is missing, show "--"
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+After implementation the sidebar must show a new panel:
+
+DEALER HEDGING FLOW
+FLOW BIAS         BUYING / SELLING / NEUTRAL
+INTENSITY         LOW / MEDIUM / HIGH
+ACCELERATION RISK LOW / HIGH
+TRIGGER UP        [number]
+TRIGGER DOWN      [number]
+
+Do not change existing panels except to insert this new one.
