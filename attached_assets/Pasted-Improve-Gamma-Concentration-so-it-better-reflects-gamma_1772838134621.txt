@@ -1,0 +1,93 @@
+Improve Gamma Concentration so it better reflects gamma clustering near spot.
+
+IMPORTANT:
+Do NOT modify parser.
+Do NOT modify chart rendering.
+Do NOT modify layout or styling.
+Do NOT remove any existing metrics.
+Do NOT break Gamma Pressure or Dealer Hedging Flow.
+
+Only improve:
+
+GAMMA CONCENTRATION
+
+====================================================
+CURRENT ISSUE
+====================================================
+
+Gamma Concentration is currently too crude and tends to stay near fixed values, which makes it less useful.
+
+We need Gamma Concentration to reflect how much gamma is actually clustered near the current spot region.
+
+====================================================
+GOAL
+====================================================
+
+Gamma Concentration should become a normalized proximity-aware metric such as:
+
+0.32
+0.57
+0.81
+
+Optionally also derive a classification:
+LOW / MEDIUM / HIGH
+
+But keep the numeric value visible in the sidebar.
+
+====================================================
+CALCULATION LOGIC
+====================================================
+
+Instead of using only a raw total-gamma ratio, use a proximity-weighted concentration model.
+
+Suggested approach:
+
+1. For each strike compute proximity weight:
+
+distancePct = Math.abs(strike - spotPrice) / spotPrice
+spotWeight = Math.max(0, 1 - distancePct * 12)
+
+2. Compute:
+
+localGamma += Math.abs(gamma * openInterest) * spotWeight
+totalGammaAbs += Math.abs(gamma * openInterest)
+
+3. Then:
+
+gammaConcentration = localGamma / Math.max(totalGammaAbs, 1)
+
+4. Clamp:
+gammaConcentration = Math.max(0, Math.min(1, gammaConcentration))
+
+====================================================
+CLASSIFICATION
+====================================================
+
+Optionally derive a label:
+
+- HIGH if > 0.65
+- MEDIUM if > 0.35
+- LOW otherwise
+
+If classification already exists elsewhere, keep it compatible.
+But the sidebar should still show the numeric concentration value.
+
+====================================================
+DISPLAY
+====================================================
+
+Display numeric value with 2 decimals:
+0.74
+0.51
+0.28
+
+Do not leave it stuck at 1.00 unless that is genuinely the result.
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+Gamma Concentration must vary meaningfully with spot location and gamma distribution.
+
+Do not change any other metric.
+Only improve Gamma Concentration calculation.

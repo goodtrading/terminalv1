@@ -96,9 +96,17 @@ export class MemStorage implements IStorage {
     const normalizedPressure = Math.tanh(gammaPressureValue * 1.5); // Adjusted multiplier for better sensitivity without saturation
     
     // Removed temporary debug logging
-    const totalOI = data.reduce((acc, d) => acc + d.open_interest, 0);
-    const totalGammaExp = data.reduce((acc, d) => acc + (d.gamma * d.open_interest), 0);
-    const concentration = totalAbsGamma > 0 ? Math.abs(totalGammaExp) / totalAbsGamma : 0;
+    // Gamma Concentration (Proximity-Weighted)
+    let localGamma = 0;
+    let totalGammaAbs = 0;
+    data.forEach(d => {
+      const distancePct = Math.abs(d.strike - spotPrice) / spotPrice;
+      const spotWeight = Math.max(0, 1 - distancePct * 12);
+      const absGamma = Math.abs(d.gamma * d.open_interest);
+      localGamma += absGamma * spotWeight;
+      totalGammaAbs += absGamma;
+    });
+    const concentration = totalGammaAbs > 0 ? Math.max(0, Math.min(1, localGamma / totalGammaAbs)) : 0;
 
     const de: DealerExposure = {
       id: 1,
