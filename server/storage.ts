@@ -88,7 +88,7 @@ export class MemStorage implements IStorage {
 
     const totalAbsGamma = data.reduce((acc, d) => acc + Math.abs(d.gamma * d.open_interest), 0);
     const gammaPressureValue = totalAbsGamma > 0 ? (rawGammaPressure / totalAbsGamma) : 0;
-    const normalizedPressure = Math.tanh(gammaPressureValue * 5); // Increased sensitivity
+    const normalizedPressure = Math.tanh(gammaPressureValue / 10000); // Adjusted divisor to prevent saturation
     
     const totalOI = data.reduce((acc, d) => acc + d.open_interest, 0);
     const totalGammaExp = data.reduce((acc, d) => acc + (d.gamma * d.open_interest), 0);
