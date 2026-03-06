@@ -91,12 +91,14 @@ export function MainChart() {
           rightOffset: 12,
         },
         rightPriceScale: {
+          visible: true,
+          autoScale: false,
           borderColor: "#1a1a1a",
-          autoScale: true,
           scaleMargins: {
             top: 0.1,
             bottom: 0.2,
           },
+          minimumWidth: 100,
         },
         crosshair: {
           mode: 0,
@@ -406,7 +408,7 @@ export function MainChart() {
             </div>
           </div>
           
-          <div className="flex flex-col items-end space-y-2 pointer-events-auto">
+          <div className="flex flex-col items-end space-y-2 pointer-events-auto mr-20">
             <div className="flex space-x-1">
               {["1M", "15M", "1H", "4H", "1D"].map(tf => (
                 <button key={tf} className={`px-2 py-0.5 text-[9px] font-bold font-mono border rounded-sm transition-all ${tf === '15M' ? 'bg-terminal-accent/20 border-terminal-accent text-white' : 'bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white'}`}>
