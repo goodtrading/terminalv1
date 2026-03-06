@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createChart, ColorType, ISeriesApi, version, LineStyle, CandlestickSeries, HistogramSeries } from "lightweight-charts";
+import { createChart, ColorType, version, LineStyle, CandlestickSeries, HistogramSeries } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels } from "@shared/schema";
 
@@ -54,6 +54,8 @@ export function MainChart() {
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
+    console.log("[MainChart] Initializing Lightweight Charts v" + version());
+
     try {
       const chart = createChart(chartContainerRef.current, {
         layout: {
@@ -77,7 +79,7 @@ export function MainChart() {
           borderColor: "#1a1a1a",
           scaleMargins: {
             top: 0.1,
-            bottom: 0.25, // Leave room for pressure histogram
+            bottom: 0.25,
           },
         },
         crosshair: {
@@ -107,18 +109,17 @@ export function MainChart() {
         lastValueVisible: true,
       });
 
-      // Dealer Pressure Histogram
       const volumeSeries = chart.addSeries(HistogramSeries, {
         color: '#26a69a',
         priceFormat: {
           type: 'volume',
         },
-        priceScaleId: '', // Overlay scale
+        priceScaleId: '', 
       });
 
       volumeSeries.priceScale().applyOptions({
         scaleMargins: {
-          top: 0.8, // Position at bottom
+          top: 0.8,
           bottom: 0,
         },
       });
@@ -155,7 +156,6 @@ export function MainChart() {
     if (candleSeriesRef.current && candles) {
       candleSeriesRef.current.setData(candles);
       
-      // Update Live Price Line
       const lastCandle = candles[candles.length - 1];
       const isUp = lastCandle.close >= lastCandle.open;
       const color = isUp ? "#22c55e" : "#ef4444";
@@ -175,12 +175,11 @@ export function MainChart() {
         });
       }
 
-      // Update Dealer Pressure Histogram
       if (volumeSeriesRef.current && market?.totalGex) {
         const pressureData = candles.map((c, i) => {
           const prevClose = i > 0 ? candles[i-1].close : c.open;
           const move = c.close - prevClose;
-          const pressure = (market.totalGex / 1e9) * move; // Scale for vis
+          const pressure = (market.totalGex / 1e9) * move; 
           return {
             time: c.time,
             value: Math.abs(pressure),
@@ -192,7 +191,6 @@ export function MainChart() {
     }
   }, [candles, toggles.price, market?.totalGex]);
 
-  // Update Overlays
   useEffect(() => {
     if (!candleSeriesRef.current || !candles) return;
 
@@ -283,7 +281,6 @@ export function MainChart() {
     ? ((currentPrice - candles[0].close) / candles[0].close * 100).toFixed(2)
     : "0.00";
 
-  // Regime Background logic
   const regimeColor = market?.gammaRegime === 'LONG GAMMA' 
     ? 'rgba(30, 58, 138, 0.05)' 
     : market?.gammaRegime === 'SHORT GAMMA' 
@@ -348,7 +345,6 @@ export function MainChart() {
 
       <div ref={chartContainerRef} className="w-full h-full" />
       
-      {/* Dealer Pressure Label */}
       <div className="absolute bottom-[20%] left-4 text-[8px] font-mono text-terminal-muted pointer-events-none uppercase tracking-tighter opacity-50">
         Dealer Hedging Pressure
       </div>
