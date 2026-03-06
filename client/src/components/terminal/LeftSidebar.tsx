@@ -23,6 +23,9 @@ export function LeftSidebar() {
     refetchInterval: 5000 
   });
 
+  console.log("[LeftSidebar] marketData:", market);
+  console.log("[LeftSidebar] positioningData:", positioning);
+
   return (
     <div className="w-64 h-full flex flex-col gap-2 overflow-y-auto p-2 border-r border-terminal-border bg-terminal-bg shrink-0">
       

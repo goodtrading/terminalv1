@@ -1,0 +1,79 @@
+Audit and fix the exact frontend component rendering the left dashboard metrics.
+
+IMPORTANT:
+Do NOT modify backend calculations, parser, API responses, chart rendering, or layout design.
+Do NOT claim the fix is complete unless the fields visibly render in the dashboard.
+Only inspect and fix the exact frontend component and state mapping responsible for displaying these fields.
+
+Problem:
+The backend returns valid values for:
+
+From /api/market-state:
+- gammaFlip
+- distanceToFlip
+- transitionZoneStart
+- transitionZoneEnd
+
+From /api/options-positioning:
+- dealerPivot
+
+But the dashboard still shows these fields as blank.
+
+This means the issue is in the frontend component, state binding, or render logic.
+
+Required actions:
+
+1. Find the exact component that renders:
+- GAMMA FLIP
+- DIST. TO FLIP
+- TRANSITION ZONE
+- DEALER PIVOT
+
+2. Inspect the exact variables used in JSX/TSX for those fields.
+
+3. Verify the fetch/state pipeline:
+- confirm /api/market-state response is stored in frontend state
+- confirm /api/options-positioning response is stored in frontend state
+- confirm the component reads the correct state object
+
+4. Match backend keys exactly:
+- gammaFlip
+- distanceToFlip
+- transitionZoneStart
+- transitionZoneEnd
+- dealerPivot
+
+5. If the component is using wrong field names, fix them.
+
+6. If the component is reading stale/mock/local data, replace it with the actual API state.
+
+7. If async loading causes blank render, add safe fallback formatting:
+- gammaFlip ?? '-'
+- distanceToFlip ?? '-'
+etc.
+But when data exists, it must display.
+
+8. Transition Zone must render as:
+{transitionZoneStart} - {transitionZoneEnd}
+
+9. Distance to Flip must render as:
+13.55%
+
+10. Dealer Pivot must render numeric value from /api/options-positioning.
+
+11. Add a temporary console.log in the frontend component for:
+marketState
+optionsPositioning
+so it is possible to verify that the component receives the data.
+
+12. Only fix the exact data binding/render path. Do not change styles or layout.
+
+Success condition:
+The visible dashboard must show:
+- Gamma Flip
+- Dist. to Flip
+- Transition Zone
+- Dealer Pivot
+
+Do not respond with a generic completion message.
+Instead, verify the actual rendered output path.
