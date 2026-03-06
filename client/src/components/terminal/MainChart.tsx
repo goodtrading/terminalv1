@@ -322,17 +322,6 @@ export function MainChart() {
       if (toggles.dealer && positioning?.dealerPivot) {
         addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.5)", "DEALER PIVOT", LineStyle.Dotted, 2);
       }
-
-      // Standard free navigation behavior
-      // Removed any logic that calls setVisibleRange or autoscaleInfoProvider forcing
-      
-      chartRef.current.priceScale("right").applyOptions({
-        autoScale: true,
-        scaleMargins: {
-          top: 0.1,
-          bottom: 0.2,
-        },
-      });
     } catch (err) {
       console.error("[MainChart] Overlay update failed:", err);
     }
