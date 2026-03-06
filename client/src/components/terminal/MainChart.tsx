@@ -9,6 +9,7 @@ export function MainChart() {
   const chartRef = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
   const priceLinesRef = useRef<any[]>([]);
+  const livePriceLineRef = useRef<any>(null);
 
   const [toggles, setToggles] = useState({
     price: true,
@@ -101,7 +102,7 @@ export function MainChart() {
         borderVisible: false,
         wickUpColor: "#22c55e",
         wickDownColor: "#ef4444",
-        priceLineVisible: true,
+        priceLineVisible: false, // We'll manage our own live price line
         lastValueVisible: true,
       });
       
@@ -135,14 +136,34 @@ export function MainChart() {
   useEffect(() => {
     if (candleSeriesRef.current && candles) {
       candleSeriesRef.current.setData(candles);
+      
+      // Update Live Price Line
+      const lastCandle = candles[candles.length - 1];
+      const isUp = lastCandle.close >= lastCandle.open;
+      const color = isUp ? "#22c55e" : "#ef4444";
+
+      if (livePriceLineRef.current) {
+        candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
+      }
+
+      if (toggles.price) {
+        livePriceLineRef.current = candleSeriesRef.current.createPriceLine({
+          price: lastCandle.close,
+          color: color,
+          lineWidth: 2,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: "",
+        });
+      }
     }
-  }, [candles]);
+  }, [candles, toggles.price]);
 
   // Update Overlays
   useEffect(() => {
     if (!candleSeriesRef.current || !candles) return;
 
-    // Clear previous lines
+    // Clear previous structural lines
     priceLinesRef.current.forEach(line => {
       candleSeriesRef.current.removePriceLine(line);
     });
@@ -164,10 +185,29 @@ export function MainChart() {
 
     try {
       if (toggles.flip && market?.gammaFlip) {
+        // Main Flip Line
         addLine(market.gammaFlip, {
-          color: "rgba(234, 179, 8, 0.6)",
+          color: "#eab308",
           lineStyle: LineStyle.Dashed,
-          title: "FLIP",
+          title: "GAMMA FLIP",
+          lineWidth: 2,
+        });
+
+        // Transition Zone (±0.5%)
+        const transitionUpper = market.gammaFlip * 1.005;
+        const transitionLower = market.gammaFlip * 0.995;
+        
+        addLine(transitionUpper, {
+          color: "rgba(234, 179, 8, 0.15)",
+          lineStyle: LineStyle.Solid,
+          title: "",
+          axisLabelVisible: false,
+        });
+        addLine(transitionLower, {
+          color: "rgba(234, 179, 8, 0.15)",
+          lineStyle: LineStyle.Solid,
+          title: "",
+          axisLabelVisible: false,
         });
       }
 
@@ -176,26 +216,24 @@ export function MainChart() {
           addLine(positioning.callWall, {
             color: "rgba(239, 68, 68, 0.6)",
             lineStyle: LineStyle.Solid,
-            title: "C-WALL",
+            title: "CALL WALL",
           });
         }
         if (positioning?.putWall) {
           addLine(positioning.putWall, {
             color: "rgba(34, 197, 94, 0.6)",
             lineStyle: LineStyle.Solid,
-            title: "P-WALL",
+            title: "PUT WALL",
           });
         }
       }
 
       if (toggles.magnets && levels?.gammaMagnets) {
-        // Find nearest magnet
         const nearbyMagnets = levels.gammaMagnets
           .filter(m => Math.abs(m - currentPrice) < threshold)
           .sort((a, b) => Math.abs(a - currentPrice) - Math.abs(b - currentPrice));
         
         if (nearbyMagnets.length > 0) {
-          // Show top 3 magnets to avoid clutter
           nearbyMagnets.slice(0, 3).forEach((m, i) => {
             addLine(m, {
               color: "rgba(59, 130, 246, 0.4)",
@@ -246,6 +284,21 @@ export function MainChart() {
               {parseFloat(priceChange) >= 0 ? '+' : ''}{priceChange}%
             </span>
           </div>
+          
+          <div className="mt-2 flex items-center space-x-4">
+            <div className="flex flex-col">
+              <span className="text-[10px] text-terminal-muted font-mono uppercase">Gamma Regime</span>
+              <span className={`text-xs font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
+                {market?.gammaRegime || "NEUTRAL"}
+              </span>
+            </div>
+            <div className="flex flex-col border-l border-terminal-border pl-4">
+              <span className="text-[10px] text-terminal-muted font-mono uppercase">Dist. To Flip</span>
+              <span className="text-xs font-bold font-mono text-white">
+                {market?.distanceToFlip?.toFixed(2) || "0.00"}%
+              </span>
+            </div>
+          </div>
         </div>
         
         <div className="flex flex-col items-end space-y-2 pointer-events-auto">
@@ -272,7 +325,6 @@ export function MainChart() {
 
       <div ref={chartContainerRef} className="w-full h-full" />
       
-      {/* Offscreen Levels Indicator */}
       <div className="absolute bottom-4 right-4 text-[9px] font-mono text-terminal-muted pointer-events-none z-10 bg-black/40 px-2 py-1 rounded">
         <span>STRUCTURAL_BIAS: {market?.gammaRegime || "NEUTRAL"}</span>
       </div>
