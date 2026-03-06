@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createChart, ColorType, version, LineStyle, CandlestickSeries, HistogramSeries } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
-import { OptionsPositioning, MarketState, KeyLevels } from "@shared/schema";
+import { OptionsPositioning, MarketState, KeyLevels, DealerExposure } from "@shared/schema";
 
 export function MainChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -18,6 +18,7 @@ export function MainChart() {
     walls: true,
     magnets: true,
     pockets: true,
+    dealer: true,
   });
 
   const { data: positioning } = useQuery<OptionsPositioning>({ 
@@ -32,6 +33,11 @@ export function MainChart() {
 
   const { data: levels } = useQuery<KeyLevels>({ 
     queryKey: ["/api/key-levels"],
+    refetchInterval: 5000
+  });
+
+  const { data: exposure } = useQuery<DealerExposure>({ 
+    queryKey: ["/api/dealer-exposure"],
     refetchInterval: 5000
   });
 
@@ -212,60 +218,87 @@ export function MainChart() {
     priceLinesRef.current = [];
 
     const currentPrice = candles[candles.length - 1].close;
-    const threshold = currentPrice * 0.1;
+    const threshold = currentPrice * 0.15; // Increased threshold for institutional view
 
-    const addLine = (price: number, options: any) => {
+    const addZone = (price: number, widthPct: number, color: string, title: string, isDashed = false) => {
       if (Math.abs(price - currentPrice) > threshold) return;
-      const line = candleSeriesRef.current.createPriceLine({
+      
+      const halfWidth = price * (widthPct / 100);
+      
+      // Main Line
+      const mainLine = candleSeriesRef.current.createPriceLine({
         price,
-        axisLabelVisible: true,
+        color: color.replace('0.25', '0.6').replace('0.15', '0.4').replace('0.1', '0.3'),
         lineWidth: 1,
-        ...options,
+        lineStyle: isDashed ? LineStyle.Dashed : LineStyle.Solid,
+        axisLabelVisible: true,
+        title,
       });
-      priceLinesRef.current.push(line);
+      priceLinesRef.current.push(mainLine);
+
+      // Boundary Lines for shading (lightweight-charts hack for zones)
+      const upper = candleSeriesRef.current.createPriceLine({
+        price: price + halfWidth,
+        color: color,
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: false,
+        title: "",
+      });
+      const lower = candleSeriesRef.current.createPriceLine({
+        price: price - halfWidth,
+        color: color,
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: false,
+        title: "",
+      });
+      priceLinesRef.current.push(upper, lower);
     };
 
     try {
       if (toggles.flip && market?.gammaFlip) {
-        addLine(market.gammaFlip, {
-          color: "rgba(234, 179, 8, 0.5)",
-          lineStyle: LineStyle.Dashed,
-          title: "FLIP",
-          lineWidth: 1,
-        });
+        addZone(market.gammaFlip, 0.5, "rgba(234, 179, 8, 0.25)", "GAMMA FLIP", true);
       }
 
       if (toggles.walls) {
         if (positioning?.callWall) {
-          addLine(positioning.callWall, {
-            color: "rgba(239, 68, 68, 0.4)",
-            lineStyle: LineStyle.Solid,
-            title: "C-WALL",
-          });
+          addZone(positioning.callWall, 0.2, "rgba(255, 50, 50, 0.25)", "CALL WALL");
         }
         if (positioning?.putWall) {
-          addLine(positioning.putWall, {
-            color: "rgba(34, 197, 94, 0.4)",
-            lineStyle: LineStyle.Solid,
-            title: "P-WALL",
-          });
+          addZone(positioning.putWall, 0.2, "rgba(50, 255, 100, 0.25)", "PUT WALL");
         }
       }
 
       if (toggles.magnets && levels?.gammaMagnets) {
-        const nearbyMagnets = levels.gammaMagnets
-          .filter(m => Math.abs(m - currentPrice) < threshold)
-          .sort((a, b) => Math.abs(a - currentPrice) - Math.abs(b - currentPrice));
-        
-        if (nearbyMagnets.length > 0) {
-          nearbyMagnets.slice(0, 2).forEach((m, i) => {
-            addLine(m, {
-              color: "rgba(59, 130, 246, 0.3)",
-              lineStyle: LineStyle.Dotted,
-              title: i === 0 ? "MAGNET" : "",
-            });
-          });
+        levels.gammaMagnets.slice(0, 3).forEach((m, i) => {
+          addZone(m, 0.3, "rgba(59, 130, 246, 0.25)", i === 0 ? "MAGNET" : "");
+        });
+      }
+
+      if (toggles.pockets && levels) {
+        if (levels.shortGammaPocketStart && levels.shortGammaPocketEnd) {
+          const mid = (levels.shortGammaPocketStart + levels.shortGammaPocketEnd) / 2;
+          const width = Math.abs(levels.shortGammaPocketEnd - levels.shortGammaPocketStart) / mid * 100;
+          addZone(mid, width/2, "rgba(255, 120, 0, 0.15)", "SHORT GAMMA POCKET");
         }
+        if (levels.deepRiskPocketStart && levels.deepRiskPocketEnd) {
+          const mid = (levels.deepRiskPocketStart + levels.deepRiskPocketEnd) / 2;
+          const width = Math.abs(levels.deepRiskPocketEnd - levels.deepRiskPocketStart) / mid * 100;
+          addZone(mid, width/2, "rgba(255, 0, 0, 0.1)", "DEEP RISK POCKET");
+        }
+      }
+
+      if (toggles.dealer && positioning?.dealerPivot) {
+        const line = candleSeriesRef.current.createPriceLine({
+          price: positioning.dealerPivot,
+          color: "rgba(255, 255, 255, 0.4)",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: "Dealer Pivot",
+        });
+        priceLinesRef.current.push(line);
       }
     } catch (err) {
       console.error("[MainChart] Overlay update failed:", err);
@@ -301,17 +334,29 @@ export function MainChart() {
             </span>
           </div>
           
-          <div className="mt-2 flex items-center space-x-4">
+          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
             <div className="flex flex-col">
-              <span className="text-[10px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span>
-              <span className={`text-xs font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
+              <span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span>
+              <span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
                 {market?.gammaRegime || "NEUTRAL"}
               </span>
             </div>
-            <div className="flex flex-col border-l border-terminal-border pl-4">
-              <span className="text-[10px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span>
-              <span className="text-xs font-bold font-mono text-white">
+            <div className="flex flex-col">
+              <span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span>
+              <span className="text-[11px] font-bold font-mono text-white">
                 {market?.distanceToFlip?.toFixed(2) || "0.00"}%
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Pressure</span>
+              <span className="text-[11px] font-bold font-mono text-terminal-accent">
+                {exposure?.gammaPressure || "LOW"}
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Vanna/Charm</span>
+              <span className="text-[11px] font-bold font-mono text-white">
+                {exposure?.vannaBias?.charAt(0)}/{exposure?.charmBias?.charAt(0)}
               </span>
             </div>
           </div>
@@ -325,7 +370,7 @@ export function MainChart() {
               </button>
             ))}
           </div>
-          <div className="flex space-x-1">
+          <div className="flex flex-wrap justify-end gap-1 max-w-[200px]">
             {Object.entries(toggles).map(([key, val]) => (
               <button 
                 key={key} 
@@ -341,6 +386,10 @@ export function MainChart() {
 
       <div ref={chartContainerRef} className="w-full h-full" />
       
+      <div className="absolute bottom-4 right-4 text-[9px] font-mono text-terminal-muted pointer-events-none z-10 bg-black/40 px-2 py-1 rounded">
+        <span>STRUCTURAL_BIAS: {market?.gammaRegime || "NEUTRAL"}</span>
+      </div>
+
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.01] z-0">
         <span className="text-[12rem] font-bold tracking-tighter italic font-mono uppercase">QUANTUM</span>
       </div>
