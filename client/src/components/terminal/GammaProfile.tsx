@@ -1,14 +1,38 @@
 import { TerminalPanel } from "./TerminalPanel";
 import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
+import { OptionsPositioning, MarketState } from "@shared/schema";
 
 export function GammaProfile() {
-  const strikes = Array.from({ length: 25 }, (_, i) => 60000 + i * 1000);
+  const { data: positioning } = useQuery<OptionsPositioning>({ 
+    queryKey: ["/api/options-positioning"],
+    refetchInterval: 5000
+  });
+
+  const { data: market } = useQuery<MarketState>({ 
+    queryKey: ["/api/market-state"],
+    refetchInterval: 5000
+  });
+
+  // Expand range to cover more strikes, centering around spot/walls
+  const strikes = Array.from({ length: 41 }, (_, i) => 60000 + i * 500);
   
   const generateGamma = (strike: number) => {
-    if (strike < 68000) return (68000 - strike) * -1.5; 
-    if (strike === 69000) return -500;
-    const dist = Math.abs(72000 - strike);
-    return Math.max(0, 5000 - dist * 1.5); 
+    if (!market || !positioning) {
+      if (strike < 68000) return (68000 - strike) * -1.5; 
+      if (strike === 69000) return -500;
+      const dist = Math.abs(72000 - strike);
+      return Math.max(0, 5000 - dist * 1.5);
+    }
+    
+    if (strike === positioning.callWall) return 5000;
+    if (strike === positioning.putWall) return -3000;
+    if (strike === market.gammaFlip) return 0;
+    
+    // Simulate distribution decay
+    if (strike < market.gammaFlip) return (market.gammaFlip - strike) * -2.5;
+    const distToCallWall = Math.abs(positioning.callWall - strike);
+    return Math.max(0, 4500 - distToCallWall * 1.8);
   };
 
   const data = strikes.map(strike => ({
@@ -16,37 +40,55 @@ export function GammaProfile() {
     gamma: generateGamma(strike)
   }));
 
-  const maxGamma = Math.max(...data.map(d => Math.abs(d.gamma)));
+  const maxGamma = Math.max(...data.map(d => Math.abs(d.gamma)), 1);
+  const maxPosGamma = Math.max(...data.map(d => d.gamma));
 
   return (
     <TerminalPanel title="GAMMA PROFILE ANALYSIS" className="h-64 shrink-0">
-      <div className="flex h-full w-full items-end space-x-[2px] pb-8 relative pt-6 px-1">
+      <div className="flex h-full w-full items-end space-x-[1px] pb-8 relative pt-8 px-1">
         
         {/* Zero Line */}
-        <div className="absolute left-0 right-0 top-[55%] border-t border-white/10 z-0"></div>
-
-        {/* Legend/Labels */}
-        <div className="absolute top-2 left-0 right-0 flex justify-between px-4 z-20 pointer-events-none">
-          <div className="flex flex-col items-center">
-            <span className="text-[8px] font-bold text-terminal-negative uppercase tracking-widest bg-terminal-panel px-1">↓ Gamma Flip Area (69.4k)</span>
-          </div>
-          <div className="flex flex-col items-center">
-             <span className="text-[8px] font-bold text-terminal-positive uppercase tracking-widest bg-terminal-panel px-1">↑ Largest Pos GEX Strike (72k)</span>
-          </div>
-        </div>
+        <div className="absolute left-0 right-0 top-[55%] border-t border-white/5 z-0"></div>
 
         {/* Bars */}
         {data.map((d, i) => {
-          const heightPct = (Math.abs(d.gamma) / maxGamma) * 40;
+          const heightPct = (Math.abs(d.gamma) / maxGamma) * 45;
           const isPositive = d.gamma > 0;
           
+          const isFlip = market?.gammaFlip === d.strike;
+          const isCallWall = positioning?.callWall === d.strike;
+          const isPutWall = positioning?.putWall === d.strike;
+          const isMaxGex = d.gamma === maxPosGamma && d.gamma > 0;
+
           return (
             <div key={i} className="flex-1 flex flex-col items-center justify-end relative h-full z-10 group">
+              {/* Highlight Markers */}
+              {(isFlip || isCallWall || isPutWall || isMaxGex) && (
+                <div className={cn(
+                  "absolute inset-x-0 bottom-0 top-0 border-x z-20 pointer-events-none opacity-40",
+                  isFlip && "border-dashed border-terminal-accent",
+                  isCallWall && "border-terminal-negative",
+                  isPutWall && "border-terminal-positive",
+                  isMaxGex && "border-terminal-positive brightness-150"
+                )}>
+                  <span className={cn(
+                    "absolute -top-6 left-1/2 -translate-x-1/2 text-[6px] font-bold whitespace-nowrap bg-black/90 px-1 py-0.5 rounded border border-white/10",
+                    isFlip && "text-terminal-accent",
+                    isCallWall && "text-terminal-negative",
+                    isPutWall && "text-terminal-positive",
+                    isMaxGex && "text-terminal-positive brightness-150"
+                  )}>
+                    {isFlip ? "FLIP" : isCallWall ? "C-WALL" : isPutWall ? "P-WALL" : "MAX GEX"}
+                  </span>
+                </div>
+              )}
+
               {isPositive && (
                 <div 
                   className={cn(
-                    "w-full bg-terminal-positive/40 hover:bg-terminal-positive/80 transition-all border-t border-terminal-positive/30",
-                    d.strike === 72000 && "bg-terminal-positive border-white/40 brightness-125"
+                    "w-full bg-terminal-positive/20 hover:bg-terminal-positive/50 transition-all",
+                    isMaxGex && "bg-terminal-positive/60 shadow-[0_0_10px_rgba(34,197,94,0.3)]",
+                    isCallWall && "bg-terminal-negative/40"
                   )}
                   style={{ 
                     height: `${heightPct}%`,
@@ -55,11 +97,11 @@ export function GammaProfile() {
                 ></div>
               )}
 
-              {!isPositive && (
+              {!isPositive && d.gamma !== 0 && (
                 <div 
                   className={cn(
-                    "w-full bg-terminal-negative/40 hover:bg-terminal-negative/80 transition-all border-b border-terminal-negative/30",
-                    d.strike >= 68000 && d.strike <= 69000 && "bg-terminal-negative border-white/40 brightness-125"
+                    "w-full bg-terminal-negative/20 hover:bg-terminal-negative/50 transition-all",
+                    isPutWall && "bg-terminal-positive/40"
                   )}
                   style={{ 
                     height: `${heightPct}%`,
@@ -69,9 +111,15 @@ export function GammaProfile() {
                 ></div>
               )}
 
-              <div className="absolute bottom-1 text-[8px] font-mono text-terminal-muted -rotate-45 origin-left font-bold group-hover:text-white transition-colors">
-                {(d.strike / 1000).toFixed(0)}k
-              </div>
+              {/* Price Labels (every 2k or if highlighted) */}
+              {(d.strike % 2000 === 0 || isFlip || isCallWall || isPutWall) && (
+                <div className={cn(
+                  "absolute bottom-0 text-[7px] font-mono text-terminal-muted -rotate-45 origin-left font-bold transition-colors",
+                  (isFlip || isCallWall || isPutWall) && "text-white opacity-100 z-30"
+                )}>
+                  {(d.strike / 1000).toFixed(1)}k
+                </div>
+              )}
             </div>
           );
         })}
