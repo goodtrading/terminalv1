@@ -5,6 +5,7 @@ import {
 import { parseOptionsCSV, calculateGEX, findGammaFlip, calculateVanna, calculateCharm, detectWalls, calculateKeyLevels, calculateAcceleration } from "./analytics";
 import { generateDynamicScenarios } from "./scenarios";
 import path from "path";
+import fs from "fs";
 
 export interface IStorage {
   getMarketState(): Promise<MarketState | undefined>;
@@ -26,7 +27,7 @@ export class MemStorage implements IStorage {
   private optionsData: OptionData[] = [];
 
   constructor() {
-    const csvPath = path.resolve(process.cwd(), "attached_assets", "deribit_options.csv");
+    const csvPath = path.resolve(process.cwd(), "data", "deribit_options.csv");
     this.recomputeAll(csvPath).catch(err => {
       console.error("Critical: Analytics engine failed to initialize:", err.message);
     });
@@ -36,6 +37,27 @@ export class MemStorage implements IStorage {
     const data = parseOptionsCSV(csvPath);
     const spotPrice = 70245; 
     
+    // Logging requirements
+    console.log(`[Analytics] Loaded ${data.length} rows from CSV`);
+    const content = fs.readFileSync(csvPath, 'utf-8');
+    const headers = content.split(/\r?\n/)[0];
+    console.log(`[Analytics] Column names detected: ${headers}`);
+
+    const oiStrikes = [...data].sort((a, b) => b.open_interest - a.open_interest).slice(0, 5);
+    console.log("[Analytics] Top 5 strikes by Open Interest:");
+    oiStrikes.forEach(s => console.log(`  Strike: ${s.strike}, OI: ${s.open_interest}`));
+
+    const gammaStrikes = [...data].sort((a, b) => {
+      const gexA = a.gamma * a.open_interest * Math.pow(spotPrice, 2);
+      const gexB = b.gamma * b.open_interest * Math.pow(spotPrice, 2);
+      return Math.abs(gexB) - Math.abs(gexA);
+    }).slice(0, 5);
+    console.log("[Analytics] Top 5 strikes by Gamma Exposure:");
+    gammaStrikes.forEach(s => {
+      const gex = s.gamma * s.open_interest * Math.pow(spotPrice, 2);
+      console.log(`  Strike: ${s.strike}, GEX: ${(gex/1e6).toFixed(2)}M`);
+    });
+
     const totalGex = calculateGEX(data, spotPrice);
     const flip = findGammaFlip(data);
     const vanna = calculateVanna(data, spotPrice);
