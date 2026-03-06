@@ -80,16 +80,22 @@ export class MemStorage implements IStorage {
     const charm = calculateCharm(data, spotPrice);
     
     let rawGammaPressure = 0;
+    let totalSpotWeight = 0;
+    let contributingStrikes = 0;
+
     data.forEach(d => {
       const distancePct = Math.abs(d.strike - spotPrice) / spotPrice;
       const spotWeight = Math.max(0.15, 1 - distancePct * 10);
       rawGammaPressure += d.gamma * d.open_interest * spotWeight;
+      totalSpotWeight += spotWeight;
+      contributingStrikes++;
     });
 
     const totalAbsGamma = data.reduce((acc, d) => acc + Math.abs(d.gamma * d.open_interest), 0);
     const gammaPressureValue = totalAbsGamma > 0 ? (rawGammaPressure / totalAbsGamma) : 0;
-    const normalizedPressure = Math.tanh(gammaPressureValue / 10000); // Adjusted divisor to prevent saturation
+    const normalizedPressure = Math.tanh(gammaPressureValue * 1.5); // Adjusted multiplier for better sensitivity without saturation
     
+    // Removed temporary debug logging
     const totalOI = data.reduce((acc, d) => acc + d.open_interest, 0);
     const totalGammaExp = data.reduce((acc, d) => acc + (d.gamma * d.open_interest), 0);
     const concentration = totalAbsGamma > 0 ? Math.abs(totalGammaExp) / totalAbsGamma : 0;
