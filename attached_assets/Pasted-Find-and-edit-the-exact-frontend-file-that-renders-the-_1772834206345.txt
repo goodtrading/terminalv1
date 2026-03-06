@@ -1,0 +1,64 @@
+Find and edit the exact frontend file that renders the visible left sidebar cards.
+
+IMPORTANT:
+Do NOT modify backend, parser, APIs, or chart logic.
+Do NOT make abstract fixes.
+You must identify the exact TSX/JSX file that renders the visible labels:
+
+- GAMMA FLIP
+- DIST. TO FLIP
+- TRANSITION ZONE
+- DEALER PIVOT
+
+The current visible UI still shows these labels with blank values, even though backend responses contain valid data.
+
+Required workflow:
+
+1. Search the frontend codebase for the exact text labels:
+- "GAMMA FLIP"
+- "DIST. TO FLIP"
+- "TRANSITION ZONE"
+- "DEALER PIVOT"
+
+2. Open the exact component file that renders those labels in the visible sidebar.
+
+3. In that exact JSX/TSX file, replace the blank/static value area with the real bound values from state.
+
+4. Use the actual frontend state objects populated from:
+- /api/market-state
+- /api/options-positioning
+
+5. Render exactly:
+
+Gamma Flip:
+{marketState?.gammaFlip ?? "-"}
+
+Dist. to Flip:
+{marketState?.distanceToFlip != null ? `${marketState.distanceToFlip.toFixed(2)}%` : "-"}
+
+Transition Zone:
+{marketState?.transitionZoneStart != null && marketState?.transitionZoneEnd != null
+  ? `${Math.round(marketState.transitionZoneStart)} - ${Math.round(marketState.transitionZoneEnd)}`
+  : "-"}
+
+Dealer Pivot:
+{optionsPositioning?.dealerPivot ?? "-"}
+
+6. Verify the component is the one actually used by the page.
+If there are multiple similar sidebar components, trace imports and edit the rendered one only.
+
+7. Add a temporary visible debug line inside the same sidebar component:
+DEBUG MARKET: {JSON.stringify(marketState)}
+DEBUG OPTIONS: {JSON.stringify(optionsPositioning)}
+
+This must appear visibly in the sidebar so we can confirm the component receives the data.
+
+8. Do not stop at “mapping complete”.
+The success condition is that the visible sidebar shows either:
+- the real values
+or
+- the visible debug JSON
+
+If neither appears, you are editing the wrong component.
+
+Do not change styling except minimally if needed to make values visible.
