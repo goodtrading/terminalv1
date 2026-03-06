@@ -1,0 +1,106 @@
+Recalibrate the dealer flow metrics calculation.
+
+IMPORTANT:
+Do NOT modify the parser.
+Do NOT modify the chart.
+Do NOT modify the dashboard layout.
+Do NOT add new UI features.
+
+Only fix the internal calculations and normalization of the dealer flow metrics.
+
+Focus on these metrics:
+
+1. Vanna Exposure
+2. Vanna Bias
+3. Charm Exposure
+4. Charm Bias
+5. Gamma Pressure
+6. Gamma Concentration
+
+Goals:
+
+• Normalize values so they stay in a readable range (-1 to +1 where possible)
+• Prevent confusing outputs like -0M or 0.0B
+• Ensure exposures are scaled relative to Open Interest and Spot price
+• Improve formatting so the dashboard shows meaningful numbers
+
+Implementation details:
+
+1. Gamma Pressure
+Compute gamma pressure relative to total open interest and spot price.
+
+gammaPressure = (gammaExposure / totalOI) * spotPrice
+
+Normalize using a bounded function:
+
+gammaPressure = Math.tanh(gammaPressure / 1000000)
+
+
+2. Vanna Exposure
+Calculate aggregated vanna exposure considering distance from spot:
+
+vannaExposure += vanna * openInterest * (spotPrice - strike)
+
+Normalize result:
+
+vannaExposure = vannaExposure / 100000000
+
+
+3. Charm Exposure
+Charm should consider time decay effect:
+
+charmExposure += charm * openInterest * timeToExpiry
+
+Normalize result:
+
+charmExposure = charmExposure / 100000000
+
+
+4. Gamma Concentration
+Measure how concentrated gamma is around dominant strikes:
+
+gammaConcentration = Math.abs(gammaExposure) / totalGamma
+
+Classify levels:
+
+HIGH if > 0.6
+MEDIUM if > 0.3
+LOW otherwise
+
+
+5. Bias calculation
+Add simple directional bias logic:
+
+Vanna Bias:
+Bullish if vannaExposure > 0
+Bearish if vannaExposure < 0
+Neutral if near zero
+
+Charm Bias:
+Bullish if charmExposure > 0
+Bearish if charmExposure < 0
+Neutral if near zero
+
+
+6. Output formatting
+Ensure numbers are displayed cleanly:
+
++0.25
+-0.18
+0.00
+
+Avoid large abbreviations like M or B.
+
+
+Expected result in the dashboard panel:
+
+VANNA EXPOSURE      +0.24
+VANNA BIAS          BULLISH
+
+CHARM EXPOSURE      -0.18
+CHARM BIAS          BEARISH
+
+GAMMA PRESSURE      +0.31
+GAMMA CONCENTRATION MEDIUM
+
+Do not change any UI components. Only update the dealer flow calculation engine.

@@ -11,8 +11,6 @@ export interface OptionsEntry {
 }
 
 function parseDTE(expiration: string): number {
-  // Typical Deribit format: 7MAR26
-  // Current date assumed: March 6, 2026 (from context)
   const day = parseInt(expiration.substring(0, expiration.length - 5));
   const monthStr = expiration.substring(expiration.length - 5, expiration.length - 2).toUpperCase();
   const year = 2000 + parseInt(expiration.substring(expiration.length - 2));
@@ -44,7 +42,6 @@ function normalizeHeader(header: string): string {
 }
 
 export function parseOptionsCSV(filePath: string): OptionsEntry[] {
-  console.log(`[Analytics] Using file path: ${filePath}`);
   if (!fs.existsSync(filePath)) throw new Error(`Critical: Deribit CSV file not found at ${filePath}`);
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
@@ -100,30 +97,32 @@ export function findGammaFlip(data: OptionsEntry[]): number {
 }
 
 /**
- * Recalculated Vanna: dGamma / dVol
- * Institutional Estimate: sum(OI * Gamma * (Strike - Spot) * IV * sqrt(DTE/365))
+ * Normalized Vanna Exposure
+ * vannaExposure += vanna * openInterest * (spotPrice - strike)
  */
 export function calculateVanna(data: OptionsEntry[], spot: number): number {
-  return data.reduce((total, entry) => {
-    const distanceFactor = (entry.strike - spot);
-    const timeFactor = Math.sqrt(entry.dte / 365);
-    // Vanna is higher for OTM options
-    const vanna = entry.open_interest * entry.gamma * distanceFactor * entry.implied_volatility * timeFactor;
-    return total + vanna;
+  const raw = data.reduce((total, entry) => {
+    // Vanna is dGamma/dVol. 
+    // Proxy: abs(gamma) * IV * (spot - strike)
+    const vannaProxy = Math.abs(entry.gamma) * entry.implied_volatility; 
+    return total + vannaProxy * entry.open_interest * (spot - entry.strike);
   }, 0);
+  return raw / 100000000;
 }
 
 /**
- * Recalculated Charm: dDelta / dTime
- * Approximation: sum(OI * Gamma * (Strike - Spot) * (Days to Expiry Decay))
+ * Normalized Charm Exposure
+ * charmExposure += charm * openInterest * timeToExpiry
  */
 export function calculateCharm(data: OptionsEntry[], spot: number): number {
-  return data.reduce((total, entry) => {
-    const distanceFactor = (entry.strike - spot) / spot;
-    const decay = 1 / (entry.dte + 1);
-    const charm = entry.open_interest * entry.gamma * distanceFactor * decay;
-    return total + charm;
-  }, 0) * -1e10; // Scaling for readability
+  const raw = data.reduce((total, entry) => {
+    // Charm is dDelta/dTime.
+    // Proxy: gamma * (strike - spot)
+    const timeToExpiry = entry.dte / 365;
+    const charmProxy = entry.gamma * (entry.strike - spot);
+    return total + charmProxy * entry.open_interest * timeToExpiry;
+  }, 0);
+  return raw / 100000000;
 }
 
 export function detectWalls(data: OptionsEntry[]) {

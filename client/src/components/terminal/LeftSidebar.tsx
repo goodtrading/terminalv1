@@ -36,12 +36,12 @@ export function LeftSidebar() {
       </TerminalPanel>
 
       <TerminalPanel title="DEALER EXPOSURE">
-        <TerminalValue label="Vanna Exposure" value={dealer ? `${(dealer.vannaExposure / 1e6).toFixed(0)}M` : "--"} trend={dealer && dealer.vannaExposure > 0 ? "positive" : "negative"} />
+        <TerminalValue label="Vanna Exposure" value={dealer ? `${dealer.vannaExposure >= 0 ? "+" : ""}${dealer.vannaExposure.toFixed(2)}` : "--"} trend={dealer && dealer.vannaExposure > 0 ? "positive" : "negative"} />
         <TerminalValue label="Vanna Bias" value={dealer?.vannaBias ?? "--"} trend={dealer?.vannaBias === "BULLISH" ? "positive" : "negative"} isBadge />
-        <TerminalValue label="Charm Exposure" value={dealer ? `${(dealer.charmExposure / 1e9).toFixed(1)}B` : "--"} trend={dealer && dealer.charmExposure > 0 ? "positive" : "negative"} />
+        <TerminalValue label="Charm Exposure" value={dealer ? `${dealer.charmExposure >= 0 ? "+" : ""}${dealer.charmExposure.toFixed(2)}` : "--"} trend={dealer && dealer.charmExposure > 0 ? "positive" : "negative"} />
         <TerminalValue label="Charm Bias" value={dealer?.charmBias ?? "--"} trend={dealer?.charmBias === "BULLISH" ? "positive" : "negative"} isBadge />
         <TerminalValue label="Gamma Pressure" value={dealer?.gammaPressure ?? "--"} />
-        <TerminalValue label="Gamma Concen." value={dealer ? `${dealer.gammaConcentration}%` : "--"} />
+        <TerminalValue label="Gamma Concen." value={dealer ? (dealer.gammaConcentration > 0.6 ? "HIGH" : dealer.gammaConcentration > 0.3 ? "MEDIUM" : "LOW") : "--"} />
       </TerminalPanel>
 
       <TerminalPanel title="OPTIONS POSITIONING">
