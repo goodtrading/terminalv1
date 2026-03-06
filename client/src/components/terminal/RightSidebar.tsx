@@ -6,7 +6,8 @@ import { TradingScenario } from "@shared/schema";
 
 export function RightSidebar() {
   const { data: scenarios } = useQuery<TradingScenario[]>({ 
-    queryKey: ["/api/scenarios"] 
+    queryKey: ["/api/scenarios"],
+    refetchInterval: 5000
   });
 
   return (
@@ -67,9 +68,18 @@ export function RightSidebar() {
                     <span className="text-terminal-negative font-bold">{scenario.invalidation}</span>
                   </div>
                 </div>
+                {scenario.confirmation && scenario.confirmation.length > 0 && (
+                  <div className="pt-2 border-t border-white/5">
+                    <div className="text-[9px] uppercase font-bold text-terminal-muted mb-1">Confirmation</div>
+                    <div className="text-[10px] text-white/70 italic">
+                      {scenario.confirmation.join(", ")}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ))}
+          {!scenarios && <div className="text-xs text-terminal-muted p-4">Loading scenarios...</div>}
 
         </div>
       </TerminalPanel>

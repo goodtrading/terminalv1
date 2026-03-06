@@ -4,19 +4,23 @@ import { MarketState, DealerExposure, OptionsPositioning, KeyLevels } from "@sha
 
 export function LeftSidebar() {
   const { data: market } = useQuery<MarketState>({ 
-    queryKey: ["/api/market-state"] 
+    queryKey: ["/api/market-state"],
+    refetchInterval: 5000 
   });
   
   const { data: dealer } = useQuery<DealerExposure>({ 
-    queryKey: ["/api/dealer-exposure"] 
+    queryKey: ["/api/dealer-exposure"],
+    refetchInterval: 5000 
   });
 
   const { data: positioning } = useQuery<OptionsPositioning>({ 
-    queryKey: ["/api/options-positioning"] 
+    queryKey: ["/api/options-positioning"],
+    refetchInterval: 5000 
   });
 
   const { data: levels } = useQuery<KeyLevels>({ 
-    queryKey: ["/api/key-levels"] 
+    queryKey: ["/api/key-levels"],
+    refetchInterval: 5000 
   });
 
   return (
@@ -27,7 +31,7 @@ export function LeftSidebar() {
         <TerminalValue label="Total GEX" value={market ? `${(market.totalGex / 1e9).toFixed(2)}B` : "--"} trend={market && market.totalGex > 0 ? "positive" : "negative"} />
         <TerminalValue label="Gamma Flip" value={market?.gammaFlip.toLocaleString() ?? "--"} />
         <TerminalValue label="Distance to Flip" value={market ? `${market.distanceToFlip.toFixed(2)}%` : "--"} />
-        <TerminalValue label="Transition Zone" value={market ? `${market.transitionZoneStart.toLocaleString()} – ${market.transitionZoneEnd.toLocaleString()}` : "--"} />
+        <TerminalValue label="Transition Zone" value={market ? `${Math.round(market.transitionZoneStart).toLocaleString()} – ${Math.round(market.transitionZoneEnd).toLocaleString()}` : "--"} />
         <TerminalValue label="Gamma Accel" value={market?.gammaAcceleration ?? "--"} trend="positive" />
       </TerminalPanel>
 
@@ -57,6 +61,7 @@ export function LeftSidebar() {
                   {(m/1000).toFixed(0)}k
                 </span>
               ))}
+              {!levels && <span className="text-terminal-muted">--</span>}
             </div>
           </div>
           

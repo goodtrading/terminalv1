@@ -1,14 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel } from "./TerminalPanel";
-import { OptionsPositioning } from "@shared/schema";
+import { OptionsPositioning, MarketState } from "@shared/schema";
 
 export function MainChart() {
   const { data: positioning } = useQuery<OptionsPositioning>({ 
-    queryKey: ["/api/options-positioning"] 
+    queryKey: ["/api/options-positioning"],
+    refetchInterval: 5000
   });
 
-  const { data: market } = useQuery<any>({ 
-    queryKey: ["/api/market-state"] 
+  const { data: market } = useQuery<MarketState>({ 
+    queryKey: ["/api/market-state"],
+    refetchInterval: 5000
   });
 
   return (
