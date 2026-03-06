@@ -1,0 +1,211 @@
+Create a professional trading terminal dashboard called QUANTUM_SYS.
+
+This is a crypto derivatives analytics interface used to analyze options positioning and dealer exposure.
+
+The interface must look like an institutional trading terminal.
+
+Do NOT create a playful SaaS UI.
+
+The design must feel similar to professional financial dashboards like Bloomberg terminals or TradingView institutional layouts.
+
+================================================
+
+THEME
+
+Dark mode.
+
+Background: near black / charcoal
+Primary accent: deep red
+Secondary colors: muted gray and white
+Positive values: green
+Negative values: red
+
+Typography must be clean, compact and technical.
+
+================================================
+
+MAIN LAYOUT
+
+Create a 4-panel dashboard layout:
+
+TOP NAVIGATION BAR
+
+LEFT SIDEBAR
+Market context and options positioning
+
+CENTER PANEL
+Main price chart
+
+RIGHT SIDEBAR
+Trading scenarios and order flow confirmation
+
+Below the main chart add a GAMMA PROFILE chart.
+
+================================================
+
+TOP NAVIGATION BAR
+
+Left side:
+
+QUANTUM_SYS
+
+Navigation items:
+
+TERMINAL
+OPTIONS
+FLOWS
+VOLATILITY
+REPORTS
+
+Right side:
+
+Asset selector (BTC / ETH)
+Expiry selector
+Timeframe selector
+Feed indicator
+
+Example:
+
+BTC | EXPIRY | 15M | DERIBIT | LIVE
+
+================================================
+
+LEFT SIDEBAR
+
+Create stacked information panels.
+
+SECTION 1
+
+MARKET STATE
+
+Gamma Regime
+Total GEX
+Gamma Flip
+Distance to Flip
+Transition Zone
+Gamma Acceleration
+
+SECTION 2
+
+DEALER EXPOSURE
+
+Vanna Exposure
+Vanna Bias
+Charm Exposure
+Charm Bias
+Gamma Pressure
+Gamma Concentration
+
+SECTION 3
+
+OPTIONS POSITIONING
+
+Call Wall
+Put Wall
+OI Concentration
+Dealer Pivot
+
+SECTION 4
+
+KEY LEVELS
+
+Gamma Magnets
+Short Gamma Pocket
+Deep Risk Pocket
+
+================================================
+
+CENTER PANEL
+
+Create a large MAIN PRICE CHART container.
+
+The chart must support horizontal structural overlays:
+
+Gamma Flip
+Transition Zone
+Gamma Magnets
+Call Wall
+Put Wall
+Short Gamma Pocket
+
+Transition zone should appear as a shaded horizontal band.
+
+================================================
+
+BOTTOM CENTER
+
+Below the main chart create a GAMMA PROFILE chart.
+
+This chart shows gamma exposure distribution by strike.
+
+Positive gamma bars = green
+Negative gamma bars = red
+
+Add labels for:
+
+largest positive gamma strike
+gamma flip area
+short gamma pocket
+
+================================================
+
+RIGHT SIDEBAR
+
+SECTION 1
+
+DAILY SCENARIOS
+
+Create three scenario cards:
+
+BASE CASE
+ALT CASE
+VOL CASE
+
+Each scenario card contains:
+
+title
+probability
+short thesis
+key levels
+confirmation signals
+invalidation condition
+
+================================================
+
+SECTION 2
+
+ORDER FLOW CONFIRMATION
+
+Checklist style panel with:
+
+Absorption at Magnet
+Bid Holding
+Delta Divergence
+OI Stable
+Wall Pull Detected
+Aggressive Continuation
+
+================================================
+
+SECTION 3
+
+ACTIONS
+
+Buttons:
+
+Generate Trading Plan
+Export Daily Report
+Copy Telegram Update
+
+================================================
+
+IMPORTANT
+
+Do not fill the dashboard with fake numbers.
+
+Use placeholders like:
+
+--
+Awaiting Data
+
+Focus on building a clean, structured UI layout ready to connect to backend analytics later.

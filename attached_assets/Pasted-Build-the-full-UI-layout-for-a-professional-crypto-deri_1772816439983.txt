@@ -1,0 +1,341 @@
+Build the full UI layout for a professional crypto derivatives analytics terminal called QUANTUM_SYS.
+
+The goal is to create a premium institutional trading dashboard focused on options positioning and dealer exposure.
+
+The interface must be designed for professional traders and feel similar to institutional research terminals.
+
+Use a dark theme and a clean, high-density layout.
+
+Do not create playful startup UI elements.
+
+Avoid rounded oversized cards and avoid bright SaaS colors.
+
+The UI must look serious, technical and professional.
+
+================================================
+
+DESIGN STYLE
+
+Use a dark institutional trading terminal design.
+
+Colors:
+Background: near black / charcoal
+Primary accent: deep red
+Secondary accent: muted gray
+Positive gamma: green
+Negative gamma: red
+
+Typography:
+Clean sans-serif
+High readability
+Condensed layout
+Compact information density
+
+The UI must feel similar to:
+
+Bloomberg terminal
+TradingView professional dashboards
+Institutional quant dashboards
+
+================================================
+
+MAIN LAYOUT
+
+The screen should be divided into four areas:
+
+TOP NAVIGATION BAR
+
+LEFT SIDEBAR (Market Context)
+
+CENTER PANEL (Charts)
+
+RIGHT SIDEBAR (Trading Scenarios and Confirmation)
+
+BOTTOM CENTER (Gamma Profile)
+
+================================================
+
+TOP NAVIGATION BAR
+
+Display a header with system name and navigation tabs.
+
+Left side:
+
+QUANTUM_SYS v1.0
+
+Navigation tabs:
+
+TERMINAL
+OPTIONS
+FLOWS
+VOLATILITY
+REPORTS
+
+Right side of the top bar must contain:
+
+ASSET selector (BTC / ETH)
+EXPIRY selector
+TIMEFRAME selector
+DATA SOURCE indicator (DERIBIT)
+STATUS indicator (LIVE)
+
+Example layout:
+
+QUANTUM_SYS | TERMINAL | OPTIONS | FLOWS | VOLATILITY | REPORTS
+
+Right side:
+
+ASSET: BTC
+EXPIRY: Selected expiry
+TIMEFRAME: 15M
+FEED: DERIBIT
+STATUS: LIVE
+
+================================================
+
+LEFT SIDEBAR — MARKET CONTEXT
+
+Divide the left sidebar into four sections.
+
+SECTION 1 — MARKET STATE
+
+Display the following metrics:
+
+Gamma Regime
+Total GEX
+Gamma Flip
+Distance to Flip
+Transition Zone
+Gamma Acceleration
+
+Example layout:
+
+MARKET STATE
+
+Gamma Regime: LONG GAMMA
+Total GEX: +2.05B
+Gamma Flip: 69,450
+Distance to Flip: 2.04%
+Transition Zone: 69,100 – 69,700
+Gamma Acceleration: HIGH
+
+------------------------------------------------
+
+SECTION 2 — DEALER EXPOSURE
+
+Display derivatives positioning metrics.
+
+Dealer Exposure section must contain:
+
+Vanna Exposure
+Vanna Bias
+Charm Exposure
+Charm Bias
+Gamma Pressure
+Gamma Concentration
+
+Example layout:
+
+DEALER EXPOSURE
+
+Vanna Exposure: +212M
+Vanna Bias: BULLISH
+Charm Exposure: -38.1B
+Charm Bias: BULLISH
+Gamma Pressure: HIGH
+Gamma Concentration: 72%
+
+------------------------------------------------
+
+SECTION 3 — OPTIONS POSITIONING
+
+Display key options positioning levels.
+
+Metrics:
+
+Call Wall
+Put Wall
+OI Concentration
+Dealer Pivot
+
+Example layout:
+
+OPTIONS POSITIONING
+
+Call Wall: 72k
+Put Wall: 68k
+OI Concentration: 70k
+Dealer Pivot: 70k
+
+------------------------------------------------
+
+SECTION 4 — KEY LEVELS
+
+Display structural price levels derived from options positioning.
+
+Include:
+
+Gamma Magnets
+Short Gamma Pocket
+Deep Risk Pocket
+
+Example layout:
+
+KEY LEVELS
+
+Gamma Magnets:
+70k
+72k
+73k
+
+Short Gamma Pocket:
+69.1k – 68.4k
+
+Deep Risk Pocket:
+62.9k – 63.2k
+
+================================================
+
+CENTER PANEL — MAIN PRICE CHART
+
+Create the main price chart area.
+
+The chart must allow horizontal structural levels to be drawn.
+
+Overlay these levels visually:
+
+Gamma Flip
+Transition Zone
+Gamma Magnets
+Call Wall
+Put Wall
+Short Gamma Pocket
+
+Transition zone should appear as a shaded band.
+
+Magnets should appear as horizontal highlighted levels.
+
+Short gamma pockets should appear as red shaded areas.
+
+The main chart must visually communicate the market structure clearly.
+
+================================================
+
+BOTTOM CENTER — GAMMA PROFILE
+
+Below the main chart display a Gamma Profile by Strike chart.
+
+The gamma profile must display gamma exposure distribution across strikes.
+
+Chart design:
+
+Positive gamma bars → green
+Negative gamma bars → red
+
+Include labels on important strikes such as:
+
+Largest positive gamma level
+Gamma flip area
+Major short gamma pocket
+
+The goal is to visualize dealer positioning across strikes.
+
+================================================
+
+RIGHT SIDEBAR — DAILY TRADING SCENARIOS
+
+Divide the right sidebar into three sections.
+
+SECTION 1 — DAILY SCENARIOS
+
+Display three trading scenarios:
+
+Base Case
+Alternative Case
+Volatility Case
+
+Each scenario must display:
+
+Scenario title
+Probability
+Market thesis
+Key levels
+Confirmation signals
+Invalidation condition
+
+Example structure:
+
+DAILY SCENARIOS
+
+BASE CASE (60%)
+
+Mean Reversion toward 72k magnet
+Thesis: Long gamma above flip with bullish vanna/charm support
+Levels: 70k / 72k / 73k
+Confirm: absorption at 70k, delta divergence
+Invalidation: acceptance below 69.1k
+
+------------------------------------------------
+
+ALT CASE (25%)
+
+Liquidity sweep below 69k then recovery
+
+------------------------------------------------
+
+VOL CASE (15%)
+
+Breakdown into short gamma expansion
+
+================================================
+
+SECTION 2 — ORDER FLOW CONFIRMATION
+
+Create a checklist style panel.
+
+Include these confirmation signals:
+
+Absorption at Magnet
+Bid Holding
+Delta Divergence
+OI Stable
+Wall Pull Detected
+Aggressive Continuation
+
+This section helps the trader confirm scenarios using order flow tools.
+
+================================================
+
+SECTION 3 — ACTIONS
+
+Create a small panel with action buttons.
+
+Buttons:
+
+Generate Trading Plan
+Export Daily Report
+Copy Telegram Update
+
+These buttons will later connect to AI generated outputs.
+
+================================================
+
+IMPORTANT REQUIREMENTS
+
+Do not populate the dashboard with fake numeric values.
+
+Use placeholders such as "--" or "Awaiting Data" until calculations are connected.
+
+Focus on creating a clean and professional UI layout.
+
+Do not implement backend calculations yet.
+
+This phase is purely about the final UI structure of the terminal.
+
+The layout must remain stable so backend metrics can be connected later.
+
+================================================
+
+END GOAL
+
+Deliver a polished UI layout for QUANTUM_SYS v1 that visually represents an institutional options analytics terminal for crypto trading.
