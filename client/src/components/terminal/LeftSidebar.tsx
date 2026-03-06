@@ -30,7 +30,7 @@ export function LeftSidebar() {
     <div className="w-64 h-full flex flex-col gap-2 overflow-y-auto p-2 border-r border-terminal-border bg-terminal-bg shrink-0">
       
       <TerminalPanel title="MARKET STATE">
-        <TerminalValue label="Gamma Regime" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge />
+        <TerminalValue label="TEST SIDEBAR LIVE" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge />
         <TerminalValue label="Total GEX" value={market ? `${(market.totalGex / 1e9).toFixed(2)}B` : "--"} trend={market && market.totalGex > 0 ? "positive" : "negative"} />
         <TerminalValue label="Gamma Flip" value={"DEBUG_59000"} />
         <TerminalValue label="Dist. to Flip" value={"DEBUG_13.55%"} trend={market && market.distanceToFlip < 5 ? "positive" : "neutral"} />
