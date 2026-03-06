@@ -120,22 +120,62 @@ export class MemStorage implements IStorage {
     };
     this.dealerExposure = de;
 
-    // DEALER HEDGING FLOW CALCULATION
-    const hedgeFlowBias = (ms.gammaRegime === "LONG GAMMA") 
-      ? (de.vannaBias === "BULLISH" || de.charmBias === "BULLISH" ? "BUYING" : "NEUTRAL")
-      : (de.vannaBias === "BEARISH" || de.charmBias === "BEARISH" ? "SELLING" : "NEUTRAL");
+    // DEALER HEDGING FLOW V2 (Institutional Model)
+    let flowScore = 0;
+    
+    // 1. Gamma Regime Base
+    const isLongGamma = ms.gammaRegime === "LONG GAMMA";
+    flowScore += isLongGamma ? 1 : -1;
 
-    const flowIntensityScore = Math.abs(de.vannaExposure) + Math.abs(de.charmExposure);
-    const hedgeFlowIntensity = flowIntensityScore > 1.0 ? "HIGH" : flowIntensityScore > 0.4 ? "MEDIUM" : "LOW";
+    // 2. Vanna/Charm Interaction (Scoring)
+    // Thresholds: Strong > 0.5, Mild > 0.1
+    const vannaAbs = Math.abs(de.vannaExposure);
+    const charmAbs = Math.abs(de.charmExposure);
+    
+    if (de.vannaBias === "BULLISH") flowScore += vannaAbs > 0.5 ? 2 : 1;
+    if (de.vannaBias === "BEARISH") flowScore -= vannaAbs > 0.5 ? 2 : 1;
+    
+    if (de.charmBias === "BULLISH") flowScore += charmAbs > 0.5 ? 2 : 1;
+    if (de.charmBias === "BEARISH") flowScore -= charmAbs > 0.5 ? 2 : 1;
 
-    const accelerationRisk = (ms.gammaRegime === "SHORT GAMMA" && (de.vannaBias === "BEARISH" || de.charmBias === "BEARISH")) ? "HIGH" : "LOW";
+    // 3. Dealer Pivot Logic
+    const isAbovePivot = spotPrice > op.dealerPivot;
+    flowScore += isAbovePivot ? 1 : -1;
 
-    const flowTriggerUp = [op.dealerPivot, ms.gammaFlip, op.callWall]
-      .filter(l => l > spotPrice)
+    // 4. Transition Zone Logic
+    const isInsideTransition = spotPrice >= ms.transitionZoneStart && spotPrice <= ms.transitionZoneEnd;
+    if (isInsideTransition) {
+      flowScore *= 0.5;
+    }
+
+    // Map Score to Bias
+    const hedgeFlowBias = flowScore >= 2 ? "BUYING" : flowScore <= -2 ? "SELLING" : "NEUTRAL";
+
+    // 5. Intensity Logic
+    const totalExposure = vannaAbs + charmAbs;
+    const distToFlip = Math.abs(spotPrice - ms.gammaFlip) / spotPrice;
+    const distToPivot = Math.abs(spotPrice - op.dealerPivot) / spotPrice;
+    
+    let intensityScore = 0;
+    if (totalExposure > 1.0) intensityScore += 2;
+    else if (totalExposure > 0.4) intensityScore += 1;
+    
+    if (distToFlip < 0.01) intensityScore += 1; // Near flip
+    if (distToPivot < 0.005) intensityScore += 1; // Near pivot
+    
+    const hedgeFlowIntensity = intensityScore >= 3 ? "HIGH" : intensityScore >= 1 ? "MEDIUM" : "LOW";
+
+    // 6. Acceleration Risk Refinement
+    const strongAlignment = (de.vannaBias === de.charmBias) && (vannaAbs + charmAbs > 0.8);
+    const accelerationRisk = (!isLongGamma || (spotPrice < ms.gammaFlip * 1.01 && !isLongGamma) || strongAlignment) ? "HIGH" : "LOW";
+
+    // 7. Trigger Selection Refinement
+    const flowTriggerUp = [op.dealerPivot, ms.gammaFlip, ms.transitionZoneEnd, op.callWall]
+      .filter(l => l > spotPrice + 10) // Small buffer
       .sort((a, b) => a - b)[0] || op.callWall;
 
-    const flowTriggerDown = [op.dealerPivot, ms.gammaFlip, op.putWall]
-      .filter(l => l < spotPrice)
+    const flowTriggerDown = [op.dealerPivot, ms.gammaFlip, ms.transitionZoneStart, op.putWall]
+      .filter(l => l < spotPrice - 10) // Small buffer
       .sort((a, b) => b - a)[0] || op.putWall;
 
     this.dealerHedgingFlow = {

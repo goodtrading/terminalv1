@@ -1,0 +1,184 @@
+Refine Dealer Hedging Flow into a more robust v2 institutional model.
+
+IMPORTANT:
+Do NOT modify parser.
+Do NOT modify chart rendering.
+Do NOT modify layout or styling.
+Do NOT remove the existing DEALER HEDGING FLOW panel.
+Do NOT break current endpoints.
+Do NOT remove current fields from the panel.
+
+Only improve the backend logic behind:
+
+/api/dealer-hedging-flow
+
+====================================================
+CURRENT STATE
+====================================================
+
+The current Dealer Hedging Flow panel works, but it is still a simplified v1 model.
+
+We now want a more robust v2 logic that better combines:
+- gamma regime
+- vanna exposure / bias
+- charm exposure / bias
+- gamma flip
+- transition zone
+- dealer pivot
+- call wall / put wall
+- spot distance to key levels
+
+====================================================
+GOAL
+====================================================
+
+Make these outputs more institutionally coherent:
+
+- hedgeFlowBias
+- hedgeFlowIntensity
+- accelerationRisk
+- flowTriggerUp
+- flowTriggerDown
+
+====================================================
+MODEL REFINEMENT
+====================================================
+
+1. Gamma regime base state
+
+If LONG GAMMA:
+- stabilizing behavior
+- buy dips / sell rips
+- default accelerationRisk = LOW
+
+If SHORT GAMMA:
+- accelerating behavior
+- buy strength / sell weakness
+- default accelerationRisk = HIGH
+
+2. Add transition zone logic
+
+If spot is inside transition zone:
+- reduce confidence of flow bias
+- increase uncertainty
+- prefer NEUTRAL or MEDIUM intensity unless Vanna/Charm strongly align
+
+3. Add dealer pivot logic
+
+If spot is above dealerPivot:
+- bullish hedging bias gets stronger
+- downside trigger becomes more important if pivot is lost
+
+If spot is below dealerPivot:
+- bearish hedging bias gets stronger
+- upside trigger becomes more important if pivot is reclaimed
+
+4. Add Vanna/Charm interaction
+
+Use a scoring model:
+
+flowScore = 0
+
+Gamma regime:
+- LONG GAMMA -> +1 stabilization score
+- SHORT GAMMA -> -1 stabilization score
+
+Vanna:
+- strong bullish vanna -> +2
+- mild bullish vanna -> +1
+- strong bearish vanna -> -2
+- mild bearish vanna -> -1
+
+Charm:
+- strong bullish charm -> +2
+- mild bullish charm -> +1
+- strong bearish charm -> -2
+- mild bearish charm -> -1
+
+Dealer pivot:
+- spot above pivot -> +1
+- spot below pivot -> -1
+
+Transition zone:
+- if inside transition zone -> reduce total score magnitude by 50%
+
+Then map:
+score >= 2 -> BUYING
+score <= -2 -> SELLING
+otherwise -> NEUTRAL
+
+Use sensible thresholds for mild vs strong based on absolute exposure values.
+
+5. Intensity logic
+
+Base on:
+- abs(vannaExposure)
+- abs(charmExposure)
+- distance to flip
+- distance to dealerPivot
+- whether spot is near callWall / putWall
+
+Examples:
+- HIGH if multiple strong signals align
+- MEDIUM if some signals align
+- LOW if mixed or weak
+
+6. Acceleration risk refinement
+
+HIGH when:
+- SHORT GAMMA
+- or spot is near / below flip in unstable structure
+- or strong bullish/bearish vanna+charm alignment suggests chase behavior
+
+LOW when:
+- LONG GAMMA
+- price is away from unstable zones
+- hedging likely stabilizes price
+
+7. Trigger selection refinement
+
+flowTriggerUp:
+Choose nearest structurally important upside level among:
+- dealerPivot (if above spot)
+- gammaFlip (if above spot)
+- transitionZoneEnd (if above spot)
+- callWall
+
+Prefer the nearest relevant level.
+
+flowTriggerDown:
+Choose nearest structurally important downside level among:
+- dealerPivot (if below spot)
+- gammaFlip (if below spot)
+- transitionZoneStart (if below spot)
+- putWall
+
+Prefer the nearest relevant level.
+
+====================================================
+OUTPUT FORMAT
+====================================================
+
+Keep the same API response shape:
+
+{
+  "hedgeFlowBias": "BUYING" | "SELLING" | "NEUTRAL",
+  "hedgeFlowIntensity": "LOW" | "MEDIUM" | "HIGH",
+  "accelerationRisk": "LOW" | "HIGH",
+  "flowTriggerUp": number,
+  "flowTriggerDown": number,
+  "timestamp": "..."
+}
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+The new v2 model should produce more coherent flow interpretation depending on:
+- gamma regime
+- pivot location
+- transition zone
+- vanna/charm alignment
+
+Do not redesign the UI.
+Only refine the hedging-flow backend logic.
