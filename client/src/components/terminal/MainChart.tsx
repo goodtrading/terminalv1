@@ -328,6 +328,10 @@ export function MainChart() {
       
       chartRef.current.priceScale("right").applyOptions({
         autoScale: true,
+        scaleMargins: {
+          top: 0.1,
+          bottom: 0.2,
+        },
       });
     } catch (err) {
       console.error("[MainChart] Overlay update failed:", err);
