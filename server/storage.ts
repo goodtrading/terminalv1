@@ -5,7 +5,6 @@ import {
 import { parseOptionsCSV, calculateGEX, findGammaFlip, calculateVanna, calculateCharm, detectWalls, calculateKeyLevels, calculateAcceleration } from "./analytics";
 import { generateDynamicScenarios } from "./scenarios";
 import path from "path";
-import fs from "fs";
 
 export interface IStorage {
   getMarketState(): Promise<MarketState | undefined>;
@@ -14,7 +13,6 @@ export interface IStorage {
   getKeyLevels(): Promise<KeyLevels | undefined>;
   getTradingScenarios(): Promise<TradingScenario[]>;
   getOptionsData(): Promise<OptionData[]>;
-  
   recomputeAll(csvPath: string): Promise<void>;
 }
 
@@ -28,26 +26,22 @@ export class MemStorage implements IStorage {
 
   constructor() {
     const csvPath = path.resolve(process.cwd(), "data", "deribit_options.csv");
-    this.recomputeAll(csvPath).catch(err => {
-      console.error("Critical: Analytics engine failed to initialize:", err.message);
-    });
+    this.recomputeAll(csvPath).catch(err => console.error("Critical: Analytics initialization failed:", err.message));
   }
 
   async recomputeAll(csvPath: string) {
     const data = parseOptionsCSV(csvPath);
-    const spotPrice = 68250; // Based on the CSV strikes near parity
+    const spotPrice = 68250; 
     
     const totalGex = calculateGEX(data, spotPrice);
     const flip = findGammaFlip(data);
-    const vanna = calculateVanna(data, spotPrice);
-    const charm = calculateCharm(data);
     const walls = detectWalls(data);
     const levels = calculateKeyLevels(data, spotPrice);
     const accel = calculateAcceleration(data, spotPrice);
 
-    const newMarketState: MarketState = {
+    const ms: MarketState = {
       id: 1,
-      gammaRegime: totalGex > 0 ? "LONG GAMMA" : "SHORT GAMMA",
+      gammaRegime: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
       totalGex,
       gammaFlip: flip,
       distanceToFlip: Math.abs(((flip - spotPrice) / spotPrice) * 100),
@@ -56,27 +50,9 @@ export class MemStorage implements IStorage {
       gammaAcceleration: accel,
       timestamp: new Date()
     };
-    this.marketState = newMarketState;
+    this.marketState = ms;
 
-    // Gamma Concentration: % of total absolute gamma within 5% of spot
-    const nearSpotGamma = data.filter(d => Math.abs(d.strike - spotPrice) / spotPrice < 0.05)
-      .reduce((acc, d) => acc + Math.abs(d.gamma), 0);
-    const totalAbsGamma = data.reduce((acc, d) => acc + Math.abs(d.gamma), 0);
-    const concentration = totalAbsGamma > 0 ? (nearSpotGamma / totalAbsGamma) * 100 : 0;
-
-    const newDealerExposure: DealerExposure = {
-      id: 1,
-      vannaExposure: vanna,
-      vannaBias: vanna > 0 ? "BULLISH" : "BEARISH",
-      charmExposure: charm,
-      charmBias: charm > 0 ? "BULLISH" : "BEARISH",
-      gammaPressure: Math.abs(totalGex) > 2e9 ? "EXTREME" : Math.abs(totalGex) > 1e9 ? "HIGH" : "NORMAL",
-      gammaConcentration: Math.round(concentration),
-      timestamp: new Date()
-    };
-    this.dealerExposure = newDealerExposure;
-
-    const newOptionsPositioning: OptionsPositioning = {
+    const op: OptionsPositioning = {
       id: 1,
       callWall: walls.callWall,
       putWall: walls.putWall,
@@ -84,9 +60,9 @@ export class MemStorage implements IStorage {
       dealerPivot: Math.round(walls.dealerPivot),
       timestamp: new Date()
     };
-    this.optionsPositioning = newOptionsPositioning;
+    this.optionsPositioning = op;
 
-    const newKeyLevels: KeyLevels = {
+    const kl: KeyLevels = {
       id: 1,
       gammaMagnets: levels.gammaMagnets,
       shortGammaPocketStart: levels.shortGammaPocketStart,
@@ -95,14 +71,39 @@ export class MemStorage implements IStorage {
       deepRiskPocketEnd: levels.deepRiskPocketEnd,
       timestamp: new Date()
     };
-    this.keyLevels = newKeyLevels;
+    this.keyLevels = kl;
 
-    this.tradingScenarios = generateDynamicScenarios(
-      newMarketState,
-      newOptionsPositioning,
-      newKeyLevels,
-      newDealerExposure
-    );
+    const vanna = calculateVanna(data, spotPrice);
+    const charm = calculateCharm(data);
+    const nearSpotGamma = data.filter(d => Math.abs(d.strike - spotPrice) / spotPrice < 0.05).reduce((acc, d) => acc + Math.abs(d.gamma), 0);
+    const totalAbsGamma = data.reduce((acc, d) => acc + Math.abs(d.gamma), 0);
+    const de: DealerExposure = {
+      id: 1,
+      vannaExposure: vanna,
+      vannaBias: vanna > 0 ? "BULLISH" : "BEARISH",
+      charmExposure: charm,
+      charmBias: charm > 0 ? "BULLISH" : "BEARISH",
+      gammaPressure: Math.abs(totalGex) > 2e9 ? "EXTREME" : Math.abs(totalGex) > 1e9 ? "HIGH" : "NORMAL",
+      gammaConcentration: Math.round(totalAbsGamma > 0 ? (nearSpotGamma / totalAbsGamma) * 100 : 0),
+      timestamp: new Date()
+    };
+    this.dealerExposure = de;
+
+    this.tradingScenarios = generateDynamicScenarios(ms, op, kl, de);
+
+    console.log("=== QUANTITATIVE AUDIT REPORT ===");
+    console.log(`Total GEX: ${(totalGex / 1e6).toFixed(2)}M`);
+    console.log(`Gamma Regime: ${ms.gammaRegime}`);
+    console.log(`Gamma Flip: ${ms.gammaFlip}`);
+    console.log(`Transition Zone: ${ms.transitionZoneStart.toFixed(0)} - ${ms.transitionZoneEnd.toFixed(0)}`);
+    console.log(`Call Wall: ${op.callWall}`);
+    console.log(`Put Wall: ${op.putWall}`);
+    console.log(`Dealer Pivot: ${op.dealerPivot}`);
+    console.log(`Gamma Magnets: ${kl.gammaMagnets.join(", ")}`);
+    console.log(`Short Gamma Pocket: ${kl.shortGammaPocketStart} - ${kl.shortGammaPocketEnd}`);
+    console.log(`Deep Risk Pocket: ${kl.deepRiskPocketStart} - ${kl.deepRiskPocketEnd}`);
+    console.log(`Gamma Acceleration: ${ms.gammaAcceleration}`);
+    console.log("===============================");
   }
 
   async getMarketState() { return this.marketState; }

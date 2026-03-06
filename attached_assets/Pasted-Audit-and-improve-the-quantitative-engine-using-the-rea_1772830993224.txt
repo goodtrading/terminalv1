@@ -1,0 +1,99 @@
+Audit and improve the quantitative engine using the real parsed Deribit CSV data.
+
+Do not change the UI layout.
+Do not modify the chart configuration.
+Do not modify the parser.
+
+Only improve the calculation engine.
+
+Use the parsed options dataset to compute the following institutional metrics:
+
+1. Total Gamma Exposure (GEX)
+Formula:
+GEX = gamma * open_interest * spot^2
+
+Aggregate across all strikes.
+
+2. Gamma Regime
+Determine whether the market is:
+
+LONG GAMMA
+SHORT GAMMA
+
+based on the sign of total GEX.
+
+3. Gamma Flip
+Find the price level where the cumulative gamma exposure changes sign.
+
+Do not use a fixed value.
+Compute it dynamically from the strike distribution.
+
+4. Distance to Flip
+Distance between spot and gamma flip:
+
+abs(spot - gamma_flip) / spot * 100
+
+5. Transition Zone
+Create a dynamic band around the gamma flip.
+
+Default:
+±0.5% of spot.
+
+6. Call Wall
+Strike with the largest CALL open interest.
+
+7. Put Wall
+Strike with the largest PUT open interest.
+
+8. Open Interest Concentration
+Strike with the highest total open interest.
+
+9. Dealer Pivot
+Compute a weighted pivot strike using:
+
+gamma * open_interest
+
+This should represent the dealer hedging center.
+
+10. Gamma Magnets
+Identify the top 3 strikes with the highest positive GEX.
+
+Sort by absolute gamma exposure.
+
+11. Short Gamma Pocket
+Detect the nearest contiguous region where net gamma is negative.
+
+12. Deep Risk Pocket
+Detect the next major negative gamma cluster farther from spot.
+
+13. Gamma Acceleration
+Measure how fast gamma changes around spot.
+
+Classify as:
+
+LOW
+MODERATE
+HIGH
+EXTREME
+
+Console Output (required):
+
+Print a structured log containing:
+
+- total GEX
+- gamma regime
+- gamma flip
+- transition zone
+- call wall
+- put wall
+- dealer pivot
+- gamma magnets
+- short gamma pocket
+- deep risk pocket
+- gamma acceleration
+
+Important constraints:
+
+- never use hardcoded values
+- never use mock fallback values if CSV exists
+- if a metric cannot be computed, log the reason
