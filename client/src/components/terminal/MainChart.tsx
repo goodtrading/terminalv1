@@ -268,25 +268,32 @@ export function MainChart() {
     };
 
     try {
+      const activeLevels: number[] = [];
+      const candlesMin = Math.min(...candles.map(c => c.low));
+      const candlesMax = Math.max(...candles.map(c => c.high));
+
       if (toggles.flip && market?.gammaFlip) {
         addLevel(market.gammaFlip, "#eab308", "FLIP", LineStyle.LargeDashed, 2);
+        activeLevels.push(market.gammaFlip);
       }
 
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
         addZone(market.transitionZoneStart, market.transitionZoneEnd, "rgba(255, 255, 255, 0.05)", "TRANSITION");
+        activeLevels.push(market.transitionZoneStart, market.transitionZoneEnd);
       }
 
       if (toggles.walls) {
         if (positioning?.callWall) {
           addLevel(positioning.callWall, "#ef4444", "CALL WALL", LineStyle.Solid, 2);
+          activeLevels.push(positioning.callWall);
         }
         if (positioning?.putWall) {
           addLevel(positioning.putWall, "#22c55e", "PUT WALL", LineStyle.Solid, 2);
+          activeLevels.push(positioning.putWall);
         }
       }
 
       if (toggles.magnets && levels?.gammaMagnets) {
-        // Group close magnets
         const sortedMagnets = [...levels.gammaMagnets].sort((a, b) => a - b);
         const grouped: number[][] = [];
         sortedMagnets.forEach(m => {
@@ -300,20 +307,48 @@ export function MainChart() {
         grouped.forEach((group, i) => {
           const avg = group.reduce((a, b) => a + b, 0) / group.length;
           addLevel(avg, "rgba(59, 130, 246, 0.3)", group.length > 1 ? `MAGNETS (${group.length})` : "MAGNET", LineStyle.Solid, 1);
+          activeLevels.push(avg);
         });
       }
 
       if (toggles.pockets && levels) {
         if (levels.shortGammaPocketStart && levels.shortGammaPocketEnd) {
           addZone(levels.shortGammaPocketStart, levels.shortGammaPocketEnd, "rgba(249, 115, 22, 0.08)", "SHORT GAMMA POCKET");
+          activeLevels.push(levels.shortGammaPocketStart, levels.shortGammaPocketEnd);
         }
         if (levels.deepRiskPocketStart && levels.deepRiskPocketEnd) {
           addZone(levels.deepRiskPocketStart, levels.deepRiskPocketEnd, "rgba(168, 85, 247, 0.08)", "DEEP RISK POCKET");
+          activeLevels.push(levels.deepRiskPocketStart, levels.deepRiskPocketEnd);
         }
       }
 
       if (toggles.dealer && positioning?.dealerPivot) {
         addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.5)", "DEALER PIVOT", LineStyle.Dotted, 2);
+        activeLevels.push(positioning.dealerPivot);
+      }
+
+      // Dynamic Price Scale Adjustment
+      if (activeLevels.length > 0) {
+        const minL = Math.min(...activeLevels);
+        const maxL = Math.max(...activeLevels);
+        
+        const finalMin = Math.min(candlesMin, minL);
+        const finalMax = Math.max(candlesMax, maxL);
+        
+        const padding = (finalMax - finalMin) * 0.08;
+        
+        chartRef.current.priceScale("right").applyOptions({
+          autoScale: false,
+        });
+        
+        chartRef.current.priceScale("right").setVisibleRange({
+          from: finalMin - padding,
+          to: finalMax + padding,
+        });
+      } else {
+        chartRef.current.priceScale("right").applyOptions({
+          autoScale: true,
+        });
       }
     } catch (err) {
       console.error("[MainChart] Overlay update failed:", err);

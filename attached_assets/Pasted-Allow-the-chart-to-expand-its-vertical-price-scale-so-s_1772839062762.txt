@@ -1,0 +1,104 @@
+Allow the chart to expand its vertical price scale so structural levels (Flip, Transition Zone, Pockets) remain visible even if they are outside the candle range.
+
+IMPORTANT:
+Do NOT modify backend.
+Do NOT remove overlays.
+Do NOT change the chart library.
+Keep using TradingView Lightweight Charts.
+
+Only improve price scale behavior.
+
+====================================================
+CURRENT ISSUE
+====================================================
+
+The price scale currently auto-fits only visible candles.
+
+Because of this, structural levels such as:
+
+- Gamma Flip
+- Transition Zone
+- Short Gamma Pocket
+- Deep Risk Pocket
+
+may fall outside the visible price range and cannot be seen.
+
+====================================================
+GOAL
+====================================================
+
+Ensure the chart expands vertically when structural levels exist outside the candle range.
+
+Users should always be able to see:
+
+- Flip
+- Transition zone
+- Dealer pivot
+- Walls
+- Magnets
+- Risk pockets
+
+without manually zooming excessively.
+
+====================================================
+IMPLEMENTATION
+====================================================
+
+Compute a dynamic min/max price range using:
+
+Candle range
++
+All structural levels from:
+
+gammaFlip
+transitionZoneStart
+transitionZoneEnd
+dealerPivot
+callWall
+putWall
+gammaMagnets
+shortGammaPocketStart
+shortGammaPocketEnd
+deepRiskPocketStart
+deepRiskPocketEnd
+
+Example logic:
+
+minPrice = Math.min(
+  lowestCandle,
+  gammaFlip,
+  transitionZoneStart,
+  shortGammaPocketStart,
+  deepRiskPocketStart,
+  putWall
+)
+
+maxPrice = Math.max(
+  highestCandle,
+  callWall,
+  dealerPivot,
+  transitionZoneEnd,
+  ...gammaMagnets
+)
+
+Then apply padding:
+
+rangePadding = (maxPrice - minPrice) * 0.05
+
+minPrice -= rangePadding
+maxPrice += rangePadding
+
+Finally update chart scale:
+
+chart.priceScale("right").setVisibleRange({
+  from: minPrice,
+  to: maxPrice
+})
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+Even when Flip or risk pockets are far from current price, the chart automatically expands to include them.
+
+Users should not lose important structural levels due to the auto-fit behavior of the candles.
