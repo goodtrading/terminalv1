@@ -7,6 +7,27 @@ export interface OptionsEntry {
   implied_volatility: number;
   option_type: "CALL" | "PUT";
   expiration: string;
+  dte: number; // Days to Expiry
+}
+
+function parseDTE(expiration: string): number {
+  // Typical Deribit format: 7MAR26
+  // Current date assumed: March 6, 2026 (from context)
+  const day = parseInt(expiration.substring(0, expiration.length - 5));
+  const monthStr = expiration.substring(expiration.length - 5, expiration.length - 2).toUpperCase();
+  const year = 2000 + parseInt(expiration.substring(expiration.length - 2));
+  
+  const months: Record<string, number> = {
+    JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+    JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11
+  };
+  
+  const expiryDate = new Date(year, months[monthStr] || 0, day);
+  const currentDate = new Date(2026, 2, 6); // March 6, 2026
+  
+  const diffTime = expiryDate.getTime() - currentDate.getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return Math.max(diffDays, 0.5); // Min 0.5 days
 }
 
 function normalizeHeader(header: string): string {
@@ -44,17 +65,17 @@ export function parseOptionsCSV(filePath: string): OptionsEntry[] {
     const strike = parseFloat(parts[2]);
     const type = parts[3].toUpperCase() === 'C' ? 'CALL' : 'PUT';
     const expiration = parts[1];
+    const dte = parseDTE(expiration);
     const gamma = parseFloat(values[gammaIdx] || '0') || 0;
     const openInterest = parseFloat(values[oiIdx] || '0') || 0;
     
-    // Attempt to extract IV
     const ivBidIdx = headers.indexOf('iv_bid');
     const ivAskIdx = headers.indexOf('iv_ask');
     const ivBid = ivBidIdx !== -1 ? parseFloat(values[ivBidIdx] || '0') : 0;
     const ivAsk = ivAskIdx !== -1 ? parseFloat(values[ivAskIdx] || '0') : 0;
     const iv = (isNaN(ivBid) ? 0 : ivBid + (isNaN(ivAsk) ? 0 : ivAsk)) / 2 || 50;
 
-    data.push({ strike, gamma, open_interest: openInterest, implied_volatility: iv / 100, option_type: type, expiration });
+    data.push({ strike, gamma, open_interest: openInterest, implied_volatility: iv / 100, option_type: type, expiration, dte });
   });
   return data;
 }
@@ -79,26 +100,30 @@ export function findGammaFlip(data: OptionsEntry[]): number {
 }
 
 /**
- * Estimating Vanna: dGamma / dVol
- * Approximation: Gamma * (Strike - Spot) / Spot * IV
- * Higher IV and further distance from spot increases Vanna exposure.
+ * Recalculated Vanna: dGamma / dVol
+ * Institutional Estimate: sum(OI * Gamma * (Strike - Spot) * IV * sqrt(DTE/365))
  */
 export function calculateVanna(data: OptionsEntry[], spot: number): number {
   return data.reduce((total, entry) => {
-    const distanceFactor = (entry.strike - spot) / spot;
-    const vanna = entry.gamma * entry.open_interest * distanceFactor * entry.implied_volatility;
+    const distanceFactor = (entry.strike - spot);
+    const timeFactor = Math.sqrt(entry.dte / 365);
+    // Vanna is higher for OTM options
+    const vanna = entry.open_interest * entry.gamma * distanceFactor * entry.implied_volatility * timeFactor;
     return total + vanna;
-  }, 0) * 1e6; // Scale for display
+  }, 0);
 }
 
 /**
- * Estimating Charm: dDelta / dTime
- * Approximation: Gamma * Open Interest * (Time to Expiry Factor)
- * For this dashboard, we use a simplified decay factor based on Gamma.
+ * Recalculated Charm: dDelta / dTime
+ * Approximation: sum(OI * Gamma * (Strike - Spot) * (Days to Expiry Decay))
  */
-export function calculateCharm(data: OptionsEntry[]): number {
-  // Assuming a constant time decay factor as we don't have precise DTE for all rows
-  return data.reduce((total, entry) => total + entry.gamma * entry.open_interest, 0) * -1.5e9;
+export function calculateCharm(data: OptionsEntry[], spot: number): number {
+  return data.reduce((total, entry) => {
+    const distanceFactor = (entry.strike - spot) / spot;
+    const decay = 1 / (entry.dte + 1);
+    const charm = entry.open_interest * entry.gamma * distanceFactor * decay;
+    return total + charm;
+  }, 0) * -1e10; // Scaling for readability
 }
 
 export function detectWalls(data: OptionsEntry[]) {
