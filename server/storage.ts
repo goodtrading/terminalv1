@@ -35,29 +35,8 @@ export class MemStorage implements IStorage {
 
   async recomputeAll(csvPath: string) {
     const data = parseOptionsCSV(csvPath);
-    const spotPrice = 70245; 
+    const spotPrice = 68250; // Based on the CSV strikes near parity
     
-    // Logging requirements
-    console.log(`[Analytics] Loaded ${data.length} rows from CSV`);
-    const content = fs.readFileSync(csvPath, 'utf-8');
-    const headers = content.split(/\r?\n/)[0];
-    console.log(`[Analytics] Column names detected: ${headers}`);
-
-    const oiStrikes = [...data].sort((a, b) => b.open_interest - a.open_interest).slice(0, 5);
-    console.log("[Analytics] Top 5 strikes by Open Interest:");
-    oiStrikes.forEach(s => console.log(`  Strike: ${s.strike}, OI: ${s.open_interest}`));
-
-    const gammaStrikes = [...data].sort((a, b) => {
-      const gexA = a.gamma * a.open_interest * Math.pow(spotPrice, 2);
-      const gexB = b.gamma * b.open_interest * Math.pow(spotPrice, 2);
-      return Math.abs(gexB) - Math.abs(gexA);
-    }).slice(0, 5);
-    console.log("[Analytics] Top 5 strikes by Gamma Exposure:");
-    gammaStrikes.forEach(s => {
-      const gex = s.gamma * s.open_interest * Math.pow(spotPrice, 2);
-      console.log(`  Strike: ${s.strike}, GEX: ${(gex/1e6).toFixed(2)}M`);
-    });
-
     const totalGex = calculateGEX(data, spotPrice);
     const flip = findGammaFlip(data);
     const vanna = calculateVanna(data, spotPrice);
