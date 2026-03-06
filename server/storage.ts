@@ -73,7 +73,7 @@ export class MemStorage implements IStorage {
     };
     this.keyLevels = kl;
 
-    // Fixed Vanna Sensitivity: Accumulate raw, normalize by OI, clamp range
+    // Dealer Flow Recalibration
     const vanna = calculateVanna(data, spotPrice);
     const charm = calculateCharm(data, spotPrice);
     
@@ -90,7 +90,7 @@ export class MemStorage implements IStorage {
       vannaExposure: vanna,
       vannaBias: vanna > 0.05 ? "BULLISH" : vanna < -0.05 ? "BEARISH" : "NEUTRAL",
       charmExposure: charm,
-      charmBias: Math.abs(charm) < 0.01 ? "NEUTRAL" : (charm > 0 ? "BULLISH" : "BEARISH"),
+      charmBias: charm > 0.05 ? "BULLISH" : charm < -0.05 ? "BEARISH" : "NEUTRAL",
       gammaPressure: (normalizedPressure >= 0 ? "+" : "") + normalizedPressure.toFixed(2),
       gammaConcentration: concentration,
       timestamp: new Date()
@@ -108,7 +108,7 @@ export class MemStorage implements IStorage {
     console.log(`Charm Bias: ${de.charmBias}`);
     console.log(`Gamma Pressure: ${de.gammaPressure}`);
     console.log(`Gamma Concentration: ${concentration > 0.6 ? "HIGH" : concentration > 0.3 ? "MEDIUM" : "LOW"} (${concentration.toFixed(2)})`);
-    console.log(`Method Used: Enhanced Vanna Sensitivity (Spot/Time Weighted)`);
+    console.log(`Method Used: Enhanced Flow Sensitivity (Spot/Time Weighted)`);
     console.log("=========================");
   }
 

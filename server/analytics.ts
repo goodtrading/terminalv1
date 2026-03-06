@@ -98,46 +98,50 @@ export function findGammaFlip(data: OptionsEntry[]): number {
 
 /**
  * Enhanced Vanna Exposure Calculation
- * rawVannaExposure += vanna * openInterest * spotWeight * timeWeight
  */
 export function calculateVanna(data: OptionsEntry[], spot: number): number {
   const rawVannaExposure = data.reduce((total, entry) => {
-    // Vanna Institutional Proxy: gamma * IV
     const vannaProxy = entry.gamma * entry.implied_volatility;
-    
-    // Spot Proximity Weighting: spotWeight = Math.max(0.15, 1 - distancePct * 8)
     const distancePct = Math.abs(entry.strike - spot) / spot;
     const spotWeight = Math.max(0.15, 1 - distancePct * 8);
-    
-    // Time-to-Expiry Weighting: timeWeight = 1 / Math.max(timeToExpiry, 0.05)
     const timeToExpiry = entry.dte / 365;
     const timeWeight = 1 / Math.max(timeToExpiry, 0.05);
-    
-    // Aggregate raw contribution: vanna * openInterest * spotWeight * timeWeight
     const contribution = vannaProxy * entry.open_interest * spotWeight * timeWeight * (spot - entry.strike);
     return total + contribution;
   }, 0);
-
-  // Normalize relative to total open interest: vannaExposure = rawVannaExposure / Math.max(totalOI, 1)
   const totalOI = data.reduce((acc, d) => acc + d.open_interest, 0);
   const vannaExposure = rawVannaExposure / Math.max(totalOI, 1); 
-  
-  // Clamp into readable range [-9.99, 9.99]
   return Math.max(-9.99, Math.min(9.99, vannaExposure));
 }
 
 /**
- * Normalized Charm Exposure
- * charmExposure += charm * openInterest * timeToExpiry
+ * Enhanced Charm Exposure Calculation
+ * rawCharmExposure += charm * openInterest * timeWeight * spotWeight
  */
 export function calculateCharm(data: OptionsEntry[], spot: number): number {
-  const raw = data.reduce((total, entry) => {
-    // Proxy: gamma * (strike - spot)
-    const timeToExpiry = entry.dte / 365;
+  const rawCharmExposure = data.reduce((total, entry) => {
+    // Charm Institutional Proxy: dDelta / dTime
+    // We use gamma * (strike - spot) as a directional proxy for Charm sensitivity
     const charmProxy = entry.gamma * (entry.strike - spot);
-    return total + charmProxy * entry.open_interest * timeToExpiry;
+    
+    // Time-to-Expiry Weighting: near expiries matter more
+    const timeToExpiry = entry.dte / 365;
+    const timeWeight = 1 / Math.max(timeToExpiry, 0.05);
+    
+    // Spot Proximity Weighting
+    const distancePct = Math.abs(entry.strike - spot) / spot;
+    const spotWeight = Math.max(0.15, 1 - distancePct * 8);
+    
+    const contribution = charmProxy * entry.open_interest * timeWeight * spotWeight;
+    return total + contribution;
   }, 0);
-  return raw / 100000000;
+
+  // Normalize relative to total open interest
+  const totalOI = data.reduce((acc, d) => acc + d.open_interest, 0);
+  const charmExposure = rawCharmExposure / Math.max(totalOI, 1);
+  
+  // Clamp into readable range [-9.99, 9.99]
+  return Math.max(-9.99, Math.min(9.99, charmExposure));
 }
 
 export function detectWalls(data: OptionsEntry[]) {

@@ -1,0 +1,113 @@
+Fix the remaining dashboard data issues.
+
+IMPORTANT:
+Do NOT modify parser, chart rendering, layout structure, or add new UI features.
+Only fix:
+1) Charm Exposure calculation sensitivity/scaling
+2) Missing field rendering for Gamma Flip, Distance to Flip, Transition Zone, and Dealer Pivot
+
+There are two separate problems:
+
+====================================================
+A) CHARM EXPOSURE IS STILL STUCK AT -0.00
+====================================================
+
+Current issue:
+- Vanna Exposure is now working correctly
+- Charm Exposure still displays as -0.00 and Charm Bias stays NEUTRAL
+
+Goal:
+Make Charm Exposure produce meaningful non-zero values when time decay and open interest are relevant, while keeping the output readable.
+
+Required fixes for Charm:
+
+1. Accumulate raw charm first, normalize only at the end.
+Use a structure like:
+
+rawCharmExposure += charm * openInterest * timeWeight * spotWeight
+
+2. Add time-to-expiry weighting so near expiries matter more:
+timeWeight = 1 / Math.max(timeToExpiry, 0.05)
+
+Clamp if needed to avoid explosions.
+
+3. Add spot proximity weighting:
+distancePct = Math.abs(strike - spotPrice) / spotPrice
+spotWeight = Math.max(0.15, 1 - distancePct * 8)
+
+4. Normalize less aggressively.
+If the current divisor compresses everything to zero, reduce it.
+Example:
+charmExposure = rawCharmExposure / 1000000
+or normalize relative to totalOI:
+charmExposure = rawCharmExposure / Math.max(totalOI, 1)
+
+Then clamp to a readable range if necessary:
+charmExposure = Math.max(-9.99, Math.min(9.99, charmExposure))
+
+5. Bias thresholds:
+- BULLISH if charmExposure > 0.05
+- BEARISH if charmExposure < -0.05
+- NEUTRAL otherwise
+
+6. Do not round too early.
+Keep raw decimals internally and format only at render time with 2 decimals.
+
+Expected acceptable outputs:
++0.18
+-0.24
++0.51
+
+====================================================
+B) MISSING DASHBOARD FIELDS
+====================================================
+
+The following fields are not showing correctly in the dashboard:
+- Gamma Flip
+- Distance to Flip
+- Transition Zone
+- Dealer Pivot
+
+The backend likely already returns these values in:
+- /api/market-state
+- /api/options-positioning
+
+Fix the frontend mapping so these values render properly.
+
+Requirements:
+
+1. Gamma Flip
+Read gammaFlip directly from /api/market-state and display it in the top left panel.
+
+2. Distance to Flip
+Read distanceToFlip directly from /api/market-state and display it in the top left panel.
+Format as percentage with 2 decimals if needed.
+
+3. Transition Zone
+If backend returns:
+- transitionZoneStart
+- transitionZoneEnd
+
+Display them as a readable range, for example:
+58705 - 59295
+
+Do not leave the field blank.
+
+4. Dealer Pivot
+Read dealerPivot directly from /api/options-positioning and display it in the lower left panel.
+
+5. Do not recompute these values in frontend.
+Use backend values directly.
+
+6. Audit field names carefully.
+Make sure frontend property names match backend response keys exactly.
+
+Expected dashboard behavior:
+- Gamma Flip shows numeric level
+- Distance to Flip shows numeric percentage
+- Transition Zone shows start/end range
+- Dealer Pivot shows numeric level
+- Charm Exposure shows a meaningful signed number, not -0.00
+
+Do not change layout or styling.
+Only fix data calculation sensitivity for Charm and frontend field mapping for the missing values.

@@ -30,8 +30,8 @@ export function LeftSidebar() {
         <TerminalValue label="Gamma Regime" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge />
         <TerminalValue label="Total GEX" value={market ? `${(market.totalGex / 1e9).toFixed(2)}B` : "--"} trend={market && market.totalGex > 0 ? "positive" : "negative"} />
         <TerminalValue label="Gamma Flip" value={market?.gammaFlip.toLocaleString() ?? "--"} />
-        <TerminalValue label="Distance to Flip" value={market ? `${market.distanceToFlip.toFixed(2)}%` : "--"} />
-        <TerminalValue label="Transition Zone" value={market ? `${Math.round(market.transitionZoneStart).toLocaleString()} – ${Math.round(market.transitionZoneEnd).toLocaleString()}` : "--"} />
+        <TerminalValue label="Dist. to Flip" value={market ? `${market.distanceToFlip.toFixed(2)}%` : "--"} />
+        <TerminalValue label="Transition Zone" value={market ? `${Math.round(market.transitionZoneStart).toLocaleString()} - ${Math.round(market.transitionZoneEnd).toLocaleString()}` : "--"} />
         <TerminalValue label="Gamma Accel" value={market?.gammaAcceleration ?? "--"} trend="positive" />
       </TerminalPanel>
 
