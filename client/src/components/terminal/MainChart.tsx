@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels } from "@shared/schema";
-import { ResponsiveContainer, ComposedChart, XAxis, YAxis, Tooltip, Line, ReferenceLine, Area } from "recharts";
+import { ResponsiveContainer, ComposedChart, XAxis, YAxis, Tooltip, Line, ReferenceLine } from "recharts";
 
 export function MainChart() {
   const { data: positioning } = useQuery<OptionsPositioning>({ 
@@ -73,7 +73,7 @@ export function MainChart() {
               tick={{ fontSize: 9, fill: '#666', fontFamily: 'JetBrains Mono' }}
               axisLine={false}
               tickLine={false}
-              width={60}
+              width={80}
             />
             <Tooltip 
               contentStyle={{ backgroundColor: '#111', border: '1px solid #333', fontSize: '10px' }}
@@ -82,39 +82,55 @@ export function MainChart() {
             />
             
             {/* Structural Levels */}
-            {positioning?.callWall && (
-              <ReferenceLine 
-                y={positioning.callWall} 
-                stroke="#ff3b3b" 
-                strokeDasharray="3 3"
-                label={{ position: 'right', value: `CALL WALL ${positioning.callWall}`, fill: '#ff3b3b', fontSize: 9, fontWeight: 'bold' }}
-              />
-            )}
             {market?.gammaFlip && (
               <ReferenceLine 
                 y={market.gammaFlip} 
-                stroke="#ff3b3b" 
-                strokeWidth={2}
-                label={{ position: 'right', value: `FLIP ${market.gammaFlip}`, fill: '#ff3b3b', fontSize: 9, fontWeight: 'bold' }}
+                stroke="#eab308" 
+                strokeWidth={1.5}
+                label={{ position: 'right', value: `Gamma Flip ${market.gammaFlip}`, fill: '#eab308', fontSize: 9, fontWeight: 'bold' }}
+              />
+            )}
+            {positioning?.callWall && (
+              <ReferenceLine 
+                y={positioning.callWall} 
+                stroke="#ef4444" 
+                strokeDasharray="3 3"
+                label={{ position: 'right', value: `Call Wall ${positioning.callWall}`, fill: '#ef4444', fontSize: 9, fontWeight: 'bold' }}
               />
             )}
             {positioning?.putWall && (
               <ReferenceLine 
                 y={positioning.putWall} 
-                stroke="#4ade80" 
+                stroke="#22c55e" 
                 strokeDasharray="3 3"
-                label={{ position: 'right', value: `PUT WALL ${positioning.putWall}`, fill: '#4ade80', fontSize: 9, fontWeight: 'bold' }}
+                label={{ position: 'right', value: `Put Wall ${positioning.putWall}`, fill: '#22c55e', fontSize: 9, fontWeight: 'bold' }}
               />
             )}
             {levels?.gammaMagnets?.map((m, i) => (
               <ReferenceLine 
                 key={i}
                 y={m} 
-                stroke="#fff" 
-                strokeOpacity={0.2}
-                label={{ position: 'right', value: `MAGNET ${m}`, fill: '#999', fontSize: 8 }}
+                stroke="#3b82f6" 
+                strokeOpacity={0.4}
+                label={{ position: 'right', value: `Gamma Magnet ${m}`, fill: '#3b82f6', fontSize: 8 }}
               />
             ))}
+            {levels?.shortGammaPocketStart && (
+              <ReferenceLine 
+                y={levels.shortGammaPocketStart} 
+                stroke="#f97316" 
+                strokeOpacity={0.3}
+                label={{ position: 'right', value: `Short Gamma Pocket ${levels.shortGammaPocketStart}`, fill: '#f97316', fontSize: 8 }}
+              />
+            )}
+            {levels?.deepRiskPocketStart && (
+              <ReferenceLine 
+                y={levels.deepRiskPocketStart} 
+                stroke="#a855f7" 
+                strokeOpacity={0.3}
+                label={{ position: 'right', value: `Deep Risk Pocket ${levels.deepRiskPocketStart}`, fill: '#a855f7', fontSize: 8 }}
+              />
+            )}
             
             {/* Price Line */}
             <Line 
@@ -125,15 +141,6 @@ export function MainChart() {
               dot={false} 
               isAnimationActive={false}
             />
-
-            {/* Short Gamma Pocket Shading */}
-            {levels && (
-              <ReferenceLine 
-                y={levels.shortGammaPocketStart} 
-                stroke="transparent" 
-                label={{ position: 'left', value: 'SHORT GAMMA POCKET', fill: '#ff3b3b', fontSize: 8, opacity: 0.4 }}
-              />
-            )}
           </ComposedChart>
         </ResponsiveContainer>
 
