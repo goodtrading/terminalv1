@@ -220,34 +220,45 @@ export function MainChart() {
     const currentPrice = candles[candles.length - 1].close;
     const threshold = currentPrice * 0.15; // Increased threshold for institutional view
 
-    const addZone = (price: number, widthPct: number, color: string, title: string, isDashed = false) => {
+    const addLevel = (price: number, color: string, title: string, style: LineStyle = LineStyle.Solid, lineWidth: number = 1) => {
       if (Math.abs(price - currentPrice) > threshold) return;
       
-      const halfWidth = price * (widthPct / 100);
-      
-      // Main Line
-      const mainLine = candleSeriesRef.current.createPriceLine({
+      const line = candleSeriesRef.current.createPriceLine({
         price,
-        color: color.replace('0.25', '0.6').replace('0.15', '0.4').replace('0.1', '0.3'),
-        lineWidth: 1,
-        lineStyle: isDashed ? LineStyle.Dashed : LineStyle.Solid,
+        color,
+        lineWidth,
+        lineStyle: style,
         axisLabelVisible: true,
         title,
       });
-      priceLinesRef.current.push(mainLine);
+      priceLinesRef.current.push(line);
+    };
 
-      // Boundary Lines for shading (lightweight-charts hack for zones)
+    const addZone = (start: number, end: number, color: string, title: string) => {
+      if (Math.abs(start - currentPrice) > threshold && Math.abs(end - currentPrice) > threshold) return;
+      
+      const mid = (start + end) / 2;
+      const line = candleSeriesRef.current.createPriceLine({
+        price: mid,
+        color: "transparent",
+        lineWidth: 0,
+        axisLabelVisible: true,
+        title,
+      });
+      priceLinesRef.current.push(line);
+
+      // Shading via boundaries
       const upper = candleSeriesRef.current.createPriceLine({
-        price: price + halfWidth,
-        color: color,
+        price: Math.max(start, end),
+        color,
         lineWidth: 1,
         lineStyle: LineStyle.Solid,
         axisLabelVisible: false,
         title: "",
       });
       const lower = candleSeriesRef.current.createPriceLine({
-        price: price - halfWidth,
-        color: color,
+        price: Math.min(start, end),
+        color,
         lineWidth: 1,
         lineStyle: LineStyle.Solid,
         axisLabelVisible: false,
@@ -258,47 +269,51 @@ export function MainChart() {
 
     try {
       if (toggles.flip && market?.gammaFlip) {
-        addZone(market.gammaFlip, 0.5, "rgba(234, 179, 8, 0.25)", "GAMMA FLIP", true);
+        addLevel(market.gammaFlip, "#eab308", "GAMMA FLIP", LineStyle.LargeDashed, 2);
+      }
+
+      if (market?.transitionZoneStart && market?.transitionZoneEnd) {
+        addZone(market.transitionZoneStart, market.transitionZoneEnd, "rgba(255, 255, 255, 0.05)", "TRANSITION");
       }
 
       if (toggles.walls) {
         if (positioning?.callWall) {
-          addZone(positioning.callWall, 0.2, "rgba(255, 50, 50, 0.25)", "CALL WALL");
+          addLevel(positioning.callWall, "#ef4444", "CALL WALL", LineStyle.Solid, 2);
         }
         if (positioning?.putWall) {
-          addZone(positioning.putWall, 0.2, "rgba(50, 255, 100, 0.25)", "PUT WALL");
+          addLevel(positioning.putWall, "#22c55e", "PUT WALL", LineStyle.Solid, 2);
         }
       }
 
       if (toggles.magnets && levels?.gammaMagnets) {
-        levels.gammaMagnets.slice(0, 3).forEach((m, i) => {
-          addZone(m, 0.3, "rgba(59, 130, 246, 0.25)", i === 0 ? "MAGNET" : "");
+        // Group close magnets
+        const sortedMagnets = [...levels.gammaMagnets].sort((a, b) => a - b);
+        const grouped: number[][] = [];
+        sortedMagnets.forEach(m => {
+          if (grouped.length === 0 || m - grouped[grouped.length-1][grouped[grouped.length-1].length-1] > 500) {
+            grouped.push([m]);
+          } else {
+            grouped[grouped.length-1].push(m);
+          }
+        });
+
+        grouped.forEach((group, i) => {
+          const avg = group.reduce((a, b) => a + b, 0) / group.length;
+          addLevel(avg, "rgba(59, 130, 246, 0.5)", group.length > 1 ? `MAGNETS (${group.length})` : "MAGNET");
         });
       }
 
       if (toggles.pockets && levels) {
         if (levels.shortGammaPocketStart && levels.shortGammaPocketEnd) {
-          const mid = (levels.shortGammaPocketStart + levels.shortGammaPocketEnd) / 2;
-          const width = Math.abs(levels.shortGammaPocketEnd - levels.shortGammaPocketStart) / mid * 100;
-          addZone(mid, width/2, "rgba(255, 120, 0, 0.15)", "SHORT GAMMA POCKET");
+          addZone(levels.shortGammaPocketStart, levels.shortGammaPocketEnd, "rgba(249, 115, 22, 0.1)", "SHORT GAMMA POCKET");
         }
         if (levels.deepRiskPocketStart && levels.deepRiskPocketEnd) {
-          const mid = (levels.deepRiskPocketStart + levels.deepRiskPocketEnd) / 2;
-          const width = Math.abs(levels.deepRiskPocketEnd - levels.deepRiskPocketStart) / mid * 100;
-          addZone(mid, width/2, "rgba(255, 0, 0, 0.1)", "DEEP RISK POCKET");
+          addZone(levels.deepRiskPocketStart, levels.deepRiskPocketEnd, "rgba(168, 85, 247, 0.1)", "DEEP RISK POCKET");
         }
       }
 
       if (toggles.dealer && positioning?.dealerPivot) {
-        const line = candleSeriesRef.current.createPriceLine({
-          price: positioning.dealerPivot,
-          color: "rgba(255, 255, 255, 0.4)",
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: "Dealer Pivot",
-        });
-        priceLinesRef.current.push(line);
+        addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.6)", "DEALER PIVOT", LineStyle.Dotted);
       }
     } catch (err) {
       console.error("[MainChart] Overlay update failed:", err);
