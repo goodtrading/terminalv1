@@ -104,17 +104,8 @@ export function MainChart() {
             labelBackgroundColor: "#000",
           },
         },
-        handleScroll: {
-          mouseWheel: true,
-          pressedMouseMove: true,
-          horzTouchDrag: true,
-          vertTouchDrag: true,
-        },
-        handleScale: {
-          mouseWheel: true,
-          pinch: true,
-          axisPressedMouseMove: true,
-        },
+        handleScroll: true,
+        handleScale: true,
       });
 
       const candleSeries = chart.addSeries(CandlestickSeries, {
