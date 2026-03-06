@@ -46,8 +46,15 @@ export function parseOptionsCSV(filePath: string): OptionsEntry[] {
     const expiration = parts[1];
     const gamma = parseFloat(values[gammaIdx] || '0') || 0;
     const openInterest = parseFloat(values[oiIdx] || '0') || 0;
-    const iv = 0.5; // Simplified
-    data.push({ strike, gamma, open_interest: openInterest, implied_volatility: iv, option_type: type, expiration });
+    
+    // Attempt to extract IV
+    const ivBidIdx = headers.indexOf('iv_bid');
+    const ivAskIdx = headers.indexOf('iv_ask');
+    const ivBid = ivBidIdx !== -1 ? parseFloat(values[ivBidIdx] || '0') : 0;
+    const ivAsk = ivAskIdx !== -1 ? parseFloat(values[ivAskIdx] || '0') : 0;
+    const iv = (isNaN(ivBid) ? 0 : ivBid + (isNaN(ivAsk) ? 0 : ivAsk)) / 2 || 50;
+
+    data.push({ strike, gamma, open_interest: openInterest, implied_volatility: iv / 100, option_type: type, expiration });
   });
   return data;
 }
@@ -71,15 +78,27 @@ export function findGammaFlip(data: OptionsEntry[]): number {
   return closestFlip;
 }
 
+/**
+ * Estimating Vanna: dGamma / dVol
+ * Approximation: Gamma * (Strike - Spot) / Spot * IV
+ * Higher IV and further distance from spot increases Vanna exposure.
+ */
 export function calculateVanna(data: OptionsEntry[], spot: number): number {
   return data.reduce((total, entry) => {
-    const vanna = entry.gamma * (entry.strike - spot) / spot;
-    return total + vanna * entry.implied_volatility;
-  }, 0) * 1e8;
+    const distanceFactor = (entry.strike - spot) / spot;
+    const vanna = entry.gamma * entry.open_interest * distanceFactor * entry.implied_volatility;
+    return total + vanna;
+  }, 0) * 1e6; // Scale for display
 }
 
+/**
+ * Estimating Charm: dDelta / dTime
+ * Approximation: Gamma * Open Interest * (Time to Expiry Factor)
+ * For this dashboard, we use a simplified decay factor based on Gamma.
+ */
 export function calculateCharm(data: OptionsEntry[]): number {
-  return data.reduce((total, entry) => total + entry.gamma * entry.open_interest, 0) * -1.2e9;
+  // Assuming a constant time decay factor as we don't have precise DTE for all rows
+  return data.reduce((total, entry) => total + entry.gamma * entry.open_interest, 0) * -1.5e9;
 }
 
 export function detectWalls(data: OptionsEntry[]) {

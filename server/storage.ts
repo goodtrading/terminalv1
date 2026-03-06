@@ -73,37 +73,47 @@ export class MemStorage implements IStorage {
     };
     this.keyLevels = kl;
 
+    // Advanced Dealer Flow Methodology
     const vanna = calculateVanna(data, spotPrice);
     const charm = calculateCharm(data);
-    const nearSpotGamma = data.filter(d => Math.abs(d.strike - spotPrice) / spotPrice < 0.05).reduce((acc, d) => acc + Math.abs(d.gamma), 0);
-    const totalAbsGamma = data.reduce((acc, d) => acc + Math.abs(d.gamma), 0);
+    
+    // Gamma Concentration: % of total absolute gamma within ±5% of spot
+    const totalAbsGamma = data.reduce((acc, d) => acc + Math.abs(d.gamma * d.open_interest), 0);
+    const nearSpotGamma = data.filter(d => Math.abs(d.strike - spotPrice) / spotPrice <= 0.05)
+      .reduce((acc, d) => acc + Math.abs(d.gamma * d.open_interest), 0);
+    const concentration = totalAbsGamma > 0 ? (nearSpotGamma / totalAbsGamma) * 100 : 0;
+
+    // Gamma Pressure: abs(totalGex) / totalOpenInterest
+    const totalOI = data.reduce((acc, d) => acc + d.open_interest, 0);
+    const pressureValue = totalOI > 0 ? Math.abs(totalGex) / totalOI : 0;
+    
+    let pressureLabel: "LOW" | "MODERATE" | "HIGH" | "EXTREME" = "LOW";
+    if (pressureValue > 500000) pressureLabel = "EXTREME";
+    else if (pressureValue > 200000) pressureLabel = "HIGH";
+    else if (pressureValue > 50000) pressureLabel = "MODERATE";
+
     const de: DealerExposure = {
       id: 1,
       vannaExposure: vanna,
-      vannaBias: vanna > 0 ? "BULLISH" : "BEARISH",
+      vannaBias: vanna > 0 ? "BULLISH" : vanna < 0 ? "BEARISH" : "NEUTRAL",
       charmExposure: charm,
-      charmBias: charm > 0 ? "BULLISH" : "BEARISH",
-      gammaPressure: Math.abs(totalGex) > 2e9 ? "EXTREME" : Math.abs(totalGex) > 1e9 ? "HIGH" : "NORMAL",
-      gammaConcentration: Math.round(totalAbsGamma > 0 ? (nearSpotGamma / totalAbsGamma) * 100 : 0),
+      charmBias: charm > 0 ? "BULLISH" : charm < 0 ? "BEARISH" : "NEUTRAL",
+      gammaPressure: pressureLabel,
+      gammaConcentration: Math.round(concentration),
       timestamp: new Date()
     };
     this.dealerExposure = de;
 
     this.tradingScenarios = generateDynamicScenarios(ms, op, kl, de);
 
-    console.log("=== QUANTITATIVE AUDIT REPORT ===");
-    console.log(`Total GEX: ${(totalGex / 1e6).toFixed(2)}M`);
-    console.log(`Gamma Regime: ${ms.gammaRegime}`);
-    console.log(`Gamma Flip: ${ms.gammaFlip}`);
-    console.log(`Transition Zone: ${ms.transitionZoneStart.toFixed(0)} - ${ms.transitionZoneEnd.toFixed(0)}`);
-    console.log(`Call Wall: ${op.callWall}`);
-    console.log(`Put Wall: ${op.putWall}`);
-    console.log(`Dealer Pivot: ${op.dealerPivot}`);
-    console.log(`Gamma Magnets: ${kl.gammaMagnets.join(", ")}`);
-    console.log(`Short Gamma Pocket: ${kl.shortGammaPocketStart} - ${kl.shortGammaPocketEnd}`);
-    console.log(`Deep Risk Pocket: ${kl.deepRiskPocketStart} - ${kl.deepRiskPocketEnd}`);
-    console.log(`Gamma Acceleration: ${ms.gammaAcceleration}`);
-    console.log("===============================");
+    console.log("=== DEALER FLOW AUDIT ===");
+    console.log(`Vanna Exposure: ${vanna.toFixed(2)} (Method: Gamma * Distance * IV)`);
+    console.log(`Vanna Bias: ${de.vannaBias}`);
+    console.log(`Charm Exposure: ${(charm / 1e6).toFixed(2)}M (Method: Gamma-weighted decay)`);
+    console.log(`Charm Bias: ${de.charmBias}`);
+    console.log(`Gamma Pressure: ${pressureLabel} (Ratio: ${pressureValue.toFixed(0)})`);
+    console.log(`Gamma Concentration: ${concentration.toFixed(2)}% (Range: ±5%)`);
+    console.log("=========================");
   }
 
   async getMarketState() { return this.marketState; }
