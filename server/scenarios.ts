@@ -1,9 +1,10 @@
-import { MarketState, OptionsPositioning, KeyLevels, TradingScenario } from "@shared/schema";
+import { MarketState, OptionsPositioning, KeyLevels, TradingScenario, DealerExposure } from "@shared/schema";
 
 export function generateDynamicScenarios(
   market: MarketState,
   positioning: OptionsPositioning,
-  levels: KeyLevels
+  levels: KeyLevels,
+  dealer: DealerExposure
 ): TradingScenario[] {
   const isLongGamma = market.gammaRegime === "LONG GAMMA";
   const magnets = levels.gammaMagnets.map(m => `${(m / 1000).toFixed(0)}k`);
@@ -11,18 +12,25 @@ export function generateDynamicScenarios(
   const flip = market.gammaFlip.toLocaleString();
   const callWall = positioning.callWall.toLocaleString();
   const putWall = positioning.putWall.toLocaleString();
+  
+  const isVannaBullish = dealer.vannaBias === "BULLISH";
+  const isCharmBullish = dealer.charmBias === "BULLISH";
 
   const scenarios: TradingScenario[] = [];
 
   // 1. BASE CASE
   if (isLongGamma) {
+    const thesis = isVannaBullish && isCharmBullish 
+      ? `Mean Reversion toward ${firstMagnet} with strong vanna/charm support`
+      : `Range-bound mean reversion toward ${firstMagnet} magnet`;
+      
     scenarios.push({
       id: 1,
       type: "BASE",
       probability: 60,
-      thesis: `Mean Reversion toward ${firstMagnet} magnet`,
+      thesis,
       levels: magnets,
-      confirmation: ["Absorption at key strikes", "Delta divergence", "Decreasing volatility"],
+      confirmation: ["Absorption at key magnets", "Delta divergence", "Implied vol crush"],
       invalidation: `Price acceptance below flip level of ${flip}`,
       timestamp: new Date()
     });
@@ -31,10 +39,10 @@ export function generateDynamicScenarios(
       id: 1,
       type: "BASE",
       probability: 55,
-      thesis: "Volatility Expansion & Gamma Squeeze",
+      thesis: "Volatility Expansion into Short Gamma Pocket",
       levels: [flip, `${(levels.shortGammaPocketStart / 1000).toFixed(1)}k`],
-      confirmation: ["Increasing realized volatility", "Vanna-fueled selling", "Aggressive delta selling"],
-      invalidation: `Recovery and acceptance back above ${flip}`,
+      confirmation: ["Increasing realized volatility", "Aggressive delta selling", "Spot price leading IV spike"],
+      invalidation: `Sustained recovery and acceptance back above ${flip}`,
       timestamp: new Date()
     });
   }
@@ -44,10 +52,12 @@ export function generateDynamicScenarios(
     id: 2,
     type: "ALT",
     probability: 25,
-    thesis: isLongGamma ? "Range Extension to Call Wall" : "Liquidity Sweep & Mean Reversion",
+    thesis: isLongGamma 
+      ? `Upside Range Extension to ${callWall} wall`
+      : `Liquidity Sweep of ${putWall} followed by mean reversion`,
     levels: isLongGamma ? [callWall] : [putWall, flip],
-    confirmation: ["Breakout of local range", "OI expansion at walls"],
-    invalidation: `Failure to hold ${isLongGamma ? callWall : putWall}`,
+    confirmation: ["Wall defended on volume", "OI growth at strikes"],
+    invalidation: `Clean break of ${isLongGamma ? callWall : putWall} without rejection`,
     timestamp: new Date()
   });
 
@@ -56,10 +66,10 @@ export function generateDynamicScenarios(
     id: 3,
     type: "VOL",
     probability: 15,
-    thesis: "Tail Risk Event / Gamma Acceleration",
-    levels: [`${(levels.deepRiskPocketStart / 1000).toFixed(1)}k`, "Extreme OTM strikes"],
-    confirmation: ["Volatility spike (VIX/DVOL)", "Massive wall pulling", "Deep risk pocket penetration"],
-    invalidation: "Volatility stabilization",
+    thesis: "Tail Risk Acceleration / Gamma Squeeze Event",
+    levels: [`${(levels.deepRiskPocketStart / 1000).toFixed(1)}k`, "Extreme OTM levels"],
+    confirmation: ["Massive wall pulling", "DVOL spike > 10%", "Bid/Ask spread expansion"],
+    invalidation: "Orderflow stabilization and volatility mean reversion",
     timestamp: new Date()
   });
 

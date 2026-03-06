@@ -1,0 +1,200 @@
+Improve the quantitative engine and make the analytics much more robust.
+
+Do not modify the UI layout.
+
+Focus only on improving the real calculations, CSV parsing quality, and scenario logic.
+
+================================================
+CSV PARSER IMPROVEMENTS
+================================================
+
+Make the Deribit CSV parser robust and support real-world column mapping.
+
+Important:
+If a column is named "ABRIR", treat it as Open Interest.
+
+Also support flexible column normalization for common variants such as:
+
+- strike
+- Strike
+- STRIKE
+
+- gamma
+- Gamma
+- GAMMA
+
+- open_interest
+- open interest
+- OI
+- ABRIR
+
+- implied_volatility
+- iv
+- IV
+- volatility
+
+- option_type
+- type
+- call_put
+
+- expiration
+- expiry
+- exp
+
+Validate the input CSV and show clear errors if required fields are missing.
+
+================================================
+QUANT ENGINE IMPROVEMENTS
+================================================
+
+Improve all calculations using the parsed CSV data.
+
+1) TOTAL GEX
+Use:
+GEX = gamma * open_interest * spot^2
+
+Aggregate correctly by strike.
+
+2) GAMMA REGIME
+If total GEX > 0 = LONG GAMMA
+If total GEX < 0 = SHORT GAMMA
+
+3) GAMMA FLIP
+Calculate a more accurate gamma flip by finding the strike zone where net aggregated gamma changes sign.
+
+4) DISTANCE TO FLIP
+Calculate:
+abs(spot - gamma_flip) / spot * 100
+
+5) TRANSITION ZONE
+Calculate dynamically around the gamma flip.
+Use a configurable band around flip, for example +/- 0.5% to 1.0% of price.
+
+6) GAMMA ACCELERATION
+Calculate how quickly GEX changes around spot using nearby strikes.
+Classify as:
+LOW
+MODERATE
+HIGH
+
+================================================
+DEALER EXPOSURE IMPROVEMENTS
+================================================
+
+Make Vanna and Charm calculations more realistic.
+
+If raw vanna and charm are not present in the CSV, estimate them using approximations derived from:
+- spot
+- strike
+- implied volatility
+- time to expiry
+- option type
+
+Return:
+
+Vanna Exposure
+Vanna Bias
+Charm Exposure
+Charm Bias
+Gamma Pressure
+Gamma Concentration
+
+Definitions:
+
+Gamma Pressure:
+classify based on magnitude of total GEX relative to spot and distribution.
+
+Gamma Concentration:
+measure how concentrated the positive gamma is near spot.
+
+================================================
+OPTIONS POSITIONING IMPROVEMENTS
+================================================
+
+Calculate properly:
+
+Call Wall:
+strike with largest call open interest
+
+Put Wall:
+strike with largest put open interest
+
+OI Concentration:
+strike with highest total open interest
+
+Dealer Pivot:
+weighted central strike based on gamma and OI distribution
+
+================================================
+KEY LEVELS IMPROVEMENTS
+================================================
+
+Populate correctly:
+
+Gamma Magnets:
+top 3 positive gamma strikes ranked by GEX magnitude
+
+Short Gamma Pocket:
+nearest contiguous negative gamma zone below or around spot
+
+Deep Risk Pocket:
+next major negative gamma zone farther from spot
+
+Do not leave these sections empty.
+
+================================================
+SCENARIO ENGINE IMPROVEMENTS
+================================================
+
+Make scenario generation dynamic and based on the actual calculated metrics.
+
+Use:
+- Gamma Regime
+- Gamma Flip
+- Transition Zone
+- Call Wall
+- Put Wall
+- Gamma Magnets
+- Short Gamma Pocket
+- Vanna Bias
+- Charm Bias
+
+Generate:
+
+Base Case
+Alt Case
+Volatility Case
+
+Each scenario must include:
+- probability
+- short title
+- thesis
+- levels
+- invalidation
+
+Logic examples:
+
+If LONG GAMMA:
+Base case should favor mean reversion toward nearest gamma magnet.
+
+If SHORT GAMMA:
+Base case should favor volatility expansion or directional movement into the nearest pocket.
+
+If bullish vanna and bullish charm:
+favor upside support / recovery scenarios.
+
+If bearish vanna and weak charm:
+favor breakdown or failed recovery scenarios.
+
+================================================
+IMPORTANT
+================================================
+
+Do not use weak placeholder outputs.
+Do not leave values empty.
+Do not display meaningless outputs like -0M unless the value is truly near zero.
+
+Round and format values cleanly.
+
+Keep the existing dashboard UI exactly as it is.
+Only improve the analytics engine and data quality behind it.
