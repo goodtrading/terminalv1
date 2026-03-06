@@ -1,19 +1,14 @@
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { createChart, ColorType, ISeriesApi, CandlestickData, LineData } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels } from "@shared/schema";
-import { 
-  ResponsiveContainer, 
-  ComposedChart, 
-  XAxis, 
-  YAxis, 
-  Tooltip, 
-  ReferenceLine, 
-  Bar, 
-  Cell,
-  ErrorBar
-} from "recharts";
 
 export function MainChart() {
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<any>(null);
+  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+
   const { data: positioning } = useQuery<OptionsPositioning>({ 
     queryKey: ["/api/options-positioning"],
     refetchInterval: 5000
@@ -30,43 +25,152 @@ export function MainChart() {
   });
 
   const { data: candles } = useQuery({
-    queryKey: ["btc-candles"],
+    queryKey: ["btc-candles-lightweight"],
     queryFn: async () => {
-      const res = await fetch("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=100");
+      const res = await fetch("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=300");
       const data = await res.json();
       return data.map((d: any) => ({
-        time: d[0],
+        time: d[0] / 1000,
         open: parseFloat(d[1]),
         high: parseFloat(d[2]),
         low: parseFloat(d[3]),
         close: parseFloat(d[4]),
-        // For rendering candlesticks in Recharts, we calculate the body and wicks
-        bottom: Math.min(parseFloat(d[1]), parseFloat(d[4])),
-        height: Math.abs(parseFloat(d[1]) - parseFloat(d[4])),
-        color: parseFloat(d[4]) >= parseFloat(d[1]) ? "#22c55e" : "#ef4444"
       }));
     },
     refetchInterval: 10000
   });
 
+  useEffect(() => {
+    if (!chartContainerRef.current) return;
+
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: "#000000" },
+        textColor: "#d1d4dc",
+      },
+      grid: {
+        vertLines: { color: "#1a1a1a" },
+        horzLines: { color: "#1a1a1a" },
+      },
+      width: chartContainerRef.current.clientWidth,
+      height: chartContainerRef.current.clientHeight,
+      timeScale: {
+        borderColor: "#222",
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      rightPriceScale: {
+        borderColor: "#222",
+      },
+      crosshair: {
+        mode: 0,
+        vertLine: {
+          color: "#758696",
+          width: 1,
+          style: 1,
+          labelBackgroundColor: "#000",
+        },
+        horzLine: {
+          color: "#758696",
+          width: 1,
+          style: 1,
+          labelBackgroundColor: "#000",
+        },
+      },
+    });
+
+    const candleSeries = chart.addCandlestickSeries({
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderVisible: false,
+      wickUpColor: "#22c55e",
+      wickDownColor: "#ef4444",
+    });
+
+    chartRef.current = chart;
+    candleSeriesRef.current = candleSeries;
+
+    const handleResize = () => {
+      if (chartContainerRef.current) {
+        chart.applyOptions({ 
+          width: chartContainerRef.current.clientWidth,
+          height: chartContainerRef.current.clientHeight 
+        });
+      }
+    };
+
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      chart.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (candleSeriesRef.current && candles) {
+      candleSeriesRef.current.setData(candles);
+    }
+  }, [candles]);
+
+  // Update Overlays
+  useEffect(() => {
+    if (!chartRef.current) return;
+
+    // Clear existing price lines (Simplified for Fast mode - in real app we'd track and remove individual lines)
+    // Lightweight-charts doesn't have a simple "clear all lines" from a series easily, 
+    // so we re-apply or manage them. For this turn, we'll focus on the primary ones.
+
+    if (market?.gammaFlip) {
+      candleSeriesRef.current?.createPriceLine({
+        price: market.gammaFlip,
+        color: "#eab308",
+        lineWidth: 1,
+        lineStyle: 1, // Dotted
+        axisLabelVisible: true,
+        title: "Flip",
+      });
+    }
+
+    if (positioning?.callWall) {
+      candleSeriesRef.current?.createPriceLine({
+        price: positioning.callWall,
+        color: "#ef4444",
+        lineWidth: 1,
+        lineStyle: 0, // Solid
+        axisLabelVisible: true,
+        title: "Call Wall",
+      });
+    }
+
+    if (positioning?.putWall) {
+      candleSeriesRef.current?.createPriceLine({
+        price: positioning.putWall,
+        color: "#22c55e",
+        lineWidth: 1,
+        lineStyle: 0, // Solid
+        axisLabelVisible: true,
+        title: "Put Wall",
+      });
+    }
+
+    levels?.gammaMagnets?.forEach(m => {
+      candleSeriesRef.current?.createPriceLine({
+        price: m,
+        color: "#3b82f6",
+        lineWidth: 1,
+        lineStyle: 2, // Dashed
+        axisLabelVisible: true,
+        title: "Magnet",
+      });
+    });
+
+  }, [market, positioning, levels]);
+
   const currentPrice = candles?.[candles.length - 1]?.close || 0;
   const priceChange = candles && candles.length > 1 
     ? ((currentPrice - candles[0].close) / candles[0].close * 100).toFixed(2)
     : "0.00";
-
-  // Configuration for visibility & scale
-  const VISIBILITY_RANGE_PCT = 0.08; 
-  const lowerBound = currentPrice * (1 - VISIBILITY_RANGE_PCT);
-  const upperBound = currentPrice * (1 + VISIBILITY_RANGE_PCT);
-
-  const isVisible = (price: number | undefined) => {
-    if (!price) return false;
-    return price >= lowerBound && price <= upperBound;
-  };
-
-  const nearestMagnet = levels?.gammaMagnets?.length 
-    ? levels.gammaMagnets.reduce((prev, curr) => Math.abs(curr - currentPrice) < Math.abs(prev - currentPrice) ? curr : prev)
-    : null;
 
   return (
     <TerminalPanel className="flex-1 mb-2 border border-terminal-border relative" noPadding>
@@ -82,17 +186,6 @@ export function MainChart() {
               {parseFloat(priceChange) >= 0 ? '+' : ''}{priceChange}%
             </span>
           </div>
-          
-          <div className="flex space-x-4 mt-2 pointer-events-auto">
-            <div className="flex flex-col">
-              <span className="text-[8px] uppercase text-terminal-muted font-bold tracking-widest">Nearest Magnet</span>
-              <span className="text-[10px] font-mono text-blue-400 font-bold">{nearestMagnet?.toLocaleString() || "--"}</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[8px] uppercase text-terminal-muted font-bold tracking-widest">Flip Dist %</span>
-              <span className="text-[10px] font-mono text-yellow-400 font-bold">{market?.distanceToFlip?.toFixed(2) || "--"}%</span>
-            </div>
-          </div>
         </div>
         
         <div className="flex space-x-1 pointer-events-auto">
@@ -104,94 +197,11 @@ export function MainChart() {
         </div>
       </div>
 
-      {/* Candlestick Chart Area */}
-      <div className="w-full h-full bg-black relative overflow-hidden flex flex-col pt-20">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={candles} margin={{ top: 10, right: 80, bottom: 20, left: 0 }}>
-            <XAxis dataKey="time" hide />
-            <YAxis 
-              domain={[lowerBound, upperBound]} 
-              orientation="right" 
-              tick={{ fontSize: 9, fill: '#444', fontFamily: 'JetBrains Mono' }}
-              axisLine={false}
-              tickLine={false}
-              width={80}
-            />
-            <Tooltip 
-              contentStyle={{ backgroundColor: '#000', border: '1px solid #222', fontSize: '10px' }}
-              itemStyle={{ color: '#fff' }}
-              labelStyle={{ display: 'none' }}
-              cursor={{ stroke: '#333', strokeWidth: 1 }}
-            />
-            
-            {/* Structural Overlays - Semi-transparent */}
-            {market?.gammaFlip && isVisible(market.gammaFlip) && (
-              <ReferenceLine 
-                y={market.gammaFlip} 
-                stroke="#eab308" 
-                strokeWidth={1}
-                strokeDasharray="4 4"
-                strokeOpacity={0.6}
-                label={{ position: 'right', value: `Flip ${market.gammaFlip}`, fill: '#eab308', fontSize: 8, fontWeight: 'bold', opacity: 0.8 }}
-              />
-            )}
-
-            {positioning?.callWall && isVisible(positioning.callWall) && (
-              <ReferenceLine 
-                y={positioning.callWall} 
-                stroke="#ef4444" 
-                strokeWidth={1}
-                strokeOpacity={0.5}
-                label={{ position: 'right', value: `Call Wall ${positioning.callWall}`, fill: '#ef4444', fontSize: 8, fontWeight: 'bold', opacity: 0.7 }}
-              />
-            )}
-
-            {positioning?.putWall && isVisible(positioning.putWall) && (
-              <ReferenceLine 
-                y={positioning.putWall} 
-                stroke="#22c55e" 
-                strokeWidth={1}
-                strokeOpacity={0.5}
-                label={{ position: 'right', value: `Put Wall ${positioning.putWall}`, fill: '#22c55e', fontSize: 8, fontWeight: 'bold', opacity: 0.7 }}
-              />
-            )}
-
-            {levels?.gammaMagnets?.filter(m => isVisible(m)).map((m, i) => (
-              <ReferenceLine 
-                key={`magnet-${i}`}
-                y={m} 
-                stroke="#3b82f6" 
-                strokeWidth={1}
-                strokeOpacity={0.4}
-                label={{ position: 'right', value: `Magnet ${m}`, fill: '#3b82f6', fontSize: 8, opacity: 0.6 }}
-              />
-            ))}
-
-            {/* Pockets as Reference Lines for fast mode simplicity */}
-            {levels?.shortGammaPocketStart && isVisible(levels.shortGammaPocketStart) && (
-              <ReferenceLine y={levels.shortGammaPocketStart} stroke="#f97316" strokeOpacity={0.2} strokeWidth={1} label={{ position: 'right', value: `Pocket`, fill: '#f97316', fontSize: 8, opacity: 0.5 }} />
-            )}
-
-            {levels?.deepRiskPocketStart && isVisible(levels.deepRiskPocketStart) && (
-              <ReferenceLine y={levels.deepRiskPocketStart} stroke="#a855f7" strokeOpacity={0.2} strokeWidth={1} label={{ position: 'right', value: `Deep Risk`, fill: '#a855f7', fontSize: 8, opacity: 0.5 }} />
-            )}
-
-            {/* Candlestick Rendering using Bars */}
-            <Bar dataKey="height" isAnimationActive={false}>
-              {candles?.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={entry.color} fillOpacity={0.8} />
-              ))}
-              {/* Note: This is a simplified candlestick. Real candlesticks need wicks.
-                  In Recharts we can use ErrorBars or specialized Custom shapes for wicks. 
-                  For fast mode, we prioritize the overall look. */}
-            </Bar>
-          </ComposedChart>
-        </ResponsiveContainer>
-
-        {/* Center Watermark */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.01] z-0">
-          <span className="text-[12rem] font-bold tracking-tighter italic font-mono uppercase">QUANTUM</span>
-        </div>
+      <div ref={chartContainerRef} className="w-full h-full" />
+      
+      {/* Center Watermark */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.01] z-0">
+        <span className="text-[12rem] font-bold tracking-tighter italic font-mono uppercase">QUANTUM</span>
       </div>
     </TerminalPanel>
   );
