@@ -366,8 +366,8 @@ export function MainChart() {
       style={{ backgroundColor: regimeColor }}
     >
       <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start z-10 pointer-events-none">
-        <div className="flex flex-col">
-          <div className="flex items-baseline space-x-3">
+        <div className="flex flex-col pointer-events-none">
+          <div className="flex items-baseline space-x-3 pointer-events-none">
             <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
             <span className={`text-2xl font-mono font-bold ${parseFloat(priceChange) >= 0 ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
               {currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -377,26 +377,26 @@ export function MainChart() {
             </span>
           </div>
           
-          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
-            <div className="flex flex-col">
+          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 pointer-events-none">
+            <div className="flex flex-col pointer-events-none">
               <span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span>
               <span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
                 {market?.gammaRegime || "NEUTRAL"}
               </span>
             </div>
-            <div className="flex flex-col">
+            <div className="flex flex-col pointer-events-none">
               <span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span>
               <span className="text-[11px] font-bold font-mono text-white">
                 {market?.distanceToFlip?.toFixed(2) || "0.00"}%
               </span>
             </div>
-            <div className="flex flex-col">
+            <div className="flex flex-col pointer-events-none">
               <span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Pressure</span>
               <span className="text-[11px] font-bold font-mono text-terminal-accent">
                 {exposure?.gammaPressure || "LOW"}
               </span>
             </div>
-            <div className="flex flex-col">
+            <div className="flex flex-col pointer-events-none">
               <span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Vanna/Charm</span>
               <span className="text-[11px] font-bold font-mono text-white">
                 {exposure?.vannaBias?.charAt(0)}/{exposure?.charmBias?.charAt(0)}
@@ -406,14 +406,14 @@ export function MainChart() {
         </div>
         
         <div className="flex flex-col items-end space-y-2 pointer-events-auto">
-          <div className="flex space-x-1">
+          <div className="flex space-x-1 pointer-events-auto">
             {["1M", "15M", "1H", "4H", "1D"].map(tf => (
               <button key={tf} className={`px-2 py-0.5 text-[9px] font-bold font-mono border rounded-sm transition-all ${tf === '15M' ? 'bg-terminal-accent/20 border-terminal-accent text-white' : 'bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white'}`}>
                 {tf}
               </button>
             ))}
           </div>
-          <div className="flex flex-wrap justify-end gap-1 max-w-[200px]">
+          <div className="flex flex-wrap justify-end gap-1 max-w-[200px] pointer-events-auto">
             <button 
               onClick={resetScale}
               className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/20 border-terminal-accent text-white hover:bg-terminal-accent/40"
@@ -433,12 +433,8 @@ export function MainChart() {
         </div>
       </div>
 
-      <div ref={chartContainerRef} className="w-full h-full" />
+      <div ref={chartContainerRef} className="w-full h-full relative z-0" style={{ pointerEvents: 'auto' }} />
       
-      <div className="absolute bottom-4 right-4 text-[9px] font-mono text-terminal-muted pointer-events-none z-10 bg-black/40 px-2 py-1 rounded">
-        <span>STRUCTURAL_BIAS: {market?.gammaRegime || "NEUTRAL"}</span>
-      </div>
-
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.01] z-0">
         <span className="text-[12rem] font-bold tracking-tighter italic font-mono uppercase">QUANTUM</span>
       </div>
