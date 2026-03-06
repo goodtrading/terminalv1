@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createChart, ColorType, ISeriesApi, version, LineStyle, CandlestickSeries } from "lightweight-charts";
+import { createChart, ColorType, ISeriesApi, version, LineStyle, CandlestickSeries, HistogramSeries } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels } from "@shared/schema";
 
@@ -8,6 +8,7 @@ export function MainChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const candleSeriesRef = useRef<any>(null);
+  const volumeSeriesRef = useRef<any>(null);
   const priceLinesRef = useRef<any[]>([]);
   const livePriceLineRef = useRef<any>(null);
 
@@ -76,7 +77,7 @@ export function MainChart() {
           borderColor: "#1a1a1a",
           scaleMargins: {
             top: 0.1,
-            bottom: 0.1,
+            bottom: 0.25, // Leave room for pressure histogram
           },
         },
         crosshair: {
@@ -102,12 +103,29 @@ export function MainChart() {
         borderVisible: false,
         wickUpColor: "#22c55e",
         wickDownColor: "#ef4444",
-        priceLineVisible: false, // We'll manage our own live price line
+        priceLineVisible: false,
         lastValueVisible: true,
+      });
+
+      // Dealer Pressure Histogram
+      const volumeSeries = chart.addSeries(HistogramSeries, {
+        color: '#26a69a',
+        priceFormat: {
+          type: 'volume',
+        },
+        priceScaleId: '', // Overlay scale
+      });
+
+      volumeSeries.priceScale().applyOptions({
+        scaleMargins: {
+          top: 0.8, // Position at bottom
+          bottom: 0,
+        },
       });
       
       chartRef.current = chart;
       candleSeriesRef.current = candleSeries;
+      volumeSeriesRef.current = volumeSeries;
 
       const handleResize = () => {
         if (chartContainerRef.current && chartRef.current) {
@@ -156,24 +174,38 @@ export function MainChart() {
           title: "",
         });
       }
+
+      // Update Dealer Pressure Histogram
+      if (volumeSeriesRef.current && market?.totalGex) {
+        const pressureData = candles.map((c, i) => {
+          const prevClose = i > 0 ? candles[i-1].close : c.open;
+          const move = c.close - prevClose;
+          const pressure = (market.totalGex / 1e9) * move; // Scale for vis
+          return {
+            time: c.time,
+            value: Math.abs(pressure),
+            color: pressure >= 0 ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)',
+          };
+        });
+        volumeSeriesRef.current.setData(pressureData);
+      }
     }
-  }, [candles, toggles.price]);
+  }, [candles, toggles.price, market?.totalGex]);
 
   // Update Overlays
   useEffect(() => {
     if (!candleSeriesRef.current || !candles) return;
 
-    // Clear previous structural lines
     priceLinesRef.current.forEach(line => {
       candleSeriesRef.current.removePriceLine(line);
     });
     priceLinesRef.current = [];
 
     const currentPrice = candles[candles.length - 1].close;
-    const threshold = currentPrice * 0.1; // 10% range for nearby levels
+    const threshold = currentPrice * 0.1;
 
     const addLine = (price: number, options: any) => {
-      if (Math.abs(price - currentPrice) > threshold) return; // Only nearby
+      if (Math.abs(price - currentPrice) > threshold) return;
       const line = candleSeriesRef.current.createPriceLine({
         price,
         axisLabelVisible: true,
@@ -185,7 +217,6 @@ export function MainChart() {
 
     try {
       if (toggles.flip && market?.gammaFlip) {
-        // Main Flip Line
         addLine(market.gammaFlip, {
           color: "#eab308",
           lineStyle: LineStyle.Dashed,
@@ -193,7 +224,6 @@ export function MainChart() {
           lineWidth: 2,
         });
 
-        // Transition Zone (±0.5%)
         const transitionUpper = market.gammaFlip * 1.005;
         const transitionLower = market.gammaFlip * 0.995;
         
@@ -243,27 +273,9 @@ export function MainChart() {
           });
         }
       }
-
-      if (toggles.pockets && levels) {
-        if (levels.shortGammaPocketStart) {
-          addLine(levels.shortGammaPocketStart, {
-            color: "rgba(249, 115, 22, 0.3)",
-            lineStyle: LineStyle.Solid,
-            title: "SG-POCKET",
-          });
-        }
-        if (levels.deepRiskPocketStart) {
-          addLine(levels.deepRiskPocketStart, {
-            color: "rgba(168, 85, 247, 0.3)",
-            lineStyle: LineStyle.Solid,
-            title: "DR-POCKET",
-          });
-        }
-      }
     } catch (err) {
       console.error("[MainChart] Overlay update failed:", err);
     }
-
   }, [market, positioning, levels, candles, toggles]);
 
   const currentPrice = candles?.[candles.length - 1]?.close || 0;
@@ -271,8 +283,19 @@ export function MainChart() {
     ? ((currentPrice - candles[0].close) / candles[0].close * 100).toFixed(2)
     : "0.00";
 
+  // Regime Background logic
+  const regimeColor = market?.gammaRegime === 'LONG GAMMA' 
+    ? 'rgba(30, 58, 138, 0.05)' 
+    : market?.gammaRegime === 'SHORT GAMMA' 
+      ? 'rgba(127, 29, 29, 0.05)' 
+      : 'transparent';
+
   return (
-    <TerminalPanel className="flex-1 mb-2 border border-terminal-border relative" noPadding>
+    <TerminalPanel 
+      className="flex-1 mb-2 border border-terminal-border relative" 
+      noPadding
+      style={{ backgroundColor: regimeColor }}
+    >
       <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start z-10 pointer-events-none">
         <div className="flex flex-col">
           <div className="flex items-baseline space-x-3">
@@ -325,6 +348,11 @@ export function MainChart() {
 
       <div ref={chartContainerRef} className="w-full h-full" />
       
+      {/* Dealer Pressure Label */}
+      <div className="absolute bottom-[20%] left-4 text-[8px] font-mono text-terminal-muted pointer-events-none uppercase tracking-tighter opacity-50">
+        Dealer Hedging Pressure
+      </div>
+
       <div className="absolute bottom-4 right-4 text-[9px] font-mono text-terminal-muted pointer-events-none z-10 bg-black/40 px-2 py-1 rounded">
         <span>STRUCTURAL_BIAS: {market?.gammaRegime || "NEUTRAL"}</span>
       </div>
