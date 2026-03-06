@@ -54,19 +54,17 @@ export function MainChart() {
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    console.log("[MainChart] Initializing Lightweight Charts v" + version());
-
     try {
       const chart = createChart(chartContainerRef.current, {
         layout: {
           background: { type: ColorType.Solid, color: "#000000" },
           textColor: "#d1d4dc",
-          fontSize: 10,
+          fontSize: 11,
           fontFamily: "JetBrains Mono, monospace",
         },
         grid: {
-          vertLines: { color: "#0a0a0a" },
-          horzLines: { color: "#0a0a0a" },
+          vertLines: { color: "#111111" },
+          horzLines: { color: "#111111" },
         },
         width: chartContainerRef.current.clientWidth,
         height: chartContainerRef.current.clientHeight,
@@ -74,12 +72,15 @@ export function MainChart() {
           borderColor: "#1a1a1a",
           timeVisible: true,
           secondsVisible: false,
+          barSpacing: 8,
+          rightOffset: 12,
         },
         rightPriceScale: {
           borderColor: "#1a1a1a",
+          autoScale: true,
           scaleMargins: {
             top: 0.1,
-            bottom: 0.25,
+            bottom: 0.2,
           },
         },
         crosshair: {
@@ -97,6 +98,17 @@ export function MainChart() {
             labelBackgroundColor: "#000",
           },
         },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: true,
+        },
+        handleScale: {
+          mouseWheel: true,
+          pinch: true,
+          axisPressedMouseMove: true,
+        },
       });
 
       const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -110,7 +122,7 @@ export function MainChart() {
       });
 
       const volumeSeries = chart.addSeries(HistogramSeries, {
-        color: '#26a69a',
+        color: 'rgba(38, 166, 154, 0.3)',
         priceFormat: {
           type: 'volume',
         },
@@ -119,7 +131,7 @@ export function MainChart() {
 
       volumeSeries.priceScale().applyOptions({
         scaleMargins: {
-          top: 0.8,
+          top: 0.85,
           bottom: 0,
         },
       });
@@ -183,7 +195,7 @@ export function MainChart() {
           return {
             time: c.time,
             value: Math.abs(pressure),
-            color: pressure >= 0 ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)',
+            color: pressure >= 0 ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)',
           };
         });
         volumeSeriesRef.current.setData(pressureData);
@@ -216,42 +228,26 @@ export function MainChart() {
     try {
       if (toggles.flip && market?.gammaFlip) {
         addLine(market.gammaFlip, {
-          color: "#eab308",
+          color: "rgba(234, 179, 8, 0.5)",
           lineStyle: LineStyle.Dashed,
-          title: "GAMMA FLIP",
-          lineWidth: 2,
-        });
-
-        const transitionUpper = market.gammaFlip * 1.005;
-        const transitionLower = market.gammaFlip * 0.995;
-        
-        addLine(transitionUpper, {
-          color: "rgba(234, 179, 8, 0.15)",
-          lineStyle: LineStyle.Solid,
-          title: "",
-          axisLabelVisible: false,
-        });
-        addLine(transitionLower, {
-          color: "rgba(234, 179, 8, 0.15)",
-          lineStyle: LineStyle.Solid,
-          title: "",
-          axisLabelVisible: false,
+          title: "FLIP",
+          lineWidth: 1,
         });
       }
 
       if (toggles.walls) {
         if (positioning?.callWall) {
           addLine(positioning.callWall, {
-            color: "rgba(239, 68, 68, 0.6)",
+            color: "rgba(239, 68, 68, 0.4)",
             lineStyle: LineStyle.Solid,
-            title: "CALL WALL",
+            title: "C-WALL",
           });
         }
         if (positioning?.putWall) {
           addLine(positioning.putWall, {
-            color: "rgba(34, 197, 94, 0.6)",
+            color: "rgba(34, 197, 94, 0.4)",
             lineStyle: LineStyle.Solid,
-            title: "PUT WALL",
+            title: "P-WALL",
           });
         }
       }
@@ -262,9 +258,9 @@ export function MainChart() {
           .sort((a, b) => Math.abs(a - currentPrice) - Math.abs(b - currentPrice));
         
         if (nearbyMagnets.length > 0) {
-          nearbyMagnets.slice(0, 3).forEach((m, i) => {
+          nearbyMagnets.slice(0, 2).forEach((m, i) => {
             addLine(m, {
-              color: "rgba(59, 130, 246, 0.4)",
+              color: "rgba(59, 130, 246, 0.3)",
               lineStyle: LineStyle.Dotted,
               title: i === 0 ? "MAGNET" : "",
             });
@@ -307,13 +303,13 @@ export function MainChart() {
           
           <div className="mt-2 flex items-center space-x-4">
             <div className="flex flex-col">
-              <span className="text-[10px] text-terminal-muted font-mono uppercase">Gamma Regime</span>
+              <span className="text-[10px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span>
               <span className={`text-xs font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
                 {market?.gammaRegime || "NEUTRAL"}
               </span>
             </div>
             <div className="flex flex-col border-l border-terminal-border pl-4">
-              <span className="text-[10px] text-terminal-muted font-mono uppercase">Dist. To Flip</span>
+              <span className="text-[10px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span>
               <span className="text-xs font-bold font-mono text-white">
                 {market?.distanceToFlip?.toFixed(2) || "0.00"}%
               </span>
@@ -345,14 +341,6 @@ export function MainChart() {
 
       <div ref={chartContainerRef} className="w-full h-full" />
       
-      <div className="absolute bottom-[20%] left-4 text-[8px] font-mono text-terminal-muted pointer-events-none uppercase tracking-tighter opacity-50">
-        Dealer Hedging Pressure
-      </div>
-
-      <div className="absolute bottom-4 right-4 text-[9px] font-mono text-terminal-muted pointer-events-none z-10 bg-black/40 px-2 py-1 rounded">
-        <span>STRUCTURAL_BIAS: {market?.gammaRegime || "NEUTRAL"}</span>
-      </div>
-
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.01] z-0">
         <span className="text-[12rem] font-bold tracking-tighter italic font-mono uppercase">QUANTUM</span>
       </div>
