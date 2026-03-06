@@ -62,7 +62,7 @@ export function TerminalValue({
           "text-xs font-mono font-bold",
           trend === "positive" ? "text-terminal-positive" : 
           trend === "negative" ? "text-terminal-negative" : 
-          "text-white"
+          "text-terminal-text"
         )}>
           {value}
         </span>
