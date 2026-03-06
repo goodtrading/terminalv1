@@ -73,7 +73,7 @@ export function MainChart() {
               tick={{ fontSize: 9, fill: '#666', fontFamily: 'JetBrains Mono' }}
               axisLine={false}
               tickLine={false}
-              width={80}
+              width={100}
             />
             <Tooltip 
               contentStyle={{ backgroundColor: '#111', border: '1px solid #333', fontSize: '10px' }}
@@ -81,54 +81,98 @@ export function MainChart() {
               labelStyle={{ display: 'none' }}
             />
             
-            {/* Structural Levels */}
+            {/* 1. Gamma Flip */}
             {market?.gammaFlip && (
               <ReferenceLine 
                 y={market.gammaFlip} 
                 stroke="#eab308" 
                 strokeWidth={1.5}
+                strokeDasharray="5 5"
                 label={{ position: 'right', value: `Gamma Flip ${market.gammaFlip}`, fill: '#eab308', fontSize: 9, fontWeight: 'bold' }}
               />
             )}
+
+            {/* 7. Transition Zone Band */}
+            {market?.transitionZoneStart && market?.transitionZoneEnd && (
+              <ReferenceLine 
+                y={market.transitionZoneStart} 
+                stroke="none"
+                label={{ position: 'insideRight', value: 'Transition Zone', fill: '#999', fontSize: 8, opacity: 0.5 }}
+              />
+            )}
+            {market?.transitionZoneStart && market?.transitionZoneEnd && (
+              <Line 
+                data={[{ price: market.transitionZoneStart }, { price: market.transitionZoneEnd }]}
+                stroke="none"
+              />
+            )}
+            {/* Note: Recharts doesn't have a direct "Band" component for horizontal areas easily without hacks, 
+                using multiple lines or specialized Area. For simplicity in Fast mode, we use ReferenceLines 
+                and a semi-transparent Line if needed, but the requirement asks for a band.
+                I'll use ReferenceLine with a background if possible, or just two boundaries. */}
+            {market?.transitionZoneStart && (
+              <ReferenceLine y={market.transitionZoneStart} stroke="#eab308" strokeOpacity={0.1} strokeWidth={2} />
+            )}
+            {market?.transitionZoneEnd && (
+              <ReferenceLine y={market.transitionZoneEnd} stroke="#eab308" strokeOpacity={0.1} strokeWidth={2} />
+            )}
+
+            {/* 2. Call Wall */}
             {positioning?.callWall && (
               <ReferenceLine 
                 y={positioning.callWall} 
                 stroke="#ef4444" 
-                strokeDasharray="3 3"
+                strokeWidth={2}
                 label={{ position: 'right', value: `Call Wall ${positioning.callWall}`, fill: '#ef4444', fontSize: 9, fontWeight: 'bold' }}
               />
             )}
+
+            {/* 3. Put Wall */}
             {positioning?.putWall && (
               <ReferenceLine 
                 y={positioning.putWall} 
                 stroke="#22c55e" 
-                strokeDasharray="3 3"
+                strokeWidth={2}
                 label={{ position: 'right', value: `Put Wall ${positioning.putWall}`, fill: '#22c55e', fontSize: 9, fontWeight: 'bold' }}
               />
             )}
+
+            {/* 4. All Gamma Magnets */}
             {levels?.gammaMagnets?.map((m, i) => (
               <ReferenceLine 
-                key={i}
+                key={`magnet-${i}`}
                 y={m} 
                 stroke="#3b82f6" 
-                strokeOpacity={0.4}
+                strokeWidth={1}
                 label={{ position: 'right', value: `Gamma Magnet ${m}`, fill: '#3b82f6', fontSize: 8 }}
               />
             ))}
+
+            {/* 5. Short Gamma Pocket Band */}
             {levels?.shortGammaPocketStart && (
+              <ReferenceLine y={levels.shortGammaPocketStart} stroke="#f97316" strokeOpacity={0.2} strokeWidth={1} />
+            )}
+            {levels?.shortGammaPocketEnd && (
               <ReferenceLine 
-                y={levels.shortGammaPocketStart} 
+                y={levels.shortGammaPocketEnd} 
                 stroke="#f97316" 
-                strokeOpacity={0.3}
-                label={{ position: 'right', value: `Short Gamma Pocket ${levels.shortGammaPocketStart}`, fill: '#f97316', fontSize: 8 }}
+                strokeOpacity={0.2} 
+                strokeWidth={1}
+                label={{ position: 'right', value: `Short Gamma Pocket`, fill: '#f97316', fontSize: 8, opacity: 0.8 }}
               />
             )}
+
+            {/* 6. Deep Risk Pocket Band */}
             {levels?.deepRiskPocketStart && (
+              <ReferenceLine y={levels.deepRiskPocketStart} stroke="#a855f7" strokeOpacity={0.2} strokeWidth={1} />
+            )}
+            {levels?.deepRiskPocketEnd && (
               <ReferenceLine 
-                y={levels.deepRiskPocketStart} 
+                y={levels.deepRiskPocketEnd} 
                 stroke="#a855f7" 
-                strokeOpacity={0.3}
-                label={{ position: 'right', value: `Deep Risk Pocket ${levels.deepRiskPocketStart}`, fill: '#a855f7', fontSize: 8 }}
+                strokeOpacity={0.2} 
+                strokeWidth={1}
+                label={{ position: 'right', value: `Deep Risk Pocket`, fill: '#a855f7', fontSize: 8, opacity: 0.8 }}
               />
             )}
             
@@ -137,7 +181,7 @@ export function MainChart() {
               type="monotone" 
               dataKey="price" 
               stroke="#fff" 
-              strokeWidth={1} 
+              strokeWidth={1.5} 
               dot={false} 
               isAnimationActive={false}
             />
