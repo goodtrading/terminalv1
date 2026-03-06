@@ -3,6 +3,7 @@ import {
   type MarketState, type DealerExposure, type OptionsPositioning, type KeyLevels, type TradingScenario, type OptionData
 } from "@shared/schema";
 import { parseOptionsCSV, calculateGEX, findGammaFlip, calculateVanna, calculateCharm, detectWalls, calculateKeyLevels } from "./analytics";
+import { generateDynamicScenarios } from "./scenarios";
 import path from "path";
 
 export interface IStorage {
@@ -40,7 +41,7 @@ export class MemStorage implements IStorage {
     const walls = detectWalls(data);
     const levels = calculateKeyLevels(data);
 
-    this.marketState = {
+    const newMarketState = {
       id: 1,
       gammaRegime: totalGex > 0 ? "LONG GAMMA" : "SHORT GAMMA",
       totalGex,
@@ -51,6 +52,7 @@ export class MemStorage implements IStorage {
       gammaAcceleration: Math.abs(totalGex) > 1e9 ? "HIGH" : "MODERATE",
       timestamp: new Date()
     };
+    this.marketState = newMarketState;
 
     this.dealerExposure = {
       id: 1,
@@ -63,7 +65,7 @@ export class MemStorage implements IStorage {
       timestamp: new Date()
     };
 
-    this.optionsPositioning = {
+    const newOptionsPositioning = {
       id: 1,
       callWall: walls.callWall,
       putWall: walls.putWall,
@@ -71,8 +73,9 @@ export class MemStorage implements IStorage {
       dealerPivot: walls.dealerPivot,
       timestamp: new Date()
     };
+    this.optionsPositioning = newOptionsPositioning;
 
-    this.keyLevels = {
+    const newKeyLevels = {
       id: 1,
       gammaMagnets: levels.gammaMagnets,
       shortGammaPocketStart: levels.shortGammaPocketStart,
@@ -81,19 +84,13 @@ export class MemStorage implements IStorage {
       deepRiskPocketEnd: levels.deepRiskPocketEnd,
       timestamp: new Date()
     };
+    this.keyLevels = newKeyLevels;
 
-    this.tradingScenarios = [
-      {
-        id: 1,
-        type: "BASE",
-        probability: 60,
-        thesis: `Mean Reversion toward ${levels.gammaMagnets[0]/1000}k magnet`,
-        levels: levels.gammaMagnets.map(m => `${m/1000}k`),
-        confirmation: ["absorption at key strikes", "delta divergence"],
-        invalidation: `acceptance below ${levels.shortGammaPocketEnd.toLocaleString()}`,
-        timestamp: new Date()
-      }
-    ];
+    this.tradingScenarios = generateDynamicScenarios(
+      newMarketState as MarketState,
+      newOptionsPositioning as OptionsPositioning,
+      newKeyLevels as KeyLevels
+    );
   }
 
   async getMarketState() { return this.marketState; }
