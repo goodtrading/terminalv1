@@ -1,0 +1,156 @@
+Refine and beautify the existing dashboard without changing the layout.
+
+Do NOT redesign the structure.
+Keep the exact same panels and layout.
+
+Focus only on visual polish to make the interface look like a premium institutional trading terminal.
+
+================================================
+
+GLOBAL STYLE
+
+Switch the entire UI to a professional dark trading terminal theme.
+
+Background:
+#0b0b0b or near black
+
+Panels:
+#111111
+
+Borders:
+subtle dark gray
+
+Accent color:
+deep red (#ff3b3b)
+
+Positive values:
+green
+
+Negative values:
+red
+
+Text:
+light gray / white for readability.
+
+================================================
+
+TYPOGRAPHY
+
+Use clean professional typography.
+
+Main metrics:
+larger bold font
+
+Labels:
+small uppercase
+
+Spacing:
+tight and compact like professional trading dashboards.
+
+================================================
+
+LEFT SIDEBAR
+
+Keep the current sections but improve hierarchy.
+
+Section titles:
+MARKET STATE
+DEALER EXPOSURE
+OPTIONS POSITIONING
+KEY LEVELS
+
+Make section headers slightly brighter with thin separators.
+
+Important values should stand out more visually.
+
+Gamma Regime should appear as a colored badge.
+
+Example:
+
+LONG GAMMA → green badge
+SHORT GAMMA → red badge
+
+================================================
+
+CENTER CHART AREA
+
+Replace the light gray background with a dark chart area.
+
+Add subtle grid lines.
+
+Transition zone should appear as a translucent red band.
+
+Gamma flip should be a clear horizontal line with a label.
+
+Call wall and put wall should appear as highlighted horizontal levels.
+
+Keep the watermark "QUANTUM" but make it very subtle.
+
+================================================
+
+GAMMA PROFILE CHART
+
+Improve the gamma profile chart below the main chart.
+
+Positive gamma bars → green
+Negative gamma bars → red
+
+Add small labels for key strikes:
+
+largest positive gamma
+gamma flip
+short gamma pocket
+
+Keep the chart minimalist and clean.
+
+================================================
+
+RIGHT SIDEBAR
+
+Improve the scenario cards.
+
+Each scenario card should have:
+
+a colored indicator
+clear title
+probability badge
+short explanation
+
+Example:
+
+BASE CASE (60%)
+
+Mean Reversion → 72k Magnet
+
+Cards should have subtle shadows and dark backgrounds.
+
+================================================
+
+ORDER FLOW CONFIRMATION
+
+Convert the checklist into clean toggle-style indicators.
+
+Use subtle colored dots when active.
+
+================================================
+
+ACTION BUTTONS
+
+Improve the three buttons:
+
+Generate Trading Plan
+Export Daily Report
+Copy Telegram Update
+
+Buttons should have a minimal dark design with red accent when hovered.
+
+================================================
+
+FINAL GOAL
+
+The dashboard should look like a serious professional trading terminal used by institutional traders.
+
+Do not add new widgets.
+Do not change the layout.
+
+Only improve the visual quality and dark terminal aesthetic.

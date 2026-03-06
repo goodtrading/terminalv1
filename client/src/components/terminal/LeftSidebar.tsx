@@ -5,7 +5,7 @@ export function LeftSidebar() {
     <div className="w-64 h-full flex flex-col gap-2 overflow-y-auto p-2 border-r border-terminal-border bg-terminal-bg shrink-0">
       
       <TerminalPanel title="MARKET STATE">
-        <TerminalValue label="Gamma Regime" value="LONG GAMMA" trend="positive" />
+        <TerminalValue label="Gamma Regime" value="LONG GAMMA" trend="positive" isBadge />
         <TerminalValue label="Total GEX" value="+2.05B" trend="positive" />
         <TerminalValue label="Gamma Flip" value="69,450" />
         <TerminalValue label="Distance to Flip" value="2.04%" />
@@ -15,42 +15,42 @@ export function LeftSidebar() {
 
       <TerminalPanel title="DEALER EXPOSURE">
         <TerminalValue label="Vanna Exposure" value="+212M" trend="positive" />
-        <TerminalValue label="Vanna Bias" value="BULLISH" trend="positive" />
+        <TerminalValue label="Vanna Bias" value="BULLISH" trend="positive" isBadge />
         <TerminalValue label="Charm Exposure" value="-38.1B" trend="negative" />
-        <TerminalValue label="Charm Bias" value="BULLISH" trend="positive" />
+        <TerminalValue label="Charm Bias" value="BULLISH" trend="positive" isBadge />
         <TerminalValue label="Gamma Pressure" value="HIGH" />
         <TerminalValue label="Gamma Concen." value="72%" />
       </TerminalPanel>
 
       <TerminalPanel title="OPTIONS POSITIONING">
-        <TerminalValue label="Call Wall" value="72,000" />
-        <TerminalValue label="Put Wall" value="68,000" />
+        <TerminalValue label="Call Wall" value="72,000" trend="negative" />
+        <TerminalValue label="Put Wall" value="68,000" trend="positive" />
         <TerminalValue label="OI Concentration" value="70,000" />
         <TerminalValue label="Dealer Pivot" value="70,000" />
       </TerminalPanel>
 
       <TerminalPanel title="KEY LEVELS">
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div>
-            <div className="text-[10px] text-terminal-muted mb-1 font-semibold tracking-wider">GAMMA MAGNETS</div>
-            <div className="flex space-x-2 font-mono text-sm">
-              <span className="bg-terminal-bg border border-terminal-border px-2 py-0.5 rounded text-white">70k</span>
-              <span className="bg-terminal-bg border border-terminal-border px-2 py-0.5 rounded text-white">72k</span>
-              <span className="bg-terminal-bg border border-terminal-border px-2 py-0.5 rounded text-white">73k</span>
+            <div className="text-[9px] uppercase tracking-[0.2em] text-terminal-muted mb-2 font-bold">GAMMA MAGNETS</div>
+            <div className="flex space-x-2 font-mono text-xs">
+              <span className="bg-terminal-panel border border-terminal-border px-2 py-1 rounded-sm text-white font-bold">70,000</span>
+              <span className="bg-terminal-panel border border-terminal-border px-2 py-1 rounded-sm text-white font-bold">72,000</span>
+              <span className="bg-terminal-panel border border-terminal-border px-2 py-1 rounded-sm text-white font-bold">73,000</span>
             </div>
           </div>
           
-          <div>
-            <div className="text-[10px] text-terminal-muted mb-1 font-semibold tracking-wider">SHORT GAMMA POCKET</div>
-            <div className="font-mono text-sm text-terminal-negative bg-terminal-negative/10 border border-terminal-negative/30 px-2 py-1 rounded inline-block">
-              69.1k – 68.4k
+          <div className="p-2 bg-terminal-negative/5 border border-terminal-negative/20 rounded-sm">
+            <div className="text-[9px] uppercase tracking-[0.2em] text-terminal-negative/70 mb-1 font-bold">SHORT GAMMA POCKET</div>
+            <div className="font-mono text-xs text-terminal-negative font-bold">
+              69,100 – 68,400
             </div>
           </div>
 
-          <div>
-            <div className="text-[10px] text-terminal-muted mb-1 font-semibold tracking-wider">DEEP RISK POCKET</div>
-            <div className="font-mono text-sm text-terminal-negative bg-terminal-negative/10 border border-terminal-negative/30 px-2 py-1 rounded inline-block">
-              62.9k – 63.2k
+          <div className="p-2 bg-white/[0.02] border border-white/5 rounded-sm">
+            <div className="text-[9px] uppercase tracking-[0.2em] text-terminal-muted mb-1 font-bold">DEEP RISK POCKET</div>
+            <div className="font-mono text-xs text-white/80 font-bold">
+              62,900 – 63,200
             </div>
           </div>
         </div>

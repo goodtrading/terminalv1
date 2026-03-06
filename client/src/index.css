@@ -39,44 +39,43 @@
 }
 
 :root {
-  /* Default to dark mode for terminal */
   --background: 0 0% 4%;
   --foreground: 0 0% 90%;
   
-  --card: 0 0% 6%;
+  --card: 0 0% 7%;
   --card-foreground: 0 0% 90%;
   
-  --popover: 0 0% 6%;
+  --popover: 0 0% 7%;
   --popover-foreground: 0 0% 90%;
   
-  --primary: 0 85% 45%;
+  --primary: 0 100% 62%;
   --primary-foreground: 0 0% 100%;
   
-  --secondary: 0 0% 15%;
+  --secondary: 0 0% 12%;
   --secondary-foreground: 0 0% 90%;
   
-  --muted: 0 0% 12%;
-  --muted-foreground: 0 0% 60%;
+  --muted: 0 0% 10%;
+  --muted-foreground: 0 0% 50%;
   
-  --accent: 0 0% 15%;
+  --accent: 0 0% 12%;
   --accent-foreground: 0 0% 90%;
   
-  --destructive: 0 85% 45%;
+  --destructive: 0 100% 62%;
   --destructive-foreground: 0 0% 100%;
 
-  --border: 0 0% 15%;
-  --input: 0 0% 15%;
-  --ring: 0 85% 45%;
+  --border: 0 0% 12%;
+  --input: 0 0% 12%;
+  --ring: 0 100% 62%;
 
-  /* Terminal Theme */
-  --terminal-bg: 0 0% 2%;
-  --terminal-panel: 0 0% 6%;
+  /* Terminal Theme - Institutional Refinement */
+  --terminal-bg: 0 0% 4%;      /* #0b0b0b approximation */
+  --terminal-panel: 0 0% 7%;   /* #111111 approximation */
   --terminal-border: 0 0% 12%;
-  --terminal-text: 0 0% 85%;
-  --terminal-muted: 0 0% 55%;
+  --terminal-text: 0 0% 88%;
+  --terminal-muted: 0 0% 45%;
   --terminal-positive: 142 71% 45%;
-  --terminal-negative: 0 84% 60%;
-  --terminal-accent: 0 85% 45%; /* Deep Red */
+  --terminal-negative: 0 100% 62%; /* #ff3b3b */
+  --terminal-accent: 0 100% 62%;   /* #ff3b3b */
 }
 
 @layer base {
@@ -84,14 +83,14 @@
     @apply border-border;
   }
   body {
-    @apply font-sans antialiased bg-terminal-bg text-terminal-text;
+    @apply font-sans antialiased bg-terminal-bg text-terminal-text selection:bg-terminal-accent/30 selection:text-white;
   }
 }
 
 /* Scrollbar styling for terminal feel */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -100,9 +99,13 @@
 
 ::-webkit-scrollbar-thumb {
   background: hsl(var(--terminal-border)); 
-  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--terminal-muted)); 
+}
+
+/* Institutional UI Overrides */
+.terminal-panel-shadow {
+  box-shadow: 0 4px 20px -10px rgba(0,0,0,0.5);
 }
