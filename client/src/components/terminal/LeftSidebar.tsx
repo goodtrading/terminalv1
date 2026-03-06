@@ -41,7 +41,7 @@ export function LeftSidebar() {
         <TerminalValue label="Charm Exposure" value={dealer ? `${dealer.charmExposure >= 0 ? "+" : ""}${dealer.charmExposure.toFixed(2)}` : "--"} trend={dealer && dealer.charmExposure > 0 ? "positive" : "negative"} />
         <TerminalValue label="Charm Bias" value={dealer?.charmBias ?? "--"} trend={dealer?.charmBias === "BULLISH" ? "positive" : "negative"} isBadge />
         <TerminalValue label="Gamma Pressure" value={dealer?.gammaPressure ?? "--"} />
-        <TerminalValue label="Gamma Concen." value={dealer ? (dealer.gammaConcentration > 0.6 ? "HIGH" : dealer.gammaConcentration > 0.3 ? "MEDIUM" : "LOW") : "--"} />
+        <TerminalValue label="Gamma Concen." value={dealer ? dealer.gammaConcentration.toFixed(2) : "--"} />
       </TerminalPanel>
 
       <TerminalPanel title="OPTIONS POSITIONING">
