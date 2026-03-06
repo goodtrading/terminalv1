@@ -1,6 +1,16 @@
+import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel } from "./TerminalPanel";
+import { OptionsPositioning } from "@shared/schema";
 
 export function MainChart() {
+  const { data: positioning } = useQuery<OptionsPositioning>({ 
+    queryKey: ["/api/options-positioning"] 
+  });
+
+  const { data: market } = useQuery<any>({ 
+    queryKey: ["/api/market-state"] 
+  });
+
   return (
     <TerminalPanel className="flex-1 mb-2 border border-terminal-border relative" noPadding>
       {/* Chart Header Overlay */}
@@ -41,40 +51,28 @@ export function MainChart() {
         <div className="absolute inset-0 pt-20 pb-10 pr-16 relative">
           
           {/* Call Wall */}
-          <div className="absolute top-[18%] left-0 w-full flex items-center group">
-            <div className="w-full border-t border-terminal-negative/40"></div>
-            <div className="absolute right-0 bg-terminal-negative text-white text-[9px] font-bold px-2 py-0.5 font-mono shadow-lg uppercase tracking-tighter">CALL WALL • 72,000</div>
-          </div>
-
-          {/* Gamma Magnets */}
-          <div className="absolute top-[32%] left-0 w-full flex items-center">
-            <div className="w-full border-t border-white/20"></div>
-            <div className="absolute right-0 bg-white/10 backdrop-blur-sm text-white text-[9px] font-bold px-2 py-0.5 font-mono border border-white/20 uppercase tracking-tighter">MAGNET • 70,000</div>
-          </div>
-
-          {/* Transition Zone Band */}
-          <div className="absolute top-[38%] w-full h-[12%] bg-terminal-negative/5 border-y border-terminal-negative/10 flex items-center justify-start pl-4 overflow-hidden">
-             <div className="text-[8px] font-mono text-terminal-negative/30 font-bold uppercase tracking-[0.5em] whitespace-nowrap">
-               TRANSITION ZONE • TRANSITION ZONE • TRANSITION ZONE
-             </div>
-          </div>
+          {positioning && (
+            <div className="absolute left-0 w-full flex items-center group" style={{ top: '18%' }}>
+              <div className="w-full border-t border-terminal-negative/40"></div>
+              <div className="absolute right-0 bg-terminal-negative text-white text-[9px] font-bold px-2 py-0.5 font-mono shadow-lg uppercase tracking-tighter">CALL WALL • {positioning.callWall.toLocaleString()}</div>
+            </div>
+          )}
 
           {/* Gamma Flip */}
-          <div className="absolute top-[44%] left-0 w-full flex items-center z-10">
-            <div className="w-full border-t-2 border-terminal-accent/60"></div>
-            <div className="absolute right-0 bg-terminal-accent text-white text-[9px] font-bold px-2 py-0.5 font-mono shadow-lg uppercase tracking-tighter">GAMMA FLIP • 69,450</div>
-          </div>
-
-          {/* Short Gamma Pocket - Translucent Red Band */}
-          <div className="absolute top-[52%] w-full h-[15%] bg-terminal-negative/[0.08] border-y border-terminal-negative/20 flex flex-col justify-center overflow-hidden">
-            <div className="absolute left-4 text-terminal-negative/40 text-[9px] font-mono font-bold tracking-[0.3em] uppercase">SHORT GAMMA EXPANSION POCKET</div>
-          </div>
+          {market && (
+            <div className="absolute left-0 w-full flex items-center z-10" style={{ top: '44%' }}>
+              <div className="w-full border-t-2 border-terminal-accent/60"></div>
+              <div className="absolute right-0 bg-terminal-accent text-white text-[9px] font-bold px-2 py-0.5 font-mono shadow-lg uppercase tracking-tighter">GAMMA FLIP • {market.gammaFlip.toLocaleString()}</div>
+            </div>
+          )}
 
           {/* Put Wall */}
-          <div className="absolute bottom-[22%] left-0 w-full flex items-center">
-            <div className="w-full border-t border-terminal-positive/40"></div>
-            <div className="absolute right-0 bg-terminal-positive text-white text-[9px] font-bold px-2 py-0.5 font-mono shadow-lg uppercase tracking-tighter">PUT WALL • 68,000</div>
-          </div>
+          {positioning && (
+            <div className="absolute bottom-[22%] left-0 w-full flex items-center">
+              <div className="w-full border-t border-terminal-positive/40"></div>
+              <div className="absolute right-0 bg-terminal-positive text-white text-[9px] font-bold px-2 py-0.5 font-mono shadow-lg uppercase tracking-tighter">PUT WALL • {positioning.putWall.toLocaleString()}</div>
+            </div>
+          )}
 
           {/* Mock Price Action (Vector Curve) */}
           <svg className="absolute inset-0 w-full h-full opacity-40" preserveAspectRatio="none" viewBox="0 0 100 100">
