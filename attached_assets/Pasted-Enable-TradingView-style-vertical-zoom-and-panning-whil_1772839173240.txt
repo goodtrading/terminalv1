@@ -1,0 +1,91 @@
+Enable TradingView-style vertical zoom and panning while still including structural levels in autoscale.
+
+IMPORTANT:
+Do NOT lock the price scale.
+Do NOT use setVisibleRange.
+Do NOT force a fixed min/max range.
+
+The current implementation forces the chart range using setVisibleRange, which compresses the chart and prevents vertical zooming like TradingView.
+
+====================================================
+GOAL
+====================================================
+
+Allow users to:
+
+- zoom vertically using the price axis
+- drag the chart up and down
+- scroll normally
+
+while still ensuring that structural levels such as:
+
+- Gamma Flip
+- Transition Zone
+- Dealer Pivot
+- Call Wall
+- Put Wall
+- Gamma Magnets
+- Short Gamma Pocket
+- Deep Risk Pocket
+
+are included in the autoscale calculation.
+
+====================================================
+IMPLEMENTATION
+====================================================
+
+Remove any logic that calls:
+
+chart.priceScale("right").setVisibleRange()
+
+Instead, use the Lightweight Charts autoscale extension system.
+
+Attach an autoscaleInfoProvider to the main price series.
+
+Example concept:
+
+series.applyOptions({
+  autoscaleInfoProvider: (baseImplementation) => {
+    const base = baseImplementation();
+
+    const structuralLevels = [
+      gammaFlip,
+      transitionZoneStart,
+      transitionZoneEnd,
+      dealerPivot,
+      callWall,
+      putWall,
+      ...gammaMagnets,
+      shortGammaPocketStart,
+      shortGammaPocketEnd,
+      deepRiskPocketStart,
+      deepRiskPocketEnd
+    ];
+
+    const minLevel = Math.min(...structuralLevels);
+    const maxLevel = Math.max(...structuralLevels);
+
+    return {
+      priceRange: {
+        minValue: Math.min(base.priceRange.minValue, minLevel),
+        maxValue: Math.max(base.priceRange.maxValue, maxLevel)
+      }
+    };
+  }
+});
+
+This extends autoscale instead of overriding it.
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+Users can:
+
+- zoom vertically using the price axis
+- drag the chart vertically
+- scroll normally
+
+while the autoscale automatically includes structural levels when needed.
+
+The chart should behave similarly to TradingView interaction.

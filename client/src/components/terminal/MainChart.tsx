@@ -327,29 +327,35 @@ export function MainChart() {
         activeLevels.push(positioning.dealerPivot);
       }
 
-      // Dynamic Price Scale Adjustment
-      if (activeLevels.length > 0) {
-        const minL = Math.min(...activeLevels);
-        const maxL = Math.max(...activeLevels);
-        
-        const finalMin = Math.min(candlesMin, minL);
-        const finalMax = Math.max(candlesMax, maxL);
-        
-        const padding = (finalMax - finalMin) * 0.08;
-        
-        chartRef.current.priceScale("right").applyOptions({
-          autoScale: false,
-        });
-        
-        chartRef.current.priceScale("right").setVisibleRange({
-          from: finalMin - padding,
-          to: finalMax + padding,
-        });
-      } else {
-        chartRef.current.priceScale("right").applyOptions({
-          autoScale: true,
-        });
-      }
+      // TradingView-style Autoscale Extension
+      candleSeries.applyOptions({
+        autoscaleInfoProvider: () => {
+          const structuralLevels: number[] = [];
+          if (toggles.flip && market?.gammaFlip) structuralLevels.push(market.gammaFlip);
+          if (market?.transitionZoneStart) structuralLevels.push(market.transitionZoneStart);
+          if (market?.transitionZoneEnd) structuralLevels.push(market.transitionZoneEnd);
+          if (toggles.walls && positioning?.callWall) structuralLevels.push(positioning.callWall);
+          if (toggles.walls && positioning?.putWall) structuralLevels.push(positioning.putWall);
+          if (toggles.dealer && positioning?.dealerPivot) structuralLevels.push(positioning.dealerPivot);
+          if (toggles.magnets && levels?.gammaMagnets) structuralLevels.push(...levels.gammaMagnets);
+          if (toggles.pockets && levels?.shortGammaPocketStart) structuralLevels.push(levels.shortGammaPocketStart, levels.shortGammaPocketEnd);
+          if (toggles.pockets && levels?.deepRiskPocketStart) structuralLevels.push(levels.deepRiskPocketStart, levels.deepRiskPocketEnd);
+
+          const minL = structuralLevels.length > 0 ? Math.min(...structuralLevels) : null;
+          const maxL = structuralLevels.length > 0 ? Math.max(...structuralLevels) : null;
+
+          return {
+            priceRange: {
+              minValue: minL !== null ? Math.min(candlesMin, minL) : candlesMin,
+              maxValue: maxL !== null ? Math.max(candlesMax, maxL) : candlesMax,
+            },
+            margins: {
+              above: 0.1,
+              below: 0.1,
+            },
+          };
+        },
+      });
     } catch (err) {
       console.error("[MainChart] Overlay update failed:", err);
     }
