@@ -1,0 +1,122 @@
+Convert the current QUANTUM_SYS dashboard into a functional analytics application.
+
+Do not modify the existing UI layout.
+
+Build the backend engine that powers the dashboard with options analytics.
+
+Create a backend module that calculates institutional positioning metrics.
+
+The engine must support these calculations:
+
+------------------------------------------------
+
+Gamma Exposure (GEX)
+
+Formula:
+GEX = Gamma × Open Interest × Spot Price²
+
+Aggregate gamma exposure across all strikes to calculate total market GEX.
+
+------------------------------------------------
+
+Gamma Flip
+
+Determine the price level where total dealer gamma changes sign.
+
+If total gamma > 0 → LONG GAMMA regime  
+If total gamma < 0 → SHORT GAMMA regime
+
+Calculate and output:
+
+Gamma Flip Price
+Gamma Regime
+Distance to Flip
+Transition Zone
+
+------------------------------------------------
+
+Dealer Exposure Metrics
+
+Calculate:
+
+Vanna Exposure
+Charm Exposure
+
+Vanna measures exposure to changes in volatility.
+
+Charm measures exposure decay as time passes.
+
+------------------------------------------------
+
+Options Positioning
+
+Detect structural levels based on open interest distribution:
+
+Call Wall
+Put Wall
+OI Concentration
+Dealer Pivot
+
+------------------------------------------------
+
+Key Levels
+
+Calculate:
+
+Gamma Magnets
+Short Gamma Pocket
+Deep Risk Pocket
+
+------------------------------------------------
+
+Data Source
+
+Create a CSV parser that reads Deribit options data.
+
+Expected columns:
+
+strike
+gamma
+open_interest
+implied_volatility
+option_type
+expiration
+
+------------------------------------------------
+
+Scenario Engine
+
+Generate three automated trading scenarios:
+
+Base Case
+Alternative Case
+Volatility Case
+
+Each scenario must include:
+
+probability
+market thesis
+key levels
+invalidation condition
+
+------------------------------------------------
+
+API Layer
+
+Create API endpoints:
+
+/market-state
+/dealer-exposure
+/options-positioning
+/key-levels
+/scenarios
+
+These endpoints will feed the existing dashboard UI.
+
+------------------------------------------------
+
+Important:
+
+Do not redesign the UI.
+
+Only connect real data calculations to the existing panels.

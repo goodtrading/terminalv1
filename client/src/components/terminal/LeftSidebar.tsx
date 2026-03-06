@@ -1,25 +1,35 @@
+import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel, TerminalValue } from "./TerminalPanel";
+import { MarketState, DealerExposure } from "@shared/schema";
 
 export function LeftSidebar() {
+  const { data: market } = useQuery<MarketState>({ 
+    queryKey: ["/api/market-state"] 
+  });
+  
+  const { data: dealer } = useQuery<DealerExposure>({ 
+    queryKey: ["/api/dealer-exposure"] 
+  });
+
   return (
     <div className="w-64 h-full flex flex-col gap-2 overflow-y-auto p-2 border-r border-terminal-border bg-terminal-bg shrink-0">
       
       <TerminalPanel title="MARKET STATE">
-        <TerminalValue label="Gamma Regime" value="LONG GAMMA" trend="positive" isBadge />
-        <TerminalValue label="Total GEX" value="+2.05B" trend="positive" />
-        <TerminalValue label="Gamma Flip" value="69,450" />
-        <TerminalValue label="Distance to Flip" value="2.04%" />
-        <TerminalValue label="Transition Zone" value="69,100 – 69,700" />
-        <TerminalValue label="Gamma Accel" value="HIGH" trend="positive" />
+        <TerminalValue label="Gamma Regime" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge />
+        <TerminalValue label="Total GEX" value={market ? `${(market.totalGex / 1e9).toFixed(2)}B` : "--"} trend="positive" />
+        <TerminalValue label="Gamma Flip" value={market?.gammaFlip.toLocaleString() ?? "--"} />
+        <TerminalValue label="Distance to Flip" value={market ? `${market.distanceToFlip}%` : "--"} />
+        <TerminalValue label="Transition Zone" value={market ? `${market.transitionZoneStart.toLocaleString()} – ${market.transitionZoneEnd.toLocaleString()}` : "--"} />
+        <TerminalValue label="Gamma Accel" value={market?.gammaAcceleration ?? "--"} trend="positive" />
       </TerminalPanel>
 
       <TerminalPanel title="DEALER EXPOSURE">
-        <TerminalValue label="Vanna Exposure" value="+212M" trend="positive" />
-        <TerminalValue label="Vanna Bias" value="BULLISH" trend="positive" isBadge />
-        <TerminalValue label="Charm Exposure" value="-38.1B" trend="negative" />
-        <TerminalValue label="Charm Bias" value="BULLISH" trend="positive" isBadge />
-        <TerminalValue label="Gamma Pressure" value="HIGH" />
-        <TerminalValue label="Gamma Concen." value="72%" />
+        <TerminalValue label="Vanna Exposure" value={dealer ? `${(dealer.vannaExposure / 1e6).toFixed(0)}M` : "--"} trend="positive" />
+        <TerminalValue label="Vanna Bias" value={dealer?.vannaBias ?? "--"} trend="positive" isBadge />
+        <TerminalValue label="Charm Exposure" value={dealer ? `${(dealer.charmExposure / 1e9).toFixed(1)}B` : "--"} trend="negative" />
+        <TerminalValue label="Charm Bias" value={dealer?.charmBias ?? "--"} trend="positive" isBadge />
+        <TerminalValue label="Gamma Pressure" value={dealer?.gammaPressure ?? "--"} />
+        <TerminalValue label="Gamma Concen." value={dealer ? `${dealer.gammaConcentration}%` : "--"} />
       </TerminalPanel>
 
       <TerminalPanel title="OPTIONS POSITIONING">
