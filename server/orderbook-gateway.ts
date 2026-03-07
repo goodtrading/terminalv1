@@ -275,19 +275,23 @@ export class OrderBookGateway {
         .forEach(c => gammaLevels.push({ price: c.strike, label: "Gamma Cliff" }));
     }
 
+    const confluenceRadius = range;
     for (const gl of gammaLevels) {
-      const nearbyHeat = heatZones.filter(
-        z => gl.price >= z.priceStart - binSize && gl.price <= z.priceEnd + binSize
-      );
+      const nearbyHeat = heatZones.filter(z => {
+        const zMid = (z.priceStart + z.priceEnd) / 2;
+        return Math.abs(gl.price - zMid) <= confluenceRadius;
+      });
       if (nearbyHeat.length > 0) {
         const totalIntensity = nearbyHeat.reduce((s, z) => s + z.intensity, 0);
+        const distFactor = 1 - Math.min(1, Math.abs(gl.price - spotPrice) / range);
         const sources = [gl.label, ...nearbyHeat.map(z => `${z.side} liquidity`)];
         const uniqueSources = [...new Set(sources)];
         const dominantSide = nearbyHeat[0]?.side || "NEUTRAL";
+        const bestHeat = nearbyHeat.sort((a, b) => b.intensity - a.intensity)[0];
         confluenceZones.push({
-          priceStart: Math.min(gl.price, ...nearbyHeat.map(z => z.priceStart)),
-          priceEnd: Math.max(gl.price, ...nearbyHeat.map(z => z.priceEnd)),
-          confluenceScore: Math.round(Math.min(1, totalIntensity * 0.8 + 0.3) * 100) / 100,
+          priceStart: bestHeat.priceStart,
+          priceEnd: bestHeat.priceEnd,
+          confluenceScore: Math.round(Math.min(1, totalIntensity * 0.5 + 0.3 + distFactor * 0.2) * 100) / 100,
           sources: uniqueSources.slice(0, 4),
           side: dominantSide as "BID" | "ASK" | "NEUTRAL"
         });

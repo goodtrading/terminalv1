@@ -309,17 +309,64 @@ export function MainChart() {
       const heatmap = positioning_engines?.liquidityHeatmap;
       if (heatmap) {
         const confluenceSet = new Set<number>();
-        const confluenceZones = (heatmap.liquidityConfluenceZones || [])
-          .sort((a: any, b: any) => b.confluenceScore - a.confluenceScore)
-          .slice(0, 4);
-        confluenceZones.forEach((cz: any) => {
-          const mid = (cz.priceStart + cz.priceEnd) / 2;
-          const label = `γ CONFLUENCE ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
-          addLevel(mid, "rgba(168, 85, 247, 0.6)", label, LineStyle.Solid, 2);
-          for (let p = cz.priceStart; p <= cz.priceEnd; p += 250) {
-            confluenceSet.add(Math.round(Math.floor(p / 250) * 250));
+        const binSize = price > 50000 ? 250 : price > 10000 ? 100 : 50;
+
+        const gammaLevels: { price: number; label: string }[] = [];
+        if (positioning?.putWall) gammaLevels.push({ price: positioning.putWall, label: "Put Wall" });
+        if (positioning?.callWall) gammaLevels.push({ price: positioning.callWall, label: "Call Wall" });
+        if (positioning?.dealerPivot) gammaLevels.push({ price: positioning.dealerPivot, label: "Dealer Pivot" });
+        if (positioning?.gammaMagnet) gammaLevels.push({ price: positioning.gammaMagnet, label: "Gamma Magnet" });
+        if (levels?.gammaMagnets) {
+          levels.gammaMagnets.forEach((m: any) => {
+            const p = typeof m === "number" ? m : m?.strike;
+            if (p) gammaLevels.push({ price: p, label: "Gamma Magnet" });
+          });
+        }
+        if (positioning?.gammaMagnets) {
+          (Array.isArray(positioning.gammaMagnets) ? positioning.gammaMagnets : []).forEach((m: any) => {
+            const p = typeof m === "number" ? m : m?.strike;
+            if (p && !gammaLevels.some(g => g.price === p)) gammaLevels.push({ price: p, label: "Gamma Magnet" });
+          });
+        }
+        if (positioning_engines?.gammaCurveEngine?.gammaCliffs) {
+          positioning_engines.gammaCurveEngine.gammaCliffs
+            .filter((c: any) => Math.abs(c.strike - price) <= price * 0.04)
+            .sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength))
+            .slice(0, 8)
+            .forEach((c: any) => gammaLevels.push({ price: c.strike, label: "Gamma Cliff" }));
+        }
+
+        const allHeatZones: any[] = heatmap.liquidityHeatZones || [];
+        const seen = new Set<number>();
+
+        for (const gl of gammaLevels) {
+          let bestZone: any = null;
+          let bestDist = Infinity;
+          for (const zone of allHeatZones) {
+            const zMid = (zone.priceStart + zone.priceEnd) / 2;
+            const dist = Math.abs(gl.price - zMid);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestZone = zone;
+            }
           }
-        });
+          if (!bestZone) continue;
+          const zMid = (bestZone.priceStart + bestZone.priceEnd) / 2;
+          const midKey = Math.round(zMid);
+          if (seen.has(midKey)) continue;
+          const proximityPct = bestDist / price;
+          if (proximityPct > 0.06) continue;
+          seen.add(midKey);
+          const proximityBoost = Math.max(0, 1 - proximityPct / 0.06);
+          const opacity = Math.min(0.85, 0.3 + bestZone.intensity * 0.3 + proximityBoost * 0.25);
+          const width = (bestZone.intensity >= 0.5 && proximityPct < 0.02) ? 3 : 2;
+          const fmtPrice = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(p);
+          const label = `γ ${gl.label.toUpperCase()} ${fmtPrice(zMid)}`;
+          addLevel(zMid, `rgba(168, 85, 247, ${opacity.toFixed(2)})`, label, LineStyle.Solid, width);
+          for (let p = bestZone.priceStart - binSize; p <= bestZone.priceEnd + binSize; p += binSize) {
+            confluenceSet.add(Math.round(Math.floor(p / binSize) * binSize));
+          }
+        }
 
         const bidZones = (heatmap.liquidityHeatZones || [])
           .filter((z: any) => z.side === "BID" && z.intensity >= 0.02)
@@ -341,9 +388,16 @@ export function MainChart() {
         };
         const intensityToStyle = (int: number, near: boolean) => (int >= 0.5 || near) ? LineStyle.Solid : LineStyle.Dotted;
 
+        const isInConfluence = (zone: any) => {
+          const bs = price > 50000 ? 250 : price > 10000 ? 100 : 50;
+          const start = Math.round(Math.floor(zone.priceStart / bs) * bs);
+          const mid = Math.round(Math.floor(((zone.priceStart + zone.priceEnd) / 2) / bs) * bs);
+          return confluenceSet.has(start) || confluenceSet.has(mid);
+        };
+
         bidZones.forEach((zone: any) => {
           const mid = (zone.priceStart + zone.priceEnd) / 2;
-          if (confluenceSet.has(zone.priceStart)) return;
+          if (isInConfluence(zone)) return;
           const near = Math.abs(mid - price) <= nearThreshold;
           const opacity = intensityToOpacity(zone.intensity, near);
           const width = intensityToWidth(zone.intensity, near);
@@ -353,7 +407,7 @@ export function MainChart() {
 
         askZones.forEach((zone: any) => {
           const mid = (zone.priceStart + zone.priceEnd) / 2;
-          if (confluenceSet.has(zone.priceStart)) return;
+          if (isInConfluence(zone)) return;
           const near = Math.abs(mid - price) <= nearThreshold;
           const opacity = intensityToOpacity(zone.intensity, near);
           const width = intensityToWidth(zone.intensity, near);
