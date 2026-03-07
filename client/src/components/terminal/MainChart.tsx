@@ -590,7 +590,7 @@ export function MainChart() {
       
       <div 
         ref={chartContainerRef} 
-        className="w-full h-full"
+        className="w-full h-full chart-container-root"
         style={{ pointerEvents: 'auto' }}
       />
     </TerminalPanel>

@@ -185,3 +185,8 @@
 .terminal-panel-shadow {
   box-shadow: 0 4px 20px -10px rgba(0,0,0,0.5);
 }
+
+/* Ensure chart container stays black and doesn't inherit background-color from parent unless intended */
+.chart-container-root {
+  background-color: #000000 !important;
+}
