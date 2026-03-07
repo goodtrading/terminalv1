@@ -217,21 +217,6 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         </div>
       </TerminalPanel>
 
-      <TerminalPanel title="EXECUTION DRIVERS">
-        <div className="space-y-1" data-testid="section-execution-drivers">
-          {(tradeDecision?.executionReason || []).length > 0 ? (
-            (tradeDecision.executionReason as string[]).map((reason: string, i: number) => (
-              <div key={i} className="flex items-start gap-1.5 py-0.5" data-testid={`text-execution-reason-${i}`}>
-                <span className="text-terminal-accent text-[10px] mt-[1px] shrink-0">&bull;</span>
-                <span className="text-[10px] terminal-text-secondary font-medium leading-tight">{reason}</span>
-              </div>
-            ))
-          ) : (
-            <div className="text-[9px] terminal-text-muted italic py-1.5">No execution drivers available</div>
-          )}
-        </div>
-      </TerminalPanel>
-
       <TerminalPanel title="DAILY SCENARIOS">
         <div className="space-y-3">
           {(scenarios as TradingScenario[])?.map((scenario) => (
