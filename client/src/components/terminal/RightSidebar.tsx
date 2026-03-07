@@ -236,11 +236,18 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
           const vacuumRisk = vacuum?.vacuumRisk || "LOW";
           const vacuumZones = vacuum?.activeZones?.length || 0;
           const vacuumRiskColor = vacuumRisk === "EXTREME" ? "red" : vacuumRisk === "HIGH" ? "orange" : vacuumRisk === "MEDIUM" ? "yellow" : "gray";
+          const predictiveRisk = vacuum?.predictiveRisk || "LOW";
+          const proximityColor = predictiveRisk === "IMMINENT" ? "red" : predictiveRisk === "HIGH" ? "orange" : predictiveRisk === "MEDIUM" ? "yellow" : "gray";
+          const thinZone = vacuum?.nearestThinLiquidityZone;
+          const thinDir = vacuum?.nearestThinLiquidityDirection;
           const fmtK = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(Math.round(p));
+          const thinLabel = thinZone ? `${fmtK(thinZone)} ${thinDir === "UP" ? "ABOVE" : "BELOW"}` : "--";
           return (
             <div className="flex flex-col gap-2">
               <StatusValue label="Pressure" value={pressure.replace(/_/g, " ")} color={pressureColor} />
               <StatusValue label="Vacuum Risk" value={vacuumRisk} color={vacuumRiskColor} />
+              <StatusValue label="Vacuum Proximity" value={predictiveRisk} color={proximityColor} />
+              <StatusValue label="Thin Liquidity" value={thinLabel} color={thinZone ? "blue" : "gray"} />
               <StatusValue label="Vacuum Zones" value={String(vacuumZones)} color={vacuumZones > 0 ? "blue" : "gray"} />
               {vacuum?.activeZones?.length > 0 && (
                 <div className="flex flex-col gap-0.5">
@@ -248,7 +255,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
                     <div key={i} className="flex items-start gap-1.5">
                       <span className="text-[8px] mt-[3px] text-blue-400">◆</span>
                       <span className="text-[10px] text-white/50 font-mono leading-snug">
-                        {z.direction} {fmtK(z.priceStart)}–{fmtK(z.priceEnd)} ({Math.round(z.strength * 100)}%)
+                        {z.direction} {fmtK(z.priceStart)}–{fmtK(z.priceEnd)} {z.strengthClass} ({Math.round(z.strength * 100)}%)
                       </span>
                     </div>
                   ))}

@@ -1,0 +1,223 @@
+Upgrade the Liquidity Vacuum module from simple event detection into a predictive liquidity vacuum anticipation system.
+
+Goal:
+Improve the current vacuum engine so the terminal can detect not only confirmed liquidity vacuums, but also approaching thin-liquidity zones and rising acceleration risk before the move happens.
+
+Do NOT replace the current vacuum detector.
+Extend it with predictive logic, stronger UI, and better context.
+
+----------------------------------------
+1. Add VACUUM PROXIMITY logic
+----------------------------------------
+
+Create a new metric:
+
+vacuumProximity
+
+Purpose:
+Measure how close current price is to entering a thin-liquidity zone that could trigger acceleration.
+
+Inputs:
+- current orderbook depth by price zone
+- nearby resting liquidity
+- spread behavior
+- short-term price velocity
+- distance to nearest thin-liquidity area
+
+Output:
+A normalized score from 0 to 100.
+
+Interpretation:
+0–25   = LOW
+26–50  = MEDIUM
+51–75  = HIGH
+76–100 = IMMINENT
+
+Render in Liquidity Map panel as:
+
+VACUUM PROXIMITY
+LOW / MEDIUM / HIGH / IMMINENT
+
+----------------------------------------
+2. Add THIN LIQUIDITY AHEAD detection
+----------------------------------------
+
+Detect the nearest price zone above or below current spot where orderbook depth is significantly below rolling average.
+
+Condition example:
+zoneDepth < averageDepth * 0.35
+
+If found, expose:
+
+{
+  nearestThinLiquidityZone: number,
+  direction: "UP" | "DOWN",
+  thinnessScore: number
+}
+
+Render in Liquidity Map panel as:
+
+THIN LIQUIDITY
+67.1k ABOVE
+or
+66.4k BELOW
+
+Goal:
+Show the next area where price could accelerate if triggered.
+
+----------------------------------------
+3. Keep confirmed VACUUM EVENTS
+----------------------------------------
+
+Do not remove current confirmed event logic.
+
+Confirmed vacuum still requires:
+- depth collapse
+- spread expansion
+- rapid displacement
+
+Keep emitting:
+LIQUIDITY_VACUUM events
+
+But now distinguish between:
+
+- predictive state
+- confirmed event
+
+----------------------------------------
+4. Add predictive + confirmed state model
+----------------------------------------
+
+Create two layers:
+
+A) Predictive vacuum state
+Indicates risk of entering a vacuum soon.
+
+B) Confirmed vacuum event
+Indicates an active vacuum is happening right now.
+
+Suggested schema:
+
+{
+  predictiveRisk: "LOW" | "MEDIUM" | "HIGH" | "IMMINENT",
+  nearestThinLiquidityZone: number | null,
+  nearestThinLiquidityDirection: "UP" | "DOWN" | null,
+  confirmedVacuumActive: boolean,
+  confirmedVacuumZones: VacuumZone[]
+}
+
+----------------------------------------
+5. Improve chart visualization
+----------------------------------------
+
+When predictive risk is HIGH or IMMINENT:
+- render subtle dashed blue zone markers ahead of price
+- label: THIN LIQUIDITY
+- low opacity, anticipatory style
+
+When confirmed vacuum is active:
+- render stronger translucent blue band
+- label: VACUUM
+- add directional acceleration arrows
+- stronger opacity than predictive markers
+
+Visual distinction:
+Predictive = subtle / dashed / anticipatory
+Confirmed = solid / stronger / active
+
+----------------------------------------
+6. Upgrade Liquidity Map panel
+----------------------------------------
+
+Refactor Liquidity Map section to show:
+
+PRESSURE
+VACUUM RISK
+VACUUM PROXIMITY
+THIN LIQUIDITY
+VACUUM ZONES
+
+Example:
+
+PRESSURE          BALANCED
+VACUUM RISK       LOW
+VACUUM PROXIMITY  HIGH
+THIN LIQUIDITY    67.1k BELOW
+VACUUM ZONES      0
+
+----------------------------------------
+7. Add strength classification
+----------------------------------------
+
+For confirmed vacuum events, classify strength:
+
+LOW
+MEDIUM
+HIGH
+EXTREME
+
+Based on:
+- depth collapse severity
+- spread expansion magnitude
+- displacement speed
+
+Render:
+VACUUM STRENGTH
+
+This can appear in tooltip or panel when vacuum is active.
+
+----------------------------------------
+8. Add Learn Mode explanation
+----------------------------------------
+
+Add Learn Mode entries for:
+
+LIQUIDITY VACUUM
+VACUUM PROXIMITY
+THIN LIQUIDITY
+
+Definitions:
+
+LIQUIDITY VACUUM
+A market condition where resting liquidity becomes thin and price accelerates quickly through the orderbook.
+
+VACUUM PROXIMITY
+A forward-looking measure of how close price is to entering a thin-liquidity zone.
+
+THIN LIQUIDITY
+A nearby price area with unusually low resting orders, where movement can accelerate if triggered.
+
+Each entry must include:
+- definition
+- interpretation
+- tradingUse
+
+----------------------------------------
+9. Integration requirements
+----------------------------------------
+
+Update or extend:
+
+engine/liquidityVacuum.ts
+overlay/liquidityVacuumOverlay.ts
+right-sidebar liquidity map panel
+learn tooltip dictionary
+
+Keep architecture modular:
+- detection
+- predictive scoring
+- rendering
+- UI summary
+
+----------------------------------------
+10. Acceptance criteria
+----------------------------------------
+
+After implementation:
+
+- The terminal still detects confirmed vacuum events.
+- The terminal now also anticipates thin-liquidity acceleration zones.
+- Liquidity Map shows Vacuum Proximity and Thin Liquidity Ahead.
+- Predictive and confirmed vacuum states are visually different.
+- Learn Mode explains all new vacuum concepts.
+- The module feels institutional, predictive, and useful for real trading decisions.

@@ -204,9 +204,21 @@ const CONCEPTS: Record<string, ConceptEntry> = {
   },
   "Liquidity Vacuum": {
     title: "LIQUIDITY VACUUM",
-    definition: "A detected zone where orderbook depth collapses, the bid-ask spread expands, and price displaces rapidly due to lack of liquidity.",
-    interpretation: "Vacuum zones indicate areas where the orderbook became thin and price accelerated without meaningful resistance. This suggests fragile market structure.",
+    definition: "A confirmed market condition where resting liquidity collapses, the bid-ask spread expands, and price accelerates rapidly through the orderbook.",
+    interpretation: "Vacuum zones indicate areas where the orderbook became thin and price displaced without meaningful resistance. Confirmed vacuums signal fragile market structure.",
     tradingUse: "Avoid placing entries inside active vacuum zones. Price may revisit the zone to fill the gap. Use vacuum events as confirmation of breakout strength or exhaustion.",
+  },
+  "Vacuum Proximity": {
+    title: "VACUUM PROXIMITY",
+    definition: "A forward-looking measure of how close price is to entering a thin-liquidity zone that could trigger rapid acceleration.",
+    interpretation: "Combines current depth ratio, spread behavior, price velocity, and distance to the nearest thin-liquidity area into a 0–100 score. IMMINENT means conditions are aligned for a vacuum event.",
+    tradingUse: "When proximity is HIGH or IMMINENT, tighten stops and prepare for sudden acceleration. Avoid fading price moves in the direction of the thin-liquidity zone.",
+  },
+  "Thin Liquidity": {
+    title: "THIN LIQUIDITY",
+    definition: "A nearby price area with unusually low resting orders compared to the rolling average depth, where price movement can accelerate if triggered.",
+    interpretation: "Identifies the closest zone above or below spot where orderbook depth is significantly below normal levels. Acts as an early warning for potential vacuum events.",
+    tradingUse: "Treat thin-liquidity zones as low-friction areas. If price enters this zone with momentum, expect acceleration rather than absorption. Plan exits accordingly.",
   },
 };
 

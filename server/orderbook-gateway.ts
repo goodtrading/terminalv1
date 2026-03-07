@@ -38,6 +38,7 @@ export const vacuumEventSchema = z.object({
   priceStart: z.number(),
   priceEnd: z.number(),
   strength: z.number(),
+  strengthClass: z.enum(["LOW", "MEDIUM", "HIGH", "EXTREME"]),
   timestamp: z.number(),
 });
 
@@ -46,6 +47,12 @@ export const vacuumStateSchema = z.object({
   activeZones: z.array(vacuumEventSchema),
   depthRatio: z.number(),
   spreadRatio: z.number(),
+  vacuumProximity: z.number(),
+  predictiveRisk: z.enum(["LOW", "MEDIUM", "HIGH", "IMMINENT"]),
+  nearestThinLiquidityZone: z.number().nullable(),
+  nearestThinLiquidityDirection: z.enum(["UP", "DOWN"]).nullable(),
+  nearestThinLiquidityScore: z.number(),
+  confirmedVacuumActive: z.boolean(),
 });
 
 export const liquidityHeatmapSchema = z.object({
@@ -410,7 +417,7 @@ export class OrderBookGateway {
         timestamp: Date.now()
       },
       liquidityMapLines: ["Order book data unavailable"],
-      liquidityVacuum: { vacuumRisk: "LOW", activeZones: [], depthRatio: 1, spreadRatio: 1 },
+      liquidityVacuum: { vacuumRisk: "LOW", activeZones: [], depthRatio: 1, spreadRatio: 1, vacuumProximity: 0, predictiveRisk: "LOW" as const, nearestThinLiquidityZone: null, nearestThinLiquidityDirection: null, nearestThinLiquidityScore: 0, confirmedVacuumActive: false },
     };
   }
 }
