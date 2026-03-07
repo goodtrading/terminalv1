@@ -480,6 +480,13 @@ export class DeribitOptionsGateway {
             positionSizeSuggestion: "NO_TRADE" as const,
             executionReason: ["Insufficient data", "No signal alignment"]
           },
+          liquidityCascadeEngine: {
+            cascadeRisk: "LOW" as const,
+            cascadeDirection: "NONE" as const,
+            cascadeTrigger: "Awaiting options data ingestion",
+            liquidationPocket: "--",
+            cascadeDrivers: ["Insufficient data", "Awaiting options ingestion", "No signal alignment"]
+          },
           source: dataSource
         };
       }
@@ -1510,6 +1517,7 @@ export class DeribitOptionsGateway {
         volatilityExpansionDetector,
         institutionalBiasEngine,
         tradeDecisionEngine,
+        liquidityCascadeEngine,
         source: dataSource
       };
     } catch (e) {
@@ -1560,6 +1568,13 @@ export class DeribitOptionsGateway {
           riskLevel: "MEDIUM",
           positionSizeSuggestion: "NO_TRADE",
           executionReason: ["Analytics engine error", "No signal alignment"]
+        },
+        liquidityCascadeEngine: {
+          cascadeRisk: "LOW",
+          cascadeDirection: "NONE",
+          cascadeTrigger: "Analytics engine recovery required",
+          liquidationPocket: "--",
+          cascadeDrivers: ["Analytics engine error", "Using fallback values", "No signal alignment"]
         },
         source: dataSource
       } as any;

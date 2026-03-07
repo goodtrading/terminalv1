@@ -43,12 +43,13 @@ High-density institutional crypto derivatives trading dashboard with real BTC ma
 13. Volatility Expansion Detector (volExpansionState, expansionDirection, expansionProbability, playbookShiftSuggested, suggestedPlaybook, expansionTriggerZone)
 14. Institutional Bias Engine (institutionalBias, biasConfidence, biasDrivers, biasInvalidation, biasHorizon)
 15. Trade Decision Engine (tradeState, tradeDirection, entryCondition, riskLevel, positionSizeSuggestion, executionReason)
+16. Liquidity Cascade Engine (cascadeRisk, cascadeDirection, cascadeTrigger, liquidationPocket, cascadeDrivers)
 
 ## Terminal State Data Flow
 `getTerminalState()` in `terminal-state.ts`:
 - Reads DB for market, exposure, positioning, levels, scenarios
 - Calls `DeribitOptionsGateway.ingestOptions()` (live API primary, CSV fallback)
-- Injects `tradingPlaybook`, `volatilityExpansionDetector`, `gammaCurveEngine`, `institutionalBiasEngine`, `tradeDecisionEngine`, and `optionsSource` into `positioning`
+- Injects `tradingPlaybook`, `volatilityExpansionDetector`, `gammaCurveEngine`, `institutionalBiasEngine`, `tradeDecisionEngine`, `liquidityCascadeEngine`, and `optionsSource` into `positioning`
 - Reads cached ticker from MarketDataGateway
 - Returns unified state at `/api/terminal/state`
 
