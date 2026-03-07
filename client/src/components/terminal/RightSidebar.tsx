@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel, TerminalValue } from "./TerminalPanel";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { TradingScenario, MarketState, OptionsPositioning, DealerExposure, DealerHedgingFlow } from "@shared/schema";
+import { TradingScenario, MarketState, OptionsPositioning, DealerExposure, DealerHedgingFlow, KeyLevels } from "@shared/schema";
 import { X } from "lucide-react";
 
 interface RightSidebarProps {
@@ -49,12 +49,39 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     refetchInterval: 5000
   });
 
+  const { data: levels } = useQuery<KeyLevels>({ 
+    queryKey: ["/api/key-levels"],
+    refetchInterval: 5000
+  });
+
+  const { data: candles } = useQuery({
+    queryKey: ["btc-candles-lightweight"],
+    queryFn: async () => {
+      const res = await fetch("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=1");
+      const data = await res.json();
+      return data.map((d: any) => ({
+        close: parseFloat(d[4]),
+      }));
+    },
+    refetchInterval: 10000
+  });
+
+  const currentPrice = candles?.[0]?.close || 0;
+
   const activeScenario = useMemo(() => 
     scenarios?.find(s => s.id === selectedId) || null,
     [scenarios, selectedId]
   );
 
-  const qualityMetrics = useMemo(() => {
+  const parseLevel = (val: string): number => {
+    const clean = val.toLowerCase().replace(/,/g, '').trim();
+    if (clean.endsWith('k')) {
+      return parseFloat(clean.slice(0, -1)) * 1000;
+    }
+    return parseFloat(clean);
+  };
+
+  const engineData = useMemo(() => {
     let score = 0;
     
     // 1. Scenario confidence
@@ -107,8 +134,48 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     if (market?.gammaRegime === "LONG GAMMA" && flow?.accelerationRisk === "LOW") volRisk = "LOW";
     if (market?.gammaRegime === "SHORT GAMMA" || activeScenario?.type === "VOL") volRisk = "HIGH";
 
-    return { quality, condition, flowState, volRisk, score };
-  }, [activeScenario, market, exposure, flow, confirmations]);
+    // Execution State Logic
+    let status = "AVOID ENTRY";
+    let bias = "NEUTRAL";
+    let entryZone = "--";
+    let trigger = Object.entries(confirmations)
+      .filter(([_, active]) => active)
+      .map(([label]) => label.split(' ')[0])
+      .join(", ") || "NONE";
+    let target = "--";
+    let invalidation = activeScenario?.invalidation || "--";
+
+    if (activeScenario) {
+      const scenarioLevels = activeScenario.levels.map(parseLevel);
+      const firstLevel = scenarioLevels[0];
+      const lastLevel = scenarioLevels[scenarioLevels.length - 1];
+      
+      // Bias
+      if (activeScenario.type === "VOL") bias = "NEUTRAL";
+      else if (lastLevel > firstLevel) bias = "LONG";
+      else bias = "SHORT";
+
+      entryZone = activeScenario.levels[0];
+      target = activeScenario.levels[activeScenario.levels.length - 1];
+
+      const priceNearEntry = Math.abs(currentPrice - firstLevel) < (currentPrice * 0.015);
+      const priceNearMagnet = levels?.gammaMagnets.some(m => Math.abs(currentPrice - m) < (currentPrice * 0.01));
+
+      if ((quality === "A" || quality === "B") && condition === "CONFIRMED" && activeConfCount >= 2 && (priceNearEntry || priceNearMagnet)) {
+        status = "READY TO EXECUTE";
+      } else if ((quality === "B" || quality === "C") && condition === "DEVELOPING") {
+        status = "WAIT FOR CONFIRMATION";
+      } else if (activeScenario.probability >= 50 && !priceNearEntry) {
+        status = "STRUCTURE DEVELOPING";
+      }
+    }
+
+    if (quality === "D" || flowState === "SUPPRESSIVE") {
+      status = "AVOID ENTRY";
+    }
+
+    return { quality, condition, flowState, volRisk, score, status, bias, entryZone, trigger, target, invalidation };
+  }, [activeScenario, market, exposure, flow, confirmations, currentPrice, levels]);
 
   const formatLevel = (level: string | number) => {
     if (typeof level === 'number') {
@@ -202,25 +269,49 @@ OR dealer hedge flow accelerates
         <div className="space-y-2">
           <TerminalValue 
             label="Setup Quality" 
-            value={qualityMetrics.quality} 
-            trend={qualityMetrics.quality === "A" ? "positive" : qualityMetrics.quality === "B" ? "neutral" : "negative"} 
+            value={engineData.quality} 
+            trend={engineData.quality === "A" ? "positive" : engineData.quality === "B" ? "neutral" : "negative"} 
             isBadge 
           />
           <TerminalValue 
             label="Condition" 
-            value={qualityMetrics.condition} 
-            trend={qualityMetrics.condition === "CONFIRMED" ? "positive" : qualityMetrics.condition === "DEVELOPING" ? "neutral" : "negative"} 
+            value={engineData.condition} 
+            trend={engineData.condition === "CONFIRMED" ? "positive" : engineData.condition === "DEVELOPING" ? "neutral" : "negative"} 
           />
-          <TerminalValue label="Flow State" value={qualityMetrics.flowState} />
+          <TerminalValue label="Flow State" value={engineData.flowState} />
           <TerminalValue 
             label="Vol Risk" 
-            value={qualityMetrics.volRisk} 
-            trend={qualityMetrics.volRisk === "LOW" ? "positive" : qualityMetrics.volRisk === "MEDIUM" ? "neutral" : "negative"} 
+            value={engineData.volRisk} 
+            trend={engineData.volRisk === "LOW" ? "positive" : engineData.volRisk === "MEDIUM" ? "neutral" : "negative"} 
           />
           <TerminalValue 
             label="Active Scenario" 
             value={activeScenario ? `${activeScenario.type} ${activeScenario.probability}%` : "NONE"} 
           />
+        </div>
+      </TerminalPanel>
+
+      <TerminalPanel title="EXECUTION STATE">
+        <div className="space-y-2">
+          <TerminalValue 
+            label="Status" 
+            value={engineData.status} 
+            trend={
+              engineData.status === "READY TO EXECUTE" ? "positive" : 
+              engineData.status === "WAIT FOR CONFIRMATION" ? "neutral" : 
+              engineData.status === "STRUCTURE DEVELOPING" ? "neutral" : "negative"
+            }
+            isBadge
+          />
+          <TerminalValue 
+            label="Bias" 
+            value={engineData.bias} 
+            trend={engineData.bias === "LONG" ? "positive" : engineData.bias === "SHORT" ? "negative" : "neutral"}
+          />
+          <TerminalValue label="Entry Zone" value={engineData.entryZone} />
+          <TerminalValue label="Trigger" value={engineData.trigger} />
+          <TerminalValue label="Target" value={engineData.target} />
+          <TerminalValue label="Invalidation" value={engineData.invalidation} />
         </div>
       </TerminalPanel>
 

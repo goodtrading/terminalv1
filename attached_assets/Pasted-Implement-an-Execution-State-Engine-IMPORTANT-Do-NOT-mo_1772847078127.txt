@@ -1,0 +1,135 @@
+Implement an Execution State Engine.
+
+IMPORTANT:
+Do NOT modify backend APIs.
+Do NOT remove existing panels or scoring logic.
+
+Use current data already available from:
+- Trade Setup Quality Engine
+- active scenario
+- dealer flow
+- gamma regime
+- confirmations toggles
+- key levels
+
+====================================================
+GOAL
+====================================================
+
+Add a new panel below TRADE SETUP QUALITY called:
+
+EXECUTION STATE
+
+This panel determines whether the trader should:
+
+- execute
+- wait
+- monitor
+- avoid entry
+
+====================================================
+OUTPUT FIELDS
+====================================================
+
+Display the following:
+
+STATUS
+Possible values:
+- READY TO EXECUTE
+- WAIT FOR CONFIRMATION
+- STRUCTURE DEVELOPING
+- AVOID ENTRY
+
+BIAS
+Possible values:
+- LONG
+- SHORT
+- NEUTRAL
+
+ENTRY ZONE
+Derived from:
+- scenario levels
+- magnets
+- dealer pivot
+
+TRIGGER
+Derived from confirmation toggles:
+- absorption
+- bid holding
+- delta divergence
+- OI stability
+
+TARGET
+Derived from scenario levels.
+
+INVALIDATION
+Derived from scenario invalidation rule.
+
+====================================================
+LOGIC
+====================================================
+
+READY TO EXECUTE
+If:
+- Setup Quality = A or B
+- Condition = CONFIRMED
+- at least 2 confirmations active
+- price near scenario level or magnet
+
+WAIT FOR CONFIRMATION
+If:
+- Setup Quality = B or C
+- Condition = DEVELOPING
+- confirmations incomplete
+
+STRUCTURE DEVELOPING
+If:
+- scenario probability high
+- but price not near entry levels
+
+AVOID ENTRY
+If:
+- Setup Quality = D
+OR
+- Flow State = SUPPRESSIVE against scenario
+
+====================================================
+BIAS
+====================================================
+
+LONG
+if active scenario expects upside.
+
+SHORT
+if scenario expects downside.
+
+NEUTRAL
+if volatility scenario dominates.
+
+====================================================
+UI
+====================================================
+
+Terminal style:
+
+EXECUTION STATE
+
+STATUS
+BIAS
+ENTRY ZONE
+TRIGGER
+TARGET
+INVALIDATION
+
+Color coding:
+
+READY TO EXECUTE → green
+WAIT → yellow
+DEVELOPING → orange
+AVOID → red
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+The terminal now outputs a clear operational state telling the trader when a setup is ready to execute or when to wait.
