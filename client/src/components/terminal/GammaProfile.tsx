@@ -44,7 +44,7 @@ export function GammaProfile() {
   const maxPosGamma = Math.max(...data.map(d => d.gamma));
 
   return (
-    <TerminalPanel title="GAMMA PROFILE ANALYSIS" className="h-64 shrink-0">
+    <TerminalPanel title="GAMMA PROFILE ANALYSIS" className="flex-1 h-full shrink-0">
       <div className="flex h-full w-full items-end space-x-[1px] pb-8 relative pt-8 px-1">
         
         {/* Zero Line */}

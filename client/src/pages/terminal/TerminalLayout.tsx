@@ -3,6 +3,7 @@ import { LeftSidebar } from "@/components/terminal/LeftSidebar";
 import { RightSidebar } from "@/components/terminal/RightSidebar";
 import { MainChart } from "@/components/terminal/MainChart";
 import { GammaProfile } from "@/components/terminal/GammaProfile";
+import { TradingPlan } from "@/components/terminal/TradingPlan";
 
 export default function TerminalLayout() {
   return (
@@ -14,7 +15,10 @@ export default function TerminalLayout() {
         
         <div className="flex-1 flex flex-col p-1 gap-1 min-w-0 overflow-hidden bg-terminal-bg relative">
           <MainChart />
-          <GammaProfile />
+          <div className="flex gap-1 h-64 shrink-0">
+            <GammaProfile />
+            <TradingPlan />
+          </div>
         </div>
 
         <RightSidebar onScenarioSelect={(s) => {

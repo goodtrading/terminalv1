@@ -1,10 +1,8 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel, TerminalValue } from "./TerminalPanel";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TradingScenario, MarketState, OptionsPositioning, DealerExposure, DealerHedgingFlow, KeyLevels } from "@shared/schema";
-import { X } from "lucide-react";
 
 interface RightSidebarProps {
   onScenarioSelect?: (scenario: TradingScenario | null) => void;
@@ -19,8 +17,6 @@ type FlowEvent = {
 
 export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [tradingPlan, setTradingPlan] = useState<string | null>(null);
-  const [isTradingPlanOpen, setIsTradingPlanOpen] = useState(false);
   
   // Confirmation Toggles State
   const [confirmations, setConfirmations] = useState<Record<string, boolean>>({
