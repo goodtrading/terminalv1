@@ -51,13 +51,21 @@ export async function registerRoutes(
         const intervalMinutes = interval === "1h" ? 60 : interval === "1d" ? 1440 : 15;
         const now = Math.floor(Date.now() / (intervalMinutes * 60 * 1000)) * (intervalMinutes * 60 * 1000);
         
-        let lastClose = basePrice;
+        // Deterministic random generator for stable mock structure
+        let seed = now - (limitNum * intervalMinutes * 60 * 1000);
+        const deterministicRandom = () => {
+          const x = Math.sin(seed++) * 10000;
+          return x - Math.floor(x);
+        };
+
+        let lastClose = basePrice + (deterministicRandom() - 0.5) * 1000;
         const mockKlines = Array.from({ length: limitNum }).map((_, i) => {
           const time = now - (limitNum - 1 - i) * intervalMinutes * 60 * 1000;
           const open = lastClose;
-          const close = open + (Math.random() - 0.5) * 150;
-          const high = Math.max(open, close) + Math.random() * 50;
-          const low = Math.min(open, close) - Math.random() * 50;
+          const change = (deterministicRandom() - 0.5) * 150;
+          const close = open + change;
+          const high = Math.max(open, close) + deterministicRandom() * 50;
+          const low = Math.min(open, close) - deterministicRandom() * 50;
           lastClose = close;
           
           return [
