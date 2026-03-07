@@ -202,6 +202,12 @@ const CONCEPTS: Record<string, ConceptEntry> = {
     interpretation: "This level often acts as a gravitational point for price because a large amount of dealer exposure is tied to that strike.",
     tradingUse: "When price trades near the OI concentration level, the market often stabilizes or compresses. If price moves far away, the level may act as a magnet pulling price back.",
   },
+  "Liquidity Vacuum": {
+    title: "LIQUIDITY VACUUM",
+    definition: "A detected zone where orderbook depth collapses, the bid-ask spread expands, and price displaces rapidly due to lack of liquidity.",
+    interpretation: "Vacuum zones indicate areas where the orderbook became thin and price accelerated without meaningful resistance. This suggests fragile market structure.",
+    tradingUse: "Avoid placing entries inside active vacuum zones. Price may revisit the zone to fill the gap. Use vacuum events as confirmation of breakout strength or exhaustion.",
+  },
 };
 
 interface TooltipWrapperProps {

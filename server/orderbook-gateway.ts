@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
 
 const orderBookEntrySchema = z.object({
   price: z.number(),
@@ -31,6 +32,22 @@ export const liquidityConfluenceZoneSchema = z.object({
   side: z.enum(["BID", "ASK", "NEUTRAL"])
 });
 
+export const vacuumEventSchema = z.object({
+  type: z.literal("LIQUIDITY_VACUUM"),
+  direction: z.enum(["UP", "DOWN"]),
+  priceStart: z.number(),
+  priceEnd: z.number(),
+  strength: z.number(),
+  timestamp: z.number(),
+});
+
+export const vacuumStateSchema = z.object({
+  vacuumRisk: z.enum(["LOW", "MEDIUM", "HIGH", "EXTREME"]),
+  activeZones: z.array(vacuumEventSchema),
+  depthRatio: z.number(),
+  spreadRatio: z.number(),
+});
+
 export const liquidityHeatmapSchema = z.object({
   liquidityHeatZones: z.array(liquidityHeatZoneSchema),
   liquidityConfluenceZones: z.array(liquidityConfluenceZoneSchema),
@@ -46,7 +63,8 @@ export const liquidityHeatmapSchema = z.object({
     source: z.string(),
     timestamp: z.number()
   }),
-  liquidityMapLines: z.array(z.string())
+  liquidityMapLines: z.array(z.string()),
+  liquidityVacuum: vacuumStateSchema.optional(),
 });
 
 export type LiquidityHeatZone = z.infer<typeof liquidityHeatZoneSchema>;
@@ -348,6 +366,13 @@ export class OrderBookGateway {
     }
     if (mapLines.length === 0) mapLines.push("Order book data limited");
 
+    let liquidityVacuum: VacuumState | undefined;
+    try {
+      liquidityVacuum = processVacuumDetection(book.bids, book.asks, spotPrice);
+    } catch (e) {
+      console.warn("[OrderBook] Vacuum detection failed:", e);
+    }
+
     return {
       liquidityHeatZones: heatZones.slice(0, 40),
       liquidityConfluenceZones: topConfluence,
@@ -363,7 +388,8 @@ export class OrderBookGateway {
         source: book.source,
         timestamp: book.timestamp
       },
-      liquidityMapLines: mapLines.slice(0, 4)
+      liquidityMapLines: mapLines.slice(0, 4),
+      liquidityVacuum,
     };
   }
 
@@ -383,7 +409,8 @@ export class OrderBookGateway {
         source: "UNAVAILABLE",
         timestamp: Date.now()
       },
-      liquidityMapLines: ["Order book data unavailable"]
+      liquidityMapLines: ["Order book data unavailable"],
+      liquidityVacuum: { vacuumRisk: "LOW", activeZones: [], depthRatio: 1, spreadRatio: 1 },
     };
   }
 }

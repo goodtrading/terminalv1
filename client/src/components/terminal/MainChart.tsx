@@ -467,6 +467,28 @@ export function MainChart() {
       }
     }
 
+    const vacuumState = positioning_engines?.liquidityHeatmap?.liquidityVacuum;
+    if (vacuumState?.activeZones?.length > 0) {
+      const maxZones = 3;
+      const sortedZones = [...vacuumState.activeZones]
+        .sort((a: any, b: any) => b.strength - a.strength)
+        .slice(0, maxZones);
+      sortedZones.forEach((zone: any) => {
+        if (Math.abs(zone.priceStart - price) > threshold && Math.abs(zone.priceEnd - price) > threshold) return;
+        const bandLines = 5;
+        const bandStep = (zone.priceEnd - zone.priceStart) / bandLines;
+        for (let i = 0; i <= bandLines; i++) {
+          const p = zone.priceStart + bandStep * i;
+          const isBorder = i === 0 || i === bandLines;
+          const opacity = isBorder ? 0.25 : 0.12;
+          pushEntry(p, 3, "", "", `rgba(59, 130, 246, ${opacity})`, LineStyle.Solid, 1, true);
+        }
+        const dirArrow = zone.direction === "UP" ? "↑" : "↓";
+        const labelOpacity = Math.min(0.6, 0.3 + zone.strength * 0.3);
+        pushEntry(zone.direction === "UP" ? zone.priceEnd : zone.priceStart, 3, `VACUUM ${dirArrow}`, "VAC", `rgba(59, 130, 246, ${labelOpacity.toFixed(2)})`, LineStyle.Solid, 1);
+      });
+    }
+
     const labeledEntries = entries.filter(e => !e.isBandFill && e.label);
     labeledEntries.sort((a, b) => a.price - b.price);
     const minGap = price * 0.004;
