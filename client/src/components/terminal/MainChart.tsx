@@ -6,6 +6,7 @@ import { OptionsPositioning, MarketState, KeyLevels, DealerExposure, TradingScen
 import { cn } from "@/lib/utils";
 import { useTerminalState } from "@/hooks/useTerminalState";
 import { TooltipWrapper } from "./Tooltip";
+import { useLearnMode } from "@/hooks/useLearnMode";
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
 
@@ -31,6 +32,7 @@ export function MainChart() {
 
   const { data: terminalState } = useTerminalState();
   const positioning_engines = terminalState?.positioning as any;
+  const { learnMode } = useLearnMode();
 
   const { data: history, error: historyError, isLoading: historyLoading } = useQuery({
     queryKey: ["btc-history"],
@@ -305,6 +307,53 @@ export function MainChart() {
       }
     }
 
+    const sweepDetector = positioning_engines?.liquiditySweepDetector;
+    const sweepActive = sweepDetector && (sweepDetector.sweepRisk === "HIGH" || sweepDetector.sweepRisk === "EXTREME") && sweepDetector.sweepDirection !== "NONE";
+    const sweepZoneRange = sweepActive ? extractRangeFromText(sweepDetector.sweepTargetZone) : null;
+    const sweepDirColor = sweepDetector?.sweepDirection === "UP" ? "34, 197, 94" : sweepDetector?.sweepDirection === "DOWN" ? "239, 68, 68" : "168, 85, 247";
+    const sweepDirArrow = sweepDetector?.sweepDirection === "UP" ? " ↑" : sweepDetector?.sweepDirection === "DOWN" ? " ↓" : " ↕";
+
+    if (sweepActive && sweepZoneRange) {
+      const bandStep = (sweepZoneRange.end - sweepZoneRange.start) / 6;
+      for (let i = 0; i <= 6; i++) {
+        const p = sweepZoneRange.start + bandStep * i;
+        const isBorder = i === 0 || i === 6;
+        const opacity = isBorder ? 0.35 : 0.08;
+        const style = isBorder ? LineStyle.Solid : LineStyle.Solid;
+        const w = isBorder ? 1 : 1;
+        const title = i === 6 ? `SWEEP ZONE${sweepDirArrow}` : "";
+        addLevel(p, `rgba(${sweepDirColor}, ${opacity})`, title, style, w);
+      }
+    }
+
+    if (sweepActive) {
+      const knownLevels: number[] = [];
+      if (positioning?.dealerPivot) knownLevels.push(positioning.dealerPivot);
+      if (positioning?.putWall) knownLevels.push(positioning.putWall);
+      if (positioning?.callWall) knownLevels.push(positioning.callWall);
+      if (levels?.gammaMagnets) knownLevels.push(...levels.gammaMagnets);
+      const heatmapZones = positioning_engines?.liquidityHeatmap?.liquidityHeatZones || [];
+      heatmapZones.filter((z: any) => z.intensity >= 0.5).forEach((z: any) => knownLevels.push((z.priceStart + z.priceEnd) / 2));
+
+      const triggerText = sweepDetector.sweepTrigger || "";
+      const triggerPrice = extractPriceFromText(triggerText);
+      let bestTrigger: number | null = null;
+      if (triggerPrice) {
+        let bestDist = Infinity;
+        for (const lv of knownLevels) {
+          const d = Math.abs(lv - triggerPrice);
+          if (d < bestDist) { bestDist = d; bestTrigger = lv; }
+        }
+        if (bestTrigger && bestDist > price * 0.05) bestTrigger = null;
+        if (!bestTrigger && Math.abs(triggerPrice - price) <= threshold) bestTrigger = triggerPrice;
+      }
+      if (bestTrigger) {
+        addLevel(bestTrigger, `rgba(${sweepDirColor}, 0.6)`, "SWEEP TRIGGER", LineStyle.Dashed, 2);
+      }
+    }
+
+    const heatmapLineWidthCap = sweepActive ? 2 : 4;
+
     if (mapMode === "HEATMAP") {
       const heatmap = positioning_engines?.liquidityHeatmap;
       if (heatmap) {
@@ -380,11 +429,13 @@ export function MainChart() {
         const nearThreshold = price * 0.005;
         const intensityToWidth = (int: number, near: boolean) => {
           const w = int >= 0.7 ? 3 : int >= 0.35 ? 2 : 1;
-          return near ? Math.min(4, w + 1) : w;
+          const raw = near ? Math.min(4, w + 1) : w;
+          return Math.min(raw, heatmapLineWidthCap);
         };
         const intensityToOpacity = (int: number, near: boolean) => {
           const base = Math.min(0.75, 0.1 + int * 0.65);
-          return near ? Math.min(0.85, base + 0.15) : base;
+          const raw = near ? Math.min(0.85, base + 0.15) : base;
+          return sweepActive ? raw * 0.6 : raw;
         };
         const intensityToStyle = (int: number, near: boolean) => (int >= 0.5 || near) ? LineStyle.Solid : LineStyle.Dotted;
 
@@ -525,6 +576,26 @@ export function MainChart() {
             </div>
           </div>
         )}
+        {(() => {
+          const sd = positioning_engines?.liquiditySweepDetector;
+          const isActive = sd && (sd.sweepRisk === "HIGH" || sd.sweepRisk === "EXTREME") && sd.sweepDirection !== "NONE";
+          if (!isActive) return null;
+          const dirClr = sd.sweepDirection === "UP" ? "text-green-400 border-green-500/20 bg-green-500/10" : sd.sweepDirection === "DOWN" ? "text-red-400 border-red-500/20 bg-red-500/10" : "text-purple-400 border-purple-500/20 bg-purple-500/10";
+          const arrow = sd.sweepDirection === "UP" ? "↑" : sd.sweepDirection === "DOWN" ? "↓" : "↕";
+          return (
+            <div className="absolute bottom-3 right-28 z-10 pointer-events-none">
+              <TooltipWrapper concept="Sweep Zone">
+                <div className={cn("flex items-center gap-1.5 border rounded px-2 py-1 backdrop-blur-sm", dirClr)} style={{ pointerEvents: learnMode ? "auto" : "none" }}>
+                  <span className={cn("text-[9px] font-mono font-bold tracking-wider", dirClr.split(" ")[0])}>SWEEP ZONE {arrow}</span>
+                  <span className="text-[8px] font-mono text-white/30">{sd.sweepTargetZone}</span>
+                </div>
+              </TooltipWrapper>
+              {learnMode && (
+                <div className="mt-1 text-[8px] text-white/25 font-mono text-right italic">Area where price may move quickly</div>
+              )}
+            </div>
+          );
+        })()}
         <div ref={chartContainerRef} className="absolute inset-0 pr-[100px]" style={{ pointerEvents: 'auto' }} />
       </TerminalPanel>
     </div>

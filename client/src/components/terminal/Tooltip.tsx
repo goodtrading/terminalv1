@@ -63,6 +63,18 @@ const TOOLTIPS: Record<string, { title: string; text: string }> = {
     title: "SQUEEZE MODE",
     text: "Shows squeeze setup: Squeeze Trigger and Squeeze Target levels."
   },
+  "HEATMAP": {
+    title: "HEATMAP MODE",
+    text: "Shows order book liquidity clusters. BID zones are support, ASK zones are resistance. Purple marks gamma confluence."
+  },
+  "Sweep Zone": {
+    title: "SWEEP ZONE",
+    text: "Area where price may move quickly if liquidity gets swept."
+  },
+  "Sweep Trigger": {
+    title: "SWEEP TRIGGER",
+    text: "Level that may activate a rapid liquidity-driven move."
+  },
 };
 
 interface TooltipWrapperProps {

@@ -292,9 +292,11 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
           const target = sweep?.sweepTargetZone || "--";
           const summary: string[] = sweep?.sweepSummary || [];
           const riskColor = risk === "EXTREME" ? "red" : risk === "HIGH" ? "orange" : risk === "MEDIUM" ? "yellow" : "gray";
-          const dirColor = direction === "UP" ? "green" : direction === "DOWN" ? "red" : direction === "TWO_SIDED" ? "yellow" : "gray";
+          const dirColor = direction === "UP" ? "green" : direction === "DOWN" ? "red" : direction === "TWO_SIDED" ? "purple" : "gray";
+          const bulletColor = risk === "EXTREME" || risk === "HIGH" ? "text-orange-400" : "text-white/30";
           return (
             <div className="flex flex-col gap-2">
+              <LearnHelper text="Potential liquidity grab or breakout zone" />
               <div className="flex flex-col divide-y divide-white/[0.04]">
                 <StatusValue label="Risk" value={risk} color={riskColor} />
                 <StatusValue label="Direction" value={direction.replace(/_/g, " ")} color={dirColor} />
@@ -313,7 +315,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
                   <div className="mt-1 flex flex-col gap-0.5">
                     {summary.map((line: string, i: number) => (
                       <div key={i} className="flex items-start gap-1.5">
-                        <span className="text-[8px] mt-[3px] text-orange-400">•</span>
+                        <span className={cn("text-[8px] mt-[3px]", bulletColor)}>•</span>
                         <span className="text-[10px] text-white/50 font-mono leading-snug">{line}</span>
                       </div>
                     ))}

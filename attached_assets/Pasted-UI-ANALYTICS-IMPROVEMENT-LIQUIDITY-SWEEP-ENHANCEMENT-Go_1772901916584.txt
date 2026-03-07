@@ -1,0 +1,209 @@
+UI + ANALYTICS IMPROVEMENT — LIQUIDITY SWEEP ENHANCEMENT
+
+Goal:
+Improve the Liquidity Sweep system so it becomes easier to interpret visually and more useful for execution trading.
+
+Important:
+Do NOT remove existing engines.
+Do NOT redesign the whole terminal.
+Preserve current dark institutional styling.
+Enhance the existing Liquidity Sweep detector and integrate its key signals into the chart in a clean, readable way.
+
+================================================
+PART 1 — IMPROVE LIQUIDITY SWEEP PANEL
+================================================
+
+The existing "LIQUIDITY SWEEP" panel already displays:
+
+- sweepRisk
+- sweepDirection
+- sweepTrigger
+- sweepTargetZone
+- sweepSummary
+
+Improve it with the following rules:
+
+1. Color coding
+
+SWEEP RISK
+LOW → gray
+MEDIUM → yellow
+HIGH → orange
+EXTREME → red
+
+DIRECTION
+UP → green
+DOWN → red
+TWO_SIDED → purple
+NONE → gray
+
+2. Compact formatting
+
+Keep this layout:
+
+LIQUIDITY SWEEP
+
+Risk        HIGH
+Direction   TWO_SIDED
+
+Trigger
+Liquidity stacked both sides — directional break triggers sweep
+
+Target
+66.7k – 68.8k
+
+Summary
+• Ask liquidity stacked above spot
+• Bid liquidity visible below spot
+• Hedging flow may support upside
+• Squeeze probability adds sweep momentum
+• Cascade risk amplifies sweep potential
+
+3. Improve readability
+
+- Keep labels small
+- Keep values bold
+- Keep summary as bullet points
+- Maintain spacing consistent with the other sidebar panels
+
+================================================
+PART 2 — ADD SWEEP ZONE VISUALIZATION TO THE CHART
+================================================
+
+Goal:
+Display the Liquidity Sweep zone directly on the chart when sweepRisk is HIGH or EXTREME.
+
+1. Add a chart overlay called:
+
+SWEEP ZONE
+
+2. Rendering rules
+
+If:
+- sweepRisk == HIGH
+or
+- sweepRisk == EXTREME
+
+Then render a subtle horizontal shaded band spanning:
+
+sweepTargetZone
+
+Example:
+66.7k – 68.8k
+
+3. Visual style
+
+- Use low opacity so candles remain visible
+- Use border lines on top and bottom of the band
+- Use color based on sweepDirection:
+
+UP → green-tinted band
+DOWN → red-tinted band
+TWO_SIDED → purple-tinted band
+NONE → no band
+
+4. Add compact label
+
+At the right edge of the band, show:
+
+SWEEP ZONE
+
+If space allows, append direction:
+SWEEP ZONE ↑
+SWEEP ZONE ↓
+SWEEP ZONE ↕
+
+5. Keep chart readable
+
+- Do not cover key candles
+- Do not add large labels
+- Do not render the band if sweepRisk is LOW
+
+================================================
+PART 3 — ADD SWEEP TRIGGER LINE TO THE CHART
+================================================
+
+Goal:
+Show the most relevant trigger visually.
+
+1. Derive a visual trigger price level from sweepTrigger if possible.
+
+Use nearest structural level already known by the system:
+- dealerPivot
+- gammaMagnet
+- callWall
+- putWall
+- nearest heatmap cluster
+
+2. Render a dashed horizontal line for the trigger level.
+
+Label:
+SWEEP TRIGGER
+
+3. Use color based on sweepDirection:
+UP → green
+DOWN → red
+TWO_SIDED → purple
+
+4. If no clean price level can be derived, do not draw the line.
+
+================================================
+PART 4 — ADD LEARN MODE SUPPORT
+================================================
+
+If Learn Mode is ON:
+
+1. Show a small helper text under the Liquidity Sweep panel title:
+
+"Potential liquidity grab or breakout zone"
+
+2. Add a tooltip to "SWEEP ZONE" on the chart:
+
+"Area where price may move quickly if liquidity gets swept."
+
+3. Add a tooltip to "SWEEP TRIGGER" on the chart:
+
+"Level that may activate a rapid liquidity-driven move."
+
+If Learn Mode is OFF:
+- keep all helpers hidden
+- keep the chart clean
+
+================================================
+PART 5 — OPTIONAL VISUAL HIERARCHY IMPROVEMENT
+================================================
+
+If both Liquidity Sweep and Liquidity Heatmap are active:
+
+- Keep heatmap zones thinner and more subtle
+- Make the Sweep Zone more visually dominant
+- Confluence areas can remain purple if already implemented
+
+This ensures users immediately notice the most important actionable sweep area.
+
+================================================
+PART 6 — DO NOT MODIFY
+================================================
+
+Do NOT change:
+- gamma engine
+- market mode engine
+- trade decision engine
+- dealer hedging flow logic
+- liquidity heatmap calculations
+- backend API contracts unless required for visual trigger level extraction
+
+Only enhance:
+- Liquidity Sweep panel rendering
+- chart overlay rendering for sweep zone and trigger
+- Learn Mode helper layer
+
+================================================
+EXPECTED RESULT
+================================================
+
+1. Right sidebar shows an improved Liquidity Sweep panel
+2. Chart shows a clean Sweep Zone band when sweep risk is HIGH or EXTREME
+3. Chart shows a Sweep Trigger line when a trigger price can be derived
+4. Learn Mode explains sweep behavior to beginner users
+5. The terminal remains clean, professional, and easy to interpret
