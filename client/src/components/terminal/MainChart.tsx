@@ -175,7 +175,7 @@ export function MainChart() {
       const chart = createChart(chartContainerRef.current, {
         layout: {
           background: { type: ColorType.Solid, color: "#000000" },
-          textColor: "#ffffff", // High contrast text
+          textColor: "#ffffff",
           fontSize: 12,
           fontFamily: "JetBrains Mono, monospace",
         },
@@ -200,8 +200,9 @@ export function MainChart() {
             top: 0.2,
             bottom: 0.25,
           },
-          minimumWidth: 80, // Ensure enough width for labels
+          minimumWidth: 100, // Slightly more width to be safe
           borderVisible: true,
+          alignLabels: true,
         },
         crosshair: {
           mode: 0,
@@ -500,7 +501,7 @@ export function MainChart() {
 
   return (
     <TerminalPanel 
-      className="flex-1 w-full h-full border border-terminal-border relative overflow-hidden" 
+      className="flex-1 w-full h-full border border-terminal-border relative" 
       noPadding
       style={{ backgroundColor: regimeColor }}
     >
@@ -545,7 +546,7 @@ export function MainChart() {
             </div>
           </div>
           
-          <div className="flex flex-col items-end space-y-2 pointer-events-auto mr-24">
+          <div className="flex flex-col items-end space-y-2 pointer-events-auto mr-32">
             <div className="flex space-x-1">
               <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">PAN UP</button>
               <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">PAN DN</button>
@@ -605,7 +606,7 @@ export function MainChart() {
       
       <div 
         ref={chartContainerRef} 
-        className="absolute inset-0 chart-container-root pr-[80px]"
+        className="absolute inset-0 chart-container-root pr-[100px]"
         style={{ pointerEvents: 'auto' }}
       />
     </TerminalPanel>
