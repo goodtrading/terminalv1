@@ -137,8 +137,49 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   const riskVal = tradeDecision?.riskLevel || "MEDIUM";
   const sizeVal = tradeDecision?.positionSizeSuggestion || "NO_TRADE";
 
+  const marketModeEngine = (positioning as any)?.marketModeEngine;
+  const marketMode = marketModeEngine?.marketMode || "FRAGILE_TRANSITION";
+  const marketModeConfidence = marketModeEngine?.marketModeConfidence ?? 0;
+  const marketModeReason: string[] = marketModeEngine?.marketModeReason || [];
+
+  const modeColorMap: Record<string, { text: string; bg: string; border: string }> = {
+    GAMMA_PIN: { text: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
+    MEAN_REVERSION: { text: "text-green-400", bg: "bg-green-500/10", border: "border-green-500/20" },
+    VOL_EXPANSION: { text: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/20" },
+    SQUEEZE_RISK: { text: "text-red-400", bg: "bg-red-500/10", border: "border-red-500/20" },
+    CASCADE_RISK: { text: "text-red-500", bg: "bg-red-600/10", border: "border-red-600/20" },
+    FRAGILE_TRANSITION: { text: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/20" },
+  };
+  const modeColors = modeColorMap[marketMode] || modeColorMap.FRAGILE_TRANSITION;
+  const modeDisplay = marketMode.replace(/_/g, " ");
+
   return (
     <div className="w-80 h-full flex flex-col gap-2 overflow-y-auto p-2 border-l border-terminal-border bg-terminal-bg shrink-0">
+
+      <SidebarPanel title="Market Mode">
+        <div className="flex flex-col gap-2.5">
+          <div className={cn("rounded px-3 py-2.5 border", modeColors.bg, modeColors.border)} data-testid="status-market-mode">
+            <div className={cn("text-[15px] font-mono font-black tracking-wide", modeColors.text)}>{modeDisplay}</div>
+            <div className="flex items-center gap-1.5 mt-1">
+              <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Confidence</span>
+              <span className={cn("text-[12px] font-mono font-bold", modeColors.text)}>{marketModeConfidence}%</span>
+            </div>
+          </div>
+          {marketModeReason.length > 0 && (
+            <div>
+              <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Drivers</span>
+              <div className="mt-1 flex flex-col gap-0.5">
+                {marketModeReason.map((reason, i) => (
+                  <div key={i} className="flex items-start gap-1.5">
+                    <span className={cn("text-[8px] mt-[3px]", modeColors.text)}>•</span>
+                    <span className="text-[10px] text-white/50 font-mono leading-snug">{reason}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </SidebarPanel>
 
       <SidebarPanel title="Trading State">
         <div className="flex flex-col divide-y divide-white/[0.04]">
