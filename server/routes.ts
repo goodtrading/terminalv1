@@ -3,11 +3,32 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { MarketDataGateway } from "./market-gateway";
 import { getTerminalState } from "./terminal-state";
+import { DeribitOptionsGateway } from "./deribit-gateway";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // --- Deribit Options Gateway Endpoints ---
+  app.get("/api/options/raw", async (_req, res) => {
+    try {
+      const data = await DeribitOptionsGateway.ingestLatestCSV();
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: "INGESTION_FAILED", details: e.message });
+    }
+  });
+
+  app.get("/api/options/summary", async (_req, res) => {
+    try {
+      const data = await DeribitOptionsGateway.ingestLatestCSV();
+      const summary = await DeribitOptionsGateway.getSummary(data);
+      res.json(summary);
+    } catch (e: any) {
+      res.status(500).json({ error: "SUMMARY_FAILED", details: e.message });
+    }
+  });
+
   // --- New Terminal Aggregation Endpoint ---
   app.get("/api/terminal/state", async (_req, res) => {
     try {

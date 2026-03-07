@@ -1,0 +1,86 @@
+Build the Deribit Options Gateway as the next backend layer for the terminal.
+
+Project importance:
+This is a critical project. Do not make broad or ambiguous changes.
+Implement this in a strict, production-style way with explicit normalization and validation.
+
+Objective:
+Create a backend options-data ingestion layer based on the user's Deribit CSV format, so the terminal can later compute gamma, OI, Vanna, and Charm from a clean internal schema.
+
+Scope for this phase:
+- ingest CSV only
+- normalize and validate the data
+- expose backend endpoints
+- do not modify the frontend yet
+- do not redesign the terminal
+- do not implement final advanced gamma logic yet beyond a basic summary
+
+Requirements:
+
+1. Create a dedicated Deribit options gateway module.
+2. The source for this phase is the user's Deribit CSV format.
+3. The CSV uses "ABRIR" as Open Interest. This must be mapped explicitly to openInterest.
+4. Normalize each valid row into a strict internal schema such as:
+
+{
+  strike: number,
+  expiry: string,
+  optionType: "call" | "put",
+  openInterest: number,
+  gammaExposure?: number,
+  vannaExposure?: number,
+  charmExposure?: number
+}
+
+5. Add validation rules:
+- strike must be numeric
+- expiry must be present
+- optionType must resolve cleanly to call/put
+- openInterest must be numeric
+- malformed rows must be rejected or logged clearly
+
+6. Create backend endpoints:
+- GET /api/options/raw
+- GET /api/options/summary
+
+7. /api/options/raw should return the normalized rows.
+
+8. /api/options/summary should return a basic derived summary with the following fields if possible from the CSV:
+- totalGex
+- gammaState
+- gammaFlip
+- callWall
+- putWall
+- magnets
+- shortGammaPockets
+- vannaBias
+- charmBias
+
+9. If some fields cannot yet be computed reliably from the current CSV structure, return them as null and report that explicitly instead of inventing values.
+
+10. Add schema validation (Zod or equivalent) for both:
+- normalized row schema
+- summary schema
+
+11. Keep this layer fully separate from:
+- market candles/ticker gateway
+- chart rendering
+- frontend hooks
+- UI panels
+
+12. Do not use mock options data.
+
+Success criteria:
+- Deribit CSV ingestion works through a dedicated backend module
+- "ABRIR" is correctly mapped to openInterest
+- normalized options rows are returned by /api/options/raw
+- validated summary is returned by /api/options/summary
+- malformed rows are handled transparently
+- no frontend changes are made yet
+
+Return:
+1. files created or modified
+2. exact normalized row schema
+3. exact summary schema
+4. how "ABRIR" was mapped
+5. which summary fields are fully computed vs temporarily null
