@@ -163,8 +163,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       else if (lastLevel > firstLevel) bias = "LONG";
       else bias = "SHORT";
 
-      // Enhanced Level Extraction
-      // ENTRY ZONE: Nearest level from: scenario levels, magnets, pivot
+      // ENTRY ZONE
       const potentialEntryPoints = [...scenarioLevels];
       if (levels?.gammaMagnets) potentialEntryPoints.push(...levels.gammaMagnets);
       if (positioning?.dealerPivot) potentialEntryPoints.push(positioning.dealerPivot);
@@ -175,9 +174,11 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       );
       entryZone = formatLevelDisplay(nearestEntry);
 
-      // TARGET: Next magnet or scenario level in direction of bias
+      // TARGET RESOLUTION
       const potentialTargets = [...scenarioLevels];
       if (levels?.gammaMagnets) potentialTargets.push(...levels.gammaMagnets);
+      if (positioning?.callWall) potentialTargets.push(positioning.callWall);
+      if (positioning?.putWall) potentialTargets.push(positioning.putWall);
       
       let nextTarget = NaN;
       if (bias === "LONG") {
@@ -187,11 +188,33 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         const shortTargets = potentialTargets.filter(t => t < currentPrice).sort((a, b) => b - a);
         nextTarget = shortTargets[0] || lastLevel;
       } else {
-        nextTarget = lastLevel;
+        // BIAS = NEUTRAL
+        if (activeScenario.type === "BASE") {
+          // Mean reversion target: use nearest magnet or first level
+          nextTarget = potentialTargets.find(t => Math.abs(t - (positioning?.dealerPivot || currentPrice)) < 1000) || firstLevel;
+        } else if (activeScenario.type === "ALT") {
+          // Breakout level: use level furthest from current price
+          nextTarget = scenarioLevels.reduce((prev, curr) => 
+            Math.abs(curr - currentPrice) > Math.abs(prev - currentPrice) ? curr : prev, 
+            scenarioLevels[0]
+          );
+        } else if (activeScenario.type === "VOL") {
+          // Extreme level: use highest or lowest scenario level
+          nextTarget = Math.max(...scenarioLevels);
+        } else {
+          // Fallback: nearest magnet
+          if (levels?.gammaMagnets && levels.gammaMagnets.length > 0) {
+             nextTarget = levels.gammaMagnets.reduce((prev, curr) => 
+               Math.abs(curr - currentPrice) < Math.abs(prev - currentPrice) ? curr : prev
+             );
+          } else {
+            nextTarget = lastLevel;
+          }
+        }
       }
       target = formatLevelDisplay(nextTarget);
 
-      // INVALIDATION: Extract from text
+      // INVALIDATION
       const invNum = parseLevel(activeScenario.invalidation);
       if (!isNaN(invNum)) {
         invalidationDisplay = `${formatLevelDisplay(invNum)} FLIP`;
