@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel } from "./TerminalPanel";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { TradingScenario } from "@shared/schema";
+import { TradingScenario, MarketState, OptionsPositioning } from "@shared/schema";
 
 interface RightSidebarProps {
   onScenarioSelect?: (scenario: TradingScenario | null) => void;
@@ -18,12 +18,20 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     refetchInterval: 5000
   });
 
+  const { data: market } = useQuery<MarketState>({ 
+    queryKey: ["/api/market-state"],
+    refetchInterval: 5000 
+  });
+
+  const { data: positioning } = useQuery<OptionsPositioning>({ 
+    queryKey: ["/api/options-positioning"],
+    refetchInterval: 5000 
+  });
+
   const formatLevel = (level: string | number) => {
     if (typeof level === 'number') {
       return level.toLocaleString();
     }
-    // If it's a string like "67k", keep it as is, or if it's "71,000" keep it.
-    // If it's a string that looks like a number, we could format it, but the requirement says "67k" is a valid format.
     return level;
   };
 
@@ -37,14 +45,65 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
 
   const generateTradingPlan = () => {
     if (!scenarios || scenarios.length === 0) return;
-    const best = [...scenarios].sort((a, b) => b.probability - a.probability)[0];
+    const active = scenarios.find(s => s.id === selectedId) || [...scenarios].sort((a, b) => b.probability - a.probability)[0];
     
-    const plan = `MARKET REGIME: TRENDING
-PRIMARY SCENARIO: ${best.type} (${best.probability}%)
-ENTRY LEVEL: ${best.levels[0]}
-TARGET: ${best.levels[best.levels.length - 1]}
-INVALIDATION: ${best.invalidation}
-RISK PROFILE: MODERATE`;
+    const regimeDesc = market?.gammaRegime === "LONG GAMMA" 
+      ? "LONG GAMMA → mean reversion environment" 
+      : market?.gammaRegime === "SHORT GAMMA"
+        ? "SHORT GAMMA → expansion / momentum environment"
+        : "NEUTRAL → standard environment";
+
+    const plan = `-----------------------------------------------------
+MARKET REGIME
+${regimeDesc}
+
+-----------------------------------------------------
+ACTIVE SCENARIO
+${active.type} CASE (${active.probability}%)
+
+Thesis:
+${active.thesis}
+
+-----------------------------------------------------
+KEY LEVELS
+
+Primary Levels:
+${active.levels.join("\n")}
+
+Dealer Levels:
+Call Wall: ${positioning?.callWall?.toLocaleString() ?? "--"}
+Put Wall: ${positioning?.putWall?.toLocaleString() ?? "--"}
+Dealer Pivot: ${positioning?.dealerPivot?.toLocaleString() ?? "--"}
+
+-----------------------------------------------------
+TRADE SETUPS
+
+SETUP 1 — ${active.type === "VOL" ? "Volatility Expansion" : "Mean Reversion"}
+Entry zone:
+${active.levels[0]}
+
+Confirmation:
+${active.confirmation.join(" + ")}
+
+Target:
+${active.levels[active.levels.length - 1]}
+
+Invalidation:
+${active.invalidation}
+
+-----------------------------------------------------
+FLOW SIGNALS TO WATCH
+- absorption at magnets
+- bid holding
+- delta divergence
+- OI stability
+
+-----------------------------------------------------
+RISK CONDITIONS
+If volatility expansion begins
+OR dealer hedge flow accelerates
+→ scenario invalid
+-----------------------------------------------------`;
     
     setTradingPlan(plan);
   };
