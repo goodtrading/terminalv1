@@ -196,6 +196,12 @@ const CONCEPTS: Record<string, ConceptEntry> = {
     interpretation: "Bullish Charm bias suggests time decay generates net buying pressure. Bearish Charm bias suggests time decay generates net selling pressure.",
     tradingUse: "Charm flows often influence slow directional drift during the day.",
   },
+  "OI Concentration": {
+    title: "OI CONCENTRATION",
+    definition: "The price or strike level where the largest amount of open options contracts is currently concentrated.",
+    interpretation: "This level often acts as a gravitational point for price because a large amount of dealer exposure is tied to that strike.",
+    tradingUse: "When price trades near the OI concentration level, the market often stabilizes or compresses. If price moves far away, the level may act as a magnet pulling price back.",
+  },
 };
 
 interface TooltipWrapperProps {

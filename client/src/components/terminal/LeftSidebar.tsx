@@ -161,7 +161,7 @@ export function LeftSidebar() {
       <TerminalPanel title="OPTIONS POSITIONING">
         <TerminalValue label="Call Wall" value={positioning?.callWall ? positioning.callWall.toLocaleString() : "--"} trend="negative" tooltip="Call Wall" />
         <TerminalValue label="Put Wall" value={positioning?.putWall ? positioning.putWall.toLocaleString() : "--"} trend="positive" tooltip="Put Wall" />
-        <TerminalValue label="OI Concentration" value={positioning?.oiConcentration ? positioning.oiConcentration.toLocaleString() : "--"} />
+        <TerminalValue label="OI Concentration" value={positioning?.oiConcentration ? positioning.oiConcentration.toLocaleString() : "--"} tooltip="OI Concentration" />
         <TerminalValue label="Dealer Pivot" value={positioning?.dealerPivot ?? "--"} tooltip="Dealer Pivot" />
       </TerminalPanel>
 
