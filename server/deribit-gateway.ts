@@ -191,6 +191,7 @@ export const optionsSummarySchema = z.object({
     sweepTargetZone: z.string(),
     sweepSummary: z.array(z.string())
   }).optional(),
+  dominantExpiry: z.string().nullable().optional(),
   source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()
 });
 
@@ -534,6 +535,7 @@ export class DeribitOptionsGateway {
             hedgingTriggerZone: "Awaiting options data ingestion",
             hedgingFlowSummary: ["Insufficient data", "Awaiting options ingestion"]
           },
+          dominantExpiry: null,
           source: dataSource
         };
       }
@@ -541,8 +543,12 @@ export class DeribitOptionsGateway {
       let totalGex = 0, callWall = 0, putWall = 0, maxCallOi = 0, maxPutOi = 0;
       let totalVanna = 0, totalCharm = 0;
       const strikeMap = new Map<number, { gex: number, oi: number }>();
+      const expiryOiMap = new Map<string, number>();
 
       options.forEach(opt => {
+        if (opt.expiry && opt.openInterest > 0) {
+          expiryOiMap.set(opt.expiry, (expiryOiMap.get(opt.expiry) || 0) + opt.openInterest);
+        }
         // Global GEX
         if (opt.gammaExposure) totalGex += opt.gammaExposure;
         if (opt.vannaExposure) totalVanna += opt.vannaExposure;
@@ -1848,6 +1854,23 @@ export class DeribitOptionsGateway {
 
       const dealerHedgingFlowMap = { hedgingFlowDirection, hedgingFlowStrength, hedgingAccelerationRisk, hedgingTriggerZone, hedgingFlowSummary };
 
+      let dominantExpiry: string | null = null;
+      if (expiryOiMap.size > 0) {
+        const now = new Date();
+        const entries = [...expiryOiMap.entries()]
+          .map(([exp, oi]) => ({ exp, oi, date: new Date(exp) }))
+          .filter(e => !isNaN(e.date.getTime()) && e.date > now)
+          .sort((a, b) => a.date.getTime() - b.date.getTime());
+        const nearestSignificant = entries.find(e => e.oi > 0);
+        const largestOi = entries.length > 0 ? entries.reduce((max, e) => e.oi > max.oi ? e : max, entries[0]) : null;
+        const chosen = nearestSignificant || largestOi;
+        if (chosen) {
+          const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+          const d = chosen.date;
+          dominantExpiry = `${d.getUTCDate()} ${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+        }
+      }
+
       return {
         totalGex: totalGex || 0,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -1888,6 +1911,7 @@ export class DeribitOptionsGateway {
         squeezeProbabilityEngine,
         marketModeEngine,
         dealerHedgingFlowMap,
+        dominantExpiry,
         source: dataSource
       };
     } catch (e) {
@@ -1966,6 +1990,7 @@ export class DeribitOptionsGateway {
           hedgingTriggerZone: "Analytics engine recovery required",
           hedgingFlowSummary: ["Analytics engine error", "Using fallback values"]
         },
+        dominantExpiry: null,
         source: dataSource
       } as any;
     }

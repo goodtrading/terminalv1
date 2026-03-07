@@ -1,12 +1,17 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useLearnMode } from "@/hooks/useLearnMode";
+import { useTerminalState } from "@/hooks/useTerminalState";
 
 export function TopNav() {
   const [activeTab, setActiveTab] = useState("TERMINAL");
   const { learnMode, toggleLearnMode } = useLearnMode();
+  const { data: terminalState } = useTerminalState();
 
   const tabs = ["TERMINAL", "OPTIONS", "FLOWS", "VOLATILITY", "REPORTS"];
+
+  const dominantExpiry = (terminalState?.positioning as any)?.dominantExpiry || null;
+  const expiryLabel = dominantExpiry || "N/A";
 
   return (
     <div className="flex h-12 items-center justify-between bg-terminal-bg border-b border-terminal-border px-4 shrink-0 w-full z-10 relative">
@@ -61,7 +66,7 @@ export function TopNav() {
         
         <div className="flex items-center space-x-2 border border-terminal-border bg-terminal-panel px-2 py-1 rounded-sm">
           <span className="text-terminal-muted">EXPIRY:</span>
-          <span className="text-white">29 MAR 2024</span>
+          <span className="text-white" data-testid="text-dominant-expiry">{expiryLabel}</span>
         </div>
         
         <div className="flex items-center space-x-2 border border-terminal-border bg-terminal-panel px-2 py-1 rounded-sm">

@@ -39,6 +39,7 @@ export async function getTerminalState(): Promise<TerminalState> {
   let liveMarketMode = null;
   let liveDealerHedgingFlowMap = null;
   let liveHeatmap = null;
+  let liveDominantExpiry: string | null = null;
   let optionsSource: string | null = null;
   try {
     const { options: rawOptions, source } = await DeribitOptionsGateway.ingestOptions();
@@ -54,6 +55,7 @@ export async function getTerminalState(): Promise<TerminalState> {
     liveMarketMode = summary.marketModeEngine || null;
     liveDealerHedgingFlowMap = summary.dealerHedgingFlowMap || null;
     optionsSource = summary.source || source;
+    liveDominantExpiry = (summary as any).dominantExpiry || null;
 
     if (cachedTicker?.price) {
       try {
@@ -207,7 +209,7 @@ export async function getTerminalState(): Promise<TerminalState> {
     };
   }
 
-  const enrichedPositioning = positioning ? { ...positioning, tradingPlaybook: livePlaybook, volatilityExpansionDetector: liveVolExpansion, gammaCurveEngine: liveGammaCurve, institutionalBiasEngine: liveInstitutionalBias, tradeDecisionEngine: liveTradeDecision, liquidityCascadeEngine: liveLiquidityCascade, squeezeProbabilityEngine: liveSqueezeProbability, marketModeEngine: liveMarketMode, dealerHedgingFlowMap: liveDealerHedgingFlowMap, liquiditySweepDetector: liveSweepDetector, liquidityHeatmap: liveHeatmap, optionsSource } : positioning;
+  const enrichedPositioning = positioning ? { ...positioning, tradingPlaybook: livePlaybook, volatilityExpansionDetector: liveVolExpansion, gammaCurveEngine: liveGammaCurve, institutionalBiasEngine: liveInstitutionalBias, tradeDecisionEngine: liveTradeDecision, liquidityCascadeEngine: liveLiquidityCascade, squeezeProbabilityEngine: liveSqueezeProbability, marketModeEngine: liveMarketMode, dealerHedgingFlowMap: liveDealerHedgingFlowMap, liquiditySweepDetector: liveSweepDetector, liquidityHeatmap: liveHeatmap, dominantExpiry: liveDominantExpiry, optionsSource } : positioning;
 
   // Read from in-memory cache ONLY (deterministic latency, no side effects)
   const ticker = MarketDataGateway.getCachedTicker();
