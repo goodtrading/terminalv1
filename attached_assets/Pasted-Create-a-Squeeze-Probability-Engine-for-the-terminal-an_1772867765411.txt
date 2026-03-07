@@ -1,0 +1,122 @@
+Create a Squeeze Probability Engine for the terminal analytics system.
+
+Goal:
+Detect the probability of a short squeeze, long squeeze, or gamma squeeze based on the existing market structure analytics.
+
+Use existing analytics already available in the system.
+
+Inputs available:
+
+spot price
+gammaCliffs
+gammaSlope
+gammaRegimeBand
+dealerSensitivity
+cascadeRisk
+cascadeDirection
+expansionProbability
+expansionDirection
+gammaMagnets
+callWall
+putWall
+OI concentration
+institutionalBias
+tradeDirection
+currentPlaybook
+liquidationPocket
+
+Compute the following outputs:
+
+1. squeezeProbability
+
+Return a value from 0 to 100.
+
+Rules:
+- Increase probability when cascadeRisk is HIGH or EXTREME
+- Increase when dealerSensitivity is elevated
+- Increase when expansionProbability is high
+- Increase when spot is near gamma cliffs or OI clusters
+- Reduce probability when long gamma compression dominates
+
+2. squeezeDirection
+
+Return:
+
+UP
+DOWN
+NONE
+
+Rules:
+- UP when short squeeze conditions exist (short gamma + upward expansion)
+- DOWN when long squeeze conditions exist (downside cascade risk)
+- NONE when squeeze probability is low
+
+3. squeezeType
+
+Return:
+
+SHORT_SQUEEZE
+LONG_SQUEEZE
+GAMMA_SQUEEZE
+NONE
+
+Rules:
+- SHORT_SQUEEZE when upward cascade risk exists
+- LONG_SQUEEZE when downward cascade risk exists
+- GAMMA_SQUEEZE when gamma cliffs and dealer sensitivity dominate
+
+4. squeezeTrigger
+
+Return a short description of the level that would activate the squeeze.
+
+Examples:
+
+"Break above gamma magnet"
+"Reclaim dealer pivot"
+"Loss of put wall support"
+
+Select the nearest structural level relative to spot.
+
+5. squeezeTarget
+
+Return a price range where the squeeze could accelerate.
+
+Examples:
+
+"71k – 72k"
+"64k – 65k"
+
+Prefer ranges near gamma cliffs or OI clusters.
+
+6. squeezeDrivers
+
+Return 3–5 short bullet-style explanations.
+
+Example:
+
+[
+"Short gamma regime",
+"Cascade risk elevated",
+"Dealer sensitivity high",
+"Expansion probability rising"
+]
+
+Integration:
+
+Add these fields to:
+
+/api/options/summary
+/api/terminal/state
+
+Fields to add:
+
+squeezeProbability
+squeezeDirection
+squeezeType
+squeezeTrigger
+squeezeTarget
+squeezeDrivers
+
+Do not modify existing engines.
+Do not change current analytics logic.
+Only extend the analytics pipeline and expose the fields to terminal state.

@@ -164,6 +164,14 @@ export const optionsSummarySchema = z.object({
     liquidationPocket: z.string(),
     cascadeDrivers: z.array(z.string())
   }).optional(),
+  squeezeProbabilityEngine: z.object({
+    squeezeProbability: z.number(),
+    squeezeDirection: z.enum(["UP", "DOWN", "NONE"]),
+    squeezeType: z.enum(["SHORT_SQUEEZE", "LONG_SQUEEZE", "GAMMA_SQUEEZE", "NONE"]),
+    squeezeTrigger: z.string(),
+    squeezeTarget: z.string(),
+    squeezeDrivers: z.array(z.string())
+  }).optional(),
   source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()
 });
 
@@ -486,6 +494,14 @@ export class DeribitOptionsGateway {
             cascadeTrigger: "Awaiting options data ingestion",
             liquidationPocket: "--",
             cascadeDrivers: ["Insufficient data", "Awaiting options ingestion", "No signal alignment"]
+          },
+          squeezeProbabilityEngine: {
+            squeezeProbability: 0,
+            squeezeDirection: "NONE" as const,
+            squeezeType: "NONE" as const,
+            squeezeTrigger: "Awaiting options data ingestion",
+            squeezeTarget: "--",
+            squeezeDrivers: ["Insufficient data", "Awaiting options ingestion", "No signal alignment"]
           },
           source: dataSource
         };
@@ -1481,6 +1497,101 @@ export class DeribitOptionsGateway {
         cascadeDrivers
       };
 
+      // --- Squeeze Probability Engine ---
+      let sqProb = 10;
+      if (lcCascadeRisk === "EXTREME") sqProb += 30;
+      else if (lcCascadeRisk === "HIGH") sqProb += 20;
+      else if (lcCascadeRisk === "MEDIUM") sqProb += 10;
+      if (dealerSensitivity === "HIGH") sqProb += 15;
+      else if (dealerSensitivity === "MEDIUM") sqProb += 5;
+      if (expansionProbability > 0.7) sqProb += 15;
+      else if (expansionProbability > 0.5) sqProb += 8;
+      if (nearCliffs) sqProb += 10;
+      if (isShortGamma) sqProb += 10;
+      if (isCompressing && pinningStrength > 0.6) sqProb -= 20;
+      if (isLongGamma && cascadeRisk === "LOW") sqProb -= 10;
+      const sqProbFinal = Math.max(0, Math.min(100, sqProb));
+
+      type SqDirType = "UP" | "DOWN" | "NONE";
+      type SqType = "SHORT_SQUEEZE" | "LONG_SQUEEZE" | "GAMMA_SQUEEZE" | "NONE";
+
+      let squeezeDirection: SqDirType = "NONE";
+      let squeezeType: SqType = "NONE";
+
+      if (sqProbFinal >= 30) {
+        if (isShortGamma && (cascadeDirection === "UP" || expansionDirection === "UP")) {
+          squeezeDirection = "UP";
+          squeezeType = "SHORT_SQUEEZE";
+        } else if (cascadeDirection === "DOWN" || expansionDirection === "DOWN") {
+          squeezeDirection = "DOWN";
+          squeezeType = "LONG_SQUEEZE";
+        } else if (nearCliffs && highSensitivity) {
+          squeezeDirection = cascadeDirection === "UP" ? "UP" : cascadeDirection === "DOWN" ? "DOWN" : "UP";
+          squeezeType = "GAMMA_SQUEEZE";
+        } else if (cascadeDirection === "TWO_SIDED") {
+          squeezeDirection = tradeDirection === "LONG" ? "UP" : tradeDirection === "SHORT" ? "DOWN" : "UP";
+          squeezeType = "GAMMA_SQUEEZE";
+        }
+      }
+
+      let squeezeTrigger = "";
+      let squeezeTarget = "--";
+
+      if (squeezeDirection === "UP") {
+        if (gammaMagnets && gammaMagnets.length > 0 && spotPrice) {
+          const aboveMagnets = gammaMagnets.filter(m => m > spotPrice).sort((a, b) => a - b);
+          if (aboveMagnets.length > 0) {
+            squeezeTrigger = `Break above gamma magnet at ${formatK(aboveMagnets[0])}`;
+          } else {
+            squeezeTrigger = gammaFlip && spotPrice < gammaFlip ? `Reclaim dealer pivot at ${formatK(gammaFlip)}` : "Break above current resistance";
+          }
+        } else {
+          squeezeTrigger = callWall ? `Break above call wall at ${formatK(callWall)}` : "Break above current resistance";
+        }
+        if (callWall) {
+          squeezeTarget = `${formatK(callWall)} – ${formatK(callWall + 1000)}`;
+        } else if (cliffsAbove.length > 0) {
+          const nearest = cliffsAbove.sort((a, b) => a.strike - b.strike)[0];
+          squeezeTarget = `${formatK(nearest.strike)} – ${formatK(nearest.strike + 1000)}`;
+        }
+      } else if (squeezeDirection === "DOWN") {
+        if (putWall) {
+          squeezeTrigger = `Loss of put wall support at ${formatK(putWall)}`;
+        } else if (gammaFlip && spotPrice && spotPrice > gammaFlip) {
+          squeezeTrigger = `Break below dealer pivot at ${formatK(gammaFlip)}`;
+        } else {
+          squeezeTrigger = "Break below current support structure";
+        }
+        if (cliffsBelow.length > 0) {
+          const nearest = cliffsBelow.sort((a, b) => b.strike - a.strike)[0];
+          squeezeTarget = `${formatK(nearest.strike - 500)} – ${formatK(nearest.strike + 500)}`;
+        } else if (putWall) {
+          squeezeTarget = `${formatK(putWall - 1000)} – ${formatK(putWall)}`;
+        }
+      } else {
+        squeezeTrigger = "No squeeze trigger — compression dominant";
+      }
+
+      const squeezeDrivers: string[] = [];
+      if (isShortGamma) squeezeDrivers.push("Short gamma regime");
+      else if (isLongGamma) squeezeDrivers.push("Long gamma regime");
+      if (lcCascadeRisk === "HIGH" || lcCascadeRisk === "EXTREME") squeezeDrivers.push("Cascade risk elevated");
+      if (highSensitivity) squeezeDrivers.push("Dealer sensitivity high");
+      if (expansionProbability > 0.5) squeezeDrivers.push("Expansion probability rising");
+      if (nearCliffs) squeezeDrivers.push("Near gamma cliff zone");
+      if (isCompressing && pinningStrength > 0.5) squeezeDrivers.push("Pinning suppressing squeeze");
+      while (squeezeDrivers.length < 3) squeezeDrivers.push("Standard market conditions");
+      if (squeezeDrivers.length > 5) squeezeDrivers.length = 5;
+
+      const squeezeProbabilityEngine = {
+        squeezeProbability: sqProbFinal,
+        squeezeDirection,
+        squeezeType,
+        squeezeTrigger,
+        squeezeTarget,
+        squeezeDrivers
+      };
+
       return {
         totalGex: totalGex || 0,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -1518,6 +1629,7 @@ export class DeribitOptionsGateway {
         institutionalBiasEngine,
         tradeDecisionEngine,
         liquidityCascadeEngine,
+        squeezeProbabilityEngine,
         source: dataSource
       };
     } catch (e) {
@@ -1575,6 +1687,14 @@ export class DeribitOptionsGateway {
           cascadeTrigger: "Analytics engine recovery required",
           liquidationPocket: "--",
           cascadeDrivers: ["Analytics engine error", "Using fallback values", "No signal alignment"]
+        },
+        squeezeProbabilityEngine: {
+          squeezeProbability: 0,
+          squeezeDirection: "NONE",
+          squeezeType: "NONE",
+          squeezeTrigger: "Analytics engine recovery required",
+          squeezeTarget: "--",
+          squeezeDrivers: ["Analytics engine error", "Using fallback values", "No signal alignment"]
         },
         source: dataSource
       } as any;
