@@ -1,0 +1,154 @@
+Implement a Flow Event Engine.
+
+IMPORTANT:
+Do NOT modify parser.
+Do NOT break current chart, scenario engine, setup quality engine, or execution state engine.
+Use the existing live confirmation toggles and current market context.
+
+You may add a lightweight derived frontend engine or small helper logic, but do not redesign existing APIs unless necessary.
+
+====================================================
+GOAL
+====================================================
+
+Add a new panel called:
+
+FLOW EVENTS
+
+This panel detects and displays important real-time market events that affect execution quality.
+
+====================================================
+OUTPUT
+====================================================
+
+The panel should show one or more recent active events such as:
+
+- ABSORPTION DETECTED
+- DELTA SHIFT
+- WALL PULL
+- LIQUIDITY SWEEP
+- IMBALANCE BURST
+- OI INSTABILITY
+- BID HOLD CONFIRMED
+
+Each event should include:
+- EVENT NAME
+- STATUS: ACTIVE / RECENT / INACTIVE
+- SHORT DESCRIPTION
+- IMPACT: SUPPORTIVE / WARNING / EXPANSIVE
+
+====================================================
+DATA SOURCES
+====================================================
+
+Use current available data from:
+- active scenario
+- setup quality
+- execution state
+- confirmation toggles:
+  - absorption at magnet
+  - bid holding
+  - delta divergence
+  - OI stable
+- dealer hedging flow
+- gamma pressure
+- gamma regime
+
+====================================================
+LOGIC
+====================================================
+
+Suggested rules:
+
+1. ABSORPTION DETECTED
+If:
+- absorption toggle is ON
+- price is near magnet / pivot / scenario level
+
+Impact:
+SUPPORTIVE
+
+2. BID HOLD CONFIRMED
+If:
+- bid holding toggle is ON
+
+Impact:
+SUPPORTIVE
+
+3. DELTA SHIFT
+If:
+- delta divergence toggle is ON
+
+Impact:
+WARNING or SUPPORTIVE depending on active scenario
+
+4. OI INSTABILITY
+If:
+- OI stable toggle is OFF
+
+Impact:
+WARNING
+
+5. WALL PULL
+Derived warning event if:
+- active scenario is breakout/volatility
+- structure is developing
+- price approaches wall/trigger region
+
+Impact:
+EXPANSIVE
+
+6. LIQUIDITY SWEEP
+Derived event if:
+- volatility / expansion scenario active
+- execution state not READY
+- acceleration risk medium/high
+
+Impact:
+EXPANSIVE
+
+7. IMBALANCE BURST
+Derived event if:
+- gamma pressure strong
+- hedge flow intensity medium/high
+- volatility risk not low
+
+Impact:
+WARNING or EXPANSIVE
+
+====================================================
+DISPLAY RULES
+====================================================
+
+- Show max 3 most relevant current events
+- Most important event first
+- Color code:
+  SUPPORTIVE → green
+  WARNING → yellow/orange
+  EXPANSIVE → red/orange
+
+====================================================
+UI
+====================================================
+
+Add a compact terminal panel:
+
+FLOW EVENTS
+
+Example:
+
+ABSORPTION DETECTED
+ACTIVE
+Supportive response at 67k magnet
+IMPACT: SUPPORTIVE
+
+DELTA SHIFT
+RECENT
+Divergence detected against local move
+IMPACT: WARNING
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+The terminal gains a live event-detection layer that translates structure + confirmations into actionable flow events.
