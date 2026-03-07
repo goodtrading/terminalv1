@@ -51,7 +51,7 @@ export function TerminalValue({
 }) {
   return (
     <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03] last:border-0 group">
-      <span className="terminal-text-label text-[10px] group-hover:text-white/60 transition-colors">{label}</span>
+      <span className="terminal-text-label text-[10px] transition-colors">{label}</span>
       {isBadge ? (
         <span className={cn(
           "terminal-badge",

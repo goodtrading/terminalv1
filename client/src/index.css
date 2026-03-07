@@ -27,15 +27,15 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  /* Terminal specific colors */
-  --color-terminal-bg: var(--terminal-bg);
-  --color-terminal-panel: var(--terminal-panel);
-  --color-terminal-border: var(--terminal-border);
-  --color-terminal-text: var(--terminal-text);
-  --color-terminal-muted: var(--terminal-muted);
-  --color-terminal-positive: var(--terminal-positive);
-  --color-terminal-negative: var(--terminal-negative);
-  --color-terminal-accent: var(--terminal-accent);
+  /* Terminal specific colors - Fixed HSL/Hex consistency */
+  --color-terminal-bg: #0b0b0b;
+  --color-terminal-panel: #111111;
+  --color-terminal-border: #1e1e1e;
+  --color-terminal-text: #f3f4f6;
+  --color-terminal-muted: #9ca3af;
+  --color-terminal-positive: #22c55e;
+  --color-terminal-negative: #ef4444;
+  --color-terminal-accent: #ff3b3b;
 }
 
 :root {
@@ -66,16 +66,6 @@
   --border: 0 0% 12%;
   --input: 0 0% 12%;
   --ring: 0 100% 62%;
-
-  /* Terminal Theme - Institutional Refinement */
-  --terminal-bg: 0 0% 4%;      /* #0b0b0b */
-  --terminal-panel: 0 0% 7%;   /* #111111 */
-  --terminal-border: 0 0% 12%;
-  --terminal-text: 0 0% 88%;
-  --terminal-muted: 0 0% 45%;
-  --terminal-positive: 142 71% 45%;
-  --terminal-negative: 0 100% 62%; /* #ff3b3b */
-  --terminal-accent: 0 100% 62%;   /* #ff3b3b */
 }
 
 @layer base {
@@ -87,48 +77,48 @@
   }
 }
 
-/* Design System Utility Classes - Strict Contrast Rule */
+/* Design System Utility Classes - Strict Terminal Theme */
 @utility terminal-text-primary {
-  color: #ffffff; /* Pure white for core content */
+  color: #ffffff;
 }
 
 @utility terminal-text-secondary {
-  color: #e5e5e5; /* High-contrast off-white (90%) */
+  color: #f3f4f6;
 }
 
 @utility terminal-text-label {
-  color: #a3a3a3; /* Clearly readable gray (60% equivalent but solid) */
+  color: #d1d5db;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 @utility terminal-text-muted {
-  color: var(--color-terminal-muted); /* Metadata only */
+  color: #9ca3af;
 }
 
 @utility terminal-card {
-  background-color: var(--color-terminal-panel);
-  border: 1px solid var(--color-terminal-border);
+  background-color: #111111;
+  border: 1px solid #1e1e1e;
   border-radius: 0.125rem;
   transition: all 0.2s;
 }
 
 @utility terminal-card-interactive {
-  background-color: var(--color-terminal-panel);
-  border: 1px solid var(--color-terminal-border);
+  background-color: #111111;
+  border: 1px solid #1e1e1e;
   border-radius: 0.125rem;
   transition: all 0.2s;
   cursor: pointer;
 
   &:hover {
-    border-color: #404040;
+    border-color: #4b5563;
   }
 }
 
 @utility terminal-card-selected {
-  border-color: var(--color-terminal-accent);
-  box-shadow: 0 0 0 1px rgba(255, 59, 59, 0.3);
+  border-color: #ff3b3b;
+  box-shadow: 0 0 0 1px rgba(255, 59, 59, 0.4);
 }
 
 @utility terminal-badge {
@@ -141,27 +131,27 @@
 }
 
 @utility terminal-badge-info {
-  background-color: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  background-color: rgba(59, 130, 246, 0.25);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.5);
 }
 
 @utility terminal-badge-success {
-  background-color: rgba(34, 197, 94, 0.15);
-  color: #4ade80;
-  border: 1px solid rgba(34, 197, 94, 0.3);
+  background-color: rgba(34, 197, 94, 0.25);
+  color: #86efac;
+  border: 1px solid rgba(34, 197, 94, 0.5);
 }
 
 @utility terminal-badge-warning {
-  background-color: rgba(234, 179, 8, 0.15);
-  color: #eab308;
-  border: 1px solid rgba(234, 179, 8, 0.3);
+  background-color: rgba(234, 179, 8, 0.25);
+  color: #fde047;
+  border: 1px solid rgba(234, 179, 8, 0.5);
 }
 
 @utility terminal-badge-error {
-  background-color: rgba(255, 59, 59, 0.15);
-  color: #ff3b3b;
-  border: 1px solid rgba(255, 59, 59, 0.3);
+  background-color: rgba(255, 59, 59, 0.25);
+  color: #fca5a5;
+  border: 1px solid rgba(255, 59, 59, 0.5);
 }
 
 /* Scrollbar styling */
@@ -171,17 +161,22 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: hsl(var(--terminal-bg)); 
+  background: #0b0b0b; 
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--terminal-border)); 
+  background: #1e1e1e; 
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--terminal-muted)); 
+  background: #9ca3af; 
 }
 
 .terminal-panel-shadow {
   box-shadow: 0 4px 20px -10px rgba(0,0,0,0.5);
+}
+
+/* Ensure chart container stays black */
+.chart-container-root {
+  background-color: #000000 !important;
 }

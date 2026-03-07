@@ -99,19 +99,16 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   const engineData = useMemo(() => {
     let score = 0;
     
-    // 1. Scenario confidence
     if (activeScenario) {
       if (activeScenario.probability >= 60) score += 2;
       else if (activeScenario.probability >= 40) score += 1;
       else score -= 1;
     }
 
-    // 2. Gamma structure
     if (market?.gammaRegime === "LONG GAMMA") score += 1;
     if (exposure?.gammaPressure.startsWith("+")) score += 1;
     if (exposure && exposure.gammaConcentration > 0.7) score += 1;
 
-    // 3. Dealer hedging flow alignment
     if (flow && activeScenario) {
       const isBullishScenario = ["BASE", "ALT"].includes(activeScenario.type);
       if (isBullishScenario && flow.hedgeFlowBias === "BUYING") score += 1;
@@ -119,17 +116,14 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       if (flow.hedgeFlowIntensity === "HIGH") score += 1;
     }
 
-    // 4. Confirmations
     const activeConfCount = Object.values(confirmations).filter(Boolean).length;
     score += activeConfCount * 1.2;
 
-    // Quality Mapping
     let quality: "A" | "B" | "C" | "D" = "D";
     if (score >= 8) quality = "A";
     else if (score >= 6) quality = "B";
     else if (score >= 4) quality = "C";
 
-    // Condition mapping
     let condition = "WEAK";
     if (activeScenario && activeConfCount >= 3) condition = "CONFIRMED";
     else if (activeConfCount >= 1) condition = "DEVELOPING";
@@ -137,19 +131,16 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       condition = "INVALID";
     }
 
-    // Flow state
     let flowState = "STABLE";
     if (market?.gammaRegime === "LONG GAMMA" && exposure?.gammaConcentration && exposure.gammaConcentration > 0.7) flowState = "STABLE";
     if (flow?.hedgeFlowBias === "BUYING") flowState = "SUPPORTIVE";
     if (flow?.hedgeFlowBias === "SELLING") flowState = "SUPPRESSIVE";
     if (market?.gammaRegime === "SHORT GAMMA" || flow?.accelerationRisk === "HIGH") flowState = "EXPANSIVE";
 
-    // Vol Risk
     let volRisk = "MEDIUM";
     if (market?.gammaRegime === "LONG GAMMA" && flow?.accelerationRisk === "LOW") volRisk = "LOW";
     if (market?.gammaRegime === "SHORT GAMMA" || activeScenario?.type === "VOL") volRisk = "HIGH";
 
-    // Execution State Logic
     let status = "AVOID ENTRY";
     let bias: "LONG" | "SHORT" | "NEUTRAL" = "NEUTRAL";
     let entryZone = "--";
@@ -167,12 +158,10 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       const firstLevel = scenarioLevels[0];
       const lastLevel = scenarioLevels[scenarioLevels.length - 1];
       
-      // Bias
       if (activeScenario.type === "VOL") bias = "NEUTRAL";
       else if (lastLevel > firstLevel) bias = "LONG";
       else bias = "SHORT";
 
-      // ENTRY ZONE
       const potentialEntryPoints = [...scenarioLevels];
       if (levels?.gammaMagnets) potentialEntryPoints.push(...levels.gammaMagnets);
       if (positioning?.dealerPivot) potentialEntryPoints.push(positioning.dealerPivot);
@@ -183,7 +172,6 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       );
       entryZone = formatLevelDisplay(nearestEntry);
 
-      // TARGET RESOLUTION
       const potentialTargets = [...scenarioLevels];
       if (levels?.gammaMagnets) potentialTargets.push(...levels.gammaMagnets);
       if (positioning?.callWall) potentialTargets.push(positioning.callWall);
@@ -197,7 +185,6 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         const shortTargets = potentialTargets.filter(t => t < currentPrice).sort((a, b) => b - a);
         nextTarget = shortTargets[0] || lastLevel;
       } else {
-        // BIAS = NEUTRAL
         if (activeScenario.type === "BASE") {
           nextTarget = potentialTargets.find(t => Math.abs(t - (positioning?.dealerPivot || currentPrice)) < 1000) || firstLevel;
         } else if (activeScenario.type === "ALT") {
@@ -219,7 +206,6 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       }
       target = formatLevelDisplay(nextTarget);
 
-      // INVALIDATION
       const invNum = parseLevel(activeScenario.invalidation);
       if (!isNaN(invNum)) {
         invalidationDisplay = `${formatLevelDisplay(invNum)} FLIP`;
@@ -238,7 +224,6 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         status = "STRUCTURE DEVELOPING";
       }
 
-      // Flow Event Logic
       if (confirmations["Absorption at Magnet"] && (priceNearMagnet || Math.abs(currentPrice - (positioning?.dealerPivot || 0)) < 500)) {
         allEvents.push({
           name: "ABSORPTION DETECTED",
@@ -308,7 +293,6 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       status = "AVOID ENTRY";
     }
 
-    // Sort events by impact: EXPANSIVE > WARNING > SUPPORTIVE
     const priority = { "EXPANSIVE": 0, "WARNING": 1, "SUPPORTIVE": 2 };
     const flowEvents = allEvents
       .sort((a, b) => priority[a.impact] - priority[b.impact])
@@ -330,72 +314,6 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     if (onScenarioSelect) {
       onScenarioSelect(newId ? scenario : null);
     }
-  };
-
-  const generateTradingPlan = () => {
-    if (!scenarios || scenarios.length === 0) return;
-    const active = activeScenario || [...scenarios].sort((a, b) => b.probability - a.probability)[0];
-    
-    const regimeDesc = market?.gammaRegime === "LONG GAMMA" 
-      ? "LONG GAMMA → mean reversion environment" 
-      : market?.gammaRegime === "SHORT GAMMA"
-        ? "SHORT GAMMA → expansion / momentum environment"
-        : "NEUTRAL → standard environment";
-
-    const plan = `-----------------------------------------------------
-MARKET REGIME
-${regimeDesc}
-
------------------------------------------------------
-ACTIVE SCENARIO
-${active.type} CASE (${active.probability}%)
-
-Thesis:
-${active.thesis}
-
------------------------------------------------------
-KEY LEVELS
-
-Primary Levels:
-${active.levels.join("\n")}
-
-Dealer Levels:
-Call Wall: ${positioning?.callWall?.toLocaleString() ?? "--"}
-Put Wall: ${positioning?.putWall?.toLocaleString() ?? "--"}
-Dealer Pivot: ${positioning?.dealerPivot?.toLocaleString() ?? "--"}
-
------------------------------------------------------
-TRADE SETUPS
-
-SETUP 1 — ${active.type === "VOL" ? "Volatility Expansion" : "Mean Reversion"}
-Entry zone:
-${active.levels[0]}
-
-Confirmation:
-${active.confirmation.join(" + ")}
-
-Target:
-${active.levels[active.levels.length - 1]}
-
-Invalidation:
-${active.invalidation}
-
------------------------------------------------------
-FLOW SIGNALS TO WATCH
-- absorption at magnets
-- bid holding
-- delta divergence
-- OI stability
-
------------------------------------------------------
-RISK CONDITIONS
-If volatility expansion begins
-OR dealer hedge flow accelerates
-→ scenario invalid
------------------------------------------------------`;
-    
-    setTradingPlan(plan);
-    setIsTradingPlanOpen(true);
   };
 
   const toggleConfirmation = (label: string) => {
@@ -466,7 +384,7 @@ OR dealer hedge flow accelerates
                   <span className={cn(
                     "text-[9px] font-bold tracking-wider",
                     event.impact === "SUPPORTIVE" ? "text-terminal-positive" : 
-                    event.impact === "WARNING" ? "text-yellow-400" : "text-terminal-negative"
+                    event.impact === "WARNING" ? "text-yellow-500" : "text-terminal-negative"
                   )}>
                     {event.name}
                   </span>
@@ -478,7 +396,7 @@ OR dealer hedge flow accelerates
                 <div className={cn(
                   "text-[8px] font-bold uppercase",
                   event.impact === "SUPPORTIVE" ? "text-terminal-positive" : 
-                  event.impact === "WARNING" ? "text-yellow-400" : "text-terminal-negative"
+                  event.impact === "WARNING" ? "text-yellow-500" : "text-terminal-negative"
                 )}>
                   IMPACT: {event.impact}
                 </div>
@@ -501,16 +419,16 @@ OR dealer hedge flow accelerates
             >
               <div className={cn(
                 "flex justify-between items-center p-1.5 border-b border-white/10",
-                scenario.type === "BASE" ? "bg-blue-500/20" : 
-                scenario.type === "ALT" ? "bg-green-500/20" : 
-                "bg-orange-500/20"
+                scenario.type === "BASE" ? "bg-blue-900/40" : 
+                scenario.type === "ALT" ? "bg-green-900/40" : 
+                "bg-orange-900/40"
               )}>
                 <div className="flex items-center space-x-1.5">
                   <div className={cn(
                     "w-1 h-1 rounded-full",
-                    scenario.type === "BASE" ? "bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : 
-                    scenario.type === "ALT" ? "bg-green-400 shadow-[0_0_8px_rgba(34,197,94,0.5)]" : 
-                    "bg-orange-400 shadow-[0_0_8px_rgba(249,115,22,0.5)]"
+                    scenario.type === "BASE" ? "bg-blue-400" : 
+                    scenario.type === "ALT" ? "bg-green-400" : 
+                    "bg-orange-400"
                   )}></div>
                   <span className="text-[9px] font-bold terminal-text-primary uppercase tracking-wider">{scenario.type} CASE</span>
                 </div>
@@ -551,30 +469,6 @@ OR dealer hedge flow accelerates
         </div>
       </TerminalPanel>
 
-      {tradingPlan && isTradingPlanOpen && (
-        <TerminalPanel 
-          title="ACTIVE TRADING PLAN" 
-          className="border-terminal-accent/30 bg-terminal-panel"
-          headerExtra={
-            <button 
-              onClick={() => setIsTradingPlanOpen(false)}
-              className="text-[8px] font-mono font-bold terminal-text-muted hover:text-white uppercase flex items-center"
-            >
-              [ CLOSE ]
-            </button>
-          }
-        >
-          <div className="p-3 space-y-2">
-            <div className="terminal-text-primary font-bold text-[10px] mb-1.5 uppercase border-b border-white/10 pb-1">
-              TRADING PLAN ACTIVE
-            </div>
-            <pre className="text-[9px] font-mono font-bold terminal-text-secondary leading-relaxed whitespace-pre-wrap">
-              {tradingPlan}
-            </pre>
-          </div>
-        </TerminalPanel>
-      )}
-
       <TerminalPanel title="ORDER FLOW CONFIRMATION">
         <div className="space-y-2">
           {Object.entries(confirmations).map(([label, isActive], i) => (
@@ -587,39 +481,17 @@ OR dealer hedge flow accelerates
               </span>
               <div className={cn(
                 "flex items-center justify-center w-8 h-4 rounded-full border border-terminal-border bg-terminal-panel p-0.5 transition-all",
-                isActive && "border-terminal-positive/30 bg-terminal-positive/5",
+                isActive ? "border-terminal-accent" : "border-terminal-border"
               )}>
                 <div className={cn(
-                  "w-1.5 h-1.5 rounded-full",
-                  isActive ? "bg-terminal-positive shadow-[0_0_6px_rgba(74,222,128,0.8)]" : "bg-white/10"
-                )} />
+                  "w-2 h-2 rounded-full transition-all",
+                  isActive ? "bg-terminal-accent translate-x-1" : "bg-terminal-border -translate-x-1"
+                )}></div>
               </div>
             </div>
           ))}
         </div>
       </TerminalPanel>
-
-      <TerminalPanel title="ACTIONS" className="mt-auto">
-        <div className="space-y-1.5">
-          <Button 
-            onClick={generateTradingPlan}
-            variant="outline" 
-            className="w-full justify-start text-[9px] font-bold uppercase tracking-[0.1em] h-8 bg-terminal-panel border-terminal-border terminal-text-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/5 transition-all rounded-sm no-default-hover-elevate"
-          >
-            <span className="mr-2.5 opacity-40">█</span> {isTradingPlanOpen ? "Refresh Trading Plan" : "Generate Trading Plan"}
-          </Button>
-          {["Export Daily Report", "Copy Telegram Update"].map((text) => (
-            <Button 
-              key={text}
-              variant="outline" 
-              className="w-full justify-start text-[9px] font-bold uppercase tracking-[0.1em] h-8 bg-terminal-panel border-terminal-border terminal-text-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/5 transition-all rounded-sm no-default-hover-elevate"
-            >
-              <span className="mr-2.5 opacity-40">█</span> {text}
-            </Button>
-          ))}
-        </div>
-      </TerminalPanel>
-
     </div>
   );
 }
