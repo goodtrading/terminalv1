@@ -75,10 +75,18 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
 
   const parseLevel = (val: string): number => {
     const clean = val.toLowerCase().replace(/,/g, '').trim();
-    if (clean.endsWith('k')) {
-      return parseFloat(clean.slice(0, -1)) * 1000;
+    const match = clean.match(/(\d+\.?\d*)/);
+    if (!match) return NaN;
+    let num = parseFloat(match[1]);
+    if (clean.includes('k')) {
+      num *= 1000;
     }
-    return parseFloat(clean);
+    return num;
+  };
+
+  const formatLevelDisplay = (price: number): string => {
+    if (isNaN(price)) return "--";
+    return price >= 1000 ? `${(price / 1000).toFixed(1)}k` : price.toString();
   };
 
   const engineData = useMemo(() => {
@@ -136,17 +144,17 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
 
     // Execution State Logic
     let status = "AVOID ENTRY";
-    let bias = "NEUTRAL";
+    let bias: "LONG" | "SHORT" | "NEUTRAL" = "NEUTRAL";
     let entryZone = "--";
     let trigger = Object.entries(confirmations)
       .filter(([_, active]) => active)
       .map(([label]) => label.split(' ')[0])
       .join(", ") || "NONE";
     let target = "--";
-    let invalidation = activeScenario?.invalidation || "--";
+    let invalidationDisplay = "--";
 
     if (activeScenario) {
-      const scenarioLevels = activeScenario.levels.map(parseLevel);
+      const scenarioLevels = activeScenario.levels.map(parseLevel).filter(l => !isNaN(l));
       const firstLevel = scenarioLevels[0];
       const lastLevel = scenarioLevels[scenarioLevels.length - 1];
       
@@ -155,10 +163,43 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       else if (lastLevel > firstLevel) bias = "LONG";
       else bias = "SHORT";
 
-      entryZone = activeScenario.levels[0];
-      target = activeScenario.levels[activeScenario.levels.length - 1];
+      // Enhanced Level Extraction
+      // ENTRY ZONE: Nearest level from: scenario levels, magnets, pivot
+      const potentialEntryPoints = [...scenarioLevels];
+      if (levels?.gammaMagnets) potentialEntryPoints.push(...levels.gammaMagnets);
+      if (positioning?.dealerPivot) potentialEntryPoints.push(positioning.dealerPivot);
+      
+      const nearestEntry = potentialEntryPoints.reduce((prev, curr) => 
+        Math.abs(curr - currentPrice) < Math.abs(prev - currentPrice) ? curr : prev, 
+        potentialEntryPoints[0] || NaN
+      );
+      entryZone = formatLevelDisplay(nearestEntry);
 
-      const priceNearEntry = Math.abs(currentPrice - firstLevel) < (currentPrice * 0.015);
+      // TARGET: Next magnet or scenario level in direction of bias
+      const potentialTargets = [...scenarioLevels];
+      if (levels?.gammaMagnets) potentialTargets.push(...levels.gammaMagnets);
+      
+      let nextTarget = NaN;
+      if (bias === "LONG") {
+        const longTargets = potentialTargets.filter(t => t > currentPrice).sort((a, b) => a - b);
+        nextTarget = longTargets[0] || lastLevel;
+      } else if (bias === "SHORT") {
+        const shortTargets = potentialTargets.filter(t => t < currentPrice).sort((a, b) => b - a);
+        nextTarget = shortTargets[0] || lastLevel;
+      } else {
+        nextTarget = lastLevel;
+      }
+      target = formatLevelDisplay(nextTarget);
+
+      // INVALIDATION: Extract from text
+      const invNum = parseLevel(activeScenario.invalidation);
+      if (!isNaN(invNum)) {
+        invalidationDisplay = `${formatLevelDisplay(invNum)} FLIP`;
+      } else {
+        invalidationDisplay = activeScenario.invalidation;
+      }
+
+      const priceNearEntry = Math.abs(currentPrice - nearestEntry) < (currentPrice * 0.015);
       const priceNearMagnet = levels?.gammaMagnets.some(m => Math.abs(currentPrice - m) < (currentPrice * 0.01));
 
       if ((quality === "A" || quality === "B") && condition === "CONFIRMED" && activeConfCount >= 2 && (priceNearEntry || priceNearMagnet)) {
@@ -174,8 +215,8 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       status = "AVOID ENTRY";
     }
 
-    return { quality, condition, flowState, volRisk, score, status, bias, entryZone, trigger, target, invalidation };
-  }, [activeScenario, market, exposure, flow, confirmations, currentPrice, levels]);
+    return { quality, condition, flowState, volRisk, score, status, bias, entryZone, trigger, target, invalidationDisplay };
+  }, [activeScenario, market, exposure, flow, confirmations, currentPrice, levels, positioning]);
 
   const formatLevel = (level: string | number) => {
     if (typeof level === 'number') {
@@ -311,7 +352,7 @@ OR dealer hedge flow accelerates
           <TerminalValue label="Entry Zone" value={engineData.entryZone} />
           <TerminalValue label="Trigger" value={engineData.trigger} />
           <TerminalValue label="Target" value={engineData.target} />
-          <TerminalValue label="Invalidation" value={engineData.invalidation} />
+          <TerminalValue label="Invalidation" value={engineData.invalidationDisplay} />
         </div>
       </TerminalPanel>
 
