@@ -25,6 +25,8 @@ function StatusValue({ label, value, color }: { label: string; value: string; co
   const colorClass = color === "green" ? "text-green-400"
     : color === "red" ? "text-red-400"
     : color === "yellow" ? "text-yellow-400"
+    : color === "orange" ? "text-orange-400"
+    : color === "purple" ? "text-purple-400"
     : color === "gray" ? "text-white/50"
     : "terminal-text-primary";
 
@@ -274,6 +276,48 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
                       <span className="text-[10px] text-white/50 font-mono leading-snug">{line}</span>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </SidebarPanel>
+
+      <SidebarPanel title="Liquidity Sweep">
+        {(() => {
+          const sweep = (positioning as any)?.liquiditySweepDetector;
+          const risk = sweep?.sweepRisk || "LOW";
+          const direction = sweep?.sweepDirection || "NONE";
+          const trigger = sweep?.sweepTrigger || "--";
+          const target = sweep?.sweepTargetZone || "--";
+          const summary: string[] = sweep?.sweepSummary || [];
+          const riskColor = risk === "EXTREME" ? "red" : risk === "HIGH" ? "orange" : risk === "MEDIUM" ? "yellow" : "gray";
+          const dirColor = direction === "UP" ? "green" : direction === "DOWN" ? "red" : direction === "TWO_SIDED" ? "yellow" : "gray";
+          return (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-col divide-y divide-white/[0.04]">
+                <StatusValue label="Risk" value={risk} color={riskColor} />
+                <StatusValue label="Direction" value={direction.replace(/_/g, " ")} color={dirColor} />
+              </div>
+              <div className="mt-1">
+                <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Trigger</span>
+                <p className="text-[10px] text-white/60 font-mono leading-snug mt-0.5" data-testid="text-sweep-trigger">{trigger}</p>
+              </div>
+              <div>
+                <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Target</span>
+                <p className="text-[10px] text-white/60 font-mono leading-snug mt-0.5" data-testid="text-sweep-target">{target}</p>
+              </div>
+              {summary.length > 0 && (
+                <div>
+                  <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Summary</span>
+                  <div className="mt-1 flex flex-col gap-0.5">
+                    {summary.map((line: string, i: number) => (
+                      <div key={i} className="flex items-start gap-1.5">
+                        <span className="text-[8px] mt-[3px] text-orange-400">•</span>
+                        <span className="text-[10px] text-white/50 font-mono leading-snug">{line}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
