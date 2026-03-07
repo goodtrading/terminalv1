@@ -1,0 +1,91 @@
+UI REFACTOR — CLEAN UP GAMMA MODE OVERLAY
+
+Goal:
+Make GAMMA mode readable and useful by reducing clutter.
+
+Current issue:
+Gamma mode shows too many gamma cliff lines and labels, making the chart hard to read.
+
+Do NOT change backend analytics.
+Do NOT change gamma calculations.
+Only improve the chart overlay rendering for GAMMA mode.
+
+------------------------------------------------
+
+STEP 1 — LIMIT GAMMA CLIFFS
+
+Do not render all gamma cliffs.
+
+Instead, show only:
+- the 3 strongest gamma cliffs above current spot
+- the 3 strongest gamma cliffs below current spot
+
+Sort gamma cliffs by strength magnitude and proximity relevance.
+
+------------------------------------------------
+
+STEP 2 — KEEP ONLY CORE GAMMA ELEMENTS
+
+In GAMMA mode show only:
+
+1. Gamma Flip
+2. Transition Zone / Transition Band
+3. Key Gamma Cliffs (max 3 above, max 3 below)
+
+Hide all other overlays.
+
+------------------------------------------------
+
+STEP 3 — SIMPLIFY LABELS
+
+Gamma cliff labels should be compact.
+
+Instead of:
+CLIFF 14328 76000.00
+
+Use:
+CLIFF ↑ 76k
+or
+CLIFF ↓ 67.5k
+
+Keep labels short and readable.
+
+------------------------------------------------
+
+STEP 4 — REDUCE VISUAL NOISE
+
+Use:
+- thinner lines
+- lower opacity for secondary gamma cliffs
+- strongest cliff slightly emphasized
+- transition zone as a subtle shaded band
+
+The chart should stay readable.
+
+------------------------------------------------
+
+STEP 5 — ADD SMALL MODE SUBTITLE
+
+At the top of the chart in GAMMA mode add a small subtitle:
+
+"Showing Flip, Transition Zone, and Key Gamma Cliffs"
+
+This should help beginner users understand what they are seeing.
+
+------------------------------------------------
+
+STEP 6 — DO NOT MODIFY OTHER MODES
+
+Do not change:
+LEVELS mode
+CASCADE mode
+SQUEEZE mode
+
+Only refactor GAMMA mode rendering.
+
+------------------------------------------------
+
+Expected result:
+
+Gamma mode should feel clean, readable, and professional.
+It should show only the most important gamma structure, not every cliff in the model.

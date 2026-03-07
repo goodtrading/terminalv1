@@ -248,15 +248,30 @@ export function MainChart() {
     }
 
     if (mapMode === "GAMMA") {
-      if (market?.gammaFlip) addLevel(market.gammaFlip, "rgba(234, 179, 8, 0.7)", "GAMMA FLIP");
+      if (market?.gammaFlip) addLevel(market.gammaFlip, "rgba(234, 179, 8, 0.8)", "GAMMA FLIP");
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
-        addLevel(market.transitionZoneStart, "rgba(234, 179, 8, 0.3)", "TRANSITION LOW", LineStyle.Dashed);
-        addLevel(market.transitionZoneEnd, "rgba(234, 179, 8, 0.3)", "TRANSITION HIGH", LineStyle.Dashed);
+        addLevel(market.transitionZoneStart, "rgba(234, 179, 8, 0.25)", "TRANSITION LOW", LineStyle.Dashed);
+        addLevel(market.transitionZoneEnd, "rgba(234, 179, 8, 0.25)", "TRANSITION HIGH", LineStyle.Dashed);
       }
       const gammaCliffs = positioning_engines?.gammaCurveEngine?.gammaCliffs;
       if (gammaCliffs && Array.isArray(gammaCliffs)) {
-        gammaCliffs.forEach((cliff: { strike: number; strength: number }) => {
-          addLevel(cliff.strike, "rgba(249, 115, 22, 0.5)", `CLIFF ${cliff.strength.toFixed(0)}`, LineStyle.Dotted);
+        const above = gammaCliffs
+          .filter((c: any) => c.strike > price)
+          .sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength))
+          .slice(0, 3);
+        const below = gammaCliffs
+          .filter((c: any) => c.strike < price)
+          .sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength))
+          .slice(0, 3);
+        const keyCliffs = [...above, ...below];
+        const maxStrength = Math.max(...keyCliffs.map((c: any) => Math.abs(c.strength)), 1);
+        keyCliffs.forEach((cliff: { strike: number; strength: number }) => {
+          const isAbove = cliff.strike > price;
+          const arrow = isAbove ? "↑" : "↓";
+          const label = `CLIFF ${arrow} ${cliff.strike >= 1000 ? (cliff.strike / 1000).toFixed(cliff.strike % 1000 === 0 ? 0 : 1) + "k" : cliff.strike}`;
+          const ratio = Math.abs(cliff.strength) / maxStrength;
+          const opacity = ratio > 0.7 ? 0.55 : ratio > 0.4 ? 0.35 : 0.2;
+          addLevel(cliff.strike, `rgba(249, 115, 22, ${opacity})`, label, LineStyle.Dotted);
         });
       }
     }
@@ -343,6 +358,9 @@ export function MainChart() {
                 <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>
                 <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span><span className="text-[11px] font-bold font-mono text-white">{market?.distanceToFlip?.toFixed(2) || "0.00"}%</span></div>
               </div>
+              {mapMode === "GAMMA" && (
+                <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Showing Flip, Transition Zone, and Key Gamma Cliffs</div>
+              )}
             </div>
           </div>
         </div>
