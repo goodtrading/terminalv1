@@ -123,7 +123,7 @@ export function LeftSidebar() {
                   )}>{alert.title}</span>
                   <span className="text-[8px] font-mono terminal-text-muted leading-none">{alert.timestamp}</span>
                 </div>
-                <div className="text-[10px] terminal-text-secondary font-medium leading-tight">
+                <div className="text-[10px] terminal-text-secondary font-bold leading-tight">
                   {alert.message}
                 </div>
               </div>
@@ -180,7 +180,7 @@ export function LeftSidebar() {
           </div>
           
           <div className="p-2 bg-terminal-negative/10 border border-terminal-negative/30 rounded-sm">
-            <div className="text-[9px] uppercase tracking-[0.2em] text-terminal-negative/70 mb-1 font-bold">SHORT GAMMA POCKET</div>
+            <div className="text-[9px] uppercase tracking-[0.2em] text-terminal-negative mb-1 font-bold">SHORT GAMMA POCKET</div>
             <div className="font-mono text-xs text-terminal-negative font-bold">
               {levels ? `${levels.shortGammaPocketStart.toLocaleString()} – ${levels.shortGammaPocketEnd.toLocaleString()}` : "--"}
             </div>

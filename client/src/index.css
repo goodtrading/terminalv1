@@ -87,24 +87,24 @@
   }
 }
 
-/* Design System Utility Classes */
+/* Design System Utility Classes - Strict Contrast Rule */
 @utility terminal-text-primary {
-  color: white;
+  color: #ffffff; /* Pure white for core content */
 }
 
 @utility terminal-text-secondary {
-  color: rgba(255, 255, 255, 0.9);
+  color: #e5e5e5; /* High-contrast off-white (90%) */
 }
 
 @utility terminal-text-label {
-  color: rgba(255, 255, 255, 0.6);
+  color: #a3a3a3; /* Clearly readable gray (60% equivalent but solid) */
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 @utility terminal-text-muted {
-  color: var(--color-terminal-muted);
+  color: var(--color-terminal-muted); /* Metadata only */
 }
 
 @utility terminal-card {
@@ -122,7 +122,7 @@
   cursor: pointer;
 
   &:hover {
-    border-color: rgba(255, 255, 255, 0.2);
+    border-color: #404040;
   }
 }
 
@@ -141,27 +141,27 @@
 }
 
 @utility terminal-badge-info {
-  background-color: rgba(59, 130, 246, 0.2);
-  color: rgb(96, 165, 250);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
 }
 
 @utility terminal-badge-success {
-  background-color: rgba(34, 197, 94, 0.2);
-  color: var(--color-terminal-positive);
-  border: 1px solid rgba(34, 197, 94, 0.2);
+  background-color: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
 }
 
 @utility terminal-badge-warning {
-  background-color: rgba(234, 179, 8, 0.2);
-  color: rgb(234, 179, 8);
-  border: 1px solid rgba(234, 179, 8, 0.2);
+  background-color: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+  border: 1px solid rgba(234, 179, 8, 0.3);
 }
 
 @utility terminal-badge-error {
-  background-color: rgba(255, 59, 59, 0.2);
-  color: var(--color-terminal-negative);
-  border: 1px solid rgba(255, 59, 59, 0.2);
+  background-color: rgba(255, 59, 59, 0.15);
+  color: #ff3b3b;
+  border: 1px solid rgba(255, 59, 59, 0.3);
 }
 
 /* Scrollbar styling */

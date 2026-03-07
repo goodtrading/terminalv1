@@ -470,15 +470,15 @@ OR dealer hedge flow accelerates
                   )}>
                     {event.name}
                   </span>
-                  <span className="text-[8px] font-mono opacity-50">{event.status}</span>
+                  <span className="text-[8px] font-mono terminal-text-muted">{event.status}</span>
                 </div>
-                <div className="text-[9px] terminal-text-secondary leading-tight">
+                <div className="text-[9px] terminal-text-secondary font-bold leading-tight">
                   {event.description}
                 </div>
                 <div className={cn(
                   "text-[8px] font-bold uppercase",
-                  event.impact === "SUPPORTIVE" ? "text-terminal-positive/70" : 
-                  event.impact === "WARNING" ? "text-yellow-400/70" : "text-terminal-negative/70"
+                  event.impact === "SUPPORTIVE" ? "text-terminal-positive" : 
+                  event.impact === "WARNING" ? "text-yellow-400" : "text-terminal-negative"
                 )}>
                   IMPACT: {event.impact}
                 </div>
@@ -537,7 +537,7 @@ OR dealer hedge flow accelerates
                   
                   <div className="grid grid-cols-[75px_1fr] gap-2">
                     <span className="terminal-text-label text-[9px]">Confirm</span>
-                    <span className="terminal-text-secondary font-medium italic">{scenario.confirmation.join(", ")}</span>
+                    <span className="terminal-text-secondary font-bold italic">{scenario.confirmation.join(", ")}</span>
                   </div>
                   <div className="grid grid-cols-[75px_1fr] gap-2">
                     <span className="terminal-text-label text-[9px]">Invalid</span>
