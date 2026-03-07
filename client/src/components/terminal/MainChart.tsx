@@ -485,7 +485,7 @@ export function MainChart() {
 
   return (
     <TerminalPanel 
-      className="flex-1 mb-2 border border-terminal-border relative overflow-hidden" 
+      className="flex-[2] border border-terminal-border relative overflow-hidden" 
       noPadding
       style={{ backgroundColor: regimeColor }}
     >
