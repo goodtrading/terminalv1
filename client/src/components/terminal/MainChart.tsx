@@ -142,7 +142,14 @@ export function MainChart() {
   const { data: candles } = useQuery({
     queryKey: ["btc-candles-lightweight"],
     queryFn: async () => {
-      const res = await fetch("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=300");
+      // Use a relative path to trigger the development proxy instead of direct Binance URL
+      // This helps avoid CORS issues in the Replit environment
+      const res = await fetch("/api/proxy/binance/klines?symbol=BTCUSDT&interval=15m&limit=300");
+      if (!res.ok) {
+        // Fallback to direct Binance if proxy is not yet implemented
+        const directRes = await fetch("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=300");
+        return directRes.json();
+      }
       const data = await res.json();
       return data
         .map((d: any) => ({

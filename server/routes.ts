@@ -36,5 +36,19 @@ export async function registerRoutes(
     res.json(data);
   });
 
+  // Binance Proxy to avoid CORS
+  app.get("/api/proxy/binance/klines", async (req, res) => {
+    try {
+      const { symbol, interval, limit } = req.query;
+      const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      res.json(data);
+    } catch (error) {
+      console.error("Proxy error:", error);
+      res.status(500).json({ error: "Failed to fetch from Binance" });
+    }
+  });
+
   return httpServer;
 }

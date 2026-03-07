@@ -20,16 +20,6 @@ export function TradingPlan() {
     refetchInterval: 5000
   });
 
-  const { data: positioning } = useQuery<OptionsPositioning>({ 
-    queryKey: ["/api/options-positioning"],
-    refetchInterval: 5000
-  });
-
-  const { data: levels } = useQuery<KeyLevels>({ 
-    queryKey: ["/api/key-levels"],
-    refetchInterval: 5000
-  });
-
   const { data: exposure } = useQuery<DealerExposure>({ 
     queryKey: ["/api/dealer-exposure"],
     refetchInterval: 5000
@@ -51,7 +41,7 @@ export function TradingPlan() {
 
   if (!selectedScenario) {
     return (
-      <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-1 min-w-[300px]">
+      <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-[0.65] min-w-[300px]">
         <div className="h-full flex items-center justify-center text-terminal-muted text-[10px] italic">
           Select a scenario from the right sidebar to generate plan
         </div>
@@ -60,33 +50,55 @@ export function TradingPlan() {
   }
 
   return (
-    <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-1 min-w-[300px]">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="space-y-3">
-          <TerminalValue label="Bias" value={planData?.bias} trend={planData?.bias.includes("BULLISH") ? "positive" : "neutral"} isBadge />
-          <TerminalValue label="Regime" value={planData?.regime} trend={planData?.regime === "LONG GAMMA" ? "positive" : "negative"} />
+    <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-[0.65] min-w-[300px]">
+      <div className="grid grid-cols-3 gap-x-12 px-4 py-2">
+        {/* Column 1: Market Context */}
+        <div className="flex flex-col">
+          <div className="text-[10px] text-terminal-accent font-bold uppercase tracking-wider border-b border-terminal-accent/20 pb-2 mb-4">
+            Market Context
+          </div>
+          <div className="space-y-4">
+            <TerminalValue label="Bias" value={planData?.bias} trend={planData?.bias.includes("BULLISH") ? "positive" : "neutral"} isBadge />
+            <TerminalValue label="Regime" value={planData?.regime} trend={planData?.regime === "LONG GAMMA" ? "positive" : "negative"} />
+            <div className="flex justify-between items-center py-2 border-b border-white/[0.03] last:border-0">
+               <span className="terminal-text-label text-[10px]">Vanna/Charm</span>
+               <span className="text-xs font-mono font-bold terminal-text-primary">
+                 {exposure?.vannaBias?.charAt(0)}/{exposure?.charmBias?.charAt(0)}
+               </span>
+            </div>
+          </div>
         </div>
-        <div className="space-y-3">
-          <TerminalValue label="Scenario" value={planData?.scenario} />
-          <TerminalValue label="Confirmations" value={planData?.confirmations} />
+
+        {/* Column 2: Execution Params */}
+        <div className="flex flex-col">
+          <div className="text-[10px] text-terminal-accent font-bold uppercase tracking-wider border-b border-terminal-accent/20 pb-2 mb-4">
+            Execution Params
+          </div>
+          <div className="space-y-4">
+            <TerminalValue label="Entry Zone" value={planData?.entry} trend="positive" />
+            <TerminalValue label="Invalidation" value={planData?.invalidation} trend="negative" />
+            <TerminalValue label="Primary Targets" value={planData?.targets} />
+          </div>
         </div>
-        <div className="space-y-3">
-          <TerminalValue label="Entry Zone" value={planData?.entry} trend="positive" />
-          <TerminalValue label="Invalidation" value={planData?.invalidation} trend="negative" />
-        </div>
-        <div className="space-y-3">
-          <TerminalValue label="Primary Targets" value={planData?.targets} />
-          <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03] last:border-0">
-             <span className="terminal-text-label text-[10px]">Vanna/Charm</span>
-             <span className="text-xs font-mono font-bold terminal-text-primary">
-               {exposure?.vannaBias?.charAt(0)}/{exposure?.charmBias?.charAt(0)}
-             </span>
+
+        {/* Column 3: Scenario & Confirm */}
+        <div className="flex flex-col">
+          <div className="text-[10px] text-terminal-accent font-bold uppercase tracking-wider border-b border-terminal-accent/20 pb-2 mb-4">
+            Scenario & Confirm
+          </div>
+          <div className="space-y-4">
+            <TerminalValue label="Scenario" value={planData?.scenario} />
+            <TerminalValue label="Confirmations" value={planData?.confirmations} />
           </div>
         </div>
       </div>
-      <div className="mt-4 p-2 bg-terminal-accent/5 border border-terminal-accent/10 rounded-sm">
-        <div className="text-[9px] text-terminal-accent font-bold uppercase mb-1">Execution Thesis</div>
-        <div className="text-[10px] terminal-text-secondary leading-relaxed font-medium">
+      
+      <div className="mt-8 mx-4 p-5 bg-terminal-accent/[0.03] border border-terminal-accent/10 rounded-sm">
+        <div className="text-[10px] text-terminal-accent font-bold uppercase tracking-widest mb-3 flex items-center">
+          <div className="w-1.5 h-3.5 bg-terminal-accent mr-2.5"></div>
+          Execution Thesis
+        </div>
+        <div className="text-[11px] terminal-text-secondary leading-relaxed font-medium pl-4 border-l border-terminal-accent/20">
           {selectedScenario.thesis}
         </div>
       </div>
