@@ -403,10 +403,10 @@ OR dealer hedge flow accelerates
   };
 
   return (
-    <div className="w-80 h-full flex flex-col gap-2 overflow-y-auto p-2 border-l border-terminal-border bg-terminal-bg shrink-0">
+    <div className="w-80 h-full flex flex-col gap-1 overflow-y-auto p-1 border-l border-terminal-border bg-terminal-bg shrink-0">
       
       <TerminalPanel title="TRADE SETUP QUALITY">
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <TerminalValue 
             label="Setup Quality" 
             value={engineData.quality} 
@@ -432,7 +432,7 @@ OR dealer hedge flow accelerates
       </TerminalPanel>
 
       <TerminalPanel title="EXECUTION STATE">
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <TerminalValue 
             label="Status" 
             value={engineData.status} 
@@ -456,21 +456,21 @@ OR dealer hedge flow accelerates
       </TerminalPanel>
 
       <TerminalPanel title="FLOW EVENTS">
-        <div className="space-y-4">
+        <div className="space-y-3">
           {engineData.flowEvents.length === 0 ? (
-            <div className="text-[10px] terminal-text-muted italic py-2">No significant flow events detected</div>
+            <div className="text-[9px] terminal-text-muted italic py-1.5">No significant flow events detected</div>
           ) : (
             engineData.flowEvents.map((event, i) => (
-              <div key={i} className="border-l-2 border-white/10 pl-3 space-y-1">
+              <div key={i} className="border-l border-white/10 pl-2.5 space-y-1">
                 <div className="flex justify-between items-center">
                   <span className={cn(
-                    "text-[10px] font-bold tracking-wider",
+                    "text-[9px] font-bold tracking-wider",
                     event.impact === "SUPPORTIVE" ? "text-terminal-positive" : 
                     event.impact === "WARNING" ? "text-yellow-400" : "text-terminal-negative"
                   )}>
                     {event.name}
                   </span>
-                  <span className="text-[8px] font-mono terminal-text-muted">{event.status}</span>
+                  <span className="text-[7px] font-mono terminal-text-muted">{event.status}</span>
                 </div>
                 <div className="text-[9px] terminal-text-secondary font-bold leading-tight">
                   {event.description}
@@ -489,7 +489,7 @@ OR dealer hedge flow accelerates
       </TerminalPanel>
 
       <TerminalPanel title="DAILY SCENARIOS">
-        <div className="space-y-4">
+        <div className="space-y-3">
           {scenarios?.map((scenario) => (
             <div 
               key={scenario.id}
@@ -500,19 +500,19 @@ OR dealer hedge flow accelerates
               )}
             >
               <div className={cn(
-                "flex justify-between items-center p-2 border-b border-white/5",
+                "flex justify-between items-center p-1.5 border-b border-white/5",
                 scenario.type === "BASE" ? "bg-blue-500/10" : 
                 scenario.type === "ALT" ? "bg-green-500/10" : 
                 "bg-orange-500/10"
               )}>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1.5">
                   <div className={cn(
-                    "w-1.5 h-1.5 rounded-full",
+                    "w-1 h-1 rounded-full",
                     scenario.type === "BASE" ? "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : 
                     scenario.type === "ALT" ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" : 
                     "bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]"
                   )}></div>
-                  <span className="text-[10px] font-bold terminal-text-secondary uppercase tracking-wider">{scenario.type} CASE</span>
+                  <span className="text-[9px] font-bold terminal-text-secondary uppercase tracking-wider">{scenario.type} CASE</span>
                 </div>
                 <span className={cn(
                   "terminal-badge",
@@ -523,52 +523,52 @@ OR dealer hedge flow accelerates
                   {scenario.probability}% PROB
                 </span>
               </div>
-              <div className="p-3 text-[11px] space-y-3">
+              <div className="p-2 text-[10px] space-y-2">
                 <div className="font-bold terminal-text-primary leading-tight">
                   {scenario.thesis}
                 </div>
-                <div className="space-y-3">
-                  <div className="flex flex-col mt-1 mb-2">
-                    <span className="terminal-text-label text-[9px]">Levels</span>
-                    <span className="text-xs font-mono font-bold terminal-text-primary mt-1 block leading-normal">
+                <div className="space-y-2">
+                  <div className="flex flex-col">
+                    <span className="terminal-text-label text-[8px]">Levels</span>
+                    <span className="text-[9px] font-mono font-bold terminal-text-primary block leading-normal">
                       {scenario.levels.map(formatLevel).join(" / ")}
                     </span>
                   </div>
                   
-                  <div className="grid grid-cols-[75px_1fr] gap-2">
-                    <span className="terminal-text-label text-[9px]">Confirm</span>
-                    <span className="terminal-text-secondary font-bold italic">{scenario.confirmation.join(", ")}</span>
+                  <div className="grid grid-cols-[60px_1fr] gap-1.5">
+                    <span className="terminal-text-label text-[8px]">Confirm</span>
+                    <span className="terminal-text-secondary font-bold italic text-[9px]">{scenario.confirmation.join(", ")}</span>
                   </div>
-                  <div className="grid grid-cols-[75px_1fr] gap-2">
-                    <span className="terminal-text-label text-[9px]">Invalid</span>
-                    <span className="text-terminal-negative font-bold">{scenario.invalidation}</span>
+                  <div className="grid grid-cols-[60px_1fr] gap-1.5">
+                    <span className="terminal-text-label text-[8px]">Invalid</span>
+                    <span className="text-terminal-negative font-bold text-[9px]">{scenario.invalidation}</span>
                   </div>
                 </div>
               </div>
             </div>
           ))}
-          {!scenarios && <div className="text-xs terminal-text-muted p-4">Loading scenarios...</div>}
+          {!scenarios && <div className="text-[10px] text-terminal-muted p-3">Loading scenarios...</div>}
         </div>
       </TerminalPanel>
 
       {tradingPlan && isTradingPlanOpen && (
         <TerminalPanel 
           title="ACTIVE TRADING PLAN" 
-          className="border-terminal-accent/50 bg-terminal-panel"
+          className="border-terminal-accent/30 bg-terminal-panel"
           headerExtra={
             <button 
               onClick={() => setIsTradingPlanOpen(false)}
-              className="text-[9px] font-mono font-bold terminal-text-muted hover:text-white uppercase flex items-center"
+              className="text-[8px] font-mono font-bold terminal-text-muted hover:text-white uppercase flex items-center"
             >
               [ CLOSE ]
             </button>
           }
         >
-          <div className="p-4 space-y-3">
-            <div className="terminal-text-primary font-bold text-[11px] mb-2 uppercase border-b border-white/10 pb-1">
+          <div className="p-3 space-y-2">
+            <div className="terminal-text-primary font-bold text-[10px] mb-1.5 uppercase border-b border-white/10 pb-1">
               TRADING PLAN ACTIVE
             </div>
-            <pre className="text-[10px] font-mono font-bold terminal-text-secondary leading-relaxed whitespace-pre-wrap">
+            <pre className="text-[9px] font-mono font-bold terminal-text-secondary leading-relaxed whitespace-pre-wrap">
               {tradingPlan}
             </pre>
           </div>
@@ -576,21 +576,21 @@ OR dealer hedge flow accelerates
       )}
 
       <TerminalPanel title="ORDER FLOW CONFIRMATION">
-        <div className="space-y-3">
+        <div className="space-y-2">
           {Object.entries(confirmations).map(([label, isActive], i) => (
             <div key={i} className="flex items-center justify-between group cursor-pointer" onClick={() => toggleConfirmation(label)}>
               <span className={cn(
-                "text-[10px] uppercase font-bold tracking-wider transition-colors",
+                "text-[9px] uppercase font-bold tracking-wider transition-colors",
                 isActive ? "terminal-text-primary" : "terminal-text-muted group-hover:text-white/60"
               )}>
                 {label}
               </span>
               <div className={cn(
-                "flex items-center justify-center w-10 h-5 rounded-full border border-terminal-border bg-terminal-panel p-1 transition-all",
-                isActive && "border-terminal-positive/50 bg-terminal-positive/10",
+                "flex items-center justify-center w-8 h-4 rounded-full border border-terminal-border bg-terminal-panel p-0.5 transition-all",
+                isActive && "border-terminal-positive/30 bg-terminal-positive/5",
               )}>
                 <div className={cn(
-                  "w-2 h-2 rounded-full",
+                  "w-1.5 h-1.5 rounded-full",
                   isActive ? "bg-terminal-positive shadow-[0_0_6px_rgba(74,222,128,0.8)]" : "bg-white/10"
                 )} />
               </div>
@@ -600,21 +600,21 @@ OR dealer hedge flow accelerates
       </TerminalPanel>
 
       <TerminalPanel title="ACTIONS" className="mt-auto">
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <Button 
             onClick={generateTradingPlan}
             variant="outline" 
-            className="w-full justify-start text-[10px] font-bold uppercase tracking-[0.15em] h-10 bg-terminal-panel border-terminal-border terminal-text-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/10 transition-all rounded-sm no-default-hover-elevate"
+            className="w-full justify-start text-[9px] font-bold uppercase tracking-[0.1em] h-8 bg-terminal-panel border-terminal-border terminal-text-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/5 transition-all rounded-sm no-default-hover-elevate"
           >
-            <span className="mr-3 opacity-50">█</span> {isTradingPlanOpen ? "Refresh Trading Plan" : "Generate Trading Plan"}
+            <span className="mr-2.5 opacity-40">█</span> {isTradingPlanOpen ? "Refresh Trading Plan" : "Generate Trading Plan"}
           </Button>
           {["Export Daily Report", "Copy Telegram Update"].map((text) => (
             <Button 
               key={text}
               variant="outline" 
-              className="w-full justify-start text-[10px] font-bold uppercase tracking-[0.15em] h-10 bg-terminal-panel border-terminal-border terminal-text-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/10 transition-all rounded-sm no-default-hover-elevate"
+              className="w-full justify-start text-[9px] font-bold uppercase tracking-[0.1em] h-8 bg-terminal-panel border-terminal-border terminal-text-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/5 transition-all rounded-sm no-default-hover-elevate"
             >
-              <span className="mr-3 opacity-50">█</span> {text}
+              <span className="mr-2.5 opacity-40">█</span> {text}
             </Button>
           ))}
         </div>

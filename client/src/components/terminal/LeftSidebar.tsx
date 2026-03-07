@@ -96,13 +96,13 @@ export function LeftSidebar() {
   }, [market, flow, dealer]);
 
   return (
-    <div className="w-64 h-full flex flex-col gap-2 overflow-y-auto p-2 border-r border-terminal-border bg-terminal-bg shrink-0">
+    <div className="w-64 h-full flex flex-col gap-1 overflow-y-auto p-1 border-r border-terminal-border bg-terminal-bg shrink-0">
       
       <TerminalPanel title="ALERT CENTER">
-        <div className="p-3 space-y-2">
+        <div className="p-2 space-y-2">
           {alerts.length === 0 ? (
-            <div className="py-4 px-2 border border-dashed border-white/10 rounded-sm text-center bg-terminal-panel/30">
-              <div className="terminal-text-label mb-1">NO ACTIVE ALERTS</div>
+            <div className="py-3 px-2 border border-dashed border-white/10 rounded-sm text-center bg-terminal-panel/30">
+              <div className="terminal-text-label mb-1 text-[9px]">NO ACTIVE ALERTS</div>
               <div className="text-[9px] terminal-text-muted leading-tight">System monitoring flow conditions...</div>
             </div>
           ) : (
@@ -110,20 +110,20 @@ export function LeftSidebar() {
               <div 
                 key={alert.id} 
                 className={cn(
-                  "p-3 terminal-card border-l-4",
+                  "p-2 terminal-card border-l-2",
                   alert.type === "warning" ? "border-l-yellow-500" : 
                   alert.type === "error" ? "border-l-terminal-negative" : "border-l-blue-500"
                 )}
               >
-                <div className="flex justify-between items-start mb-1">
+                <div className="flex justify-between items-start mb-0.5">
                   <span className={cn(
-                    "text-[10px] font-bold uppercase tracking-tight leading-none",
+                    "text-[9px] font-bold uppercase tracking-tight leading-none",
                     alert.type === "warning" ? "text-yellow-500" : 
                     alert.type === "error" ? "text-terminal-negative" : "text-blue-500"
                   )}>{alert.title}</span>
-                  <span className="text-[8px] font-mono terminal-text-muted leading-none">{alert.timestamp}</span>
+                  <span className="text-[7px] font-mono terminal-text-muted leading-none">{alert.timestamp}</span>
                 </div>
-                <div className="text-[10px] terminal-text-secondary font-bold leading-tight">
+                <div className="text-[9px] terminal-text-secondary font-bold leading-tight">
                   {alert.message}
                 </div>
               </div>
@@ -166,12 +166,12 @@ export function LeftSidebar() {
       </TerminalPanel>
 
       <TerminalPanel title="KEY LEVELS">
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div>
-            <div className="terminal-text-label mb-2">GAMMA MAGNETS</div>
-            <div className="flex space-x-2 font-mono text-xs">
+            <div className="terminal-text-label mb-1.5 text-[9px]">GAMMA MAGNETS</div>
+            <div className="flex space-x-1.5 font-mono text-[10px]">
               {levels?.gammaMagnets.map((m, i) => (
-                <span key={i} className="terminal-card px-2 py-1 terminal-text-primary font-bold">
+                <span key={i} className="terminal-card px-1.5 py-0.5 terminal-text-primary font-bold">
                   {(m/1000).toFixed(0)}k
                 </span>
               ))}
@@ -179,16 +179,16 @@ export function LeftSidebar() {
             </div>
           </div>
           
-          <div className="p-2 bg-terminal-negative/10 border border-terminal-negative/30 rounded-sm">
-            <div className="text-[9px] uppercase tracking-[0.2em] text-terminal-negative mb-1 font-bold">SHORT GAMMA POCKET</div>
-            <div className="font-mono text-xs text-terminal-negative font-bold">
+          <div className="p-1.5 bg-terminal-negative/10 border border-terminal-negative/20 rounded-sm">
+            <div className="text-[8px] uppercase tracking-[0.2em] text-terminal-negative mb-0.5 font-bold">SHORT GAMMA POCKET</div>
+            <div className="font-mono text-[10px] text-terminal-negative font-bold">
               {levels ? `${levels.shortGammaPocketStart.toLocaleString()} – ${levels.shortGammaPocketEnd.toLocaleString()}` : "--"}
             </div>
           </div>
 
-          <div className="p-2 terminal-card">
-            <div className="terminal-text-label mb-1 text-[9px]">DEEP RISK POCKET</div>
-            <div className="font-mono text-xs terminal-text-secondary font-bold">
+          <div className="p-1.5 terminal-card">
+            <div className="terminal-text-label mb-0.5 text-[8px]">DEEP RISK POCKET</div>
+            <div className="font-mono text-[10px] terminal-text-secondary font-bold">
               {levels ? `${levels.deepRiskPocketStart.toLocaleString()} – ${levels.deepRiskPocketEnd.toLocaleString()}` : "--"}
             </div>
           </div>

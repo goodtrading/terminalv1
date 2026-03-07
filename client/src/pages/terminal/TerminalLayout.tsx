@@ -12,9 +12,13 @@ export default function TerminalLayout() {
       <div className="flex-1 flex overflow-hidden">
         <LeftSidebar />
         
-        <div className="flex-1 flex flex-col p-2 min-w-0 overflow-hidden">
-          <MainChart />
-          <GammaProfile />
+        <div className="flex-1 flex flex-col p-1 gap-1 min-w-0 overflow-hidden bg-terminal-bg">
+          <div className="flex-[2] min-h-0">
+            <MainChart />
+          </div>
+          <div className="flex-1 min-h-0">
+            <GammaProfile />
+          </div>
         </div>
 
         <RightSidebar onScenarioSelect={(s) => {
