@@ -18,6 +18,15 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     refetchInterval: 5000
   });
 
+  const formatLevel = (level: string | number) => {
+    if (typeof level === 'number') {
+      return level.toLocaleString();
+    }
+    // If it's a string like "67k", keep it as is, or if it's "71,000" keep it.
+    // If it's a string that looks like a number, we could format it, but the requirement says "67k" is a valid format.
+    return level;
+  };
+
   const handleScenarioClick = (scenario: TradingScenario) => {
     const newId = selectedId === scenario.id ? null : scenario.id;
     setSelectedId(newId);
@@ -88,7 +97,13 @@ RISK PROFILE: MODERATE`;
                 <div className="space-y-1.5 opacity-80">
                   <div className="grid grid-cols-[75px_1fr] gap-2">
                     <span className="text-terminal-muted uppercase text-[9px] font-bold">Levels</span>
-                    <span className="font-mono font-bold text-white">{scenario.levels.join(" / ")}</span>
+                    <span className="font-mono font-bold text-white text-xs">
+                      {scenario.levels.map(formatLevel).join(" / ")}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-[75px_1fr] gap-2">
+                    <span className="text-terminal-muted uppercase text-[9px] font-bold">Confirm</span>
+                    <span className="text-white/90 italic">{scenario.confirmation.join(", ")}</span>
                   </div>
                   <div className="grid grid-cols-[75px_1fr] gap-2">
                     <span className="text-terminal-muted uppercase text-[9px] font-bold">Invalid</span>
