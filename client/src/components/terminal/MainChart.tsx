@@ -143,8 +143,7 @@ export function MainChart() {
     queryFn: async () => {
       const res = await fetch("/api/proxy/binance/klines?symbol=BTCUSDT&interval=15m&limit=300");
       if (!res.ok) {
-        const directRes = await fetch("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=300");
-        return directRes.json();
+        throw new Error("Failed to fetch klines");
       }
       const data = await res.json();
       return data
@@ -195,7 +194,7 @@ export function MainChart() {
         },
         rightPriceScale: {
           visible: true,
-          autoScale: false,
+          autoScale: true,
           borderColor: "#1a1a1a",
           scaleMargins: {
             top: 0.1,
@@ -304,35 +303,9 @@ export function MainChart() {
   }, [manualPriceRange]);
 
   useEffect(() => {
-    if (candleSeriesRef.current && candles) {
-      const safeCandles = candles.filter((c: any) => {
-        const hasValidTime = c.time !== undefined && c.time !== null;
-        const hasValidPrices = 
-          Number.isFinite(c.open) && 
-          Number.isFinite(c.high) && 
-          Number.isFinite(c.low) && 
-          Number.isFinite(c.close);
-        return hasValidTime && hasValidPrices;
-      }).map((c: any) => {
-        let normalizedTime = c.time;
-        if (c.time instanceof Date) {
-          normalizedTime = Math.floor(c.time.getTime() / 1000);
-        } else if (typeof c.time === 'string' || typeof c.time === 'object') {
-          const d = new Date(c.time);
-          if (!isNaN(d.getTime())) {
-            normalizedTime = Math.floor(d.getTime() / 1000);
-          }
-        }
-        return { ...c, time: normalizedTime };
-      }).sort((a: any, b: any) => a.time - b.time);
-
-      if (safeCandles.length > 0) {
-        try {
-          candleSeriesRef.current.setData(safeCandles);
-        } catch (err) {
-          console.error("[MainChart] setData failed:", err);
-          return;
-        }
+    if (candleSeriesRef.current && candles && candles.length > 0) {
+      try {
+        candleSeriesRef.current.setData(candles);
         
         if (isInitialLoad) {
           chartRef.current.priceScale("right").applyOptions({ autoScale: true });
@@ -345,7 +318,7 @@ export function MainChart() {
           }, 100);
         }
         
-        const lastCandle = safeCandles[safeCandles.length - 1];
+        const lastCandle = candles[candles.length - 1];
         const isUp = lastCandle.close >= lastCandle.open;
         const color = isUp ? "#22c55e" : "#ef4444";
 
@@ -365,8 +338,8 @@ export function MainChart() {
         }
 
         if (volumeSeriesRef.current && market?.totalGex) {
-          const pressureData = safeCandles.map((c, i) => {
-            const prevClose = i > 0 ? safeCandles[i-1].close : c.open;
+          const pressureData = candles.map((c, i) => {
+            const prevClose = i > 0 ? candles[i-1].close : c.open;
             const move = c.close - prevClose;
             const pressure = (market.totalGex / 1e9) * move; 
             return {
@@ -377,6 +350,8 @@ export function MainChart() {
           });
           volumeSeriesRef.current.setData(pressureData);
         }
+      } catch (err) {
+        console.error("[MainChart] setData failed:", err);
       }
     }
   }, [candles, toggles.price, market?.totalGex, isInitialLoad]);
