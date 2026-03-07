@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { TerminalPanel } from "./TerminalPanel";
+import { TerminalPanel, TerminalValue } from "./TerminalPanel";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { TradingScenario, MarketState, OptionsPositioning } from "@shared/schema";
+import { TradingScenario, MarketState, OptionsPositioning, DealerExposure, DealerHedgingFlow } from "@shared/schema";
 import { X } from "lucide-react";
 
 interface RightSidebarProps {
@@ -14,6 +14,15 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [tradingPlan, setTradingPlan] = useState<string | null>(null);
   const [isTradingPlanOpen, setIsTradingPlanOpen] = useState(false);
+  
+  // Confirmation Toggles State
+  const [confirmations, setConfirmations] = useState<Record<string, boolean>>({
+    "Absorption at Magnet": false,
+    "Bid Holding": true,
+    "Delta Divergence": false,
+    "OI Stable": true,
+    "Wall Pull Detected": false,
+  });
 
   const { data: scenarios } = useQuery<TradingScenario[]>({ 
     queryKey: ["/api/scenarios"],
@@ -29,6 +38,77 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     queryKey: ["/api/options-positioning"],
     refetchInterval: 5000 
   });
+
+  const { data: exposure } = useQuery<DealerExposure>({
+    queryKey: ["/api/dealer-exposure"],
+    refetchInterval: 5000
+  });
+
+  const { data: flow } = useQuery<DealerHedgingFlow>({
+    queryKey: ["/api/dealer-hedging-flow"],
+    refetchInterval: 5000
+  });
+
+  const activeScenario = useMemo(() => 
+    scenarios?.find(s => s.id === selectedId) || null,
+    [scenarios, selectedId]
+  );
+
+  const qualityMetrics = useMemo(() => {
+    let score = 0;
+    
+    // 1. Scenario confidence
+    if (activeScenario) {
+      if (activeScenario.probability >= 60) score += 2;
+      else if (activeScenario.probability >= 40) score += 1;
+      else score -= 1;
+    }
+
+    // 2. Gamma structure
+    if (market?.gammaRegime === "LONG GAMMA") score += 1;
+    if (exposure?.gammaPressure.startsWith("+")) score += 1;
+    if (exposure && exposure.gammaConcentration > 0.7) score += 1;
+
+    // 3. Dealer hedging flow alignment
+    if (flow && activeScenario) {
+      const isBullishScenario = ["BASE", "ALT"].includes(activeScenario.type);
+      if (isBullishScenario && flow.hedgeFlowBias === "BUYING") score += 1;
+      if (activeScenario.type === "VOL" && flow.hedgeFlowBias === "SELLING") score += 1;
+      if (flow.hedgeFlowIntensity === "HIGH") score += 1;
+    }
+
+    // 4. Confirmations
+    const activeConfCount = Object.values(confirmations).filter(Boolean).length;
+    score += activeConfCount * 1.2;
+
+    // Quality Mapping
+    let quality: "A" | "B" | "C" | "D" = "D";
+    if (score >= 8) quality = "A";
+    else if (score >= 6) quality = "B";
+    else if (score >= 4) quality = "C";
+
+    // Condition mapping
+    let condition = "WEAK";
+    if (activeScenario && activeConfCount >= 3) condition = "CONFIRMED";
+    else if (activeConfCount >= 1) condition = "DEVELOPING";
+    if (market?.gammaRegime === "SHORT GAMMA" && flow?.hedgeFlowBias === "SELLING" && activeScenario?.type === "BASE") {
+      condition = "INVALID";
+    }
+
+    // Flow state
+    let flowState = "STABLE";
+    if (market?.gammaRegime === "LONG GAMMA" && exposure?.gammaConcentration && exposure.gammaConcentration > 0.7) flowState = "STABLE";
+    if (flow?.hedgeFlowBias === "BUYING") flowState = "SUPPORTIVE";
+    if (flow?.hedgeFlowBias === "SELLING") flowState = "SUPPRESSIVE";
+    if (market?.gammaRegime === "SHORT GAMMA" || flow?.accelerationRisk === "HIGH") flowState = "EXPANSIVE";
+
+    // Vol Risk
+    let volRisk = "MEDIUM";
+    if (market?.gammaRegime === "LONG GAMMA" && flow?.accelerationRisk === "LOW") volRisk = "LOW";
+    if (market?.gammaRegime === "SHORT GAMMA" || activeScenario?.type === "VOL") volRisk = "HIGH";
+
+    return { quality, condition, flowState, volRisk, score };
+  }, [activeScenario, market, exposure, flow, confirmations]);
 
   const formatLevel = (level: string | number) => {
     if (typeof level === 'number') {
@@ -47,7 +127,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
 
   const generateTradingPlan = () => {
     if (!scenarios || scenarios.length === 0) return;
-    const active = scenarios.find(s => s.id === selectedId) || [...scenarios].sort((a, b) => b.probability - a.probability)[0];
+    const active = activeScenario || [...scenarios].sort((a, b) => b.probability - a.probability)[0];
     
     const regimeDesc = market?.gammaRegime === "LONG GAMMA" 
       ? "LONG GAMMA → mean reversion environment" 
@@ -111,9 +191,39 @@ OR dealer hedge flow accelerates
     setIsTradingPlanOpen(true);
   };
 
+  const toggleConfirmation = (label: string) => {
+    setConfirmations(prev => ({ ...prev, [label]: !prev[label] }));
+  };
+
   return (
     <div className="w-80 h-full flex flex-col gap-2 overflow-y-auto p-2 border-l border-terminal-border bg-terminal-bg shrink-0">
       
+      <TerminalPanel title="TRADE SETUP QUALITY">
+        <div className="space-y-2">
+          <TerminalValue 
+            label="Setup Quality" 
+            value={qualityMetrics.quality} 
+            trend={qualityMetrics.quality === "A" ? "positive" : qualityMetrics.quality === "B" ? "neutral" : "negative"} 
+            isBadge 
+          />
+          <TerminalValue 
+            label="Condition" 
+            value={qualityMetrics.condition} 
+            trend={qualityMetrics.condition === "CONFIRMED" ? "positive" : qualityMetrics.condition === "DEVELOPING" ? "neutral" : "negative"} 
+          />
+          <TerminalValue label="Flow State" value={qualityMetrics.flowState} />
+          <TerminalValue 
+            label="Vol Risk" 
+            value={qualityMetrics.volRisk} 
+            trend={qualityMetrics.volRisk === "LOW" ? "positive" : qualityMetrics.volRisk === "MEDIUM" ? "neutral" : "negative"} 
+          />
+          <TerminalValue 
+            label="Active Scenario" 
+            value={activeScenario ? `${activeScenario.type} ${activeScenario.probability}%` : "NONE"} 
+          />
+        </div>
+      </TerminalPanel>
+
       <TerminalPanel title="DAILY SCENARIOS">
         <div className="space-y-4">
           {scenarios?.map((scenario) => (
@@ -214,27 +324,21 @@ OR dealer hedge flow accelerates
 
       <TerminalPanel title="ORDER FLOW CONFIRMATION">
         <div className="space-y-3">
-          {[
-            { label: "Absorption at Magnet", status: "pending" },
-            { label: "Bid Holding", status: "confirmed" },
-            { label: "Delta Divergence", status: "pending" },
-            { label: "OI Stable", status: "confirmed" },
-            { label: "Wall Pull Detected", status: "none" },
-          ].map((item, i) => (
-            <div key={i} className="flex items-center justify-between group cursor-pointer">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-terminal-muted group-hover:text-white transition-colors">
-                {item.label}
+          {Object.entries(confirmations).map(([label, isActive], i) => (
+            <div key={i} className="flex items-center justify-between group cursor-pointer" onClick={() => toggleConfirmation(label)}>
+              <span className={cn(
+                "text-[10px] uppercase font-bold tracking-wider transition-colors",
+                isActive ? "text-white" : "text-terminal-muted group-hover:text-white/60"
+              )}>
+                {label}
               </span>
               <div className={cn(
                 "flex items-center justify-center w-10 h-5 rounded-full border border-terminal-border bg-terminal-panel p-1 transition-all",
-                item.status === "confirmed" && "border-terminal-positive/50 bg-terminal-positive/10",
-                item.status === "pending" && "border-yellow-500/50 bg-yellow-500/10"
+                isActive && "border-terminal-positive/50 bg-terminal-positive/10",
               )}>
                 <div className={cn(
                   "w-2 h-2 rounded-full",
-                  item.status === "confirmed" ? "bg-terminal-positive shadow-[0_0_6px_rgba(74,222,128,0.8)]" : 
-                  item.status === "pending" ? "bg-yellow-500 animate-pulse" : 
-                  "bg-white/10"
+                  isActive ? "bg-terminal-positive shadow-[0_0_6px_rgba(74,222,128,0.8)]" : "bg-white/10"
                 )} />
               </div>
             </div>

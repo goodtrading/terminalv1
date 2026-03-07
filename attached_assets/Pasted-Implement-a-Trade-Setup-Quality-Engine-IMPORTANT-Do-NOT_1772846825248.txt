@@ -1,0 +1,168 @@
+Implement a Trade Setup Quality Engine.
+
+IMPORTANT:
+Do NOT modify parser.
+Do NOT remove existing overlays or panels.
+Do NOT break current APIs or chart behavior.
+
+You may add a new derived endpoint if needed, or compute this in the frontend from existing data.
+
+Use current available data from:
+- /api/market-state
+- /api/dealer-exposure
+- /api/dealer-hedging-flow
+- /api/scenarios
+- existing confirmation toggles:
+  - absorption at magnet
+  - bid holding
+  - delta divergence
+  - OI stable
+
+====================================================
+GOAL
+====================================================
+
+Add a new terminal panel called:
+
+TRADE SETUP QUALITY
+
+This panel should summarize whether the current market setup is high quality or low quality for execution.
+
+====================================================
+OUTPUT FIELDS
+====================================================
+
+The panel must display:
+
+1. SETUP QUALITY
+Possible values:
+- A
+- B
+- C
+- D
+
+2. CONDITION
+Possible values:
+- CONFIRMED
+- DEVELOPING
+- WEAK
+- INVALID
+
+3. FLOW STATE
+Possible values:
+- STABLE
+- SUPPORTIVE
+- SUPPRESSIVE
+- EXPANSIVE
+
+4. VOL RISK
+Possible values:
+- LOW
+- MEDIUM
+- HIGH
+
+5. ACTIVE SCENARIO
+Display selected scenario type and probability if available:
+Example:
+BASE 60%
+
+====================================================
+LOGIC MODEL
+====================================================
+
+Build a scoring model using the current data.
+
+1. Scenario confidence
+- high probability scenario adds score
+- medium probability adds smaller score
+- low probability reduces score
+
+2. Gamma structure
+- LONG GAMMA + positive gammaPressure + high gammaConcentration = cleaner/stabler setup
+- SHORT GAMMA + unstable structure = lower quality unless momentum conditions align
+
+3. Dealer hedging flow
+- BUYING or SELLING with MEDIUM/HIGH coherence adds score if aligned with active scenario
+- conflicting hedge flow reduces score
+
+4. Confirmation toggles
+Use the existing UI toggles as live confirmations:
+- absorption at magnet
+- bid holding
+- delta divergence
+- OI stable
+
+More confirmations = higher setup quality.
+
+Suggested weighting:
+- 3 or 4 confirmations active = strong boost
+- 2 confirmations active = moderate boost
+- 0 or 1 = weak
+
+5. Volatility risk
+Use:
+- gamma regime
+- accelerationRisk
+- scenario type
+
+Rules:
+- LONG GAMMA + LOW acceleration risk = LOW vol risk
+- SHORT GAMMA or VOL scenario = HIGH vol risk
+- otherwise MEDIUM
+
+6. Flow state
+Map from current structure:
+- STABLE if long gamma + positive gamma pressure + high concentration
+- SUPPORTIVE if hedge flow bias supports current scenario
+- SUPPRESSIVE if flow works against the scenario
+- EXPANSIVE if short gamma / volatility acceleration conditions dominate
+
+7. Final quality mapping
+Example:
+score 8+ = A
+score 6-7 = B
+score 4-5 = C
+below 4 = D
+
+8. Condition mapping
+- CONFIRMED if active scenario exists and confirmations align
+- DEVELOPING if some confirmations align
+- WEAK if structure exists but confirmations are insufficient
+- INVALID if flow and structure conflict strongly
+
+====================================================
+UI
+====================================================
+
+Add a new panel in the right sidebar or left sidebar:
+
+TRADE SETUP QUALITY
+
+Fields:
+- Setup Quality
+- Condition
+- Flow State
+- Vol Risk
+- Active Scenario
+
+Use terminal style:
+- monospace
+- compact
+- high contrast
+- clear status colors
+
+Suggested colors:
+- A / CONFIRMED / LOW risk = green or strong positive
+- B / DEVELOPING / MEDIUM = yellow
+- C / WEAK = orange
+- D / INVALID / HIGH = red
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+The terminal gains a clear decision-quality panel that updates with:
+- scenario selection
+- confirmations toggles
+- market structure
+- dealer flow
