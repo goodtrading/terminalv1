@@ -52,6 +52,10 @@ export const optionsSummarySchema = z.object({
   dealerHedgeDirection: z.string().nullable(),
   volatilityRegime: z.enum(["HIGH_VOL", "LOW_VOL", "TRANSITION"]).nullable(),
   dealerFlowScore: z.number().nullable(),
+  gammaSlopeByStrike: z.array(z.object({ strike: z.number(), slope: z.number() })).optional(),
+  gammaAccelerationByStrike: z.array(z.object({ strike: z.number(), acceleration: z.number() })).optional(),
+  gammaCliffs: z.array(z.object({ strike: z.number(), strength: z.number() })).optional(),
+  gammaWallStrength: z.array(z.object({ strike: z.number(), strengthScore: z.number() })).optional(),
   reactionZones: z.array(z.object({
     startStrike: z.number(),
     endStrike: z.number(),
@@ -232,6 +236,51 @@ export class DeribitOptionsGateway {
       });
       if (currentZone) shortGammaZones.push(currentZone);
 
+      // --- Gamma Gradient Engine ---
+      const gammaSlopeByStrike: { strike: number, slope: number }[] = [];
+      const gammaAccelerationByStrike: { strike: number, acceleration: number }[] = [];
+      const gammaCliffs: { strike: number, strength: number }[] = [];
+      const gammaWallStrength: { strike: number, strengthScore: number }[] = [];
+
+      for (let i = 0; i < gammaByStrike.length; i++) {
+        const curr = gammaByStrike[i];
+        const prev = i > 0 ? gammaByStrike[i - 1] : null;
+        const next = i < gammaByStrike.length - 1 ? gammaByStrike[i + 1] : null;
+
+        // 1. Gamma Slope (dGEX / dStrike)
+        if (prev) {
+          const dGex = curr.gex - prev.gex;
+          const dStrike = curr.strike - prev.strike;
+          const slope = dStrike !== 0 ? dGex / dStrike : 0;
+          gammaSlopeByStrike.push({ strike: curr.strike, slope });
+
+          // 3. Gamma Cliffs (Threshold-based slope detection)
+          const cliffThreshold = 5000; // Normalized strength threshold
+          if (Math.abs(slope) > cliffThreshold) {
+            gammaCliffs.push({ strike: curr.strike, strength: slope });
+          }
+        }
+
+        // 2. Gamma Acceleration (d²GEX / dStrike²)
+        if (prev && next) {
+          const dStrike1 = curr.strike - prev.strike;
+          const dStrike2 = next.strike - curr.strike;
+          const slope1 = dStrike1 !== 0 ? (curr.gex - prev.gex) / dStrike1 : 0;
+          const slope2 = dStrike2 !== 0 ? (next.gex - curr.gex) / dStrike2 : 0;
+          const acceleration = (dStrike1 + dStrike2) !== 0 ? (slope2 - slope1) / ((dStrike1 + dStrike2) / 2) : 0;
+          gammaAccelerationByStrike.push({ strike: curr.strike, acceleration });
+        }
+
+        // 4. Gamma Wall Strength (Concentration at magnets/walls)
+        const isWall = curr.strike === callWall || curr.strike === putWall || gammaMagnets.includes(curr.strike);
+        if (isWall) {
+          const localGex = Math.abs(curr.gex);
+          const totalAbsGex = options.reduce((sum, opt) => sum + Math.abs(opt.gammaExposure || 0), 0);
+          const strengthScore = totalAbsGex > 0 ? localGex / totalAbsGex : 0;
+          gammaWallStrength.push({ strike: curr.strike, strengthScore });
+        }
+      }
+
       // --- Advanced Hedging Dynamics ---
       const dealerGammaState = totalGex >= 0 ? "LONG_GAMMA" : "SHORT_GAMMA";
       let dealerHedgeDirection = "NEUTRAL";
@@ -340,6 +389,10 @@ export class DeribitOptionsGateway {
         dealerHedgeDirection,
         volatilityRegime,
         dealerFlowScore,
+        gammaSlopeByStrike,
+        gammaAccelerationByStrike,
+        gammaCliffs,
+        gammaWallStrength,
         reactionZones
       };
     } catch (e) {
