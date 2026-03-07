@@ -41,6 +41,9 @@ export const optionsSummarySchema = z.object({
   putWall: z.number().nullable(),
   gammaByStrike: z.array(z.object({ strike: z.number(), gex: z.number() })).optional(),
   oiByStrike: z.array(z.object({ strike: z.number(), oi: z.number() })).optional(),
+  gammaCurve: z.array(z.object({ strike: z.number(), cumulativeGamma: z.number() })).optional(),
+  gammaMagnets: z.array(z.number()).optional(),
+  shortGammaZones: z.array(z.object({ startStrike: z.number(), endStrike: z.number() })).optional(),
   magnets: z.array(z.number()).nullable(),
   shortGammaPockets: z.array(z.object({ start: z.number(), end: z.number() })).nullable(),
   vannaBias: z.enum(["BULLISH", "BEARISH"]).nullable(),
@@ -129,7 +132,7 @@ export class DeribitOptionsGateway {
           totalGex: null, gammaState: null, gammaFlip: null,
           callWall: null, putWall: null, magnets: null,
           shortGammaPockets: null, vannaBias: null, charmBias: null,
-          gammaByStrike: [], oiByStrike: []
+          gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: []
         };
       }
 
@@ -164,16 +167,69 @@ export class DeribitOptionsGateway {
         .map(([strike, data]) => ({ strike, oi: data.oi }))
         .sort((a, b) => a.strike - b.strike);
 
+      // 1. Gamma Curve Calculation
+      let runningTotal = 0;
+      const gammaCurve = gammaByStrike.map(s => {
+        runningTotal += s.gex;
+        return { strike: s.strike, cumulativeGamma: runningTotal };
+      });
+
+      // 2. Gamma Flip Calculation
+      let gammaFlip = null;
+      for (let i = 0; i < gammaCurve.length - 1; i++) {
+        const current = gammaCurve[i];
+        const next = gammaCurve[i + 1];
+        if ((current.cumulativeGamma <= 0 && next.cumulativeGamma > 0) || 
+            (current.cumulativeGamma >= 0 && next.cumulativeGamma < 0)) {
+          // Simple linear interpolation for flip strike
+          gammaFlip = current.strike + (next.strike - current.strike) * 
+            (Math.abs(current.cumulativeGamma) / (Math.abs(current.cumulativeGamma) + Math.abs(next.cumulativeGamma)));
+          break;
+        }
+      }
+
+      // 3. Gamma Magnets (Top 3 highest positive gamma)
+      const gammaMagnets = [...gammaByStrike]
+        .filter(s => s.gex > 0)
+        .sort((a, b) => b.gex - a.gex)
+        .slice(0, 3)
+        .map(s => s.strike);
+
+      // 4. Short Gamma Pockets
+      const shortGammaZones: { startStrike: number, endStrike: number }[] = [];
+      const threshold = -1000000; // Define a "strongly negative" threshold
+      let currentZone: { startStrike: number, endStrike: number } | null = null;
+
+      gammaByStrike.forEach(s => {
+        if (s.gex < threshold) {
+          if (!currentZone) {
+            currentZone = { startStrike: s.strike, endStrike: s.strike };
+          } else {
+            currentZone.endStrike = s.strike;
+          }
+        } else {
+          if (currentZone) {
+            shortGammaZones.push(currentZone);
+            currentZone = null;
+          }
+        }
+      });
+      if (currentZone) shortGammaZones.push(currentZone);
+
       return {
         totalGex: totalGex || null,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
-        gammaFlip: null, 
+        gammaFlip: gammaFlip || null, 
         callWall: callWall || null, 
         putWall: putWall || null,
         gammaByStrike,
         oiByStrike,
-        magnets: null, 
-        shortGammaPockets: null, 
+        gammaCurve,
+        gammaFlip,
+        gammaMagnets,
+        shortGammaZones,
+        magnets: gammaMagnets, // Aliased for backward compatibility if needed
+        shortGammaPockets: shortGammaZones.map(z => ({ start: z.startStrike, end: z.endStrike })),
         vannaBias: null, 
         charmBias: null
       };
@@ -182,7 +238,7 @@ export class DeribitOptionsGateway {
         totalGex: null, gammaState: null, gammaFlip: null,
         callWall: null, putWall: null, magnets: null,
         shortGammaPockets: null, vannaBias: null, charmBias: null,
-        gammaByStrike: [], oiByStrike: []
+        gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: []
       };
     }
   }
