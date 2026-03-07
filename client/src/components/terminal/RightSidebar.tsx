@@ -8,24 +8,8 @@ interface RightSidebarProps {
   onScenarioSelect?: (scenario: TradingScenario | null) => void;
 }
 
-type FlowEvent = {
-  name: string;
-  status: "ACTIVE" | "RECENT" | "INACTIVE";
-  description: string;
-  impact: "SUPPORTIVE" | "WARNING" | "EXPANSIVE";
-};
-
 export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  
-  // Confirmation Toggles State
-  const [confirmations, setConfirmations] = useState<Record<string, boolean>>({
-    "Absorption at Magnet": false,
-    "Bid Holding": true,
-    "Delta Divergence": false,
-    "OI Stable": true,
-    "Wall Pull Detected": false,
-  });
 
   const { data: state, isLoading: stateLoading } = useTerminalState();
 
@@ -86,8 +70,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     // No, it used getMarketState, getDealerExposure, getOptionsPositioning, getKeyLevels.
     // I'll add hedging flow to the state too.
 
-    const activeConfCount = Object.values(confirmations).filter(Boolean).length;
-    score += activeConfCount * 1.2;
+    const activeConfCount = 0;
 
     let quality: "A" | "B" | "C" | "D" = "D";
     if (score >= 8) quality = "A";
@@ -106,14 +89,9 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     let status = "AVOID ENTRY";
     let bias: "LONG" | "SHORT" | "NEUTRAL" = "NEUTRAL";
     let entryZone = "--";
-    let trigger = Object.entries(confirmations)
-      .filter(([_, active]) => active)
-      .map(([label]) => label.split(' ')[0])
-      .join(", ") || "NONE";
+    let trigger = "NONE";
     let target = "--";
     let invalidationDisplay = "--";
-
-    const allEvents: FlowEvent[] = [];
 
     if (activeScenario) {
       const scenarioLevels = activeScenario.levels.map(parseLevel).filter(l => !isNaN(l));
@@ -162,8 +140,8 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
 
     if (quality === "D") status = "AVOID ENTRY";
 
-    return { quality, condition, flowState, volRisk, score, status, bias, entryZone, trigger, target, invalidationDisplay, flowEvents: allEvents };
-  }, [activeScenario, market, exposure, confirmations, currentPrice, levels, positioning]);
+    return { quality, condition, flowState, volRisk, score, status, bias, entryZone, trigger, target, invalidationDisplay };
+  }, [activeScenario, market, exposure, currentPrice, levels, positioning]);
 
   const handleScenarioClick = (scenario: TradingScenario) => {
     const newId = selectedId === scenario.id ? null : scenario.id;
@@ -171,10 +149,6 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     if (onScenarioSelect) {
       onScenarioSelect(newId ? scenario : null);
     }
-  };
-
-  const toggleConfirmation = (label: string) => {
-    setConfirmations(prev => ({ ...prev, [label]: !prev[label] }));
   };
 
   return (
@@ -258,16 +232,6 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         </div>
       </TerminalPanel>
 
-      <TerminalPanel title="FLOW EVENTS">
-        <div className="space-y-3">
-          {engineData.flowEvents.length === 0 ? (
-            <div className="text-[9px] terminal-text-muted italic py-1.5">No significant flow events detected</div>
-          ) : (
-            <div className="text-[9px] terminal-text-muted italic py-1.5">Events logic suppressed for aggregation migration</div>
-          )}
-        </div>
-      </TerminalPanel>
-
       <TerminalPanel title="DAILY SCENARIOS">
         <div className="space-y-3">
           {(scenarios as TradingScenario[])?.map((scenario) => (
@@ -322,29 +286,6 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         </div>
       </TerminalPanel>
 
-      <TerminalPanel title="ORDER FLOW CONFIRMATION">
-        <div className="space-y-2">
-          {Object.entries(confirmations).map(([label, isActive], i) => (
-            <div key={i} className="flex items-center justify-between group cursor-pointer" onClick={() => toggleConfirmation(label)}>
-              <span className={cn(
-                "text-[9px] uppercase font-bold tracking-wider transition-colors",
-                isActive ? "terminal-text-primary" : "terminal-text-muted group-hover:text-white/60"
-              )}>
-                {label}
-              </span>
-              <div className={cn(
-                "flex items-center justify-center w-8 h-4 rounded-full border border-terminal-border bg-terminal-panel p-0.5 transition-all",
-                isActive ? "border-terminal-accent" : "border-terminal-border"
-              )}>
-                <div className={cn(
-                  "w-2 h-2 rounded-full transition-all",
-                  isActive ? "bg-terminal-accent translate-x-1" : "bg-terminal-border -translate-x-1"
-                )}></div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </TerminalPanel>
     </div>
   );
 }
