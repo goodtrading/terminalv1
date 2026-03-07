@@ -85,7 +85,6 @@ export function MainChart() {
     if (historyLoading || !history) return;
 
     const connectWS = () => {
-      // Re-initialize websocket
       const ws = new WebSocket("wss://stream.binance.com:9443/ws/btcusdt@kline_15m");
       wsRef.current = ws;
 
@@ -198,7 +197,6 @@ export function MainChart() {
         chartRef.current?.timeScale().fitContent();
         setIsInitialLoad(false);
       }
-      // Set last candle from history as initial point if ws hasn't updated yet
       if (!lastCandle) {
         setLastCandle(history[history.length - 1]);
       }

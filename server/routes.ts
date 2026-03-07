@@ -101,18 +101,5 @@ export async function registerRoutes(
     });
   });
 
-  // Proxy for live price to avoid CORS
-  app.get("/api/chart/latest", async (req, res) => {
-    try {
-      const symbol = (req.query.symbol as string) || "BTCUSDT";
-      const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1m&limit=1`);
-      if (!response.ok) throw new Error(`Binance returned ${response.status}`);
-      const data = await response.json();
-      res.json(data);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   return httpServer;
 }

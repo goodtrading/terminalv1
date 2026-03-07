@@ -1,0 +1,89 @@
+Implement a production-grade chart data flow using historical candles + live WebSocket updates.
+
+Context:
+This trading terminal is a critical project. Do not apply experimental or broad changes.
+The current WebSocket connection works, but the chart only shows the live candle and lacks historical context.
+As a result, the chart is not usable as a professional terminal because pan/scroll/zoom freedom is severely limited.
+
+Objective:
+Make the BTCUSDT 15m chart behave like a professional trading chart:
+- load full historical context on startup
+- keep the latest candle updating in real time
+- preserve free navigation (pan/zoom/scroll)
+- avoid resetting the chart view on each update
+
+Required implementation:
+
+1) Initial historical load
+- On first mount, fetch historical BTCUSDT 15m candles from a reliable source.
+- Load at least 300–500 candles.
+- Normalize all candles into this exact shape:
+  {
+    time: number,
+    open: number,
+    high: number,
+    low: number,
+    close: number,
+    volume: number
+  }
+- Sort candles by ascending time.
+- Remove duplicate timestamps.
+- Validate numeric integrity before rendering.
+- Use setData(historyCandles) once for the initial render.
+
+2) Live update layer
+- After the historical data has been successfully loaded, connect to:
+  wss://stream.binance.com:9443/ws/btcusdt@kline_15m
+- Use the websocket stream only to:
+  - update the currently open 15m candle
+  - append a new candle when a new 15m interval begins
+- Do NOT replace the entire candle history on every websocket event.
+- Do NOT recreate the chart or series on each update.
+
+3) Chart lifecycle rules
+- Create the chart only once.
+- Create the candlestick series only once.
+- Create the volume series only once.
+- Do not remount the chart component when new data arrives.
+- Do not reset the visible range on every refresh.
+- Do not call fitContent() on every websocket event.
+- If needed, call fitContent() only once after the initial historical load, or only through an explicit Reset View button.
+
+4) Navigation / UX requirements
+- Keep chart interaction fully enabled:
+  - horizontal pan
+  - vertical scroll if already supported
+  - zoom
+  - free historical navigation
+- The user must be able to move around the chart without the chart snapping back on each update.
+
+5) Stability requirements
+- No mock candles
+- No random fallback candles
+- If the historical source fails, show an explicit data error state
+- If websocket fails, keep the historical chart visible and show a live-feed warning instead of clearing the chart
+
+6) Non-goals / do not change
+- Do not change the dashboard layout
+- Do not change the side panels
+- Do not redesign the chart theme
+- Do not modify scenario engine logic
+- Do not modify the trading plan layout
+- Only fix the chart data pipeline and interaction behavior
+
+Success criteria:
+The implementation is only considered complete if all of the following are true:
+- the chart loads with several hundred historical candles visible
+- the latest candle updates live via websocket
+- the chart does not lose historical candles on update
+- the chart does not reset zoom/position on each event
+- the user can pan and zoom freely like a normal trading terminal
+
+Return format:
+At the end, report:
+1. which files were changed
+2. how historical candles are fetched
+3. how websocket updates are merged into the existing series
+4. whether fitContent() is called only once or via reset button
+5. confirmation that chart pan/zoom remain enabled
+6. confirmation that no mock candle generation remains in the chart pipeline
