@@ -301,56 +301,85 @@ export function MainChart() {
   }, [manualPriceRange]);
 
   useEffect(() => {
-    if (candleSeriesRef.current && candles && candles.length > 0) {
-      try {
-        candleSeriesRef.current.setData(candles);
-      } catch (err) {
-        console.error("[MainChart] setData failed:", err);
-        return;
-      }
-      
-      if (isInitialLoad && candles.length > 0) {
-        chartRef.current.priceScale("right").applyOptions({ autoScale: true });
-        chartRef.current.timeScale().fitContent();
-        setIsInitialLoad(false);
-        setTimeout(() => {
-          if (chartRef.current) {
-            chartRef.current.priceScale("right").applyOptions({ autoScale: false });
+    if (candleSeriesRef.current && candles) {
+      const rawCount = candles.length;
+      const safeCandles = candles.filter((c: any) => {
+        const hasValidTime = c.time !== undefined && c.time !== null;
+        const hasValidPrices = 
+          Number.isFinite(c.open) && 
+          Number.isFinite(c.high) && 
+          Number.isFinite(c.low) && 
+          Number.isFinite(c.close);
+        return hasValidTime && hasValidPrices;
+      }).map((c: any) => {
+        let normalizedTime = c.time;
+        if (c.time instanceof Date) {
+          normalizedTime = Math.floor(c.time.getTime() / 1000);
+        } else if (typeof c.time === 'string' || typeof c.time === 'object') {
+          const d = new Date(c.time);
+          if (!isNaN(d.getTime())) {
+            normalizedTime = Math.floor(d.getTime() / 1000);
           }
-        }, 100);
-      }
-      
-      const lastCandle = candles[candles.length - 1];
-      const isUp = lastCandle.close >= lastCandle.open;
-      const color = isUp ? "#22c55e" : "#ef4444";
+        }
+        return { ...c, time: normalizedTime };
+      }).sort((a: any, b: any) => a.time - b.time);
 
-      if (livePriceLineRef.current) {
-        candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
+      const filteredCount = rawCount - safeCandles.length;
+      if (filteredCount > 0) {
+        console.warn(`[MainChart] Filtered out ${filteredCount} malformed candles`);
       }
 
-      if (toggles.price) {
-        livePriceLineRef.current = candleSeriesRef.current.createPriceLine({
-          price: lastCandle.close,
-          color: color,
-          lineWidth: 2,
-          lineStyle: LineStyle.Solid,
-          axisLabelVisible: true,
-          title: "",
-        });
-      }
+      if (safeCandles.length > 0) {
+        try {
+          candleSeriesRef.current.setData(safeCandles);
+        } catch (err) {
+          console.error("[MainChart] setData failed:", err);
+          return;
+        }
+        
+        if (isInitialLoad) {
+          chartRef.current.priceScale("right").applyOptions({ autoScale: true });
+          chartRef.current.timeScale().fitContent();
+          setIsInitialLoad(false);
+          setTimeout(() => {
+            if (chartRef.current) {
+              chartRef.current.priceScale("right").applyOptions({ autoScale: false });
+            }
+          }, 100);
+        }
+        
+        const lastCandle = safeCandles[safeCandles.length - 1];
+        const isUp = lastCandle.close >= lastCandle.open;
+        const color = isUp ? "#22c55e" : "#ef4444";
 
-      if (volumeSeriesRef.current && market?.totalGex) {
-        const pressureData = candles.map((c, i) => {
-          const prevClose = i > 0 ? candles[i-1].close : c.open;
-          const move = c.close - prevClose;
-          const pressure = (market.totalGex / 1e9) * move; 
-          return {
-            time: c.time,
-            value: Math.abs(pressure),
-            color: pressure >= 0 ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)',
-          };
-        });
-        volumeSeriesRef.current.setData(pressureData);
+        if (livePriceLineRef.current) {
+          candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
+        }
+
+        if (toggles.price) {
+          livePriceLineRef.current = candleSeriesRef.current.createPriceLine({
+            price: lastCandle.close,
+            color: color,
+            lineWidth: 2,
+            lineStyle: LineStyle.Solid,
+            axisLabelVisible: true,
+            title: "",
+          });
+        }
+
+        if (volumeSeriesRef.current && market?.totalGex) {
+          const pressureData = safeCandles.map((c, i) => {
+            const prevClose = i > 0 ? safeCandles[i-1].close : c.open;
+            const move = c.close - prevClose;
+            const pressure = (market.totalGex / 1e9) * move; 
+            return {
+              time: c.time,
+              value: Math.abs(pressure),
+              color: pressure >= 0 ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)',
+            };
+          });
+          volumeSeriesRef.current.setData(pressureData);
+        }
       }
     }
   }, [candles, toggles.price, market?.totalGex, isInitialLoad]);
