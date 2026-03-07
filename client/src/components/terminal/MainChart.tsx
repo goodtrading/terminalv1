@@ -330,22 +330,26 @@ export function MainChart() {
           .sort((a: any, b: any) => b.intensity - a.intensity)
           .slice(0, 8);
 
-        bidZones.forEach((zone: any, i: number) => {
+        const intensityToWidth = (int: number) => int >= 0.7 ? 3 : int >= 0.35 ? 2 : 1;
+        const intensityToOpacity = (int: number) => Math.min(0.75, 0.1 + int * 0.65);
+        const intensityToStyle = (int: number) => int >= 0.5 ? LineStyle.Solid : LineStyle.Dotted;
+
+        bidZones.forEach((zone: any) => {
           const mid = (zone.priceStart + zone.priceEnd) / 2;
           if (confluenceSet.has(zone.priceStart)) return;
-          const isStrongest = i === 0;
-          const opacity = isStrongest ? 0.6 : 0.12 + zone.intensity * 0.45;
+          const opacity = intensityToOpacity(zone.intensity);
+          const width = intensityToWidth(zone.intensity);
           const label = `BID ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
-          addLevel(mid, `rgba(34, 197, 94, ${opacity.toFixed(2)})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
+          addLevel(mid, `rgba(34, 197, 94, ${opacity.toFixed(2)})`, label, intensityToStyle(zone.intensity), width);
         });
 
-        askZones.forEach((zone: any, i: number) => {
+        askZones.forEach((zone: any) => {
           const mid = (zone.priceStart + zone.priceEnd) / 2;
           if (confluenceSet.has(zone.priceStart)) return;
-          const isStrongest = i === 0;
-          const opacity = isStrongest ? 0.6 : 0.12 + zone.intensity * 0.45;
+          const opacity = intensityToOpacity(zone.intensity);
+          const width = intensityToWidth(zone.intensity);
           const label = `ASK ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
-          addLevel(mid, `rgba(239, 68, 68, ${opacity.toFixed(2)})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
+          addLevel(mid, `rgba(239, 68, 68, ${opacity.toFixed(2)})`, label, intensityToStyle(zone.intensity), width);
         });
       }
     }
