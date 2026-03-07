@@ -41,6 +41,8 @@ export function LeftSidebar() {
   // Derived alerts logic
   const alerts = useMemo(() => {
     const list: Alert[] = [];
+    
+    // 1. Regime Alert
     if (market?.gammaRegime === "SHORT GAMMA") {
       list.push({
         id: 1,
@@ -50,17 +52,53 @@ export function LeftSidebar() {
         type: "warning"
       });
     }
+
+    // 2. Flow Intensity Alert
     if (flow?.hedgeFlowIntensity === "HIGH") {
       list.push({
         id: 2,
         title: "HIGH FLOW INTENSITY",
-        message: "Dealer hedging flow is accelerating.",
+        message: `Dealer hedging flow is accelerating (${flow.hedgeFlowBias}).`,
+        timestamp: new Date().toLocaleTimeString(),
+        type: "error"
+      });
+    }
+
+    // 3. Pressure Alert
+    if (dealer?.gammaPressure && parseFloat(dealer.gammaPressure) > 0.7) {
+      list.push({
+        id: 3,
+        title: "GAMMA PRESSURE",
+        message: `High directional pressure detected: ${dealer.gammaPressure}`,
+        timestamp: new Date().toLocaleTimeString(),
+        type: "warning"
+      });
+    }
+
+    // 4. Concentration Alert
+    if (dealer && dealer.gammaConcentration > 0.8) {
+      list.push({
+        id: 4,
+        title: "GAMMA CONCENTRATION",
+        message: "Dealer exposure is highly concentrated near spot.",
         timestamp: new Date().toLocaleTimeString(),
         type: "info"
       });
     }
+
+    // 5. Acceleration Risk
+    if (flow?.accelerationRisk === "HIGH") {
+      list.push({
+        id: 5,
+        title: "ACCELERATION RISK",
+        message: "High risk of non-linear price movement.",
+        timestamp: new Date().toLocaleTimeString(),
+        type: "error"
+      });
+    }
+
     return list;
-  }, [market, flow]);
+  }, [market, flow, dealer]);
 
   return (
     <div className="w-64 h-full flex flex-col gap-2 overflow-y-auto p-2 border-r border-terminal-border bg-terminal-bg shrink-0">
