@@ -175,8 +175,8 @@ export function MainChart() {
       const chart = createChart(chartContainerRef.current, {
         layout: {
           background: { type: ColorType.Solid, color: "#000000" },
-          textColor: "#d1d4dc",
-          fontSize: 11,
+          textColor: "#ffffff", // High contrast text
+          fontSize: 12,
           fontFamily: "JetBrains Mono, monospace",
         },
         grid: {
@@ -200,7 +200,8 @@ export function MainChart() {
             top: 0.2,
             bottom: 0.25,
           },
-          minimumWidth: 100,
+          minimumWidth: 80, // Ensure enough width for labels
+          borderVisible: true,
         },
         crosshair: {
           mode: 0,
@@ -243,8 +244,8 @@ export function MainChart() {
         lastValueVisible: true,
         autoscaleInfoProvider: () => ({
           priceRange: {
-            minValue: Math.min(...(candles?.map((c: any) => c.low) || [])),
-            maxValue: Math.max(...(candles?.map((c: any) => c.high) || [])),
+            minValue: Math.min(...(candles?.map((c: any) => c.low) || [0])),
+            maxValue: Math.max(...(candles?.map((c: any) => c.high) || [100000])),
           },
         }),
       });
@@ -290,7 +291,7 @@ export function MainChart() {
     } catch (error) {
       console.error("[MainChart] Chart initialization failed:", error);
     }
-  }, [candles]); // Added candles to dependency to update autoscaleInfoProvider
+  }, [candles]);
 
   useEffect(() => {
     if (chartRef.current && manualPriceRange) {
@@ -544,7 +545,7 @@ export function MainChart() {
             </div>
           </div>
           
-          <div className="flex flex-col items-end space-y-2 pointer-events-auto mr-20">
+          <div className="flex flex-col items-end space-y-2 pointer-events-auto mr-24">
             <div className="flex space-x-1">
               <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">PAN UP</button>
               <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">PAN DN</button>
@@ -604,7 +605,7 @@ export function MainChart() {
       
       <div 
         ref={chartContainerRef} 
-        className="absolute inset-0 chart-container-root"
+        className="absolute inset-0 chart-container-root pr-[80px]"
         style={{ pointerEvents: 'auto' }}
       />
     </TerminalPanel>
