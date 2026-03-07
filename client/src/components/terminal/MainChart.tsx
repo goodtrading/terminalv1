@@ -33,7 +33,8 @@ export function MainChart() {
     if (!chartRef.current) return;
     setManualPriceRange(null);
     chartRef.current.priceScale("right").applyOptions({ autoScale: true });
-    setIsInitialLoad(true);
+    // Trigger fitContent only on explicit reset
+    chartRef.current.timeScale().fitContent();
   };
 
   const fitLevels = () => {
@@ -179,6 +180,7 @@ export function MainChart() {
     refetchInterval: 10000
   });
 
+  // INITIALIZATION: ONLY ONCE
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -228,20 +230,6 @@ export function MainChart() {
             width: 1,
             style: LineStyle.Solid,
             labelBackgroundColor: "#000",
-          },
-        },
-        handleScroll: {
-          mouseWheel: true,
-          pressedMouseMove: true,
-          horzTouchDrag: true,
-          vertTouchDrag: true,
-        },
-        handleScale: {
-          mouseWheel: true,
-          pinch: true,
-          axisPressedMouseMove: {
-            price: true,
-            time: true,
           },
         },
       });
@@ -298,53 +286,21 @@ export function MainChart() {
     } catch (error) {
       console.error("[MainChart] Chart initialization failed:", error);
     }
-  }, []);
+  }, []); // EMPTY DEP ARRAY IS CRITICAL
 
-  useEffect(() => {
-    if (candleSeriesRef.current && candles && candles.length > 0) {
-      candleSeriesRef.current.applyOptions({
-        autoscaleInfoProvider: () => ({
-          priceRange: {
-            minValue: Math.min(...candles.map((c: any) => c.low)),
-            maxValue: Math.max(...candles.map((c: any) => c.high)),
-          },
-        }),
-      });
-    }
-  }, [candles]);
-
-  useEffect(() => {
-    if (chartRef.current && manualPriceRange) {
-      chartRef.current.priceScale("right").applyOptions({
-        autoScale: false,
-      });
-      try {
-        const scale = chartRef.current.priceScale("right");
-        scale.setVisibleRange(manualPriceRange);
-      } catch (e) {
-        console.error("Failed to set manual range:", e);
-      }
-    }
-  }, [manualPriceRange]);
-
+  // DATA UPDATES: DO NOT CALL fitContent() HERE
   useEffect(() => {
     if (candleSeriesRef.current && candles && candles.length > 0) {
       try {
-        // Strictly ordered and unique candles before setting data
         const sortedUniqueCandles = [...candles]
           .sort((a: any, b: any) => a.time - b.time);
         
         candleSeriesRef.current.setData(sortedUniqueCandles);
         
+        // Only run fitContent ONCE on initial boot
         if (isInitialLoad) {
-          chartRef.current?.priceScale("right").applyOptions({ autoScale: true });
           chartRef.current?.timeScale().fitContent();
           setIsInitialLoad(false);
-          setTimeout(() => {
-            if (chartRef.current) {
-              chartRef.current.priceScale("right").applyOptions({ autoScale: false });
-            }
-          }, 100);
         }
         
         const lastCandle = sortedUniqueCandles[sortedUniqueCandles.length - 1];
@@ -383,7 +339,18 @@ export function MainChart() {
         console.error("[MainChart] setData failed:", err);
       }
     }
-  }, [candles, toggles.price, market?.totalGex, isInitialLoad]);
+  }, [candles, toggles.price, market?.totalGex]);
+
+  useEffect(() => {
+    if (chartRef.current && manualPriceRange) {
+      try {
+        chartRef.current.priceScale("right").applyOptions({ autoScale: false });
+        chartRef.current.priceScale("right").setVisibleRange(manualPriceRange);
+      } catch (e) {
+        console.error("Failed to set manual range:", e);
+      }
+    }
+  }, [manualPriceRange]);
 
   useEffect(() => {
     if (!candleSeriesRef.current || !candles || candles.length === 0) return;
