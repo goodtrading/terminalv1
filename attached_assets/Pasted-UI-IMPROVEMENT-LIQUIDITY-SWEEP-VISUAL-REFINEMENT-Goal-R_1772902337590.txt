@@ -1,0 +1,167 @@
+UI IMPROVEMENT — LIQUIDITY SWEEP VISUAL REFINEMENT
+
+Goal:
+Refine the Liquidity Sweep visualization to reduce chart clutter and improve visual hierarchy while preserving the current analytics logic.
+
+Do NOT modify the sweep engine logic.
+Only improve chart rendering and label clarity.
+
+================================================
+PART 1 — REDUCE CHART CLUTTER WHEN SWEEP IS ACTIVE
+================================================
+
+Condition:
+If sweepRisk >= HIGH
+
+Adjust the opacity of other structural overlays so the Sweep Zone becomes visually dominant.
+
+Apply these changes:
+
+Heatmap liquidity lines
+opacity: 0.30
+
+Gamma magnets
+opacity: 0.50
+
+Gamma levels / cliffs
+opacity: 0.60
+
+Dealer pivot
+opacity: 0.70
+
+Call wall / Put wall
+opacity: 0.70
+
+Do NOT hide them completely — only reduce visual intensity.
+
+This ensures the Sweep Zone becomes the primary visual element without losing context.
+
+================================================
+PART 2 — IMPROVE SWEEP ZONE LABEL
+================================================
+
+Replace the current label:
+
+"SWEEP ZONE"
+
+With directional indicators based on sweepDirection.
+
+Rules:
+
+UP
+label = "SWEEP ZONE ↑"
+
+DOWN
+label = "SWEEP ZONE ↓"
+
+TWO_SIDED
+label = "SWEEP ZONE ↕"
+
+NONE
+do not render label
+
+Position the label at the right edge of the sweep band.
+
+================================================
+PART 3 — REDUCE LABEL SIZE
+================================================
+
+Current sweep zone label is visually too dominant.
+
+Adjust typography:
+
+font-size: 10px
+font-weight: 600
+opacity: 0.85
+
+Maintain the same color as the sweep band.
+
+This prevents the label from competing with structural levels like:
+
+CALL WALL
+PUT WALL
+MAGNET
+DEALER PIVOT
+
+================================================
+PART 4 — IMPROVE SWEEP BAND STYLE
+================================================
+
+Current band is correct but can be refined.
+
+Style rules:
+
+Band fill opacity: 0.12
+Border line width: 1px
+
+Color rules:
+
+UP → green band
+DOWN → red band
+TWO_SIDED → purple band
+
+Keep borders slightly stronger than the fill.
+
+================================================
+PART 5 — PRIORITIZE SWEEP OVER HEATMAP
+================================================
+
+If both heatmap and sweep zone are active:
+
+Heatmap intensity must visually step back.
+
+Implementation:
+
+Heatmap zone width
+max: 2px
+
+Heatmap opacity reduction
+-40%
+
+This ensures sweep structures dominate the chart visually.
+
+================================================
+PART 6 — OPTIONAL PRESSURE ARROWS (VISUAL LIQUIDITY STRUCTURE)
+================================================
+
+Inside the sweep zone band add subtle directional pressure arrows.
+
+Rules:
+
+If sweepDirection = UP
+display small upward arrows above the price area.
+
+If sweepDirection = DOWN
+display downward arrows below the price area.
+
+If sweepDirection = TWO_SIDED
+display both directions faintly.
+
+Arrow style:
+
+opacity: 0.25
+small size
+do not overlap candles.
+
+Purpose:
+Visually communicate liquidity pressure zones without clutter.
+
+================================================
+PART 7 — KEEP CHART PERFORMANCE STABLE
+================================================
+
+Ensure sweep overlays:
+
+- render only when sweepRisk >= HIGH
+- update only when sweepTargetZone changes
+- do not trigger unnecessary chart redraws
+
+================================================
+EXPECTED RESULT
+================================================
+
+1. Sweep Zone becomes the dominant visual structure when active
+2. Chart remains readable with reduced overlay noise
+3. Directional meaning is instantly visible through ↑ ↓ ↕ labels
+4. Structural levels remain visible but less intrusive
+5. Terminal retains institutional clean aesthetic

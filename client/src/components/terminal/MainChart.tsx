@@ -240,20 +240,26 @@ export function MainChart() {
       if (line) priceLinesRef.current.push(line);
     };
 
+    const sweepDetector = positioning_engines?.liquiditySweepDetector;
+    const sweepActive = sweepDetector && (sweepDetector.sweepRisk === "HIGH" || sweepDetector.sweepRisk === "EXTREME") && sweepDetector.sweepDirection !== "NONE";
+    const sweepDirColor = sweepDetector?.sweepDirection === "UP" ? "34, 197, 94" : sweepDetector?.sweepDirection === "DOWN" ? "239, 68, 68" : "168, 85, 247";
+    const sweepDirArrow = sweepDetector?.sweepDirection === "UP" ? " ↑" : sweepDetector?.sweepDirection === "DOWN" ? " ↓" : " ↕";
+    const dim = (base: number, factor: number) => sweepActive ? +(base * factor).toFixed(2) : base;
+
     if (mapMode === "LEVELS") {
-      if (positioning?.callWall) addLevel(positioning.callWall, "rgba(239, 68, 68, 0.6)", "CALL WALL");
-      if (positioning?.putWall) addLevel(positioning.putWall, "rgba(34, 197, 94, 0.6)", "PUT WALL");
+      if (positioning?.callWall) addLevel(positioning.callWall, `rgba(239, 68, 68, ${dim(0.6, 0.7)})`, "CALL WALL");
+      if (positioning?.putWall) addLevel(positioning.putWall, `rgba(34, 197, 94, ${dim(0.6, 0.7)})`, "PUT WALL");
       if (levels?.gammaMagnets) {
-        levels.gammaMagnets.forEach(m => addLevel(m, "rgba(59, 130, 246, 0.4)", "MAGNET", LineStyle.Dashed));
+        levels.gammaMagnets.forEach(m => addLevel(m, `rgba(59, 130, 246, ${dim(0.4, 0.5)})`, "MAGNET", LineStyle.Dashed));
       }
-      if (positioning?.dealerPivot) addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.3)", "DEALER PIVOT", LineStyle.Dashed);
+      if (positioning?.dealerPivot) addLevel(positioning.dealerPivot, `rgba(255, 255, 255, ${dim(0.3, 0.7)})`, "DEALER PIVOT", LineStyle.Dashed);
     }
 
     if (mapMode === "GAMMA") {
-      if (market?.gammaFlip) addLevel(market.gammaFlip, "rgba(250, 240, 180, 0.85)", "GAMMA FLIP", LineStyle.Solid, 2);
+      if (market?.gammaFlip) addLevel(market.gammaFlip, `rgba(250, 240, 180, ${dim(0.85, 0.7)})`, "GAMMA FLIP", LineStyle.Solid, 2);
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
-        addLevel(market.transitionZoneStart, "rgba(234, 179, 8, 0.25)", "TRANSITION LOW", LineStyle.Dashed);
-        addLevel(market.transitionZoneEnd, "rgba(234, 179, 8, 0.25)", "TRANSITION HIGH", LineStyle.Dashed);
+        addLevel(market.transitionZoneStart, `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, "TRANSITION LOW", LineStyle.Dashed);
+        addLevel(market.transitionZoneEnd, `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, "TRANSITION HIGH", LineStyle.Dashed);
       }
       const gammaCliffs = positioning_engines?.gammaCurveEngine?.gammaCliffs;
       if (gammaCliffs && Array.isArray(gammaCliffs)) {
@@ -271,14 +277,14 @@ export function MainChart() {
           const label = `CLIFF ↑ ${cliff.strike >= 1000 ? (cliff.strike / 1000).toFixed(cliff.strike % 1000 === 0 ? 0 : 1) + "k" : cliff.strike}`;
           const isStrongest = i === 0;
           const ratio = Math.abs(cliff.strength) / maxAbove;
-          const opacity = isStrongest ? 0.7 : ratio > 0.5 ? 0.45 : 0.25;
+          const opacity = dim(isStrongest ? 0.7 : ratio > 0.5 ? 0.45 : 0.25, 0.6);
           addLevel(cliff.strike, `rgba(249, 115, 22, ${opacity})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
         });
         below.forEach((cliff: { strike: number; strength: number }, i: number) => {
           const label = `CLIFF ↓ ${cliff.strike >= 1000 ? (cliff.strike / 1000).toFixed(cliff.strike % 1000 === 0 ? 0 : 1) + "k" : cliff.strike}`;
           const isStrongest = i === 0;
           const ratio = Math.abs(cliff.strength) / maxBelow;
-          const opacity = isStrongest ? 0.7 : ratio > 0.5 ? 0.45 : 0.25;
+          const opacity = dim(isStrongest ? 0.7 : ratio > 0.5 ? 0.45 : 0.25, 0.6);
           addLevel(cliff.strike, `rgba(56, 189, 248, ${opacity})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
         });
       }
@@ -307,22 +313,16 @@ export function MainChart() {
       }
     }
 
-    const sweepDetector = positioning_engines?.liquiditySweepDetector;
-    const sweepActive = sweepDetector && (sweepDetector.sweepRisk === "HIGH" || sweepDetector.sweepRisk === "EXTREME") && sweepDetector.sweepDirection !== "NONE";
     const sweepZoneRange = sweepActive ? extractRangeFromText(sweepDetector.sweepTargetZone) : null;
-    const sweepDirColor = sweepDetector?.sweepDirection === "UP" ? "34, 197, 94" : sweepDetector?.sweepDirection === "DOWN" ? "239, 68, 68" : "168, 85, 247";
-    const sweepDirArrow = sweepDetector?.sweepDirection === "UP" ? " ↑" : sweepDetector?.sweepDirection === "DOWN" ? " ↓" : " ↕";
 
     if (sweepActive && sweepZoneRange) {
-      const bandStep = (sweepZoneRange.end - sweepZoneRange.start) / 6;
-      for (let i = 0; i <= 6; i++) {
+      const bandStep = (sweepZoneRange.end - sweepZoneRange.start) / 8;
+      for (let i = 0; i <= 8; i++) {
         const p = sweepZoneRange.start + bandStep * i;
-        const isBorder = i === 0 || i === 6;
-        const opacity = isBorder ? 0.35 : 0.08;
-        const style = isBorder ? LineStyle.Solid : LineStyle.Solid;
-        const w = isBorder ? 1 : 1;
-        const title = i === 6 ? `SWEEP ZONE${sweepDirArrow}` : "";
-        addLevel(p, `rgba(${sweepDirColor}, ${opacity})`, title, style, w);
+        const isBorder = i === 0 || i === 8;
+        const opacity = isBorder ? 0.35 : 0.12;
+        const title = i === 8 ? `SWEEP ZONE${sweepDirArrow}` : "";
+        addLevel(p, `rgba(${sweepDirColor}, ${opacity})`, title, LineStyle.Solid, 1);
       }
     }
 
@@ -582,18 +582,33 @@ export function MainChart() {
           if (!isActive) return null;
           const dirClr = sd.sweepDirection === "UP" ? "text-green-400 border-green-500/20 bg-green-500/10" : sd.sweepDirection === "DOWN" ? "text-red-400 border-red-500/20 bg-red-500/10" : "text-purple-400 border-purple-500/20 bg-purple-500/10";
           const arrow = sd.sweepDirection === "UP" ? "↑" : sd.sweepDirection === "DOWN" ? "↓" : "↕";
+          const arrowColor = sd.sweepDirection === "UP" ? "text-green-400/25" : sd.sweepDirection === "DOWN" ? "text-red-400/25" : "text-purple-400/25";
+          const showUp = sd.sweepDirection === "UP" || sd.sweepDirection === "TWO_SIDED";
+          const showDown = sd.sweepDirection === "DOWN" || sd.sweepDirection === "TWO_SIDED";
           return (
-            <div className="absolute bottom-3 right-28 z-10 pointer-events-none">
-              <TooltipWrapper concept="Sweep Zone">
-                <div className={cn("flex items-center gap-1.5 border rounded px-2 py-1 backdrop-blur-sm", dirClr)} style={{ pointerEvents: learnMode ? "auto" : "none" }}>
-                  <span className={cn("text-[9px] font-mono font-bold tracking-wider", dirClr.split(" ")[0])}>SWEEP ZONE {arrow}</span>
-                  <span className="text-[8px] font-mono text-white/30">{sd.sweepTargetZone}</span>
-                </div>
-              </TooltipWrapper>
-              {learnMode && (
-                <div className="mt-1 text-[8px] text-white/25 font-mono text-right italic">Area where price may move quickly</div>
-              )}
-            </div>
+            <>
+              <div className="absolute bottom-3 right-28 z-10 pointer-events-none">
+                <TooltipWrapper concept="Sweep Zone">
+                  <div className={cn("flex items-center gap-1.5 border rounded px-2 py-1 backdrop-blur-sm", dirClr)} style={{ pointerEvents: learnMode ? "auto" : "none" }}>
+                    <span className={cn("text-[10px] font-mono font-semibold tracking-wider opacity-85", dirClr.split(" ")[0])}>SWEEP ZONE {arrow}</span>
+                    <span className="text-[8px] font-mono text-white/30">{sd.sweepTargetZone}</span>
+                  </div>
+                </TooltipWrapper>
+                {learnMode && (
+                  <div className="mt-1 text-[8px] text-white/25 font-mono text-right italic">Area where price may move quickly</div>
+                )}
+              </div>
+              <div className="absolute left-1/2 -translate-x-1/2 z-[5] pointer-events-none flex flex-col items-center gap-1" style={{ top: "38%" }}>
+                {showUp && [0, 1, 2].map(i => (
+                  <span key={`up-${i}`} className={cn("text-[10px] font-mono leading-none select-none", arrowColor)} style={{ opacity: 0.15 + i * 0.05 }}>▲</span>
+                ))}
+              </div>
+              <div className="absolute left-1/2 -translate-x-1/2 z-[5] pointer-events-none flex flex-col items-center gap-1" style={{ bottom: "28%" }}>
+                {showDown && [0, 1, 2].map(i => (
+                  <span key={`dn-${i}`} className={cn("text-[10px] font-mono leading-none select-none", arrowColor)} style={{ opacity: 0.15 + i * 0.05 }}>▼</span>
+                ))}
+              </div>
+            </>
           );
         })()}
         <div ref={chartContainerRef} className="absolute inset-0 pr-[100px]" style={{ pointerEvents: 'auto' }} />
