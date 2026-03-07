@@ -1,0 +1,133 @@
+Perform a final visual polish pass on the HEATMAP overlay to improve level hierarchy and clarity.
+
+The HEATMAP mode is already clean, but a few adjustments are required to achieve an institutional-quality visualization.
+
+Do NOT add new features. Only refine rendering and hierarchy.
+
+----------------------------------------
+1. Render SWEEP as a zone band
+----------------------------------------
+
+Currently SWEEP is rendered as a single horizontal line.
+
+Change SWEEP rendering to a zone band.
+
+Requirements:
+
+- Render a translucent horizontal band instead of a line.
+- Band height should represent the sweep zone width.
+- Opacity: 0.15–0.20
+- Color: purple (same family used for sweep labels)
+- Keep a single small label "SWEEP" aligned on the right axis.
+
+Example rendering logic:
+
+renderSweepZone({
+  priceTop,
+  priceBottom,
+  color: purple,
+  opacity: 0.18
+})
+
+Goal:
+Visually communicate that SWEEP is a liquidity zone, not a precise level.
+
+----------------------------------------
+2. Correct CLIFF color (gamma category)
+----------------------------------------
+
+CLIFF currently uses a liquidity-style orange color.
+
+CLIFF must belong to the gamma visual family.
+
+Change styling to:
+
+- color: violet or cyan
+- opacity: 0.9
+- label: "CLIFF"
+
+This keeps gamma-related levels visually consistent.
+
+Gamma family should include:
+- Gamma Flip
+- Magnet
+- Cliff
+
+----------------------------------------
+3. Reduce visual dominance of MAGNET
+----------------------------------------
+
+MAGNET is an attractor level, not a hard wall.
+
+Adjust style:
+
+- opacity: 0.6
+- thinner line width
+- smaller label padding
+- slightly muted color
+
+MAGNET should be visible but secondary.
+
+----------------------------------------
+4. Reduce prominence of BID / passive liquidity
+----------------------------------------
+
+BID labels represent resting liquidity and should not compete with walls or gamma levels.
+
+Adjust:
+
+- opacity: 0.5
+- smaller font size
+- thinner line width
+
+Keep visible but subtle.
+
+----------------------------------------
+5. Enforce maximum visible level count
+----------------------------------------
+
+To prevent chart clutter, enforce:
+
+maximumVisibleLevels = 6
+
+Use priority ranking:
+
+1. CALL WALL
+2. PUT WALL
+3. GAMMA FLIP
+4. SWEEP ZONE
+5. CLIFF
+6. MAGNET
+7. DEALER PIVOT
+8. BID / secondary liquidity
+
+Rendering rule:
+
+If more than 6 levels exist:
+
+- Render highest priority levels first
+- Hide lowest priority levels automatically
+
+----------------------------------------
+6. Maintain deterministic placement
+----------------------------------------
+
+Ensure labels remain stable across renders.
+
+- Sort levels by price
+- Apply priority filtering
+- Then render
+
+Labels must not jump randomly between frames.
+
+----------------------------------------
+Acceptance Criteria
+----------------------------------------
+
+After this fix:
+
+- SWEEP appears as a translucent zone band.
+- CLIFF visually matches gamma-level styling.
+- MAGNET and BID are less dominant.
+- Maximum 6 levels visible at once.
+- Chart remains readable and institutional in appearance.
