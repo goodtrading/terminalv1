@@ -302,7 +302,15 @@ export class DeribitOptionsGateway {
           shortGammaPockets: null, vannaBias: null, charmBias: null,
           gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
           dealerGammaState: null, dealerHedgeDirection: null, volatilityRegime: null, dealerFlowScore: null,
-          tradingPlaybook: fallbackPlaybook
+          tradingPlaybook: fallbackPlaybook,
+          volatilityExpansionDetector: {
+            volExpansionState: "PRE_BREAKOUT" as const,
+            expansionDirection: "NEUTRAL" as const,
+            expansionProbability: 0.5,
+            playbookShiftSuggested: false,
+            suggestedPlaybook: "RANGE_SCALPING" as const,
+            expansionTriggerZone: null
+          }
         };
       }
 
@@ -773,6 +781,94 @@ export class DeribitOptionsGateway {
         regimeShiftTrigger
       };
 
+      // --- Volatility Expansion Detector ---
+      let volExpansionState: "COMPRESSING" | "PRE_BREAKOUT" | "EXPANDING" = "PRE_BREAKOUT";
+      let expansionDirection: "UP" | "DOWN" | "NEUTRAL" = "NEUTRAL";
+      let expansionProbability = 0.5;
+      let playbookShiftSuggested = false;
+      let suggestedPlaybook: "RANGE_SCALPING" | "FADE_EXTREMES" | "MOMENTUM_BREAKOUT" | "VOLATILITY_EXPANSION" | "LIQUIDITY_SWEEP_REVERSAL" = strategyType;
+      let expansionTriggerZone: { start: number, end: number } | null = null;
+
+      // 1. volExpansionState
+      if (dealerRegime === "LONG_GAMMA" && pinningStrength > 0.5 && cascadeRisk === "LOW") {
+        volExpansionState = "COMPRESSING";
+      } else if (dealerRegime === "SHORT_GAMMA" || cascadeRisk === "HIGH" || (hedgingStressScore > 0.7 && liquidityPressure === "CASCADE_RISK")) {
+        volExpansionState = "EXPANDING";
+      } else {
+        volExpansionState = "PRE_BREAKOUT";
+      }
+
+      // 2. expansionDirection
+      if (volExpansionState !== "COMPRESSING") {
+        const trapBias = activeTrapContext?.misleadingDirection;
+        const shortGammaBelow = shortGammaZones.some(z => spotPrice ? spotPrice > z.endStrike : false);
+        const shortGammaAbove = shortGammaZones.some(z => spotPrice ? spotPrice < z.startStrike : false);
+
+        if (tradeBias === "LONG" || tradeBias === "MEAN_REVERSION" && totalVanna > 0) {
+          expansionDirection = "UP";
+        } else if (tradeBias === "SHORT") {
+          expansionDirection = "DOWN";
+        }
+
+        if (trapBias === "UP" && activeTrapContext && activeTrapContext.confidence > 70) {
+          expansionDirection = "DOWN";
+        } else if (trapBias === "DOWN" && activeTrapContext && activeTrapContext.confidence > 70) {
+          expansionDirection = "UP";
+        }
+
+        if (shortGammaBelow && !shortGammaAbove && expansionDirection === "NEUTRAL") {
+          expansionDirection = "DOWN";
+        } else if (shortGammaAbove && !shortGammaBelow && expansionDirection === "NEUTRAL") {
+          expansionDirection = "UP";
+        }
+      }
+
+      // 3. expansionProbability
+      let expProb = 0.3;
+      if (volExpansionState === "EXPANDING") expProb += 0.3;
+      else if (volExpansionState === "PRE_BREAKOUT") expProb += 0.15;
+      if (cascadeRisk === "HIGH") expProb += 0.2;
+      else if (cascadeRisk === "MEDIUM") expProb += 0.1;
+      if (hedgingStressScore > 0.6) expProb += 0.1;
+      if (hedgingSpeedScore > 0.5) expProb += 0.05;
+      if (pinningStrength > 0.7) expProb -= 0.2;
+      if (dealerRegime === "LONG_GAMMA") expProb -= 0.15;
+      expansionProbability = Math.max(0, Math.min(1, expProb));
+
+      // 4 & 5. playbookShiftSuggested + suggestedPlaybook
+      if (volExpansionState === "EXPANDING" && strategyType !== "VOLATILITY_EXPANSION" && strategyType !== "MOMENTUM_BREAKOUT") {
+        playbookShiftSuggested = true;
+        suggestedPlaybook = cascadeRisk === "HIGH" ? "VOLATILITY_EXPANSION" : "MOMENTUM_BREAKOUT";
+      } else if (volExpansionState === "COMPRESSING" && strategyType !== "RANGE_SCALPING" && strategyType !== "FADE_EXTREMES") {
+        playbookShiftSuggested = true;
+        suggestedPlaybook = pinningStrength > 0.7 ? "RANGE_SCALPING" : "FADE_EXTREMES";
+      } else if (volExpansionState === "PRE_BREAKOUT" && strategyType === "RANGE_SCALPING" && hedgingStressScore > 0.5) {
+        playbookShiftSuggested = true;
+        suggestedPlaybook = "LIQUIDITY_SWEEP_REVERSAL";
+      }
+
+      // 6. expansionTriggerZone
+      if (spotPrice && gammaFlip && volExpansionState !== "COMPRESSING") {
+        const nearestShortZone = shortGammaZones
+          .map(z => ({ ...z, dist: Math.min(Math.abs((spotPrice || 0) - z.startStrike), Math.abs((spotPrice || 0) - z.endStrike)) }))
+          .sort((a, b) => a.dist - b.dist)[0];
+
+        if (nearestShortZone) {
+          expansionTriggerZone = { start: nearestShortZone.startStrike, end: nearestShortZone.endStrike };
+        } else if (gammaFlip) {
+          expansionTriggerZone = { start: gammaFlip - 500, end: gammaFlip + 500 };
+        }
+      }
+
+      const volatilityExpansionDetector = {
+        volExpansionState,
+        expansionDirection,
+        expansionProbability,
+        playbookShiftSuggested,
+        suggestedPlaybook,
+        expansionTriggerZone
+      };
+
       return {
         totalGex: totalGex || 0,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -804,7 +900,8 @@ export class DeribitOptionsGateway {
         marketRegime,
         dealerTrapEngine,
         tradingPlaybook,
-        reactionZones
+        reactionZones,
+        volatilityExpansionDetector
       };
     } catch (e) {
       console.error("[DeribitGateway] Summary error:", e);
@@ -825,6 +922,14 @@ export class DeribitOptionsGateway {
           tradeZones: { longZones: [], shortZones: [] },
           invalidationLevel: spotPrice ? spotPrice * 0.95 : 0,
           regimeShiftTrigger: "Engine recovery required"
+        },
+        volatilityExpansionDetector: {
+          volExpansionState: "PRE_BREAKOUT",
+          expansionDirection: "NEUTRAL",
+          expansionProbability: 0.5,
+          playbookShiftSuggested: false,
+          suggestedPlaybook: "RANGE_SCALPING",
+          expansionTriggerZone: null
         }
       } as any;
     }
