@@ -142,10 +142,10 @@ export function LeftSidebar() {
       </TerminalPanel>
 
       <TerminalPanel title="DEALER EXPOSURE">
-        <TerminalValue label="Vanna Exposure" value={dealer ? `${dealer.vannaExposure >= 0 ? "+" : ""}${dealer.vannaExposure.toFixed(2)}` : "--"} trend={dealer && dealer.vannaExposure > 0 ? "positive" : "negative"} />
-        <TerminalValue label="Vanna Bias" value={dealer?.vannaBias ?? "--"} trend={dealer?.vannaBias === "BULLISH" ? "positive" : "negative"} isBadge />
-        <TerminalValue label="Charm Exposure" value={dealer ? `${dealer.charmExposure >= 0 ? "+" : ""}${dealer.charmExposure.toFixed(2)}` : "--"} trend={dealer && dealer.charmExposure > 0 ? "positive" : "negative"} />
-        <TerminalValue label="Charm Bias" value={dealer?.charmBias ?? "--"} trend={dealer?.charmBias === "BULLISH" ? "positive" : "negative"} isBadge />
+        <TerminalValue label="Vanna Exposure" value={dealer ? `${dealer.vannaExposure >= 0 ? "+" : ""}${dealer.vannaExposure.toFixed(2)}` : "--"} trend={dealer && dealer.vannaExposure > 0 ? "positive" : "negative"} tooltip="Vanna Exposure" />
+        <TerminalValue label="Vanna Bias" value={dealer?.vannaBias ?? "--"} trend={dealer?.vannaBias === "BULLISH" ? "positive" : "negative"} isBadge tooltip="Vanna Bias" />
+        <TerminalValue label="Charm Exposure" value={dealer ? `${dealer.charmExposure >= 0 ? "+" : ""}${dealer.charmExposure.toFixed(2)}` : "--"} trend={dealer && dealer.charmExposure > 0 ? "positive" : "negative"} tooltip="Charm Exposure" />
+        <TerminalValue label="Charm Bias" value={dealer?.charmBias ?? "--"} trend={dealer?.charmBias === "BULLISH" ? "positive" : "negative"} isBadge tooltip="Charm Bias" />
         <TerminalValue label="Gamma Pressure" value={dealer?.gammaPressure ?? "--"} />
         <TerminalValue label="Gamma Concen." value={dealer ? dealer.gammaConcentration.toFixed(2) : "--"} />
       </TerminalPanel>

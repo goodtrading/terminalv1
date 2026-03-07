@@ -172,6 +172,30 @@ const CONCEPTS: Record<string, ConceptEntry> = {
     interpretation: "BID zones (green) show resting demand, ASK zones (red) show resting supply. Purple marks gamma-liquidity confluence.",
     tradingUse: "Use to identify where real liquidity sits. Confluence zones (gamma + liquidity) are the highest-conviction levels.",
   },
+  "Vanna Exposure": {
+    title: "VANNA EXPOSURE",
+    definition: "Vanna measures how the delta of options changes when implied volatility changes.",
+    interpretation: "When Vanna exposure is positive, dealers tend to buy spot as volatility falls and sell spot when volatility rises. This often stabilizes the market.",
+    tradingUse: "Positive Vanna can dampen volatility and encourage mean reversion. Negative Vanna can amplify volatility moves.",
+  },
+  "Vanna Bias": {
+    title: "VANNA BIAS",
+    definition: "Directional interpretation of the current Vanna exposure.",
+    interpretation: "Bullish Vanna bias suggests dealer hedging tends to support price dips. Bearish Vanna bias suggests dealers may sell rallies.",
+    tradingUse: "Helps anticipate whether volatility changes will reinforce or dampen price moves.",
+  },
+  "Charm Exposure": {
+    title: "CHARM EXPOSURE",
+    definition: "Charm measures how the delta of options changes as time passes toward expiration.",
+    interpretation: "As time decay progresses, dealers must adjust their hedges even if price does not move.",
+    tradingUse: "Charm flows can create gradual buying or selling pressure during the trading session.",
+  },
+  "Charm Bias": {
+    title: "CHARM BIAS",
+    definition: "Directional interpretation of the Charm exposure.",
+    interpretation: "Bullish Charm bias suggests time decay generates net buying pressure. Bearish Charm bias suggests time decay generates net selling pressure.",
+    tradingUse: "Charm flows often influence slow directional drift during the day.",
+  },
 };
 
 interface TooltipWrapperProps {
