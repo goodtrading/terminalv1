@@ -172,6 +172,11 @@ export const optionsSummarySchema = z.object({
     squeezeTarget: z.string(),
     squeezeDrivers: z.array(z.string())
   }).optional(),
+  marketModeEngine: z.object({
+    marketMode: z.enum(["GAMMA_PIN", "MEAN_REVERSION", "VOL_EXPANSION", "SQUEEZE_RISK", "CASCADE_RISK", "FRAGILE_TRANSITION"]),
+    marketModeConfidence: z.number(),
+    marketModeReason: z.array(z.string())
+  }).optional(),
   source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()
 });
 
@@ -502,6 +507,11 @@ export class DeribitOptionsGateway {
             squeezeTrigger: "Awaiting options data ingestion",
             squeezeTarget: "--",
             squeezeDrivers: ["Insufficient data", "Awaiting options ingestion", "No signal alignment"]
+          },
+          marketModeEngine: {
+            marketMode: "FRAGILE_TRANSITION" as const,
+            marketModeConfidence: 0,
+            marketModeReason: ["Insufficient data", "Awaiting options ingestion"]
           },
           source: dataSource
         };
@@ -1592,6 +1602,120 @@ export class DeribitOptionsGateway {
         squeezeDrivers
       };
 
+      // === MARKET MODE ENGINE (Engine #18) ===
+      const mmIsLongGamma = totalGex >= 0;
+      const mmIsShortGamma = totalGex < 0;
+      const mmRegBand = gammaCurveEngine?.gammaRegimeBand || "TRANSITION";
+      const mmLcRisk = liquidityCascadeEngine?.cascadeRisk || "LOW";
+      const mmSqProb = squeezeProbabilityEngine?.squeezeProbability ?? 0;
+      const mmSqType = squeezeProbabilityEngine?.squeezeType || "NONE";
+      const mmExpProb = volatilityExpansionDetector?.expansionProbability ?? 0.5;
+      const mmExpState = volatilityExpansionDetector?.volExpansionState || "PRE_BREAKOUT";
+      const mmInstBias = institutionalBiasEngine?.institutionalBias || "NEUTRAL_CHOP";
+      const mmBiasConf = institutionalBiasEngine?.biasConfidence ?? 50;
+      const mmDSens = gammaCurveEngine?.dealerSensitivity || "MEDIUM";
+      const mmTState = tradeDecisionEngine?.tradeState || "WAIT";
+      const mmPlaybook = tradingPlaybook?.currentPlaybook?.strategyType || "RANGE_SCALPING";
+
+      type MarketMode = "GAMMA_PIN" | "MEAN_REVERSION" | "VOL_EXPANSION" | "SQUEEZE_RISK" | "CASCADE_RISK" | "FRAGILE_TRANSITION";
+      let marketMode: MarketMode = "FRAGILE_TRANSITION";
+      let marketModeConfidence = 0;
+      const marketModeReason: string[] = [];
+
+      const scores: Record<MarketMode, number> = {
+        GAMMA_PIN: 0,
+        MEAN_REVERSION: 0,
+        VOL_EXPANSION: 0,
+        SQUEEZE_RISK: 0,
+        CASCADE_RISK: 0,
+        FRAGILE_TRANSITION: 0
+      };
+
+      if (mmLcRisk === "EXTREME") { scores.CASCADE_RISK += 50; }
+      else if (mmLcRisk === "HIGH") { scores.CASCADE_RISK += 35; }
+      else if (mmLcRisk === "MEDIUM") { scores.CASCADE_RISK += 10; }
+
+      if (mmSqProb > 70) { scores.SQUEEZE_RISK += 40; }
+      else if (mmSqProb > 50) { scores.SQUEEZE_RISK += 25; }
+      else if (mmSqProb > 30) { scores.SQUEEZE_RISK += 10; }
+      if (mmSqType !== "NONE") { scores.SQUEEZE_RISK += 10; }
+
+      if (mmIsLongGamma && pinningStrength > 0.6 && mmExpProb < 0.4) {
+        scores.GAMMA_PIN += 35;
+      }
+      if (pinningStrength > 0.7) { scores.GAMMA_PIN += 15; }
+      if (mmRegBand === "DEEP_LONG_GAMMA") { scores.GAMMA_PIN += 10; }
+      if (mmPlaybook === "RANGE_SCALPING" && mmIsLongGamma) { scores.GAMMA_PIN += 5; }
+
+      if (mmIsLongGamma && (mmPlaybook === "FADE_EXTREMES" || mmPlaybook === "RANGE_SCALPING")) {
+        scores.MEAN_REVERSION += 25;
+      }
+      if (mmRegBand === "LONG_GAMMA_SUPPORT" || mmRegBand === "DEEP_LONG_GAMMA") {
+        scores.MEAN_REVERSION += 10;
+      }
+      if (mmIsLongGamma && mmExpProb < 0.35) { scores.MEAN_REVERSION += 10; }
+      if (pinningStrength > 0.4 && pinningStrength <= 0.6) { scores.MEAN_REVERSION += 5; }
+
+      if (mmIsShortGamma) { scores.VOL_EXPANSION += 20; }
+      if (mmExpState === "EXPANDING") { scores.VOL_EXPANSION += 25; }
+      else if (mmExpState === "PRE_BREAKOUT" && mmExpProb > 0.5) { scores.VOL_EXPANSION += 15; }
+      if (mmExpProb > 0.6) { scores.VOL_EXPANSION += 10; }
+      if (mmRegBand === "SHORT_GAMMA_RISK" || mmRegBand === "DEEP_SHORT_GAMMA") { scores.VOL_EXPANSION += 10; }
+      if (mmDSens === "HIGH") { scores.VOL_EXPANSION += 5; }
+      if (mmPlaybook === "VOLATILITY_EXPANSION" || mmPlaybook === "MOMENTUM_BREAKOUT") { scores.VOL_EXPANSION += 10; }
+
+      if (mmRegBand === "TRANSITION") { scores.FRAGILE_TRANSITION += 20; }
+      if (mmInstBias === "FRAGILE_TRANSITION") { scores.FRAGILE_TRANSITION += 15; }
+      if (mmTState === "WAIT" || mmTState === "AVOID") { scores.FRAGILE_TRANSITION += 5; }
+
+      const sortedModes = (Object.entries(scores) as [MarketMode, number][])
+        .sort((a, b) => b[1] - a[1]);
+      marketMode = sortedModes[0][0];
+      const topScore = sortedModes[0][1];
+      const secondScore = sortedModes[1]?.[1] || 0;
+
+      const separation = topScore - secondScore;
+      let confBase = Math.min(100, mmBiasConf * 0.4 + topScore * 0.8 + separation * 0.5);
+      if (mmDSens === "HIGH") confBase += 5;
+      if (mmSqProb > 50 && marketMode === "SQUEEZE_RISK") confBase += 5;
+      if (mmExpProb > 0.6 && marketMode === "VOL_EXPANSION") confBase += 5;
+      marketModeConfidence = Math.round(Math.min(100, Math.max(0, confBase)));
+
+      if (marketMode === "GAMMA_PIN") {
+        if (pinningStrength > 0.7) marketModeReason.push("Strong pinning detected");
+        if (mmIsLongGamma) marketModeReason.push("Long gamma regime");
+        if (mmExpProb < 0.4) marketModeReason.push("Low expansion probability");
+        if (mmRegBand === "DEEP_LONG_GAMMA") marketModeReason.push("Deep long gamma band");
+      } else if (marketMode === "MEAN_REVERSION") {
+        if (mmIsLongGamma) marketModeReason.push("Long gamma regime");
+        if (mmPlaybook === "FADE_EXTREMES") marketModeReason.push("Fade-extremes playbook active");
+        else if (mmPlaybook === "RANGE_SCALPING") marketModeReason.push("Range-scalping conditions");
+        if (pinningStrength > 0.3) marketModeReason.push("Moderate pinning supports reversion");
+      } else if (marketMode === "VOL_EXPANSION") {
+        if (mmIsShortGamma) marketModeReason.push("Short gamma regime");
+        if (mmExpState === "EXPANDING") marketModeReason.push("Volatility expanding");
+        else if (mmExpProb > 0.5) marketModeReason.push("Expansion probability elevated");
+        if (mmDSens === "HIGH") marketModeReason.push("Dealer sensitivity high");
+        if (mmRegBand === "DEEP_SHORT_GAMMA") marketModeReason.push("Deep short gamma band");
+      } else if (marketMode === "SQUEEZE_RISK") {
+        if (mmSqProb > 50) marketModeReason.push(`Squeeze probability ${mmSqProb.toFixed(0)}%`);
+        if (mmSqType !== "NONE") marketModeReason.push(`${mmSqType.replace(/_/g, " ").toLowerCase()} setup`);
+        if (mmIsShortGamma) marketModeReason.push("Short gamma amplifies squeeze");
+      } else if (marketMode === "CASCADE_RISK") {
+        marketModeReason.push(`Cascade risk ${mmLcRisk.toLowerCase()}`);
+        if (mmIsShortGamma) marketModeReason.push("Short gamma accelerates cascades");
+        if (mmDSens === "HIGH") marketModeReason.push("Dealer sensitivity high");
+      } else if (marketMode === "FRAGILE_TRANSITION") {
+        if (mmRegBand === "TRANSITION") marketModeReason.push("Between gamma regimes");
+        if (mmInstBias === "FRAGILE_TRANSITION") marketModeReason.push("Institutional bias fragile");
+        if (mmTState === "WAIT") marketModeReason.push("Trade state: waiting for clarity");
+        else if (mmTState === "AVOID") marketModeReason.push("Trade state: avoid");
+      }
+      while (marketModeReason.length < 2) marketModeReason.push("Standard market conditions");
+      if (marketModeReason.length > 4) marketModeReason.length = 4;
+
+      const marketModeEngine = { marketMode, marketModeConfidence, marketModeReason };
+
       return {
         totalGex: totalGex || 0,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -1630,6 +1754,7 @@ export class DeribitOptionsGateway {
         tradeDecisionEngine,
         liquidityCascadeEngine,
         squeezeProbabilityEngine,
+        marketModeEngine,
         source: dataSource
       };
     } catch (e) {
@@ -1695,6 +1820,11 @@ export class DeribitOptionsGateway {
           squeezeTrigger: "Analytics engine recovery required",
           squeezeTarget: "--",
           squeezeDrivers: ["Analytics engine error", "Using fallback values", "No signal alignment"]
+        },
+        marketModeEngine: {
+          marketMode: "FRAGILE_TRANSITION",
+          marketModeConfidence: 0,
+          marketModeReason: ["Analytics engine error", "Using fallback values"]
         },
         source: dataSource
       } as any;
