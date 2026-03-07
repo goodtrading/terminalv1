@@ -127,7 +127,15 @@ export const optionsSummarySchema = z.object({
     expectedBehavior: z.enum(["MEAN_REVERSION", "VOLATILITY_EXPANSION", "ACCELERATION_UP", "ACCELERATION_DOWN"]),
     volatilityRisk: z.enum(["LOW", "MEDIUM", "HIGH"]),
     tradeBias: z.enum(["LONG", "SHORT", "NEUTRAL"])
-  })).optional()
+  })).optional(),
+  volatilityExpansionDetector: z.object({
+    volExpansionState: z.enum(["COMPRESSING", "PRE_BREAKOUT", "EXPANDING"]),
+    expansionDirection: z.enum(["UP", "DOWN", "NEUTRAL"]),
+    expansionProbability: z.number(),
+    playbookShiftSuggested: z.boolean(),
+    suggestedPlaybook: z.enum(["RANGE_SCALPING", "FADE_EXTREMES", "MOMENTUM_BREAKOUT", "VOLATILITY_EXPANSION", "LIQUIDITY_SWEEP_REVERSAL"]),
+    expansionTriggerZone: z.object({ start: z.number(), end: z.number() }).nullable()
+  }).optional()
 });
 
 export type NormalizedOption = z.infer<typeof normalizedOptionSchema>;
