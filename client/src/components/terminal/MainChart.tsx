@@ -12,9 +12,11 @@ export function MainChart() {
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLinesRef = useRef<any[]>([]);
   const livePriceLineRef = useRef<any>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const lastSetTimestampRef = useRef<number>(0);
+  const [wsStatus, setWsStatus] = useState<"CONNECTING" | "OPEN" | "CLOSED" | "ERROR">("CONNECTING");
+  const [lastCandle, setLastCandle] = useState<any>(null);
 
   const [toggles, setToggles] = useState({
     price: true,
@@ -38,8 +40,8 @@ export function MainChart() {
   };
 
   const fitLevels = () => {
-    if (!chartRef.current || !candles || candles.length === 0) return;
-    const currentPriceVal = candles[candles.length - 1].close;
+    if (!chartRef.current || !lastCandle) return;
+    const currentPriceVal = lastCandle.close;
     const threshold = currentPriceVal * 0.15;
     const points: number[] = [currentPriceVal];
 
@@ -65,6 +67,53 @@ export function MainChart() {
       chartRef.current.priceScale("right").applyOptions({ autoScale: false });
     }
   };
+
+  useEffect(() => {
+    const connectWS = () => {
+      console.log("[WS] Connecting to Binance...");
+      const ws = new WebSocket("wss://stream.binance.com:9443/ws/btcusdt@kline_15m");
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log("[WS] Connected");
+        setWsStatus("OPEN");
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.e === "kline") {
+          const k = data.k;
+          const candle = {
+            time: Math.floor(k.t / 1000),
+            open: parseFloat(k.o),
+            high: parseFloat(k.h),
+            low: parseFloat(k.l),
+            close: parseFloat(k.c),
+            volume: parseFloat(k.v),
+            isClosed: k.x
+          };
+          setLastCandle(candle);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error("[WS] Error:", error);
+        setWsStatus("ERROR");
+      };
+
+      ws.onclose = () => {
+        console.log("[WS] Closed");
+        setWsStatus("CLOSED");
+        // Simple reconnect after 5s
+        setTimeout(connectWS, 5000);
+      };
+    };
+
+    connectWS();
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, []);
 
   useEffect(() => {
     if (!candleSeriesRef.current) return;
@@ -105,20 +154,6 @@ export function MainChart() {
   const { data: levels } = useQuery<KeyLevels>({ queryKey: ["/api/key-levels"], refetchInterval: 5000 });
   const { data: exposure } = useQuery<DealerExposure>({ queryKey: ["/api/dealer-exposure"], refetchInterval: 5000 });
 
-  const { data: candles, error: candleError } = useQuery({
-    queryKey: ["btc-candles-institutional"],
-    queryFn: async () => {
-      const res = await fetch("/api/chart/candles?symbol=BTCUSDT&interval=15m&limit=500");
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.details || "Failed to fetch institutional candles");
-      }
-      return res.json();
-    },
-    refetchInterval: 15000,
-    retry: false
-  });
-
   useEffect(() => {
     if (!chartContainerRef.current) return;
     try {
@@ -142,42 +177,21 @@ export function MainChart() {
   }, []);
 
   useEffect(() => {
-    if (candleSeriesRef.current && candles && candles.length > 0) {
+    if (candleSeriesRef.current && lastCandle) {
       try {
-        const lastCandle = candles[candles.length - 1];
-        
+        candleSeriesRef.current.update(lastCandle);
         if (isInitialLoad) {
-          candleSeriesRef.current.setData(candles);
           chartRef.current?.timeScale().fitContent();
           setIsInitialLoad(false);
-          lastSetTimestampRef.current = lastCandle.time;
-        } else {
-          if (lastCandle.time === lastSetTimestampRef.current || lastCandle.time > lastSetTimestampRef.current) {
-            candleSeriesRef.current.update(lastCandle);
-            lastSetTimestampRef.current = lastCandle.time;
-          } else {
-            candleSeriesRef.current.setData(candles);
-            lastSetTimestampRef.current = lastCandle.time;
-          }
         }
         
         const isUp = lastCandle.close >= lastCandle.open;
         const color = isUp ? "#22c55e" : "#ef4444";
         if (livePriceLineRef.current) candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
         if (toggles.price) livePriceLineRef.current = candleSeriesRef.current.createPriceLine({ price: lastCandle.close, color: color, lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: true, title: "" });
-
-        if (volumeSeriesRef.current && market?.totalGex) {
-          const pressureData = candles.map((c: any, i: number) => {
-            const prevClose = i > 0 ? candles[i-1].close : c.open;
-            const move = c.close - prevClose;
-            const pressure = (market.totalGex / 1e9) * move; 
-            return { time: c.time, value: Math.abs(pressure), color: pressure >= 0 ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)' };
-          });
-          volumeSeriesRef.current.setData(pressureData);
-        }
-      } catch (err) { console.error("setData/update failed:", err); }
+      } catch (err) { console.error("update failed:", err); }
     }
-  }, [candles, toggles.price, market?.totalGex]);
+  }, [lastCandle, toggles.price]);
 
   useEffect(() => {
     if (chartRef.current && manualPriceRange) {
@@ -189,10 +203,10 @@ export function MainChart() {
   }, [manualPriceRange]);
 
   useEffect(() => {
-    if (!candleSeriesRef.current || !candles || candles.length === 0) return;
+    if (!candleSeriesRef.current || !lastCandle) return;
     priceLinesRef.current.forEach(line => candleSeriesRef.current?.removePriceLine(line));
     priceLinesRef.current = [];
-    const currentPriceVal = candles[candles.length - 1].close;
+    const currentPriceVal = lastCandle.close;
     const threshold = currentPriceVal * 0.15;
     const addLevel = (price: number, color: string, title: string, style: LineStyle = LineStyle.Solid, lineWidth: number = 1) => {
       if (Math.abs(price - currentPriceVal) > threshold) return;
@@ -234,18 +248,17 @@ export function MainChart() {
         if (market.transitionZoneStart && market.transitionZoneEnd) { const shiftPadding = currentPriceVal * 0.002; addZone(market.transitionZoneStart - shiftPadding, market.transitionZoneEnd + shiftPadding, "rgba(255, 255, 255, 0.15)", "HEDGE SHIFT"); }
       }
     } catch (err) { console.error("Overlay update failed:", err); }
-  }, [market, positioning, levels, candles, toggles]);
+  }, [market, positioning, levels, lastCandle, toggles]);
 
-  const currentPriceValFinal = candles && candles.length > 0 ? candles[candles.length - 1].close : 0;
-  const priceChange = candles && candles.length > 1 ? ((currentPriceValFinal - candles[0].close) / candles[0].close * 100).toFixed(2) : "0.00";
+  const currentPriceValFinal = lastCandle ? lastCandle.close : 0;
   const regimeColor = market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : market?.gammaRegime === 'SHORT GAMMA' ? 'rgba(127, 29, 29, 0.03)' : 'transparent';
 
-  if (candleError) {
+  if (wsStatus === "ERROR" || wsStatus === "CLOSED") {
     return (
       <TerminalPanel className="flex-1 w-full h-full border border-terminal-border flex items-center justify-center">
         <div className="text-terminal-negative font-mono text-center">
           <p className="text-lg font-bold">MARKET DATA OFFLINE</p>
-          <p className="text-xs opacity-70 mt-2">{candleError.message}</p>
+          <p className="text-xs opacity-70 mt-2">WebSocket {wsStatus}</p>
           <button 
             onClick={() => window.location.reload()}
             className="mt-4 px-4 py-2 border border-terminal-negative/30 hover:bg-terminal-negative/10 text-[10px] uppercase"
@@ -264,8 +277,8 @@ export function MainChart() {
           <div className="flex flex-col">
             <div className="flex items-baseline space-x-3">
               <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
-              <span className={`text-2xl font-mono font-bold ${parseFloat(priceChange) >= 0 ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{currentPriceValFinal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              <span className={`text-xs font-mono font-bold opacity-80 ${parseFloat(priceChange) >= 0 ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{parseFloat(priceChange) >= 0 ? '+' : ''}{priceChange}%</span>
+              <span className={`text-2xl font-mono font-bold ${wsStatus === 'OPEN' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{currentPriceValFinal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span className="text-[10px] font-mono font-bold opacity-80 text-terminal-muted ml-2">{wsStatus}</span>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
               <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>
