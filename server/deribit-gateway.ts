@@ -68,6 +68,24 @@ export const optionsSummarySchema = z.object({
     tradeBias: z.enum(["LONG", "SHORT", "MEAN_REVERSION", "NEUTRAL"]),
     regimeConfidence: z.number()
   }).optional(),
+  dealerTrapEngine: z.object({
+    trapZones: z.array(z.object({
+      startPrice: z.number(),
+      endPrice: z.number(),
+      trapType: z.enum(["BREAKOUT_TRAP", "BREAKDOWN_TRAP", "FALSE_EXPANSION", "MAGNET_FADE", "TRANSITION_FAKEOUT"]),
+      misleadingDirection: z.enum(["UP", "DOWN"]),
+      expectedDealerReaction: z.enum(["BUY_DIPS", "SELL_RALLIES", "BUY_BREAKOUT", "SELL_WEAKNESS"]),
+      expectedOutcome: z.enum(["FAILED_BREAKOUT", "FAILED_BREAKDOWN", "MEAN_REVERSION", "VOLATILITY_FADE"]),
+      confidence: z.number()
+    })),
+    currentTrapRisk: z.enum(["LOW", "MEDIUM", "HIGH"]),
+    activeTrapContext: z.object({
+      trapType: z.enum(["BREAKOUT_TRAP", "BREAKDOWN_TRAP", "FALSE_EXPANSION", "MAGNET_FADE", "TRANSITION_FAKEOUT"]),
+      misleadingDirection: z.enum(["UP", "DOWN"]),
+      expectedOutcome: z.enum(["FAILED_BREAKOUT", "FAILED_BREAKDOWN", "MEAN_REVERSION", "VOLATILITY_FADE"]),
+      confidence: z.number()
+    }).nullable()
+  }).optional(),
   liquidationConfluence: z.object({
     zones: z.array(z.object({
       startPrice: z.number(),
@@ -583,6 +601,88 @@ export class DeribitOptionsGateway {
         regimeConfidence
       };
 
+      // --- Dealer Trap Engine ---
+      const trapZones: any[] = [];
+      let currentTrapRisk: "LOW" | "MEDIUM" | "HIGH" = "LOW";
+      let activeTrapContext = null;
+
+      if (spotPrice) {
+        // 1. Breakout Trap / Magnet Fade (LONG_GAMMA + Pinning)
+        if (dealerRegime === "LONG_GAMMA" && pinningStrength > 0.6) {
+          gammaMagnets?.forEach(m => {
+            trapZones.push({
+              startPrice: m - 500,
+              endPrice: m + 1500,
+              trapType: "BREAKOUT_TRAP",
+              misleadingDirection: "UP",
+              expectedDealerReaction: "SELL_RALLIES",
+              expectedOutcome: "FAILED_BREAKOUT",
+              confidence: Math.min(100, pinningStrength * 100)
+            });
+          });
+        }
+
+        // 2. Transition Fakeout (Mixed signals + low confidence)
+        if (dealerRegime === "TRANSITION" && regimeConfidence < 60 && gammaFlip) {
+          trapZones.push({
+            startPrice: gammaFlip - 1000,
+            endPrice: gammaFlip + 1000,
+            trapType: "TRANSITION_FAKEOUT",
+            misleadingDirection: Math.random() > 0.5 ? "UP" : "DOWN",
+            expectedDealerReaction: "BUY_DIPS",
+            expectedOutcome: "MEAN_REVERSION",
+            confidence: 100 - regimeConfidence
+          });
+        }
+
+        // 3. False Expansion (Short Gamma + Low Cascade Risk)
+        if (dealerRegime === "SHORT_GAMMA" && cascadeRisk === "LOW") {
+          shortGammaZones?.forEach(z => {
+            trapZones.push({
+              startPrice: z.startStrike - 1000,
+              endPrice: z.endStrike + 1000,
+              trapType: "FALSE_EXPANSION",
+              misleadingDirection: "DOWN",
+              expectedDealerReaction: "BUY_DIPS",
+              expectedOutcome: "VOLATILITY_FADE",
+              confidence: 70
+            });
+          });
+        }
+
+        // 4. Wall Rejection Traps
+        if (callWall) {
+          trapZones.push({
+            startPrice: callWall - 500,
+            endPrice: callWall + 1000,
+            trapType: "BREAKOUT_TRAP",
+            misleadingDirection: "UP",
+            expectedDealerReaction: "SELL_RALLIES",
+            expectedOutcome: "FAILED_BREAKOUT",
+            confidence: 75
+          });
+        }
+
+        // Active context detection
+        const activeTrap = trapZones.find(tz => spotPrice >= tz.startPrice && spotPrice <= tz.endPrice);
+        if (activeTrap) {
+          activeTrapContext = {
+            trapType: activeTrap.trapType,
+            misleadingDirection: activeTrap.misleadingDirection,
+            expectedOutcome: activeTrap.expectedOutcome,
+            confidence: activeTrap.confidence
+          };
+          if (activeTrap.confidence > 80) currentTrapRisk = "HIGH";
+          else if (activeTrap.confidence > 50) currentTrapRisk = "MEDIUM";
+        }
+      }
+
+      const dealerTrapEngine = {
+        trapZones,
+        currentTrapRisk,
+        activeTrapContext
+      };
+
       return {
         totalGex: totalGex || null,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -613,6 +713,7 @@ export class DeribitOptionsGateway {
         backtestResults,
         liquidationConfluence,
         marketRegime,
+        dealerTrapEngine,
         reactionZones
       };
     } catch (e) {
