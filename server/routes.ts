@@ -37,30 +37,37 @@ export async function registerRoutes(
   });
 
   app.get("/api/chart/candles", async (req, res) => {
-    try {
-      const symbol = (req.query.symbol as string) || "BTCUSDT";
-      const interval = (req.query.interval as string) || "15m";
-      const limit = (req.query.limit as string) || "500";
+    const symbol = (req.query.symbol as string) || "BTCUSDT";
+    const interval = (req.query.interval as string) || "15m";
+    const limit = (req.query.limit as string) || "500";
 
-      const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-      const response = await fetch(url);
-      
-      // IF BINANCE IS BLOCKED (451), WE DO NOT USE MOCK DATA.
-      // WE RETURN THE ERROR TO THE FRONTEND TO SHOW "MARKET DATA OFFLINE".
-      if (!response.ok) {
-        console.error(`Binance API returned ${response.status} for ${url}`);
-        return res.status(response.status).json({ 
-          error: "FAILED_TO_FETCH_BINANCE", 
-          details: `Binance API returned ${response.status}. The environment may be restricted.` 
-        });
-      }
-      
-      const rawData = await response.json();
-      if (!Array.isArray(rawData)) {
-        return res.status(500).json({ error: "INVALID_BINANCE_RESPONSE" });
-      }
+    const endpoints = [
+      `https://api1.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
+      `https://api2.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
+      `https://api3.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
+      `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+    ];
 
-      const cleanCandles = rawData
+    let lastError = null;
+    let successfulData = null;
+
+    for (const url of endpoints) {
+      try {
+        const response = await fetch(url);
+        if (response.ok) {
+          successfulData = await response.json();
+          break;
+        }
+        console.error(`Endpoint ${url} failed with status ${response.status}`);
+        lastError = `Binance API returned ${response.status}`;
+      } catch (error: any) {
+        console.error(`Endpoint ${url} failed with error: ${error.message}`);
+        lastError = error.message;
+      }
+    }
+
+    if (successfulData && Array.isArray(successfulData)) {
+      const cleanCandles = successfulData
         .filter((k: any[]) => Array.isArray(k) && k.length >= 5)
         .map((k: any[]) => ({
           time: Math.floor(Number(k[0]) / 1000),
@@ -79,7 +86,6 @@ export async function registerRoutes(
         )
         .sort((a: any, b: any) => a.time - b.time);
 
-      // Deduplicate
       const uniqueCandles = [];
       const seen = new Set();
       for (const c of cleanCandles) {
@@ -88,12 +94,13 @@ export async function registerRoutes(
           uniqueCandles.push(c);
         }
       }
-
-      res.json(uniqueCandles);
-    } catch (error) {
-      console.error("Chart data error:", error);
-      res.status(500).json({ error: "INTERNAL_SERVER_ERROR" });
+      return res.json(uniqueCandles);
     }
+
+    return res.status(503).json({
+      error: "FAILED_TO_FETCH_BINANCE",
+      details: lastError || "All mirror endpoints failed. The environment may be restricted."
+    });
   });
 
   return httpServer;
