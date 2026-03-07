@@ -462,7 +462,9 @@ export function MainChart() {
         // 3. HEDGE SHIFT ZONE
         if (market.transitionZoneStart && market.transitionZoneEnd) {
           // Increased opacity and clear labeling for Shift Zone
-          addZone(market.transitionZoneStart, market.transitionZoneEnd, "rgba(255, 255, 255, 0.15)", "HEDGE SHIFT");
+          // Added a small buffer to ensure vertical thickness is noticeable
+          const shiftPadding = currentPrice * 0.002; 
+          addZone(market.transitionZoneStart - shiftPadding, market.transitionZoneEnd + shiftPadding, "rgba(255, 255, 255, 0.22)", "HEDGE SHIFT");
         }
       }
     } catch (err) {
