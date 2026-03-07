@@ -51,15 +51,20 @@ export async function registerRoutes(
         const intervalMinutes = interval === "1h" ? 60 : interval === "1d" ? 1440 : 15;
         const now = Math.floor(Date.now() / (intervalMinutes * 60 * 1000)) * (intervalMinutes * 60 * 1000);
         
+        let lastClose = basePrice;
         const mockKlines = Array.from({ length: limitNum }).map((_, i) => {
           const time = now - (limitNum - 1 - i) * intervalMinutes * 60 * 1000;
-          const open = basePrice + (Math.random() - 0.5) * 500;
-          const close = open + (Math.random() - 0.5) * 200;
+          const open = lastClose;
+          const close = open + (Math.random() - 0.5) * 150;
+          const high = Math.max(open, close) + Math.random() * 50;
+          const low = Math.min(open, close) - Math.random() * 50;
+          lastClose = close;
+          
           return [
             time,
             open.toString(),
-            (Math.max(open, close) + Math.random() * 100).toString(),
-            (Math.min(open, close) - Math.random() * 100).toString(),
+            high.toString(),
+            low.toString(),
             close.toString(),
             "100", // volume
             time + intervalMinutes * 60 * 1000,

@@ -174,10 +174,6 @@ export function MainChart() {
         }
       }
 
-      if (uniqueCandles.length > 0) {
-        console.log("PIPELINE_VERIFIED_CANDLE:", uniqueCandles[0]);
-      }
-      
       return uniqueCandles;
     },
     refetchInterval: 10000
@@ -334,7 +330,11 @@ export function MainChart() {
   useEffect(() => {
     if (candleSeriesRef.current && candles && candles.length > 0) {
       try {
-        candleSeriesRef.current.setData(candles);
+        // Strictly ordered and unique candles before setting data
+        const sortedUniqueCandles = [...candles]
+          .sort((a: any, b: any) => a.time - b.time);
+        
+        candleSeriesRef.current.setData(sortedUniqueCandles);
         
         if (isInitialLoad) {
           chartRef.current?.priceScale("right").applyOptions({ autoScale: true });
@@ -347,7 +347,7 @@ export function MainChart() {
           }, 100);
         }
         
-        const lastCandle = candles[candles.length - 1];
+        const lastCandle = sortedUniqueCandles[sortedUniqueCandles.length - 1];
         const isUp = lastCandle.close >= lastCandle.open;
         const color = isUp ? "#22c55e" : "#ef4444";
 
@@ -367,8 +367,8 @@ export function MainChart() {
         }
 
         if (volumeSeriesRef.current && market?.totalGex) {
-          const pressureData = candles.map((c: any, i: number) => {
-            const prevClose = i > 0 ? candles[i-1].close : c.open;
+          const pressureData = sortedUniqueCandles.map((c: any, i: number) => {
+            const prevClose = i > 0 ? sortedUniqueCandles[i-1].close : c.open;
             const move = c.close - prevClose;
             const pressure = (market.totalGex / 1e9) * move; 
             return {
@@ -492,16 +492,17 @@ export function MainChart() {
       }
 
       if (toggles.hedgeMap && market && positioning) {
-        const pivot = positioning.dealerPivot || currentPriceVal;
+        const currentPriceValNow = candles && candles.length > 0 ? candles[candles.length - 1].close : 0;
+        const pivot = positioning.dealerPivot || currentPriceValNow;
         if (market.gammaRegime === "LONG GAMMA") {
-          const absorptionWidth = currentPriceVal * 0.015; 
+          const absorptionWidth = currentPriceValNow * 0.015; 
           addZone(pivot - absorptionWidth, pivot + absorptionWidth, "rgba(59, 130, 246, 0.08)", "ABSORPTION");
         }
         if (market.gammaFlip) {
           addLevel(market.gammaFlip, "rgba(251, 191, 36, 0.4)", "EXPANSION", LineStyle.Solid, 1);
         }
         if (market.transitionZoneStart && market.transitionZoneEnd) {
-          const shiftPadding = currentPriceVal * 0.002; 
+          const shiftPadding = currentPriceValNow * 0.002; 
           addZone(market.transitionZoneStart - shiftPadding, market.transitionZoneEnd + shiftPadding, "rgba(255, 255, 255, 0.15)", "HEDGE SHIFT");
         }
       }
@@ -510,9 +511,9 @@ export function MainChart() {
     }
   }, [market, positioning, levels, candles, toggles]);
 
-  const currentPriceVal = candles && candles.length > 0 ? candles[candles.length - 1].close : 0;
+  const currentPriceValFinal = candles && candles.length > 0 ? candles[candles.length - 1].close : 0;
   const priceChange = candles && candles.length > 1 
-    ? ((currentPriceVal - candles[0].close) / candles[0].close * 100).toFixed(2)
+    ? ((currentPriceValFinal - candles[0].close) / candles[0].close * 100).toFixed(2)
     : "0.00";
 
   const regimeColor = market?.gammaRegime === 'LONG GAMMA' 
@@ -533,7 +534,7 @@ export function MainChart() {
             <div className="flex items-baseline space-x-3">
               <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
               <span className={`text-2xl font-mono font-bold ${parseFloat(priceChange) >= 0 ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
-                {currentPriceVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {currentPriceValFinal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               <span className={`text-xs font-mono font-bold opacity-80 ${parseFloat(priceChange) >= 0 ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
                 {parseFloat(priceChange) >= 0 ? '+' : ''}{priceChange}%
