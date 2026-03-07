@@ -39,6 +39,8 @@ export const optionsSummarySchema = z.object({
   gammaFlip: z.number().nullable(),
   callWall: z.number().nullable(),
   putWall: z.number().nullable(),
+  gammaByStrike: z.array(z.object({ strike: z.number(), gex: z.number() })).optional(),
+  oiByStrike: z.array(z.object({ strike: z.number(), oi: z.number() })).optional(),
   magnets: z.array(z.number()).nullable(),
   shortGammaPockets: z.array(z.object({ start: z.number(), end: z.number() })).nullable(),
   vannaBias: z.enum(["BULLISH", "BEARISH"]).nullable(),
@@ -126,13 +128,25 @@ export class DeribitOptionsGateway {
         return {
           totalGex: null, gammaState: null, gammaFlip: null,
           callWall: null, putWall: null, magnets: null,
-          shortGammaPockets: null, vannaBias: null, charmBias: null
+          shortGammaPockets: null, vannaBias: null, charmBias: null,
+          gammaByStrike: [], oiByStrike: []
         };
       }
 
       let totalGex = 0, callWall = 0, putWall = 0, maxCallOi = 0, maxPutOi = 0;
+      const strikeMap = new Map<number, { gex: number, oi: number }>();
+
       options.forEach(opt => {
+        // Global GEX
         if (opt.gammaExposure) totalGex += opt.gammaExposure;
+
+        // Strike aggregation
+        const existing = strikeMap.get(opt.strike) || { gex: 0, oi: 0 };
+        existing.gex += (opt.gammaExposure || 0);
+        existing.oi += (opt.openInterest || 0);
+        strikeMap.set(opt.strike, existing);
+
+        // Wall detection
         if (opt.optionType === "call" && opt.openInterest > maxCallOi) {
           maxCallOi = opt.openInterest;
           callWall = opt.strike;
@@ -142,17 +156,33 @@ export class DeribitOptionsGateway {
         }
       });
 
+      const gammaByStrike = Array.from(strikeMap.entries())
+        .map(([strike, data]) => ({ strike, gex: data.gex }))
+        .sort((a, b) => a.strike - b.strike);
+
+      const oiByStrike = Array.from(strikeMap.entries())
+        .map(([strike, data]) => ({ strike, oi: data.oi }))
+        .sort((a, b) => a.strike - b.strike);
+
       return {
         totalGex: totalGex || null,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
-        gammaFlip: null, callWall: callWall || null, putWall: putWall || null,
-        magnets: null, shortGammaPockets: null, vannaBias: null, charmBias: null
+        gammaFlip: null, 
+        callWall: callWall || null, 
+        putWall: putWall || null,
+        gammaByStrike,
+        oiByStrike,
+        magnets: null, 
+        shortGammaPockets: null, 
+        vannaBias: null, 
+        charmBias: null
       };
     } catch (e) {
       return {
         totalGex: null, gammaState: null, gammaFlip: null,
         callWall: null, putWall: null, magnets: null,
-        shortGammaPockets: null, vannaBias: null, charmBias: null
+        shortGammaPockets: null, vannaBias: null, charmBias: null,
+        gammaByStrike: [], oiByStrike: []
       };
     }
   }
