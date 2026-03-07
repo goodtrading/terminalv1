@@ -5,9 +5,10 @@ interface TerminalPanelProps extends React.HTMLAttributes<HTMLDivElement> {
   title?: string;
   children: React.ReactNode;
   noPadding?: boolean;
+  headerExtra?: React.ReactNode;
 }
 
-export function TerminalPanel({ title, children, className, noPadding = false, ...props }: TerminalPanelProps) {
+export function TerminalPanel({ title, children, className, noPadding = false, headerExtra, ...props }: TerminalPanelProps) {
   return (
     <div 
       className={cn(
@@ -21,9 +22,12 @@ export function TerminalPanel({ title, children, className, noPadding = false, .
           <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/90">
             {title}
           </span>
-          <div className="flex space-x-1">
-            <div className="w-1 h-1 rounded-full bg-terminal-border"></div>
-            <div className="w-1 h-1 rounded-full bg-terminal-border"></div>
+          <div className="flex items-center space-x-2">
+            {headerExtra}
+            <div className="flex space-x-1">
+              <div className="w-1 h-1 rounded-full bg-terminal-border"></div>
+              <div className="w-1 h-1 rounded-full bg-terminal-border"></div>
+            </div>
           </div>
         </div>
       )}

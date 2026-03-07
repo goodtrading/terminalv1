@@ -4,6 +4,7 @@ import { TerminalPanel } from "./TerminalPanel";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TradingScenario, MarketState, OptionsPositioning } from "@shared/schema";
+import { X } from "lucide-react";
 
 interface RightSidebarProps {
   onScenarioSelect?: (scenario: TradingScenario | null) => void;
@@ -12,6 +13,7 @@ interface RightSidebarProps {
 export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [tradingPlan, setTradingPlan] = useState<string | null>(null);
+  const [isTradingPlanOpen, setIsTradingPlanOpen] = useState(false);
 
   const { data: scenarios } = useQuery<TradingScenario[]>({ 
     queryKey: ["/api/scenarios"],
@@ -106,6 +108,7 @@ OR dealer hedge flow accelerates
 -----------------------------------------------------`;
     
     setTradingPlan(plan);
+    setIsTradingPlanOpen(true);
   };
 
   return (
@@ -185,8 +188,19 @@ OR dealer hedge flow accelerates
         </div>
       </TerminalPanel>
 
-      {tradingPlan && (
-        <TerminalPanel title="ACTIVE TRADING PLAN" className="border-terminal-accent/50 bg-white">
+      {tradingPlan && isTradingPlanOpen && (
+        <TerminalPanel 
+          title="ACTIVE TRADING PLAN" 
+          className="border-terminal-accent/50 bg-white"
+          headerExtra={
+            <button 
+              onClick={() => setIsTradingPlanOpen(false)}
+              className="text-[9px] font-mono font-bold text-black/50 hover:text-black uppercase flex items-center"
+            >
+              [ CLOSE ]
+            </button>
+          }
+        >
           <div className="p-4 space-y-3">
             <div className="text-black font-bold text-[11px] mb-2 uppercase border-b border-black/10 pb-1">
               TRADING PLAN ACTIVE
@@ -235,7 +249,7 @@ OR dealer hedge flow accelerates
             variant="outline" 
             className="w-full justify-start text-[10px] font-bold uppercase tracking-[0.15em] h-10 bg-terminal-panel border-terminal-border text-terminal-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/10 transition-all rounded-sm no-default-hover-elevate"
           >
-            <span className="mr-3 opacity-50">█</span> Generate Trading Plan
+            <span className="mr-3 opacity-50">█</span> {isTradingPlanOpen ? "Refresh Trading Plan" : "Generate Trading Plan"}
           </Button>
           {["Export Daily Report", "Copy Telegram Update"].map((text) => (
             <Button 
