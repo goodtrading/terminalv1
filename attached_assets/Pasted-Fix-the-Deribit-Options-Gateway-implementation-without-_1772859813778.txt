@@ -1,0 +1,63 @@
+Fix the Deribit Options Gateway implementation without changing unrelated parts of the terminal.
+
+Current issues:
+1. The server crashes because the CSV parsing dependency is missing:
+   ERR_MODULE_NOT_FOUND for csv-parse
+2. The user's Deribit CSV uses Spanish headers and mixed casing (for example: Instrumento, Abrir), while the parser currently expects English-style or exact-key matches.
+
+Goal:
+Make the options gateway load safely and robustly from the user's CSV format.
+
+Requirements:
+
+1. Install and use the required CSV parsing dependency correctly.
+   - If csv-parse is used, make sure it is added properly to package.json and imported correctly for the current runtime.
+   - If a simpler built-in-safe parser is preferable, use that instead, but do not leave any missing dependency.
+
+2. Implement robust header normalization for the CSV.
+   - Normalize header names by:
+     - trimming whitespace
+     - lowercasing
+     - removing accent sensitivity if needed
+   - Explicitly support Spanish column names such as:
+     - Instrumento
+     - Abrir
+   - Map "Abrir" to openInterest
+   - Do not require exact uppercase matches like ABRIR
+
+3. Make the parser tolerant to header casing differences:
+   - Abrir
+   - ABRIR
+   - abrir
+   should all resolve to openInterest
+
+4. Do not crash the entire app if the options CSV cannot be parsed.
+   - The options gateway should fail gracefully
+   - Return a clear error from /api/options/raw or /api/options/summary
+   - The rest of the terminal must continue running
+
+5. Add explicit logging:
+   - detected headers
+   - normalized headers
+   - number of valid rows
+   - number of rejected rows
+   - parse error if any
+
+6. Keep the Market Data Gateway and chart logic untouched.
+
+7. Do not modify frontend layout in this task.
+
+Success criteria:
+- server starts successfully
+- no ERR_MODULE_NOT_FOUND
+- CSV headers in Spanish are parsed correctly
+- "Abrir" is mapped to openInterest
+- malformed rows are handled gracefully
+- the terminal stays online even if options parsing fails
+
+Return:
+1. which files were changed
+2. which dependency was installed or replaced
+3. the final header normalization logic
+4. how "Abrir" is mapped
+5. how graceful failure is handled
