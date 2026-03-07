@@ -500,19 +500,19 @@ OR dealer hedge flow accelerates
               )}
             >
               <div className={cn(
-                "flex justify-between items-center p-1.5 border-b border-white/5",
-                scenario.type === "BASE" ? "bg-blue-500/10" : 
-                scenario.type === "ALT" ? "bg-green-500/10" : 
-                "bg-orange-500/10"
+                "flex justify-between items-center p-1.5 border-b border-white/10",
+                scenario.type === "BASE" ? "bg-blue-500/20" : 
+                scenario.type === "ALT" ? "bg-green-500/20" : 
+                "bg-orange-500/20"
               )}>
                 <div className="flex items-center space-x-1.5">
                   <div className={cn(
                     "w-1 h-1 rounded-full",
-                    scenario.type === "BASE" ? "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : 
-                    scenario.type === "ALT" ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" : 
-                    "bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]"
+                    scenario.type === "BASE" ? "bg-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : 
+                    scenario.type === "ALT" ? "bg-green-400 shadow-[0_0_8px_rgba(34,197,94,0.5)]" : 
+                    "bg-orange-400 shadow-[0_0_8px_rgba(249,115,22,0.5)]"
                   )}></div>
-                  <span className="text-[9px] font-bold terminal-text-secondary uppercase tracking-wider">{scenario.type} CASE</span>
+                  <span className="text-[9px] font-bold terminal-text-primary uppercase tracking-wider">{scenario.type} CASE</span>
                 </div>
                 <span className={cn(
                   "terminal-badge",
@@ -537,17 +537,17 @@ OR dealer hedge flow accelerates
                   
                   <div className="grid grid-cols-[60px_1fr] gap-1.5">
                     <span className="terminal-text-label text-[8px]">Confirm</span>
-                    <span className="terminal-text-secondary font-bold italic text-[9px]">{scenario.confirmation.join(", ")}</span>
+                    <span className="terminal-text-secondary font-bold text-[9px]">{scenario.confirmation.join(", ")}</span>
                   </div>
                   <div className="grid grid-cols-[60px_1fr] gap-1.5">
                     <span className="terminal-text-label text-[8px]">Invalid</span>
-                    <span className="text-terminal-negative font-bold text-[9px]">{scenario.invalidation}</span>
+                    <span className="text-red-400 font-bold text-[9px]">{scenario.invalidation}</span>
                   </div>
                 </div>
               </div>
             </div>
           ))}
-          {!scenarios && <div className="text-[10px] text-terminal-muted p-3">Loading scenarios...</div>}
+          {!scenarios && <div className="text-[10px] terminal-text-muted p-3">Loading scenarios...</div>}
         </div>
       </TerminalPanel>
 

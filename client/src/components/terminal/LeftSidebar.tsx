@@ -101,7 +101,7 @@ export function LeftSidebar() {
       <TerminalPanel title="ALERT CENTER">
         <div className="p-2 space-y-2">
           {alerts.length === 0 ? (
-            <div className="py-3 px-2 border border-dashed border-white/10 rounded-sm text-center bg-terminal-panel/30">
+            <div className="py-3 px-2 border border-dashed border-white/20 rounded-sm text-center bg-terminal-panel/30">
               <div className="terminal-text-label mb-1 text-[9px]">NO ACTIVE ALERTS</div>
               <div className="text-[9px] terminal-text-muted leading-tight">System monitoring flow conditions...</div>
             </div>
@@ -111,15 +111,15 @@ export function LeftSidebar() {
                 key={alert.id} 
                 className={cn(
                   "p-2 terminal-card border-l-2",
-                  alert.type === "warning" ? "border-l-yellow-500" : 
-                  alert.type === "error" ? "border-l-terminal-negative" : "border-l-blue-500"
+                  alert.type === "warning" ? "border-l-yellow-400" : 
+                  alert.type === "error" ? "border-l-terminal-negative" : "border-l-blue-400"
                 )}
               >
                 <div className="flex justify-between items-start mb-0.5">
                   <span className={cn(
                     "text-[9px] font-bold uppercase tracking-tight leading-none",
-                    alert.type === "warning" ? "text-yellow-500" : 
-                    alert.type === "error" ? "text-terminal-negative" : "text-blue-500"
+                    alert.type === "warning" ? "text-yellow-400" : 
+                    alert.type === "error" ? "text-terminal-negative" : "text-blue-400"
                   )}>{alert.title}</span>
                   <span className="text-[7px] font-mono terminal-text-muted leading-none">{alert.timestamp}</span>
                 </div>
