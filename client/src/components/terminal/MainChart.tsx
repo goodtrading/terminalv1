@@ -38,9 +38,9 @@ export function MainChart() {
 
   const fitLevels = () => {
     if (!chartRef.current || !candles || candles.length === 0) return;
-    const currentPrice = candles[candles.length - 1].close;
-    const threshold = currentPrice * 0.15;
-    const points: number[] = [currentPrice];
+    const currentPriceVal = candles[candles.length - 1].close;
+    const threshold = currentPriceVal * 0.15;
+    const points: number[] = [currentPriceVal];
 
     if (market?.gammaFlip) points.push(market.gammaFlip);
     if (market?.transitionZoneStart) points.push(market.transitionZoneStart);
@@ -54,11 +54,11 @@ export function MainChart() {
     if (levels?.deepRiskPocketStart) points.push(levels.deepRiskPocketStart);
     if (levels?.deepRiskPocketEnd) points.push(levels.deepRiskPocketEnd);
 
-    const filteredPoints = points.filter(p => Math.abs(p - currentPrice) <= threshold);
+    const filteredPoints = points.filter(p => Math.abs(p - currentPriceVal) <= threshold);
     if (filteredPoints.length > 0) {
       const min = Math.min(...filteredPoints);
       const max = Math.max(...filteredPoints);
-      const margin = (max - min) * 0.3 || currentPrice * 0.02;
+      const margin = (max - min) * 0.3 || currentPriceVal * 0.02;
       const newRange = { from: min - margin, to: max + margin };
       setManualPriceRange(newRange);
       chartRef.current.priceScale("right").applyOptions({ autoScale: false });
@@ -145,41 +145,40 @@ export function MainChart() {
       if (!res.ok) {
         throw new Error("Failed to fetch klines");
       }
-      const rawData = await res.json();
+      const rawCandles = await res.json();
       
-      const seen = new Set<number>();
-      const normalizedCandles = rawData
-        .map((d: any) => {
-          const time = Math.floor(Number(d[0]) / 1000);
-          const open = Number(d[1]);
-          const high = Number(d[2]);
-          const low = Number(d[3]);
-          const close = Number(d[4]);
-          
-          if (isNaN(time) || isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close)) {
-            return null;
-          }
-          
-          return {
-            time: time as any,
-            open,
-            high,
-            low,
-            close
-          };
-        })
-        .filter((c: any) => {
-          if (!c || seen.has(c.time as number)) return false;
-          seen.add(c.time as number);
-          return true;
-        })
-        .sort((a: any, b: any) => (a.time as number) - (b.time as number));
+      const normalizedCandles = rawCandles
+        .filter((k: any[]) => Array.isArray(k) && k.length >= 5)
+        .map((k: any[]) => ({
+          time: Math.floor(Number(k[0]) / 1000),
+          open: Number(k[1]),
+          high: Number(k[2]),
+          low: Number(k[3]),
+          close: Number(k[4]),
+        }))
+        .filter((c: any) =>
+          Number.isFinite(c.time) &&
+          Number.isFinite(c.open) &&
+          Number.isFinite(c.high) &&
+          Number.isFinite(c.low) &&
+          Number.isFinite(c.close)
+        )
+        .sort((a: any, b: any) => a.time - b.time);
 
-      if (normalizedCandles.length > 0) {
-        console.log("PIPELINE_VERIFIED_CANDLE:", normalizedCandles[0]);
+      const uniqueCandles = [];
+      const seen = new Set();
+      for (const c of normalizedCandles) {
+        if (!seen.has(c.time)) {
+          seen.add(c.time);
+          uniqueCandles.push(c);
+        }
+      }
+
+      if (uniqueCandles.length > 0) {
+        console.log("PIPELINE_VERIFIED_CANDLE:", uniqueCandles[0]);
       }
       
-      return normalizedCandles;
+      return uniqueCandles;
     },
     refetchInterval: 10000
   });
@@ -394,11 +393,11 @@ export function MainChart() {
     });
     priceLinesRef.current = [];
 
-    const currentPrice = candles[candles.length - 1].close;
-    const threshold = currentPrice * 0.15;
+    const currentPriceVal = candles[candles.length - 1].close;
+    const threshold = currentPriceVal * 0.15;
 
     const addLevel = (price: number, color: string, title: string, style: LineStyle = LineStyle.Solid, lineWidth: number = 1) => {
-      if (Math.abs(price - currentPrice) > threshold) return;
+      if (Math.abs(price - currentPriceVal) > threshold) return;
       
       const line = candleSeriesRef.current?.createPriceLine({
         price,
@@ -412,7 +411,7 @@ export function MainChart() {
     };
 
     const addZone = (start: number, end: number, color: string, title: string) => {
-      if (Math.abs(start - currentPrice) > threshold && Math.abs(end - currentPrice) > threshold) return;
+      if (Math.abs(start - currentPriceVal) > threshold && Math.abs(end - currentPriceVal) > threshold) return;
       
       const mid = (start + end) / 2;
       const line = candleSeriesRef.current?.createPriceLine({
@@ -493,16 +492,16 @@ export function MainChart() {
       }
 
       if (toggles.hedgeMap && market && positioning) {
-        const pivot = positioning.dealerPivot || currentPrice;
+        const pivot = positioning.dealerPivot || currentPriceVal;
         if (market.gammaRegime === "LONG GAMMA") {
-          const absorptionWidth = currentPrice * 0.015; 
+          const absorptionWidth = currentPriceVal * 0.015; 
           addZone(pivot - absorptionWidth, pivot + absorptionWidth, "rgba(59, 130, 246, 0.08)", "ABSORPTION");
         }
         if (market.gammaFlip) {
           addLevel(market.gammaFlip, "rgba(251, 191, 36, 0.4)", "EXPANSION", LineStyle.Solid, 1);
         }
         if (market.transitionZoneStart && market.transitionZoneEnd) {
-          const shiftPadding = currentPrice * 0.002; 
+          const shiftPadding = currentPriceVal * 0.002; 
           addZone(market.transitionZoneStart - shiftPadding, market.transitionZoneEnd + shiftPadding, "rgba(255, 255, 255, 0.15)", "HEDGE SHIFT");
         }
       }
@@ -511,9 +510,9 @@ export function MainChart() {
     }
   }, [market, positioning, levels, candles, toggles]);
 
-  const currentPrice = candles && candles.length > 0 ? candles[candles.length - 1].close : 0;
+  const currentPriceVal = candles && candles.length > 0 ? candles[candles.length - 1].close : 0;
   const priceChange = candles && candles.length > 1 
-    ? ((currentPrice - candles[0].close) / candles[0].close * 100).toFixed(2)
+    ? ((currentPriceVal - candles[0].close) / candles[0].close * 100).toFixed(2)
     : "0.00";
 
   const regimeColor = market?.gammaRegime === 'LONG GAMMA' 
@@ -534,7 +533,7 @@ export function MainChart() {
             <div className="flex items-baseline space-x-3">
               <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
               <span className={`text-2xl font-mono font-bold ${parseFloat(priceChange) >= 0 ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
-                {currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {currentPriceVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               <span className={`text-xs font-mono font-bold opacity-80 ${parseFloat(priceChange) >= 0 ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
                 {parseFloat(priceChange) >= 0 ? '+' : ''}{priceChange}%

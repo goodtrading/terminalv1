@@ -47,8 +47,12 @@ export async function registerRoutes(
         // If Binance is restricted, return mock data based on a realistic price
         console.warn(`Binance API returned ${response.status}. Falling back to mock data.`);
         const basePrice = 68250;
-        const mockKlines = Array.from({ length: Number(limit) || 300 }).map((_, i) => {
-          const time = Date.now() - (300 - i) * 15 * 60 * 1000;
+        const limitNum = Number(limit) || 300;
+        const intervalMinutes = interval === "1h" ? 60 : interval === "1d" ? 1440 : 15;
+        const now = Math.floor(Date.now() / (intervalMinutes * 60 * 1000)) * (intervalMinutes * 60 * 1000);
+        
+        const mockKlines = Array.from({ length: limitNum }).map((_, i) => {
+          const time = now - (limitNum - 1 - i) * intervalMinutes * 60 * 1000;
           const open = basePrice + (Math.random() - 0.5) * 500;
           const close = open + (Math.random() - 0.5) * 200;
           return [
@@ -58,7 +62,7 @@ export async function registerRoutes(
             (Math.min(open, close) - Math.random() * 100).toString(),
             close.toString(),
             "100", // volume
-            time + 15 * 60 * 1000,
+            time + intervalMinutes * 60 * 1000,
             "1000",
             10,
             "50",
