@@ -276,12 +276,25 @@ export class DeribitOptionsGateway {
   static async getSummary(options: NormalizedOption[], spotPrice?: number): Promise<OptionsSummary> {
     try {
       if (options.length === 0) {
+        const fallbackPlaybook = {
+          currentPlaybook: {
+            regime: "TRANSITION" as const,
+            expectedBehavior: "Insufficient options data — awaiting CSV ingestion",
+            volatilityRisk: "MEDIUM" as const,
+            directionalBias: "NEUTRAL" as const,
+            strategyType: "RANGE_SCALPING" as const
+          },
+          tradeZones: { longZones: [] as {start: number, end: number}[], shortZones: [] as {start: number, end: number}[] },
+          invalidationLevel: spotPrice ? spotPrice * 0.95 : 0,
+          regimeShiftTrigger: "Options data ingestion required"
+        };
         return {
           totalGex: null, gammaState: null, gammaFlip: null,
           callWall: null, putWall: null, magnets: null,
           shortGammaPockets: null, vannaBias: null, charmBias: null,
           gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
-          dealerGammaState: null, dealerHedgeDirection: null, volatilityRegime: null, dealerFlowScore: null
+          dealerGammaState: null, dealerHedgeDirection: null, volatilityRegime: null, dealerFlowScore: null,
+          tradingPlaybook: fallbackPlaybook
         };
       }
 
@@ -792,7 +805,19 @@ export class DeribitOptionsGateway {
         callWall: 0, putWall: 0, magnets: [],
         shortGammaPockets: [], vannaBias: "NEUTRAL", charmBias: "NEUTRAL",
         gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
-        dealerGammaState: "LONG_GAMMA", dealerHedgeDirection: "NEUTRAL", volatilityRegime: "TRANSITION", dealerFlowScore: 0
+        dealerGammaState: "LONG_GAMMA", dealerHedgeDirection: "NEUTRAL", volatilityRegime: "TRANSITION", dealerFlowScore: 0,
+        tradingPlaybook: {
+          currentPlaybook: {
+            regime: "TRANSITION",
+            expectedBehavior: "Analytics engine error — using fallback",
+            volatilityRisk: "MEDIUM",
+            directionalBias: "NEUTRAL",
+            strategyType: "RANGE_SCALPING"
+          },
+          tradeZones: { longZones: [], shortZones: [] },
+          invalidationLevel: spotPrice ? spotPrice * 0.95 : 0,
+          regimeShiftTrigger: "Engine recovery required"
+        }
       } as any;
     }
   }

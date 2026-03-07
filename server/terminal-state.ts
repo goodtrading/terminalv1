@@ -32,9 +32,9 @@ export async function getTerminalState(): Promise<TerminalState> {
   let livePlaybook = null;
   try {
     const rawOptions = await DeribitOptionsGateway.ingestLatestCSV();
-    const ticker = MarketDataGateway.getCachedTicker();
-    const summary = await DeribitOptionsGateway.getSummary(rawOptions, ticker?.price);
-    livePlaybook = summary.tradingPlaybook;
+    const cachedTicker = MarketDataGateway.getCachedTicker();
+    const summary = await DeribitOptionsGateway.getSummary(rawOptions, cachedTicker?.price);
+    livePlaybook = summary.tradingPlaybook || null;
   } catch (e) {
     console.error("[TerminalState] Playbook injection failed:", e);
   }
