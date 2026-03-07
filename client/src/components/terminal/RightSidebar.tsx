@@ -55,37 +55,24 @@ function getRiskColor(val: string): string {
   return "";
 }
 
-type MarketMode = "RANGE CONTROL" | "VOLATILITY EXPANSION" | "SQUEEZE RISK" | "TRANSITION";
-
-function getMarketMode(positioning: any, market: any): MarketMode {
+function deriveEdge(positioning: any, market: any): string {
+  const trade = positioning?.tradeDecisionEngine;
   const squeeze = positioning?.squeezeProbabilityEngine;
-  const volExp = positioning?.volatilityExpansionDetector;
-  const cascade = positioning?.liquidityCascadeEngine;
   const bias = positioning?.institutionalBiasEngine;
+  const confidence = bias?.biasConfidence ?? 0;
+  const sqProb = squeeze?.squeezeProbability ?? 0;
 
-  if (squeeze?.squeezeProbability >= 60 || cascade?.cascadeRisk === "EXTREME") {
-    return "SQUEEZE RISK";
-  }
-  if (volExp?.volExpansionState === "EXPANDING" || bias?.institutionalBias?.includes("EXPANSION")) {
-    return "VOLATILITY EXPANSION";
-  }
-  if (bias?.institutionalBias === "FRAGILE_TRANSITION" || market?.gammaRegime === "TRANSITION") {
-    return "TRANSITION";
-  }
-  return "RANGE CONTROL";
-}
+  let score = 0;
+  if (trade?.tradeState === "EXECUTE") score += 2;
+  else if (trade?.tradeState === "PREPARE") score += 1;
+  if (confidence >= 80) score += 2;
+  else if (confidence >= 50) score += 1;
+  if (sqProb >= 70) score += 1;
+  if (market?.gammaRegime === "SHORT GAMMA") score += 1;
 
-function getMarketModeStyle(mode: MarketMode) {
-  switch (mode) {
-    case "RANGE CONTROL":
-      return { bg: "bg-blue-500/15 border-blue-500/30", text: "text-blue-400" };
-    case "VOLATILITY EXPANSION":
-      return { bg: "bg-orange-500/15 border-orange-500/30", text: "text-orange-400" };
-    case "SQUEEZE RISK":
-      return { bg: "bg-red-500/15 border-red-500/30", text: "text-red-400" };
-    case "TRANSITION":
-      return { bg: "bg-yellow-500/15 border-yellow-500/30", text: "text-yellow-400" };
-  }
+  if (score >= 5) return "HIGH";
+  if (score >= 3) return "MEDIUM";
+  return "LOW";
 }
 
 export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
@@ -94,14 +81,13 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
 
   const market = state?.market;
   const positioning = state?.positioning;
-  const exposure = state?.exposure;
   const tradeDecision = (positioning as any)?.tradeDecisionEngine;
   const scenarios = state?.market && (state as any).scenarios ? (state as any).scenarios : [];
 
-  const marketMode = useMemo(() => getMarketMode(positioning, market), [positioning, market]);
-  const modeStyle = getMarketModeStyle(marketMode);
+  const edge = useMemo(() => deriveEdge(positioning, market), [positioning, market]);
 
   const tradeSetup = useMemo(() => {
+    const exposure = state?.exposure;
     let condition = "WEAK";
     if (market?.gammaRegime === "LONG GAMMA" && exposure?.gammaPressure?.startsWith("+")) {
       condition = "CONFIRMED";
@@ -115,7 +101,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     if (market?.gammaRegime === "SHORT GAMMA") { volRisk = "HIGH"; flowState = "VOLATILE"; }
 
     return { condition, flowState, volRisk };
-  }, [market, exposure]);
+  }, [market, state?.exposure]);
 
   const handleScenarioClick = (scenario: TradingScenario) => {
     const newId = selectedId === scenario.id ? null : scenario.id;
@@ -133,19 +119,13 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   return (
     <div className="w-80 h-full flex flex-col gap-2 overflow-y-auto p-2 border-l border-terminal-border bg-terminal-bg shrink-0">
 
-      <div className={cn("border rounded px-4 py-4 text-center", modeStyle.bg)} data-testid="panel-market-mode">
-        <div className="text-[10px] uppercase tracking-[0.12em] text-white/40 font-medium mb-1.5">Market Mode</div>
-        <div className={cn("text-[18px] font-bold tracking-wide", modeStyle.text)} data-testid="text-market-mode">
-          {marketMode}
-        </div>
-      </div>
-
-      <SidebarPanel title="Execution State">
+      <SidebarPanel title="Trading State">
         <div className="flex flex-col divide-y divide-white/[0.04]">
           <StatusValue label="Status" value={statusVal} color={getStatusColor(statusVal)} />
           <StatusValue label="Direction" value={directionVal} color={getDirectionColor(directionVal)} />
           <StatusValue label="Risk" value={riskVal} color={getRiskColor(riskVal)} />
           <StatusValue label="Size" value={sizeVal} color={sizeVal === "FULL" ? "green" : sizeVal === "NO_TRADE" ? "red" : "yellow"} />
+          <StatusValue label="Edge" value={edge} color={getRiskColor(edge)} />
         </div>
       </SidebarPanel>
 
