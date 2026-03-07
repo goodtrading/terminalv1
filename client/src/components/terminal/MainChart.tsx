@@ -32,11 +32,11 @@ export function MainChart() {
   const [selectedScenario, setSelectedScenario] = useState<TradingScenario | null>(null);
   const scenarioLevelsRef = useRef<any[]>([]);
 
-  // Fetch History
+  // Fetch History from NEW GATEWAY
   const { data: history, error: historyError, isLoading: historyLoading } = useQuery({
     queryKey: ["btc-history"],
     queryFn: async () => {
-      const res = await fetch("/api/chart/history?symbol=BTCUSDT&interval=15m&limit=500");
+      const res = await fetch("/api/market/candles?symbol=BTCUSDT&interval=15m&limit=500");
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.details || "History fetch failed");
@@ -265,7 +265,7 @@ export function MainChart() {
         <div className="text-terminal-negative font-mono text-center">
           <p className="text-lg font-bold uppercase tracking-widest">Market Data Offline</p>
           <div className="mt-4 p-4 border border-terminal-negative/20 bg-terminal-negative/5 inline-block">
-            <p className="text-[10px] opacity-70 uppercase mb-4">Connection to primary market feed failed.</p>
+            <p className="text-[10px] opacity-70 uppercase mb-4">Internal Gateway Error: {historyError.message}</p>
             <button onClick={() => window.location.reload()} className="px-4 py-2 border border-terminal-negative/40 hover:bg-terminal-negative/10 text-[10px] uppercase font-bold transition-all">Reconnect Terminal</button>
           </div>
         </div>
