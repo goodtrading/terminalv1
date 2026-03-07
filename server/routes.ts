@@ -2,11 +2,22 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { MarketDataGateway } from "./market-gateway";
+import { getTerminalState } from "./terminal-state";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // --- New Terminal Aggregation Endpoint ---
+  app.get("/api/terminal/state", async (_req, res) => {
+    try {
+      const state = await getTerminalState();
+      res.json(state);
+    } catch (error: any) {
+      res.status(500).json({ error: "TERMINAL_STATE_UNAVAILABLE", details: error.message });
+    }
+  });
+
   // Existing analytics endpoints
   app.get("/api/market-state", async (_req, res) => {
     const data = await storage.getMarketState();
