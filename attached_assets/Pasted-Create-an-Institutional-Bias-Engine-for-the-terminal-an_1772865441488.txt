@@ -1,0 +1,115 @@
+Create an Institutional Bias Engine for the terminal analytics system.
+
+Goal:
+Compress the existing options and dealer-flow analytics into a high-level institutional bias classification that traders can read instantly.
+
+Use the existing analytics already available in the terminal.
+
+Inputs available:
+- gammaState
+- gammaRegimeBand
+- totalGex
+- gammaFlip
+- gammaSlope
+- gammaCliffs
+- dealerSensitivity
+- dealerRegime
+- liquidityPressure
+- volatilityState
+- tradeBias
+- regimeConfidence
+- hedgingSpeedScore
+- hedgingStressScore
+- cascadeRisk
+- pinningStrength
+- volExpansionState
+- expansionDirection
+- expansionProbability
+- playbookShiftSuggested
+- suggestedPlaybook
+- trapZones
+- currentPlaybook
+- spot price
+
+Compute the following outputs:
+
+1. institutionalBias
+
+Return one of:
+
+- BULLISH_COMPRESSION
+- BEARISH_COMPRESSION
+- BULLISH_EXPANSION
+- BEARISH_EXPANSION
+- FRAGILE_TRANSITION
+- SQUEEZE_SETUP
+- NEUTRAL_CHOP
+
+Rules:
+- BULLISH_COMPRESSION when long gamma / pinning / low cascade risk / upside stabilization
+- BEARISH_COMPRESSION when long gamma support exists but directional pressure tilts lower
+- BULLISH_EXPANSION when short gamma / upside expansion risk / breakout conditions dominate
+- BEARISH_EXPANSION when short gamma / downside expansion / cascade conditions dominate
+- FRAGILE_TRANSITION when gammaRegimeBand is TRANSITION or signal alignment is mixed
+- SQUEEZE_SETUP when expansionProbability is high and gamma cliffs / dealer sensitivity suggest abrupt movement
+- NEUTRAL_CHOP when no strong alignment exists
+
+2. biasConfidence
+
+Return a number from 0 to 100.
+
+Base this on:
+- regimeConfidence
+- expansionProbability
+- dealerSensitivity
+- signal alignment across gamma regime, volatility state, and playbook
+
+3. biasDrivers
+
+Return an array of 3 to 5 short strings explaining the main reasons.
+
+Example:
+[
+  "Short gamma regime",
+  "High expansion probability",
+  "Gamma cliff below spot",
+  "Dealer sensitivity elevated"
+]
+
+4. biasInvalidation
+
+Return a short text condition that explains what would invalidate the bias.
+
+Example:
+"Bias invalidates if GEX returns positive and expansion probability drops below 0.40"
+
+5. biasHorizon
+
+Return:
+- INTRADAY
+- SWING
+- EVENT_DRIVEN
+
+Rules:
+- INTRADAY for normal session structure
+- SWING if gamma structure suggests broader move continuation
+- EVENT_DRIVEN if bias depends on abrupt expansion / squeeze conditions
+
+Integration:
+
+Add these fields to:
+
+/api/options/summary
+/api/terminal/state
+
+Fields to add:
+
+- institutionalBias
+- biasConfidence
+- biasDrivers
+- biasInvalidation
+- biasHorizon
+
+Do not remove existing analytics.
+Do not redesign the full UI yet.
+Only extend the analytics model and make the values available to the terminal state.

@@ -142,6 +142,13 @@ export const optionsSummarySchema = z.object({
     suggestedPlaybook: z.enum(["RANGE_SCALPING", "FADE_EXTREMES", "MOMENTUM_BREAKOUT", "VOLATILITY_EXPANSION", "LIQUIDITY_SWEEP_REVERSAL"]),
     expansionTriggerZone: z.object({ start: z.number(), end: z.number() }).nullable()
   }).optional(),
+  institutionalBiasEngine: z.object({
+    institutionalBias: z.enum(["BULLISH_COMPRESSION", "BEARISH_COMPRESSION", "BULLISH_EXPANSION", "BEARISH_EXPANSION", "FRAGILE_TRANSITION", "SQUEEZE_SETUP", "NEUTRAL_CHOP"]),
+    biasConfidence: z.number(),
+    biasDrivers: z.array(z.string()),
+    biasInvalidation: z.string(),
+    biasHorizon: z.enum(["INTRADAY", "SWING", "EVENT_DRIVEN"])
+  }).optional(),
   source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()
 });
 
@@ -442,6 +449,13 @@ export class DeribitOptionsGateway {
             playbookShiftSuggested: false,
             suggestedPlaybook: "RANGE_SCALPING" as const,
             expansionTriggerZone: null
+          },
+          institutionalBiasEngine: {
+            institutionalBias: "NEUTRAL_CHOP" as const,
+            biasConfidence: 50,
+            biasDrivers: ["Insufficient data", "Awaiting options ingestion", "No signal alignment"],
+            biasInvalidation: "Bias will update once live options data is available",
+            biasHorizon: "INTRADAY" as const
           },
           source: dataSource
         };
@@ -1092,6 +1106,116 @@ export class DeribitOptionsGateway {
         expansionTriggerZone
       };
 
+      // --- Institutional Bias Engine ---
+      type BiasType = "BULLISH_COMPRESSION" | "BEARISH_COMPRESSION" | "BULLISH_EXPANSION" | "BEARISH_EXPANSION" | "FRAGILE_TRANSITION" | "SQUEEZE_SETUP" | "NEUTRAL_CHOP";
+      let institutionalBias: BiasType = "NEUTRAL_CHOP";
+      const biasDrivers: string[] = [];
+
+      const isLongGamma = dealerRegime === "LONG_GAMMA";
+      const isShortGamma = dealerRegime === "SHORT_GAMMA";
+      const isTransition = dealerRegime === "TRANSITION" || gammaRegimeBand === "TRANSITION";
+      const isExpanding = volExpansionState === "EXPANDING";
+      const isCompressing = volExpansionState === "COMPRESSING";
+      const highExpProb = expansionProbability > 0.65;
+      const highSensitivity = dealerSensitivity === "HIGH";
+      const nearCliffs = engineCliffs.some(c => spotPrice ? Math.abs(c.strike - spotPrice) <= 2000 : false);
+
+      if (highExpProb && nearCliffs && highSensitivity) {
+        institutionalBias = "SQUEEZE_SETUP";
+        biasDrivers.push("High expansion probability");
+        biasDrivers.push("Gamma cliff near spot");
+        biasDrivers.push("Dealer sensitivity elevated");
+        if (isShortGamma) biasDrivers.push("Short gamma regime");
+        if (cascadeRisk === "HIGH") biasDrivers.push("Cascade risk elevated");
+      } else if (isLongGamma && isCompressing && cascadeRisk === "LOW" && pinningStrength > 0.5) {
+        if (tradeBias === "LONG" || tradeBias === "MEAN_REVERSION") {
+          institutionalBias = "BULLISH_COMPRESSION";
+          biasDrivers.push("Long gamma regime");
+          biasDrivers.push("Volatility compressing");
+          biasDrivers.push("Strong pinning near magnets");
+          if (tradeBias === "LONG") biasDrivers.push("Upside trade bias");
+        } else if (tradeBias === "SHORT") {
+          institutionalBias = "BEARISH_COMPRESSION";
+          biasDrivers.push("Long gamma support present");
+          biasDrivers.push("Directional pressure tilts lower");
+          biasDrivers.push("Volatility compressing");
+        } else {
+          institutionalBias = "BULLISH_COMPRESSION";
+          biasDrivers.push("Long gamma regime");
+          biasDrivers.push("Low cascade risk");
+          biasDrivers.push("Pinning strength active");
+        }
+      } else if (isShortGamma && isExpanding) {
+        if (expansionDirection === "UP") {
+          institutionalBias = "BULLISH_EXPANSION";
+          biasDrivers.push("Short gamma regime");
+          biasDrivers.push("Upside expansion detected");
+          biasDrivers.push("Dealer hedging accelerates rallies");
+          if (cascadeRisk !== "LOW") biasDrivers.push(`Cascade risk: ${cascadeRisk}`);
+        } else {
+          institutionalBias = "BEARISH_EXPANSION";
+          biasDrivers.push("Short gamma regime");
+          biasDrivers.push("Downside expansion conditions");
+          if (cascadeRisk === "HIGH") biasDrivers.push("Cascade risk elevated");
+          if (liquidityPressure === "CASCADE_RISK") biasDrivers.push("Liquidity pressure critical");
+        }
+      } else if (isTransition) {
+        institutionalBias = "FRAGILE_TRANSITION";
+        biasDrivers.push("Gamma regime in transition");
+        biasDrivers.push("Mixed signal alignment");
+        if (regimeConfidence < 60) biasDrivers.push("Low regime confidence");
+        if (gammaRegimeBand === "TRANSITION") biasDrivers.push("Near gamma flip level");
+      } else {
+        institutionalBias = "NEUTRAL_CHOP";
+        biasDrivers.push("No strong directional signal");
+        biasDrivers.push("Mixed gamma and flow conditions");
+        if (Math.abs(gammaSlope) < 500) biasDrivers.push("Flat gamma curve");
+      }
+
+      while (biasDrivers.length < 3) biasDrivers.push("Standard market conditions");
+      if (biasDrivers.length > 5) biasDrivers.length = 5;
+
+      let biasConfidence = regimeConfidence;
+      if (dealerSensitivity === "HIGH") biasConfidence += 10;
+      else if (dealerSensitivity === "LOW") biasConfidence -= 5;
+      if (expansionProbability > 0.7) biasConfidence += 10;
+      else if (expansionProbability < 0.3) biasConfidence -= 5;
+
+      const gammaAligned = (isLongGamma && isCompressing) || (isShortGamma && isExpanding);
+      const playbookAligned = !playbookShiftSuggested;
+      if (gammaAligned) biasConfidence += 10;
+      if (playbookAligned) biasConfidence += 5;
+      if (!gammaAligned && !playbookAligned) biasConfidence -= 10;
+      biasConfidence = Math.max(0, Math.min(100, biasConfidence));
+
+      let biasInvalidation = "";
+      if (institutionalBias.includes("COMPRESSION")) {
+        biasInvalidation = `Bias invalidates if GEX turns negative and expansion probability rises above 0.65`;
+      } else if (institutionalBias.includes("EXPANSION")) {
+        biasInvalidation = `Bias invalidates if GEX returns positive and expansion probability drops below 0.40`;
+      } else if (institutionalBias === "SQUEEZE_SETUP") {
+        biasInvalidation = `Bias invalidates if dealer sensitivity drops to LOW and gamma cliffs move away from spot`;
+      } else if (institutionalBias === "FRAGILE_TRANSITION") {
+        biasInvalidation = `Bias invalidates if regime confidence rises above 70 and gamma regime stabilizes`;
+      } else {
+        biasInvalidation = `Bias invalidates on clear directional signal alignment across gamma, flow, and volatility`;
+      }
+
+      let biasHorizon: "INTRADAY" | "SWING" | "EVENT_DRIVEN" = "INTRADAY";
+      if (institutionalBias === "SQUEEZE_SETUP" || institutionalBias.includes("EXPANSION")) {
+        biasHorizon = "EVENT_DRIVEN";
+      } else if (gammaRegimeBand === "DEEP_LONG_GAMMA" || gammaRegimeBand === "DEEP_SHORT_GAMMA" || gammaRegimeBand === "LONG_GAMMA_SUPPORT") {
+        biasHorizon = "SWING";
+      }
+
+      const institutionalBiasEngine = {
+        institutionalBias,
+        biasConfidence,
+        biasDrivers,
+        biasInvalidation,
+        biasHorizon
+      };
+
       return {
         totalGex: totalGex || 0,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -1126,6 +1250,7 @@ export class DeribitOptionsGateway {
         reactionZones,
         gammaCurveEngine,
         volatilityExpansionDetector,
+        institutionalBiasEngine,
         source: dataSource
       };
     } catch (e) {
@@ -1161,6 +1286,13 @@ export class DeribitOptionsGateway {
           playbookShiftSuggested: false,
           suggestedPlaybook: "RANGE_SCALPING",
           expansionTriggerZone: null
+        },
+        institutionalBiasEngine: {
+          institutionalBias: "NEUTRAL_CHOP",
+          biasConfidence: 50,
+          biasDrivers: ["Analytics engine error", "Using fallback values", "No signal alignment"],
+          biasInvalidation: "Bias will update once analytics engine recovers",
+          biasHorizon: "INTRADAY"
         },
         source: dataSource
       } as any;
