@@ -36,61 +36,60 @@ export async function registerRoutes(
     res.json(data);
   });
 
-  // Binance Proxy to avoid CORS
-  app.get("/api/proxy/binance/klines", async (req, res) => {
+  app.get("/api/chart/candles", async (req, res) => {
     try {
-      const { symbol, interval, limit } = req.query;
+      const symbol = (req.query.symbol as string) || "BTCUSDT";
+      const interval = (req.query.interval as string) || "15m";
+      const limit = (req.query.limit as string) || "500";
+
       const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
       const response = await fetch(url);
       
       if (!response.ok) {
-        // If Binance is restricted, return mock data based on a realistic price
-        console.warn(`Binance API returned ${response.status}. Falling back to mock data.`);
-        const basePrice = 68250;
-        const limitNum = Number(limit) || 300;
-        const intervalMinutes = interval === "1h" ? 60 : interval === "1d" ? 1440 : 15;
-        const now = Math.floor(Date.now() / (intervalMinutes * 60 * 1000)) * (intervalMinutes * 60 * 1000);
-        
-        // Deterministic random generator for stable mock structure
-        let seed = now - (limitNum * intervalMinutes * 60 * 1000);
-        const deterministicRandom = () => {
-          const x = Math.sin(seed++) * 10000;
-          return x - Math.floor(x);
-        };
-
-        let lastClose = basePrice + (deterministicRandom() - 0.5) * 1000;
-        const mockKlines = Array.from({ length: limitNum }).map((_, i) => {
-          const time = now - (limitNum - 1 - i) * intervalMinutes * 60 * 1000;
-          const open = lastClose;
-          const change = (deterministicRandom() - 0.5) * 150;
-          const close = open + change;
-          const high = Math.max(open, close) + deterministicRandom() * 50;
-          const low = Math.min(open, close) - deterministicRandom() * 50;
-          lastClose = close;
-          
-          return [
-            time,
-            open.toString(),
-            high.toString(),
-            low.toString(),
-            close.toString(),
-            "100", // volume
-            time + intervalMinutes * 60 * 1000,
-            "1000",
-            10,
-            "50",
-            "500",
-            "0"
-          ];
+        return res.status(response.status).json({ 
+          error: "FAILED_TO_FETCH_BINANCE", 
+          details: `Binance API returned ${response.status}` 
         });
-        return res.json(mockKlines);
       }
       
-      const data = await response.json();
-      res.json(data);
+      const rawData = await response.json();
+      if (!Array.isArray(rawData)) {
+        return res.status(500).json({ error: "INVALID_BINANCE_RESPONSE" });
+      }
+
+      const cleanCandles = rawData
+        .filter((k: any[]) => Array.isArray(k) && k.length >= 5)
+        .map((k: any[]) => ({
+          time: Math.floor(Number(k[0]) / 1000),
+          open: parseFloat(k[1]),
+          high: parseFloat(k[2]),
+          low: parseFloat(k[3]),
+          close: parseFloat(k[4]),
+          volume: parseFloat(k[5])
+        }))
+        .filter((c: any) =>
+          Number.isFinite(c.time) &&
+          Number.isFinite(c.open) &&
+          Number.isFinite(c.high) &&
+          Number.isFinite(c.low) &&
+          Number.isFinite(c.close)
+        )
+        .sort((a: any, b: any) => a.time - b.time);
+
+      // Deduplicate
+      const uniqueCandles = [];
+      const seen = new Set();
+      for (const c of cleanCandles) {
+        if (!seen.has(c.time)) {
+          seen.add(c.time);
+          uniqueCandles.push(c);
+        }
+      }
+
+      res.json(uniqueCandles);
     } catch (error) {
-      console.error("Proxy error:", error);
-      res.status(500).json({ error: "Failed to fetch from Binance" });
+      console.error("Chart data error:", error);
+      res.status(500).json({ error: "INTERNAL_SERVER_ERROR" });
     }
   });
 

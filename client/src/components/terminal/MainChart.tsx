@@ -105,30 +105,18 @@ export function MainChart() {
   const { data: levels } = useQuery<KeyLevels>({ queryKey: ["/api/key-levels"], refetchInterval: 5000 });
   const { data: exposure } = useQuery<DealerExposure>({ queryKey: ["/api/dealer-exposure"], refetchInterval: 5000 });
 
-  const { data: candles } = useQuery({
-    queryKey: ["btc-candles-lightweight"],
+  const { data: candles, error: candleError } = useQuery({
+    queryKey: ["btc-candles-institutional"],
     queryFn: async () => {
-      const res = await fetch("/api/proxy/binance/klines?symbol=BTCUSDT&interval=15m&limit=300");
-      if (!res.ok) throw new Error("Failed to fetch klines");
-      const rawCandles = await res.json();
-      const normalizedCandles = rawCandles.filter((k: any[]) => Array.isArray(k) && k.length >= 5).map((k: any[]) => ({
-        time: Math.floor(Number(k[0]) / 1000),
-        open: Number(k[1]),
-        high: Number(k[2]),
-        low: Number(k[3]),
-        close: Number(k[4]),
-      })).filter((c: any) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close)).sort((a: any, b: any) => a.time - b.time);
-      const uniqueCandles = [];
-      const seen = new Set();
-      for (const c of normalizedCandles) {
-        if (!seen.has(c.time)) {
-          seen.add(c.time);
-          uniqueCandles.push(c);
-        }
+      const res = await fetch("/api/chart/candles?symbol=BTCUSDT&interval=15m&limit=500");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.details || "Failed to fetch institutional candles");
       }
-      return uniqueCandles;
+      return res.json();
     },
-    refetchInterval: 10000
+    refetchInterval: 15000,
+    retry: false
   });
 
   useEffect(() => {
@@ -156,11 +144,10 @@ export function MainChart() {
   useEffect(() => {
     if (candleSeriesRef.current && candles && candles.length > 0) {
       try {
-        const sortedUniqueCandles = [...candles].sort((a: any, b: any) => a.time - b.time);
-        const lastCandle = sortedUniqueCandles[sortedUniqueCandles.length - 1];
+        const lastCandle = candles[candles.length - 1];
         
         if (isInitialLoad) {
-          candleSeriesRef.current.setData(sortedUniqueCandles);
+          candleSeriesRef.current.setData(candles);
           chartRef.current?.timeScale().fitContent();
           setIsInitialLoad(false);
           lastSetTimestampRef.current = lastCandle.time;
@@ -169,7 +156,7 @@ export function MainChart() {
             candleSeriesRef.current.update(lastCandle);
             lastSetTimestampRef.current = lastCandle.time;
           } else {
-            candleSeriesRef.current.setData(sortedUniqueCandles);
+            candleSeriesRef.current.setData(candles);
             lastSetTimestampRef.current = lastCandle.time;
           }
         }
@@ -180,8 +167,8 @@ export function MainChart() {
         if (toggles.price) livePriceLineRef.current = candleSeriesRef.current.createPriceLine({ price: lastCandle.close, color: color, lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: true, title: "" });
 
         if (volumeSeriesRef.current && market?.totalGex) {
-          const pressureData = sortedUniqueCandles.map((c: any, i: number) => {
-            const prevClose = i > 0 ? sortedUniqueCandles[i-1].close : c.open;
+          const pressureData = candles.map((c: any, i: number) => {
+            const prevClose = i > 0 ? candles[i-1].close : c.open;
             const move = c.close - prevClose;
             const pressure = (market.totalGex / 1e9) * move; 
             return { time: c.time, value: Math.abs(pressure), color: pressure >= 0 ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)' };
@@ -252,6 +239,23 @@ export function MainChart() {
   const currentPriceValFinal = candles && candles.length > 0 ? candles[candles.length - 1].close : 0;
   const priceChange = candles && candles.length > 1 ? ((currentPriceValFinal - candles[0].close) / candles[0].close * 100).toFixed(2) : "0.00";
   const regimeColor = market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : market?.gammaRegime === 'SHORT GAMMA' ? 'rgba(127, 29, 29, 0.03)' : 'transparent';
+
+  if (candleError) {
+    return (
+      <TerminalPanel className="flex-1 w-full h-full border border-terminal-border flex items-center justify-center">
+        <div className="text-terminal-negative font-mono text-center">
+          <p className="text-lg font-bold">MARKET DATA OFFLINE</p>
+          <p className="text-xs opacity-70 mt-2">{candleError.message}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 border border-terminal-negative/30 hover:bg-terminal-negative/10 text-[10px] uppercase"
+          >
+            Reconnect Terminal
+          </button>
+        </div>
+      </TerminalPanel>
+    );
+  }
 
   return (
     <TerminalPanel className="flex-1 w-full h-full border border-terminal-border relative" noPadding style={{ backgroundColor: regimeColor }}>
