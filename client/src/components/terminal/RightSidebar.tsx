@@ -152,6 +152,15 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   };
   const modeColors = modeColorMap[marketMode] || modeColorMap.FRAGILE_TRANSITION;
   const modeDisplay = marketMode.replace(/_/g, " ");
+  const modeSubtitleMap: Record<string, string> = {
+    GAMMA_PIN: "Dealer-controlled market",
+    MEAN_REVERSION: "Range trading conditions",
+    VOL_EXPANSION: "Directional volatility expansion",
+    SQUEEZE_RISK: "Short squeeze conditions possible",
+    CASCADE_RISK: "Liquidation cascade risk elevated",
+    FRAGILE_TRANSITION: "Unstable regime transition",
+  };
+  const modeSubtitle = modeSubtitleMap[marketMode] || "";
 
   return (
     <div className="w-80 h-full flex flex-col gap-2 overflow-y-auto p-2 border-l border-terminal-border bg-terminal-bg shrink-0">
@@ -160,6 +169,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         <div className="flex flex-col gap-2.5">
           <div className={cn("rounded px-3 py-2.5 border", modeColors.bg, modeColors.border)} data-testid="status-market-mode">
             <div className={cn("text-[15px] font-mono font-black tracking-wide", modeColors.text)}>{modeDisplay}</div>
+            {modeSubtitle && <div className="text-[9px] font-mono text-white/30 mt-0.5">{modeSubtitle}</div>}
             <div className="flex items-center gap-1.5 mt-1">
               <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Confidence</span>
               <span className={cn("text-[12px] font-mono font-bold", modeColors.text)}>{marketModeConfidence}%</span>
