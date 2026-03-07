@@ -529,18 +529,18 @@ OR dealer hedge flow accelerates
                 </div>
                 <div className="space-y-3 opacity-100">
                   <div className="flex flex-col mt-1 mb-2">
-                    <span className="text-terminal-muted uppercase text-[9px] font-bold tracking-wider">Levels</span>
-                    <span className="text-xs font-mono font-bold text-white/80 mt-1 block leading-normal">
+                    <span className="text-white/60 uppercase text-[9px] font-bold tracking-wider">Levels</span>
+                    <span className="text-xs font-mono font-bold text-white mt-1 block leading-normal">
                       {scenario.levels.map(formatLevel).join(" / ")}
                     </span>
                   </div>
                   
                   <div className="grid grid-cols-[75px_1fr] gap-2">
-                    <span className="text-terminal-muted uppercase text-[9px] font-bold">Confirm</span>
-                    <span className="text-white/70 font-medium italic">{scenario.confirmation.join(", ")}</span>
+                    <span className="text-white/60 uppercase text-[9px] font-bold">Confirm</span>
+                    <span className="text-white font-medium italic">{scenario.confirmation.join(", ")}</span>
                   </div>
                   <div className="grid grid-cols-[75px_1fr] gap-2">
-                    <span className="text-terminal-muted uppercase text-[9px] font-bold">Invalid</span>
+                    <span className="text-white/60 uppercase text-[9px] font-bold">Invalid</span>
                     <span className="text-terminal-negative font-bold">{scenario.invalidation}</span>
                   </div>
                 </div>
