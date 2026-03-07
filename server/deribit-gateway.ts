@@ -184,6 +184,13 @@ export const optionsSummarySchema = z.object({
     hedgingTriggerZone: z.string(),
     hedgingFlowSummary: z.array(z.string())
   }).optional(),
+  liquiditySweepDetector: z.object({
+    sweepRisk: z.enum(["LOW", "MEDIUM", "HIGH", "EXTREME"]),
+    sweepDirection: z.enum(["UP", "DOWN", "TWO_SIDED", "NONE"]),
+    sweepTrigger: z.string(),
+    sweepTargetZone: z.string(),
+    sweepSummary: z.array(z.string())
+  }).optional(),
   source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()
 });
 

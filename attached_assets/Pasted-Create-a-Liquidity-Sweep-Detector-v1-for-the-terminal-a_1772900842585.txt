@@ -1,0 +1,104 @@
+Create a Liquidity Sweep Detector v1 for the terminal analytics system.
+
+Goal:
+Detect likely liquidity sweeps where price may move into or through visible order book liquidity zones with acceleration.
+
+Use existing analytics already available in the system.
+
+Inputs available:
+- spot price
+- liquidityHeatZones
+- liquidityConfluenceZones
+- liquidityPressure
+- marketMode
+- marketModeConfidence
+- hedgingFlowDirection
+- hedgingFlowStrength
+- hedgingAccelerationRisk
+- cascadeRisk
+- cascadeDirection
+- squeezeProbability
+- squeezeDirection
+- institutionalBias
+- tradeDirection
+- dealerPivot
+- gammaMagnets
+- callWall
+- putWall
+
+Compute the following outputs:
+
+1. sweepRisk
+
+Return one of:
+- LOW
+- MEDIUM
+- HIGH
+- EXTREME
+
+Rules:
+- Increase risk when visible liquidity is close to spot and directional conditions align
+- Increase risk when cascade or squeeze conditions support the move
+- Increase risk when dealer hedging flow may amplify the move
+- Reduce risk when price is balanced and long gamma stabilization dominates
+
+2. sweepDirection
+
+Return one of:
+- UP
+- DOWN
+- TWO_SIDED
+- NONE
+
+Rules:
+- UP when near ask liquidity and upside directional conditions dominate
+- DOWN when near bid liquidity and downside directional conditions dominate
+- TWO_SIDED when liquidity exists on both sides and regime is unstable
+- NONE when sweep risk is low
+
+3. sweepTrigger
+
+Return a short readable trigger.
+
+Examples:
+- "Break above near ask liquidity"
+- "Loss of bid support below pivot"
+- "Reclaim dealer pivot into upside sweep"
+
+4. sweepTargetZone
+
+Return a short price range where the liquidity sweep is most likely to travel.
+
+Examples:
+- "68.1k – 68.4k"
+- "67.0k – 66.6k"
+
+Prefer the strongest nearby liquidity cluster in the sweep direction.
+
+5. sweepSummary
+
+Return 3–5 short readable bullet-style strings.
+
+Examples:
+[
+  "Ask liquidity stacked above spot",
+  "Hedging flow may support upside",
+  "Sweep likely if price reclaims 68k"
+]
+
+Integration:
+
+Add these fields to:
+- /api/options/summary
+- /api/terminal/state
+
+Fields to add:
+- sweepRisk
+- sweepDirection
+- sweepTrigger
+- sweepTargetZone
+- sweepSummary
+
+Do not modify existing engines.
+Do not redesign the UI yet.
+Only extend the analytics pipeline.

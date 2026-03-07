@@ -47,6 +47,7 @@ High-density institutional crypto derivatives trading dashboard with real BTC ma
 17. Squeeze Probability Engine (squeezeProbability, squeezeDirection, squeezeType, squeezeTrigger, squeezeTarget, squeezeDrivers)
 18. Market Mode Engine (marketMode, marketModeConfidence, marketModeReason) — classifies market into GAMMA_PIN, MEAN_REVERSION, VOL_EXPANSION, SQUEEZE_RISK, CASCADE_RISK, or FRAGILE_TRANSITION using scoring system across all engines
 19. Dealer Hedging Flow Map (hedgingFlowDirection, hedgingFlowStrength, hedgingAccelerationRisk, hedgingTriggerZone, hedgingFlowSummary) — estimates when dealer hedging forces buying/selling and whether it stabilizes or accelerates price
+20. Liquidity Sweep Detector (sweepRisk, sweepDirection, sweepTrigger, sweepTargetZone, sweepSummary) — detects likely liquidity sweeps where price may move into/through visible order book zones with acceleration; computed in terminal-state.ts using heatmap + options engines
 
 ## Liquidity Heatmap Engine
 - `server/orderbook-gateway.ts` — Live order book gateway + heatmap computation
