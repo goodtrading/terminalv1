@@ -95,34 +95,39 @@ export async function registerRoutes(
       return res.json(uniqueCandles);
     }
 
-    // FALLBACK TO MOCK DATA IF BINANCE IS BLOCKED (ONLY FOR DEMO/ENVIRONMENT PURPOSES)
-    // In a real production environment, we would want to show the error.
-    // However, to ensure the chart is "usable" in this restricted environment:
-    console.warn("Binance blocked (451). Generating deterministic historical mock data for chart context.");
-    
-    const limitNum = parseInt(limit);
-    const intervalMinutes = 15;
-    const now = Math.floor(Date.now() / (intervalMinutes * 60 * 1000)) * (intervalMinutes * 60 * 1000);
-    const basePrice = 68000;
-    
-    const mockHistory = Array.from({ length: limitNum }).map((_, i) => {
-      const time = Math.floor((now - (limitNum - i) * intervalMinutes * 60 * 1000) / 1000);
-      // Deterministic pseudo-random based on time
-      const seed = time;
-      const rnd = (Math.sin(seed) + 1) / 2;
-      const open = basePrice + Math.sin(time / 100000) * 2000 + (rnd - 0.5) * 100;
-      const close = open + (rnd - 0.4) * 150;
-      return {
-        time,
-        open,
-        high: Math.max(open, close) + rnd * 50,
-        low: Math.min(open, close) - rnd * 50,
-        close,
-        volume: 100 + rnd * 1000
-      };
-    });
+    // Mock data is ONLY available if explicitly enabled in environment
+    // AND we are in development mode.
+    if (process.env.NODE_ENV === "development" && process.env.ENABLE_MOCKS === "true") {
+      console.warn("Binance blocked (451). Development mode: generating deterministic historical mock data.");
+      
+      const limitNum = parseInt(limit);
+      const intervalMinutes = 15;
+      const now = Math.floor(Date.now() / (intervalMinutes * 60 * 1000)) * (intervalMinutes * 60 * 1000);
+      const basePrice = 68000;
+      
+      const mockHistory = Array.from({ length: limitNum }).map((_, i) => {
+        const time = Math.floor((now - (limitNum - i) * intervalMinutes * 60 * 1000) / 1000);
+        const seed = time;
+        const rnd = (Math.sin(seed) + 1) / 2;
+        const open = basePrice + Math.sin(time / 100000) * 2000 + (rnd - 0.5) * 100;
+        const close = open + (rnd - 0.4) * 150;
+        return {
+          time,
+          open,
+          high: Math.max(open, close) + rnd * 50,
+          low: Math.min(open, close) - rnd * 50,
+          close,
+          volume: 100 + rnd * 1000
+        };
+      });
 
-    return res.json(mockHistory);
+      return res.json(mockHistory);
+    }
+
+    return res.status(503).json({
+      error: "FAILED_TO_FETCH_HISTORY",
+      details: lastError || "All mirror endpoints failed."
+    });
   });
 
   return httpServer;

@@ -37,10 +37,13 @@ export function MainChart() {
     queryKey: ["btc-history"],
     queryFn: async () => {
       const res = await fetch("/api/chart/history?symbol=BTCUSDT&interval=15m&limit=500");
-      if (!res.ok) throw new Error("History fetch failed");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.details || "History fetch failed");
+      }
       return res.json();
     },
-    retry: 3,
+    retry: 1,
     refetchOnWindowFocus: false
   });
 
@@ -106,7 +109,7 @@ export function MainChart() {
       ws.onerror = () => setWsStatus("ERROR");
       ws.onclose = () => {
         setWsStatus("CLOSED");
-        setTimeout(connectWS, 5000);
+        setTimeout(connectWS, 10000);
       };
     };
 
@@ -260,9 +263,11 @@ export function MainChart() {
     return (
       <TerminalPanel className="flex-1 w-full h-full border border-terminal-border flex items-center justify-center">
         <div className="text-terminal-negative font-mono text-center">
-          <p className="text-lg font-bold">MARKET DATA OFFLINE</p>
-          <p className="text-xs opacity-70 mt-2">History Fetch Error</p>
-          <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 border border-terminal-negative/30 text-[10px] uppercase">Reconnect</button>
+          <p className="text-lg font-bold uppercase tracking-widest">Market Data Offline</p>
+          <div className="mt-4 p-4 border border-terminal-negative/20 bg-terminal-negative/5 inline-block">
+            <p className="text-[10px] opacity-70 uppercase mb-4">Connection to primary market feed failed.</p>
+            <button onClick={() => window.location.reload()} className="px-4 py-2 border border-terminal-negative/40 hover:bg-terminal-negative/10 text-[10px] uppercase font-bold transition-all">Reconnect Terminal</button>
+          </div>
         </div>
       </TerminalPanel>
     );
@@ -276,7 +281,10 @@ export function MainChart() {
             <div className="flex items-baseline space-x-3">
               <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
               <span className={`text-2xl font-mono font-bold ${wsStatus === 'OPEN' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{(lastCandle?.close || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-              <span className="text-[10px] font-mono font-bold opacity-80 text-terminal-muted ml-2">{wsStatus}</span>
+              <div className="flex items-center ml-2">
+                <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", wsStatus === 'OPEN' ? "bg-terminal-positive" : "bg-terminal-negative")} />
+                <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", wsStatus === 'OPEN' ? "text-terminal-positive" : "text-terminal-negative")}>{wsStatus === 'OPEN' ? 'Live' : 'Live Feed Offline'}</span>
+              </div>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
               <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>
