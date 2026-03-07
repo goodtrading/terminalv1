@@ -68,7 +68,7 @@ export function LeftSidebar() {
       <TerminalPanel title="ALERT CENTER">
         <div className="p-3 space-y-2">
           {alerts.length === 0 ? (
-            <div className="py-4 px-2 border border-dashed border-white/10 rounded-sm text-center">
+            <div className="py-4 px-2 border border-dashed border-white/10 rounded-sm text-center bg-terminal-panel/30">
               <div className="text-[10px] font-bold text-white uppercase tracking-wider mb-1">NO ACTIVE ALERTS</div>
               <div className="text-[9px] text-terminal-muted leading-tight">System monitoring flow conditions...</div>
             </div>
@@ -77,16 +77,20 @@ export function LeftSidebar() {
               <div 
                 key={alert.id} 
                 className={cn(
-                  "p-3 rounded-sm border-l-4 bg-white",
-                  alert.type === "warning" ? "border-yellow-500" : 
-                  alert.type === "error" ? "border-red-500" : "border-blue-500"
+                  "p-3 rounded-sm border-l-4 bg-terminal-panel border border-terminal-border",
+                  alert.type === "warning" ? "border-l-yellow-500" : 
+                  alert.type === "error" ? "border-l-red-500" : "border-l-blue-500"
                 )}
               >
                 <div className="flex justify-between items-start mb-1">
-                  <span className="text-[10px] font-bold text-black uppercase tracking-tight leading-none">{alert.title}</span>
-                  <span className="text-[8px] font-mono text-gray-500 leading-none">{alert.timestamp}</span>
+                  <span className={cn(
+                    "text-[10px] font-bold uppercase tracking-tight leading-none",
+                    alert.type === "warning" ? "text-yellow-500" : 
+                    alert.type === "error" ? "text-red-500" : "text-blue-500"
+                  )}>{alert.title}</span>
+                  <span className="text-[8px] font-mono text-terminal-muted leading-none">{alert.timestamp}</span>
                 </div>
-                <div className="text-[10px] text-black font-medium leading-tight">
+                <div className="text-[10px] text-white/90 font-medium leading-tight">
                   {alert.message}
                 </div>
               </div>
@@ -142,14 +146,14 @@ export function LeftSidebar() {
             </div>
           </div>
           
-          <div className="p-2 bg-terminal-negative/5 border border-terminal-negative/20 rounded-sm">
+          <div className="p-2 bg-terminal-negative/10 border border-terminal-negative/30 rounded-sm">
             <div className="text-[9px] uppercase tracking-[0.2em] text-terminal-negative/70 mb-1 font-bold">SHORT GAMMA POCKET</div>
             <div className="font-mono text-xs text-terminal-negative font-bold">
               {levels ? `${levels.shortGammaPocketStart.toLocaleString()} – ${levels.shortGammaPocketEnd.toLocaleString()}` : "--"}
             </div>
           </div>
 
-          <div className="p-2 bg-white/[0.02] border border-white/5 rounded-sm">
+          <div className="p-2 bg-terminal-panel border border-terminal-border rounded-sm">
             <div className="text-[9px] uppercase tracking-[0.2em] text-terminal-muted mb-1 font-bold">DEEP RISK POCKET</div>
             <div className="font-mono text-xs text-white/80 font-bold">
               {levels ? `${levels.deepRiskPocketStart.toLocaleString()} – ${levels.deepRiskPocketEnd.toLocaleString()}` : "--"}

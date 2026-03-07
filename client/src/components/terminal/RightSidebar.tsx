@@ -495,15 +495,12 @@ OR dealer hedge flow accelerates
               key={scenario.id}
               onClick={() => handleScenarioClick(scenario)}
               className={cn(
-                "border cursor-pointer bg-white rounded-sm overflow-hidden flex flex-col group transition-all",
-                selectedId === scenario.id ? "border-terminal-accent ring-1 ring-terminal-accent/30" : "border-black/10 hover:border-black/20",
-                scenario.type === "BASE" && "hover:border-blue-500/30",
-                scenario.type === "ALT" && "hover:border-green-500/30",
-                scenario.type === "VOL" && "hover:border-orange-500/30"
+                "border cursor-pointer bg-terminal-panel rounded-sm overflow-hidden flex flex-col group transition-all",
+                selectedId === scenario.id ? "border-terminal-accent ring-1 ring-terminal-accent/30" : "border-terminal-border hover:border-white/20",
               )}
             >
               <div className={cn(
-                "flex justify-between items-center p-2 border-b border-white/10",
+                "flex justify-between items-center p-2 border-b border-white/5",
                 scenario.type === "BASE" ? "bg-blue-500/10" : 
                 scenario.type === "ALT" ? "bg-green-500/10" : 
                 "bg-orange-500/10"
@@ -515,46 +512,38 @@ OR dealer hedge flow accelerates
                     scenario.type === "ALT" ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" : 
                     "bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]"
                   )}></div>
-                  <span className="text-[10px] font-bold text-black uppercase tracking-wider">{scenario.type} CASE</span>
+                  <span className="text-[10px] font-bold text-white/90 uppercase tracking-wider">{scenario.type} CASE</span>
                 </div>
                 <span className={cn(
                   "px-1.5 py-0.5 rounded-sm text-[9px] font-mono font-bold",
-                  scenario.type === "BASE" ? "bg-blue-500/20 text-blue-700" : 
-                  scenario.type === "ALT" ? "bg-green-500/20 text-green-700" : 
-                  "bg-orange-500/20 text-orange-700"
+                  scenario.type === "BASE" ? "bg-blue-500/20 text-blue-400" : 
+                  scenario.type === "ALT" ? "bg-green-500/20 text-green-400" : 
+                  "bg-orange-500/20 text-orange-400"
                 )}>
                   {scenario.probability}% PROB
                 </span>
               </div>
               <div className="p-3 text-[11px] space-y-3">
-                <div className="font-bold text-black leading-tight">
+                <div className="font-bold text-white leading-tight">
                   {scenario.thesis}
                 </div>
                 <div className="space-y-3 opacity-100">
                   <div className="flex flex-col mt-1 mb-2">
-                    <span className="text-gray-600 uppercase text-[9px] font-bold tracking-wider">Levels</span>
-                    <span className="text-xs font-mono font-bold text-black mt-1 block leading-normal">
+                    <span className="text-terminal-muted uppercase text-[9px] font-bold tracking-wider">Levels</span>
+                    <span className="text-xs font-mono font-bold text-white/80 mt-1 block leading-normal">
                       {scenario.levels.map(formatLevel).join(" / ")}
                     </span>
                   </div>
                   
                   <div className="grid grid-cols-[75px_1fr] gap-2">
-                    <span className="text-gray-600 uppercase text-[9px] font-bold">Confirm</span>
-                    <span className="text-black font-medium italic">{scenario.confirmation.join(", ")}</span>
+                    <span className="text-terminal-muted uppercase text-[9px] font-bold">Confirm</span>
+                    <span className="text-white/70 font-medium italic">{scenario.confirmation.join(", ")}</span>
                   </div>
                   <div className="grid grid-cols-[75px_1fr] gap-2">
-                    <span className="text-gray-600 uppercase text-[9px] font-bold">Invalid</span>
+                    <span className="text-terminal-muted uppercase text-[9px] font-bold">Invalid</span>
                     <span className="text-terminal-negative font-bold">{scenario.invalidation}</span>
                   </div>
                 </div>
-                {scenario.confirmation && scenario.confirmation.length > 0 && (
-                  <div className="pt-2 border-t border-black/10">
-                    <div className="text-[9px] uppercase font-bold text-gray-600 mb-1">Confirmation</div>
-                    <div className="text-[10px] text-black/70 italic">
-                      {scenario.confirmation.join(", ")}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           ))}
@@ -565,21 +554,21 @@ OR dealer hedge flow accelerates
       {tradingPlan && isTradingPlanOpen && (
         <TerminalPanel 
           title="ACTIVE TRADING PLAN" 
-          className="border-terminal-accent/50 bg-white"
+          className="border-terminal-accent/50 bg-terminal-panel"
           headerExtra={
             <button 
               onClick={() => setIsTradingPlanOpen(false)}
-              className="text-[9px] font-mono font-bold text-black/50 hover:text-black uppercase flex items-center"
+              className="text-[9px] font-mono font-bold text-terminal-muted hover:text-white uppercase flex items-center"
             >
               [ CLOSE ]
             </button>
           }
         >
           <div className="p-4 space-y-3">
-            <div className="text-black font-bold text-[11px] mb-2 uppercase border-b border-black/10 pb-1">
+            <div className="text-white font-bold text-[11px] mb-2 uppercase border-b border-white/10 pb-1">
               TRADING PLAN ACTIVE
             </div>
-            <pre className="text-[10px] font-mono font-bold text-black leading-relaxed whitespace-pre-wrap">
+            <pre className="text-[10px] font-mono font-bold text-white/90 leading-relaxed whitespace-pre-wrap">
               {tradingPlan}
             </pre>
           </div>
