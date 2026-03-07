@@ -1,0 +1,137 @@
+UI FEATURE — LIQUIDITY MAP MODE TOGGLE
+
+Goal:
+Add a map mode toggle above the chart so users can switch between different visual overlays without cluttering the chart.
+
+Important:
+Do NOT change backend analytics or calculations.
+Use existing terminal state and existing engine outputs.
+Only improve the chart UI and overlay visibility logic.
+
+------------------------------------------------
+
+STEP 1 — ADD A NEW TOGGLE ABOVE THE CHART
+
+Create a compact segmented toggle above the chart with 4 modes:
+
+[ LEVELS ] [ GAMMA ] [ CASCADE ] [ SQUEEZE ]
+
+Default mode:
+LEVELS
+
+The toggle should match the current dark institutional UI style.
+
+------------------------------------------------
+
+STEP 2 — MODE: LEVELS
+
+When LEVELS is active, show only:
+
+- Call Wall
+- Put Wall
+- Gamma Magnets
+- Dealer Pivot
+
+Hide:
+- gamma cliffs
+- transition band
+- cascade trigger
+- liquidation pocket
+- squeeze trigger
+- squeeze target
+
+------------------------------------------------
+
+STEP 3 — MODE: GAMMA
+
+When GAMMA is active, show only:
+
+- Gamma Flip
+- Transition Zone / Transition Band
+- Gamma Cliffs
+
+Hide:
+- call wall
+- put wall
+- dealer pivot
+- cascade trigger
+- liquidation pocket
+- squeeze trigger
+- squeeze target
+
+Use existing gamma analytics already available in terminal state.
+
+------------------------------------------------
+
+STEP 4 — MODE: CASCADE
+
+When CASCADE is active, show only:
+
+- Cascade Trigger
+- Liquidation Pocket
+
+Hide:
+- call wall
+- put wall
+- gamma magnets
+- dealer pivot
+- gamma cliffs
+- squeeze trigger
+- squeeze target
+
+Use existing Liquidity Cascade Engine outputs.
+
+------------------------------------------------
+
+STEP 5 — MODE: SQUEEZE
+
+When SQUEEZE is active, show only:
+
+- Squeeze Trigger
+- Squeeze Target
+
+Hide:
+- call wall
+- put wall
+- gamma magnets
+- dealer pivot
+- gamma cliffs
+- cascade trigger
+- liquidation pocket
+
+Use existing Squeeze Probability Engine outputs.
+
+------------------------------------------------
+
+STEP 6 — IMPLEMENTATION RULES
+
+- Do not modify analytics engines
+- Do not add new calculations
+- Only conditionally render overlays based on selected mode
+- Preserve current chart styling and price feed
+- Keep labels visually minimal and readable
+
+------------------------------------------------
+
+STEP 7 — UX REQUIREMENTS
+
+- The chart must remain clean
+- Only one mode is active at a time
+- Switching modes should be immediate
+- Toggle should be intuitive for beginner users
+
+------------------------------------------------
+
+Expected result:
+
+LEVELS mode:
+structural levels only
+
+GAMMA mode:
+gamma structure only
+
+CASCADE mode:
+cascade risk overlays only
+
+SQUEEZE mode:
+squeeze setup overlays only
