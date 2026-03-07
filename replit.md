@@ -39,13 +39,14 @@ High-density institutional crypto derivatives trading dashboard with real BTC ma
 9. Market Regime Engine (dealerRegime, liquidityPressure, volatilityState, tradeBias, regimeConfidence)
 10. Dealer Trap Engine (trapZones, currentTrapRisk, activeTrapContext)
 11. Trading Playbook Engine (currentPlaybook, tradeZones, invalidationLevel, regimeShiftTrigger)
-12. Volatility Expansion Detector (volExpansionState, expansionDirection, expansionProbability, playbookShiftSuggested, suggestedPlaybook, expansionTriggerZone)
+12. Gamma Curve Engine (gammaSlope, gammaCliffs, dealerSensitivity, gammaRegimeBand)
+13. Volatility Expansion Detector (volExpansionState, expansionDirection, expansionProbability, playbookShiftSuggested, suggestedPlaybook, expansionTriggerZone)
 
 ## Terminal State Data Flow
 `getTerminalState()` in `terminal-state.ts`:
 - Reads DB for market, exposure, positioning, levels, scenarios
 - Calls `DeribitOptionsGateway.ingestOptions()` (live API primary, CSV fallback)
-- Injects `tradingPlaybook`, `volatilityExpansionDetector`, and `optionsSource` into `positioning`
+- Injects `tradingPlaybook`, `volatilityExpansionDetector`, `gammaCurveEngine`, and `optionsSource` into `positioning`
 - Reads cached ticker from MarketDataGateway
 - Returns unified state at `/api/terminal/state`
 

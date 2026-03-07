@@ -128,6 +128,12 @@ export const optionsSummarySchema = z.object({
     volatilityRisk: z.enum(["LOW", "MEDIUM", "HIGH"]),
     tradeBias: z.enum(["LONG", "SHORT", "NEUTRAL"])
   })).optional(),
+  gammaCurveEngine: z.object({
+    gammaSlope: z.number(),
+    gammaCliffs: z.array(z.object({ strike: z.number(), strength: z.number() })),
+    dealerSensitivity: z.enum(["LOW", "MEDIUM", "HIGH"]),
+    gammaRegimeBand: z.enum(["DEEP_LONG_GAMMA", "LONG_GAMMA_SUPPORT", "TRANSITION", "SHORT_GAMMA_RISK", "DEEP_SHORT_GAMMA"])
+  }).optional(),
   volatilityExpansionDetector: z.object({
     volExpansionState: z.enum(["COMPRESSING", "PRE_BREAKOUT", "EXPANDING"]),
     expansionDirection: z.enum(["UP", "DOWN", "NEUTRAL"]),
@@ -423,6 +429,12 @@ export class DeribitOptionsGateway {
           gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
           dealerGammaState: null, dealerHedgeDirection: null, volatilityRegime: null, dealerFlowScore: null,
           tradingPlaybook: fallbackPlaybook,
+          gammaCurveEngine: {
+            gammaSlope: 0,
+            gammaCliffs: [] as { strike: number, strength: number }[],
+            dealerSensitivity: "MEDIUM" as const,
+            gammaRegimeBand: "TRANSITION" as const
+          },
           volatilityExpansionDetector: {
             volExpansionState: "PRE_BREAKOUT" as const,
             expansionDirection: "NEUTRAL" as const,
@@ -561,6 +573,66 @@ export class DeribitOptionsGateway {
           gammaWallStrength.push({ strike: curr.strike, strengthScore });
         }
       }
+
+      // --- Gamma Curve Engine ---
+      let gammaSlope = 0;
+      const engineCliffs: { strike: number, strength: number }[] = [];
+      let dealerSensitivity: "LOW" | "MEDIUM" | "HIGH" = "MEDIUM";
+      let gammaRegimeBand: "DEEP_LONG_GAMMA" | "LONG_GAMMA_SUPPORT" | "TRANSITION" | "SHORT_GAMMA_RISK" | "DEEP_SHORT_GAMMA" = "TRANSITION";
+
+      if (spotPrice && gammaByStrike.length > 0) {
+        const nearbyStrikes = gammaSlopeByStrike
+          .filter(s => Math.abs(s.strike - spotPrice) <= 3000)
+          .sort((a, b) => Math.abs(a.strike - spotPrice) - Math.abs(b.strike - spotPrice));
+
+        if (nearbyStrikes.length > 0) {
+          const weights = nearbyStrikes.map((s, i) => 1 / (1 + Math.abs(s.strike - spotPrice) / 1000));
+          const totalWeight = weights.reduce((a, b) => a + b, 0);
+          gammaSlope = nearbyStrikes.reduce((sum, s, i) => sum + s.slope * weights[i], 0) / (totalWeight || 1);
+        }
+
+        gammaCliffs.forEach(c => {
+          engineCliffs.push({ strike: c.strike, strength: c.strength });
+        });
+
+        const nearCliff = engineCliffs.some(c => Math.abs(c.strike - spotPrice) <= 2000);
+        const nearShortGamma = shortGammaZones.some(z => spotPrice >= z.startStrike - 1000 && spotPrice <= z.endStrike + 1000);
+        const nearMagnet = gammaMagnets.some(m => Math.abs(spotPrice - m) <= 1500);
+        const slopeIsSteep = Math.abs(gammaSlope) > 3000;
+        const slopeIsFlat = Math.abs(gammaSlope) < 500;
+
+        if (slopeIsSteep && (nearCliff || nearShortGamma)) {
+          dealerSensitivity = "HIGH";
+        } else if (slopeIsFlat && nearMagnet && !nearShortGamma) {
+          dealerSensitivity = "LOW";
+        } else {
+          dealerSensitivity = "MEDIUM";
+        }
+
+        const distToFlip = gammaFlip ? (spotPrice - gammaFlip) / spotPrice : 0;
+        const localGex = gammaByStrike
+          .filter(s => Math.abs(s.strike - spotPrice) <= 2000)
+          .reduce((sum, s) => sum + s.gex, 0);
+
+        if (distToFlip > 0.08 && localGex > 0) {
+          gammaRegimeBand = "DEEP_LONG_GAMMA";
+        } else if (distToFlip > 0.02 && localGex > 0) {
+          gammaRegimeBand = "LONG_GAMMA_SUPPORT";
+        } else if (Math.abs(distToFlip) <= 0.02 || slopeIsFlat) {
+          gammaRegimeBand = "TRANSITION";
+        } else if (distToFlip < -0.02 && localGex < 0) {
+          gammaRegimeBand = "SHORT_GAMMA_RISK";
+        } else if (distToFlip < -0.08 && nearCliff) {
+          gammaRegimeBand = "DEEP_SHORT_GAMMA";
+        }
+      }
+
+      const gammaCurveEngine = {
+        gammaSlope,
+        gammaCliffs: engineCliffs,
+        dealerSensitivity,
+        gammaRegimeBand
+      };
 
       // --- Advanced Hedging Dynamics ---
       const dealerGammaState = totalGex >= 0 ? "LONG_GAMMA" : "SHORT_GAMMA";
@@ -1052,6 +1124,7 @@ export class DeribitOptionsGateway {
         dealerTrapEngine,
         tradingPlaybook,
         reactionZones,
+        gammaCurveEngine,
         volatilityExpansionDetector,
         source: dataSource
       };
@@ -1074,6 +1147,12 @@ export class DeribitOptionsGateway {
           tradeZones: { longZones: [], shortZones: [] },
           invalidationLevel: spotPrice ? spotPrice * 0.95 : 0,
           regimeShiftTrigger: "Engine recovery required"
+        },
+        gammaCurveEngine: {
+          gammaSlope: 0,
+          gammaCliffs: [],
+          dealerSensitivity: "MEDIUM",
+          gammaRegimeBand: "TRANSITION"
         },
         volatilityExpansionDetector: {
           volExpansionState: "PRE_BREAKOUT",
