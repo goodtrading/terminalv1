@@ -12,7 +12,7 @@ export function TerminalPanel({ title, children, className, noPadding = false, h
   return (
     <div 
       className={cn(
-        "flex flex-col bg-terminal-panel border border-terminal-border overflow-hidden terminal-panel-shadow",
+        "flex flex-col bg-terminal-panel border border-terminal-border overflow-hidden",
         className
       )} 
       {...props}

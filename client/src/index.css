@@ -71,8 +71,8 @@
   --terminal-bg: 0 0% 4%;      /* #0b0b0b */
   --terminal-panel: 0 0% 7%;   /* #111111 */
   --terminal-border: 0 0% 12%;
-  --terminal-text: 0 0% 95%;   /* Increased from 88% for better base readability */
-  --terminal-muted: 0 0% 65%;  /* Increased from 45% for readable metadata */
+  --terminal-text: 0 0% 88%;
+  --terminal-muted: 0 0% 45%;
   --terminal-positive: 142 71% 45%;
   --terminal-negative: 0 100% 62%; /* #ff3b3b */
   --terminal-accent: 0 100% 62%;   /* #ff3b3b */
@@ -93,18 +93,18 @@
 }
 
 @utility terminal-text-secondary {
-  color: #f3f4f6; /* High-contrast off-white (gray-100) */
+  color: #e5e5e5; /* High-contrast off-white (90%) */
 }
 
 @utility terminal-text-label {
-  color: #d1d5db; /* High-contrast gray (gray-300) for labels */
+  color: #a3a3a3; /* Clearly readable gray (60% equivalent but solid) */
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 @utility terminal-text-muted {
-  color: #9ca3af; /* gray-400 for metadata - still very readable */
+  color: var(--color-terminal-muted); /* Metadata only */
 }
 
 @utility terminal-card {
@@ -122,13 +122,13 @@
   cursor: pointer;
 
   &:hover {
-    border-color: #4b5563; /* gray-600 for better hover visibility */
+    border-color: #404040;
   }
 }
 
 @utility terminal-card-selected {
   border-color: var(--color-terminal-accent);
-  box-shadow: 0 0 0 1px rgba(255, 59, 59, 0.4);
+  box-shadow: 0 0 0 1px rgba(255, 59, 59, 0.3);
 }
 
 @utility terminal-badge {
@@ -141,27 +141,27 @@
 }
 
 @utility terminal-badge-info {
-  background-color: rgba(59, 130, 246, 0.25);
-  color: #93c5fd; /* blue-300 for readability */
-  border: 1px solid rgba(59, 130, 246, 0.5);
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
 }
 
 @utility terminal-badge-success {
-  background-color: rgba(34, 197, 94, 0.25);
-  color: #86efac; /* green-300 for readability */
-  border: 1px solid rgba(34, 197, 94, 0.5);
+  background-color: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
 }
 
 @utility terminal-badge-warning {
-  background-color: rgba(234, 179, 8, 0.25);
-  color: #fde047; /* yellow-300 for readability */
-  border: 1px solid rgba(234, 179, 8, 0.5);
+  background-color: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+  border: 1px solid rgba(234, 179, 8, 0.3);
 }
 
 @utility terminal-badge-error {
-  background-color: rgba(255, 59, 59, 0.25);
-  color: #fca5a5; /* red-300 for readability */
-  border: 1px solid rgba(255, 59, 59, 0.5);
+  background-color: rgba(255, 59, 59, 0.15);
+  color: #ff3b3b;
+  border: 1px solid rgba(255, 59, 59, 0.3);
 }
 
 /* Scrollbar styling */
@@ -184,9 +184,4 @@
 
 .terminal-panel-shadow {
   box-shadow: 0 4px 20px -10px rgba(0,0,0,0.5);
-}
-
-/* Ensure chart container stays black and doesn't inherit background-color from parent unless intended */
-.chart-container-root {
-  background-color: #000000 !important;
 }
