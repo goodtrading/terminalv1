@@ -61,6 +61,13 @@ export const optionsSummarySchema = z.object({
   cascadeRisk: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
   pinningStrength: z.number().optional(),
   dealerFlowUrgency: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
+  backtestResults: z.object({
+    pinningAccuracy: z.number(),
+    expansionAccuracy: z.number(),
+    cascadeAccuracy: z.number(),
+    meanMoveAfterExpansion: z.number(),
+    meanMoveAfterPinning: z.number()
+  }).optional(),
   reactionZones: z.array(z.object({
     startStrike: z.number(),
     endStrike: z.number(),
@@ -77,6 +84,74 @@ export type OptionsSummary = z.infer<typeof optionsSummarySchema>;
 
 export class DeribitOptionsGateway {
   private static DATA_DIR = path.join(process.cwd(), "attached_assets");
+  private static observations: any[] = [];
+
+  private static recordObservation(spotPrice: number | undefined, zones: any[], cascadeRisk: string) {
+    if (!spotPrice) return;
+    const activeZone = zones.find(z => spotPrice >= z.startStrike && spotPrice <= z.endStrike);
+    if (!activeZone) return;
+
+    this.observations.push({
+      timestamp: Date.now(),
+      priceAtEntry: spotPrice,
+      zoneType: activeZone.zoneType,
+      expectedBehavior: activeZone.expectedBehavior,
+      cascadeRisk,
+      prices: { '30m': null, '1h': null, '4h': null }
+    });
+
+    if (this.observations.length > 1000) this.observations.shift();
+
+    const now = Date.now();
+    this.observations.forEach(obs => {
+      if (!obs.prices['30m'] && now - obs.timestamp >= 30 * 60 * 1000) obs.prices['30m'] = spotPrice;
+      if (!obs.prices['1h'] && now - obs.timestamp >= 60 * 60 * 1000) obs.prices['1h'] = spotPrice;
+      if (!obs.prices['4h'] && now - obs.timestamp >= 240 * 60 * 1000) obs.prices['4h'] = spotPrice;
+    });
+  }
+
+  private static getBacktestMetrics() {
+    const completed = this.observations.filter(o => o.prices['30m']);
+    if (completed.length === 0) {
+      return { pinningAccuracy: 0, expansionAccuracy: 0, cascadeAccuracy: 0, meanMoveAfterExpansion: 0, meanMoveAfterPinning: 0 };
+    }
+
+    let pinningHits = 0, pinningTotal = 0;
+    let expansionHits = 0, expansionTotal = 0;
+    let cascadeHits = 0, cascadeTotal = 0;
+    let expMoves: number[] = [], pinMoves: number[] = [];
+
+    completed.forEach(o => {
+      const move = Math.abs((o.prices['30m'] || o.priceAtEntry) - o.priceAtEntry) / o.priceAtEntry;
+      
+      if (o.zoneType === "PINNING") {
+        pinningTotal++;
+        if (move < 0.005) pinningHits++;
+        pinMoves.push(move);
+      }
+      if (o.zoneType === "EXPANSION") {
+        expansionTotal++;
+        if (move > 0.01) expansionHits++;
+        expMoves.push(move);
+      }
+      if (o.cascadeRisk === "HIGH") {
+        cascadeTotal++;
+        if (move > 0.02) cascadeHits++;
+      }
+    });
+
+    return {
+      pinningAccuracy: pinningTotal > 0 ? pinningHits / pinningTotal : 0,
+      expansionAccuracy: expansionTotal > 0 ? expansionHits / expansionTotal : 0,
+      cascadeAccuracy: cascadeTotal > 0 ? cascadeHits / cascadeTotal : 0,
+      meanMoveAfterExpansion: expMoves.length > 0 ? expMoves.reduce((a,b) => a+b, 0) / expMoves.length : 0,
+      meanMoveAfterPinning: pinMoves.length > 0 ? pinMoves.reduce((a,b) => a+b, 0) / pinMoves.length : 0
+    };
+  }
+
+  private static normalizeHeader(header: string): string {
+    return header.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
 
   static async ingestLatestCSV(): Promise<NormalizedOption[]> {
     try {
@@ -414,6 +489,10 @@ export class DeribitOptionsGateway {
         else if (totalStress > 0.6) dealerFlowUrgency = "MEDIUM";
       }
 
+      // --- Backtesting Engine ---
+      DeribitOptionsGateway.recordObservation(spotPrice, reactionZones, cascadeRisk);
+      const backtestResults = DeribitOptionsGateway.getBacktestMetrics();
+
       return {
         totalGex: totalGex || null,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -425,8 +504,6 @@ export class DeribitOptionsGateway {
         gammaCurve,
         gammaFlip,
         gammaMagnets,
-        shortGammaZones,
-        magnets: gammaMagnets, 
         shortGammaPockets: shortGammaZones.map(z => ({ start: z.startStrike, end: z.endStrike })),
         vannaBias: totalVanna >= 0 ? "BULLISH" : "BEARISH",
         charmBias: totalCharm >= 0 ? "BULLISH" : "BEARISH",
@@ -443,6 +520,7 @@ export class DeribitOptionsGateway {
         cascadeRisk,
         pinningStrength,
         dealerFlowUrgency,
+        backtestResults,
         reactionZones
       };
     } catch (e) {
