@@ -135,15 +135,24 @@ export const optionsSummarySchema = z.object({
     playbookShiftSuggested: z.boolean(),
     suggestedPlaybook: z.enum(["RANGE_SCALPING", "FADE_EXTREMES", "MOMENTUM_BREAKOUT", "VOLATILITY_EXPANSION", "LIQUIDITY_SWEEP_REVERSAL"]),
     expansionTriggerZone: z.object({ start: z.number(), end: z.number() }).nullable()
-  }).optional()
+  }).optional(),
+  source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()
 });
 
 export type NormalizedOption = z.infer<typeof normalizedOptionSchema>;
 export type OptionsSummary = z.infer<typeof optionsSummarySchema>;
 
+export type IngestionResult = {
+  options: NormalizedOption[];
+  source: "LIVE_DERIBIT" | "CSV_FALLBACK";
+};
+
 export class DeribitOptionsGateway {
   private static DATA_DIR = path.join(process.cwd(), "attached_assets");
   private static observations: any[] = [];
+  private static DERIBIT_API = "https://www.deribit.com/api/v2/public";
+  private static liveCache: { data: NormalizedOption[]; timestamp: number } | null = null;
+  private static CACHE_TTL_MS = 30000;
 
   private static recordObservation(spotPrice: number | undefined, zones: any[], cascadeRisk: string) {
     if (!spotPrice) return;
@@ -273,21 +282,132 @@ export class DeribitOptionsGateway {
         }
       }).filter((r: any): r is NormalizedOption => r !== null);
 
-      console.log(`[DeribitGateway] Valid rows: ${validCount}, Rejected: ${rejectedCount}`);
+      console.log(`[DeribitGateway] CSV Valid rows: ${validCount}, Rejected: ${rejectedCount}`);
       return normalizedRecords;
     } catch (e) {
-      console.error("[DeribitGateway] Ingestion error:", e);
+      console.error("[DeribitGateway] CSV ingestion error:", e);
       return [];
     }
   }
 
-  static async getSummary(options: NormalizedOption[], spotPrice?: number): Promise<OptionsSummary> {
+  static async fetchLiveDeribit(): Promise<NormalizedOption[]> {
+    if (this.liveCache && Date.now() - this.liveCache.timestamp < this.CACHE_TTL_MS) {
+      return this.liveCache.data;
+    }
+
+    const url = `${this.DERIBIT_API}/get_book_summary_by_currency?currency=BTC&kind=option`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        throw new Error(`Deribit API ${res.status}: ${res.statusText}`);
+      }
+
+      const json = await res.json();
+      if (!json.result || !Array.isArray(json.result)) {
+        throw new Error("Deribit API: invalid response shape");
+      }
+
+      const options: NormalizedOption[] = [];
+      let parsed = 0;
+      let skipped = 0;
+
+      for (const item of json.result) {
+        try {
+          const instrumentName: string = item.instrument_name || "";
+          const parts = instrumentName.split("-");
+          if (parts.length < 4) { skipped++; continue; }
+
+          const expiry = parts[1];
+          const strike = parseFloat(parts[2]);
+          const typeChar = parts[3];
+          if (isNaN(strike) || (typeChar !== "C" && typeChar !== "P")) { skipped++; continue; }
+
+          const optionType = typeChar === "C" ? "call" : "put";
+          const openInterest = item.open_interest || 0;
+          if (openInterest <= 0) { skipped++; continue; }
+
+          const underlyingPrice = item.underlying_price || item.mark_price || 0;
+          const markIv = item.mark_iv ? item.mark_iv / 100 : 0.5;
+
+          let gammaExposure: number | undefined;
+          let vannaExposure: number | undefined;
+          let charmExposure: number | undefined;
+
+          if (underlyingPrice > 0 && strike > 0) {
+            const moneyness = Math.log(underlyingPrice / strike);
+            const dteMatch = expiry.match(/(\d+)/);
+            const roughDte = dteMatch ? Math.max(1, parseInt(dteMatch[0])) : 30;
+            const T = roughDte / 365;
+            const sqrtT = Math.sqrt(T);
+            const sigma = markIv > 0 ? markIv : 0.5;
+
+            const d1 = (moneyness + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
+            const nd1 = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+
+            const rawGamma = nd1 / (underlyingPrice * sigma * sqrtT);
+            const dealerSign = optionType === "call" ? 1 : -1;
+            gammaExposure = dealerSign * rawGamma * openInterest * underlyingPrice * underlyingPrice * 0.01;
+
+            const dVannaDvol = d1 * nd1 / sigma;
+            vannaExposure = dealerSign * dVannaDvol * openInterest * underlyingPrice * 0.01;
+
+            const charmVal = -nd1 * (2 * 0.02 * T - d1 * sigma * sqrtT) / (2 * T * sigma * sqrtT);
+            charmExposure = dealerSign * charmVal * openInterest * 100;
+          }
+
+          options.push({
+            strike,
+            expiry,
+            optionType,
+            openInterest,
+            gammaExposure,
+            vannaExposure,
+            charmExposure
+          });
+          parsed++;
+        } catch {
+          skipped++;
+        }
+      }
+
+      console.log(`[DeribitGateway] Live API: ${parsed} options parsed, ${skipped} skipped from ${json.result.length} instruments`);
+
+      this.liveCache = { data: options, timestamp: Date.now() };
+      return options;
+    } catch (e: any) {
+      clearTimeout(timeout);
+      console.error(`[DeribitGateway] Live API failed: ${e.message}`);
+      throw e;
+    }
+  }
+
+  static async ingestOptions(): Promise<IngestionResult> {
+    try {
+      const liveData = await this.fetchLiveDeribit();
+      if (liveData.length > 0) {
+        return { options: liveData, source: "LIVE_DERIBIT" };
+      }
+    } catch (e: any) {
+      console.log(`[DeribitGateway] Live fetch failed, falling back to CSV: ${e.message}`);
+    }
+
+    const csvData = await this.ingestLatestCSV();
+    return { options: csvData, source: "CSV_FALLBACK" };
+  }
+
+  static async getSummary(options: NormalizedOption[], spotPrice?: number, source?: "LIVE_DERIBIT" | "CSV_FALLBACK"): Promise<OptionsSummary> {
+    const dataSource = source || "CSV_FALLBACK";
     try {
       if (options.length === 0) {
         const fallbackPlaybook = {
           currentPlaybook: {
             regime: "TRANSITION" as const,
-            expectedBehavior: "Insufficient options data — awaiting CSV ingestion",
+            expectedBehavior: "Insufficient options data — awaiting data source",
             volatilityRisk: "MEDIUM" as const,
             directionalBias: "NEUTRAL" as const,
             strategyType: "RANGE_SCALPING" as const
@@ -310,7 +430,8 @@ export class DeribitOptionsGateway {
             playbookShiftSuggested: false,
             suggestedPlaybook: "RANGE_SCALPING" as const,
             expansionTriggerZone: null
-          }
+          },
+          source: dataSource
         };
       }
 
@@ -931,7 +1052,8 @@ export class DeribitOptionsGateway {
         dealerTrapEngine,
         tradingPlaybook,
         reactionZones,
-        volatilityExpansionDetector
+        volatilityExpansionDetector,
+        source: dataSource
       };
     } catch (e) {
       console.error("[DeribitGateway] Summary error:", e);
@@ -960,7 +1082,8 @@ export class DeribitOptionsGateway {
           playbookShiftSuggested: false,
           suggestedPlaybook: "RANGE_SCALPING",
           expansionTriggerZone: null
-        }
+        },
+        source: dataSource
       } as any;
     }
   }

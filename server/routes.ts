@@ -12,8 +12,8 @@ export async function registerRoutes(
   // --- Deribit Options Gateway Endpoints ---
   app.get("/api/options/raw", async (_req, res) => {
     try {
-      const data = await DeribitOptionsGateway.ingestLatestCSV();
-      res.json(data);
+      const { options, source } = await DeribitOptionsGateway.ingestOptions();
+      res.json({ options, source });
     } catch (e: any) {
       res.status(500).json({ error: "INGESTION_FAILED", details: e.message });
     }
@@ -21,9 +21,9 @@ export async function registerRoutes(
 
   app.get("/api/options/summary", async (_req, res) => {
     try {
-      const data = await DeribitOptionsGateway.ingestLatestCSV();
+      const { options, source } = await DeribitOptionsGateway.ingestOptions();
       const ticker = await MarketDataGateway.getCachedTicker();
-      const summary = await DeribitOptionsGateway.getSummary(data, ticker?.price);
+      const summary = await DeribitOptionsGateway.getSummary(options, ticker?.price, source);
       res.json(summary);
     } catch (e: any) {
       res.status(500).json({ error: "SUMMARY_FAILED", details: e.message });

@@ -6,11 +6,19 @@ High-density institutional crypto derivatives trading dashboard with real BTC ma
 ## Architecture
 - **Frontend**: React + Vite + TailwindCSS v4 + lightweight-charts v5.1.0, wouter routing
 - **Backend**: Express server on port 5000, PostgreSQL + Drizzle ORM
-- **Data Sources**: Coinbase (primary ticker), Deribit CSV ingestion for options data
+- **Data Sources**: Coinbase (primary ticker), Deribit Live API (primary options), CSV fallback
 - **Binance/Bybit**: Geo-blocked, failover to Coinbase
 
+## Options Data Ingestion
+- **Primary**: Live Deribit API via `get_book_summary_by_currency?currency=BTC&kind=option`
+- **Fallback**: CSV files in `attached_assets/` directory
+- **Method**: `DeribitOptionsGateway.ingestOptions()` tries live first, falls back to CSV
+- **Cache**: 30-second TTL on live API responses
+- **Greeks**: Computed from instrument data (gamma, vanna, charm) using Black-Scholes approximation with Deribit mark IV
+- **Source tracking**: `source: "LIVE_DERIBIT" | "CSV_FALLBACK"` in summary and terminal state
+
 ## Key Files
-- `server/deribit-gateway.ts` — Options analytics engine (CSV ingestion + all computation engines)
+- `server/deribit-gateway.ts` — Options analytics engine (live API + CSV ingestion + all computation engines)
 - `server/terminal-state.ts` — Unified terminal state aggregator
 - `server/market-gateway.ts` — Market data (ticker) provider
 - `server/routes.ts` — API routes
@@ -36,12 +44,12 @@ High-density institutional crypto derivatives trading dashboard with real BTC ma
 ## Terminal State Data Flow
 `getTerminalState()` in `terminal-state.ts`:
 - Reads DB for market, exposure, positioning, levels, scenarios
-- Injects live `tradingPlaybook` and `volatilityExpansionDetector` from DeribitOptionsGateway into `positioning`
+- Calls `DeribitOptionsGateway.ingestOptions()` (live API primary, CSV fallback)
+- Injects `tradingPlaybook`, `volatilityExpansionDetector`, and `optionsSource` into `positioning`
 - Reads cached ticker from MarketDataGateway
 - Returns unified state at `/api/terminal/state`
 
 ## Important Notes
-- CSV returns 0 valid rows currently — all engines use fallback values
 - Liquidation data is stubbed (perp liquidation clusters hardcoded at spot±2%)
 - `tickerStatus`: "fresh" if age < 10s
 - Tailwind v4: `@utility` only
