@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { storage } from "./storage";
 import { MarketDataGateway, tickerSchema } from "./market-gateway";
+import { DeribitOptionsGateway } from "./deribit-gateway";
 
 export const terminalStateSchema = z.object({
   market: z.any(),
