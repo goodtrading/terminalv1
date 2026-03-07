@@ -23,8 +23,11 @@ export function MainChart() {
     dealer: true,
   });
 
+  const [manualPriceRange, setManualPriceRange] = useState<{from: number, to: number} | null>(null);
+
   const resetScale = () => {
     if (!chartRef.current) return;
+    setManualPriceRange(null);
     chartRef.current.priceScale("right").applyOptions({ autoScale: true });
     setIsInitialLoad(true);
   };
@@ -52,36 +55,36 @@ export function MainChart() {
       const min = Math.min(...filteredPoints);
       const max = Math.max(...filteredPoints);
       const margin = (max - min) * 0.1 || currentPrice * 0.01;
-      chartRef.current.priceScale("right").setVisibleRange({
-        from: min - margin,
-        to: max + margin
-      });
+      const newRange = { from: min - margin, to: max + margin };
+      setManualPriceRange(newRange);
+      chartRef.current.priceScale("right").applyOptions({ autoScale: false });
     }
   };
 
   const zoomVertical = (factor: number) => {
-    if (!chartRef.current) return;
-    const scale = chartRef.current.priceScale("right");
-    const range = scale.getVisiblePriceRange();
-    if (!range) return;
+    if (!chartRef.current || !candles || candles.length === 0) return;
+    const currentPrice = candles[candles.length - 1].close;
+    
+    // Fallback range if null
+    const range = manualPriceRange || { from: currentPrice * 0.95, to: currentPrice * 1.05 };
     const center = (range.from + range.to) / 2;
     const halfHeight = ((range.to - range.from) / 2) * factor;
-    scale.setVisibleRange({
-      from: center - halfHeight,
-      to: center + halfHeight
-    });
+    
+    const newRange = { from: center - halfHeight, to: center + halfHeight };
+    setManualPriceRange(newRange);
+    chartRef.current.priceScale("right").applyOptions({ autoScale: false });
   };
 
   const panVertical = (direction: number) => {
-    if (!chartRef.current) return;
-    const scale = chartRef.current.priceScale("right");
-    const range = scale.getVisiblePriceRange();
-    if (!range) return;
+    if (!chartRef.current || !candles || candles.length === 0) return;
+    const currentPrice = candles[candles.length - 1].close;
+
+    const range = manualPriceRange || { from: currentPrice * 0.95, to: currentPrice * 1.05 };
     const shift = (range.to - range.from) * 0.1 * direction;
-    scale.setVisibleRange({
-      from: range.from + shift,
-      to: range.to + shift
-    });
+    
+    const newRange = { from: range.from + shift, to: range.to + shift };
+    setManualPriceRange(newRange);
+    chartRef.current.priceScale("right").applyOptions({ autoScale: false });
   };
 
 
@@ -238,6 +241,32 @@ export function MainChart() {
       console.error("[MainChart] Chart initialization failed:", error);
     }
   }, []);
+
+  useEffect(() => {
+    if (chartRef.current && manualPriceRange) {
+      chartRef.current.priceScale("right").applyOptions({
+        autoScale: false,
+      });
+      try {
+        chartRef.current.priceScale("right").applyOptions({
+          visible: true,
+        });
+        // Correct way to set price range in v4+ is via priceScale().applyOptions({ Math.min/max or similar })
+        // but setVisibleRange is the high-level API for IPriceScale
+        const scale = chartRef.current.priceScale("right");
+        if (typeof scale.setVisibleRange === 'function') {
+          scale.setVisibleRange(manualPriceRange);
+        } else {
+          // Fallback if setVisibleRange is not directly available on the object returned by priceScale
+          scale.applyOptions({
+            autoScale: false,
+          });
+        }
+      } catch (e) {
+        console.error("Failed to set manual range:", e);
+      }
+    }
+  }, [manualPriceRange]);
 
   useEffect(() => {
     if (candleSeriesRef.current && candles) {
