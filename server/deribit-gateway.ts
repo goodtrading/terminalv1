@@ -1,7 +1,27 @@
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
-import { parse } from "csv-parse/sync";
+
+// Simple CSV parser to avoid external dependency issues
+function parseCsv(content: string): any[] {
+  const lines = content.split(/\r?\n/).filter(line => line.trim().length > 0);
+  if (lines.length === 0) return [];
+  
+  const headers = lines[0].split(',').map(h => 
+    h.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  );
+  
+  const results = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i].split(',');
+    const row: any = {};
+    headers.forEach((header, index) => {
+      row[header] = values[index]?.trim();
+    });
+    results.push(row);
+  }
+  return results;
+}
 
 export const normalizedOptionSchema = z.object({
   strike: z.number(),
@@ -31,54 +51,30 @@ export type OptionsSummary = z.infer<typeof optionsSummarySchema>;
 export class DeribitOptionsGateway {
   private static DATA_DIR = path.join(process.cwd(), "attached_assets");
 
-  private static normalizeHeader(header: string): string {
-    return header
-      .trim()
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
-  }
-
   static async ingestLatestCSV(): Promise<NormalizedOption[]> {
     try {
-      if (!fs.existsSync(this.DATA_DIR)) {
-        console.warn(`[DeribitGateway] Data directory not found: ${this.DATA_DIR}`);
-        return [];
-      }
-
+      if (!fs.existsSync(this.DATA_DIR)) return [];
+      
       const files = fs.readdirSync(this.DATA_DIR).filter(f => f.endsWith(".csv"));
       if (files.length === 0) return [];
       
       const latestFile = path.join(this.DATA_DIR, files.sort().reverse()[0]);
-      console.log(`[DeribitGateway] Ingesting: ${latestFile}`);
       const content = fs.readFileSync(latestFile, "utf-8");
       
-      const records = parse(content, {
-        columns: (header: string[]) => {
-          const normalized = header.map(this.normalizeHeader);
-          console.log(`[DeribitGateway] Headers detected:`, header);
-          console.log(`[DeribitGateway] Headers normalized:`, normalized);
-          return normalized;
-        },
-        skip_empty_lines: true,
-        trim: true,
-        relax_column_count: true
-      });
+      const records = parseCsv(content);
 
       let validCount = 0;
       let rejectedCount = 0;
 
       const normalizedRecords = records.map((row: any, index: number) => {
         try {
-          // Robust mapping for "Abrir" / "Open Interest"
+          // Mapping for "Abrir" / "Open Interest"
           const oiValue = row["abrir"] || row["openinterest"] || row["open_interest"] || "0";
           const openInterest = parseFloat(oiValue.replace(/,/g, ''));
           
-          // Strike mapping
           const strikeValue = row["strike"] || row["huelga"] || "0";
           const strike = parseFloat(strikeValue.replace(/,/g, ''));
 
-          // Option Type mapping (from instrument name if needed)
           let optionType = (row["optiontype"] || row["tipo"] || "").toLowerCase();
           const instrument = (row["instrumento"] || row["instrument"] || "").toUpperCase();
 
@@ -87,7 +83,6 @@ export class DeribitOptionsGateway {
             else if (instrument.endsWith("-P") || instrument.includes("-PUT-")) optionType = "put";
           }
 
-          // Expiry mapping
           let expiry = row["expiry"] || row["expiration"] || row["vencimiento"] || "";
           if (!expiry && instrument) {
             const parts = instrument.split('-');
@@ -104,9 +99,9 @@ export class DeribitOptionsGateway {
             expiry,
             optionType: optionType as "call" | "put",
             openInterest,
-            gammaExposure: row["gamma"] || row["gamma_exposure"] ? parseFloat(row["gamma"] || row["gamma_exposure"]) : undefined,
-            vannaExposure: row["vanna"] || row["vanna_exposure"] ? parseFloat(row["vanna"] || row["vanna_exposure"]) : undefined,
-            charmExposure: row["charm"] || row["charm_exposure"] ? parseFloat(row["charm"] || row["charm_exposure"]) : undefined
+            gammaExposure: row["gamma"] ? parseFloat(row["gamma"]) : undefined,
+            vannaExposure: row["vanna"] ? parseFloat(row["vanna"]) : undefined,
+            charmExposure: row["charm"] ? parseFloat(row["charm"]) : undefined
           });
 
           validCount++;
@@ -121,7 +116,7 @@ export class DeribitOptionsGateway {
       return normalizedRecords;
     } catch (e) {
       console.error("[DeribitGateway] Ingestion error:", e);
-      return []; // Graceful failure
+      return [];
     }
   }
 
@@ -129,63 +124,35 @@ export class DeribitOptionsGateway {
     try {
       if (options.length === 0) {
         return {
-          totalGex: null,
-          gammaState: null,
-          gammaFlip: null,
-          callWall: null,
-          putWall: null,
-          magnets: null,
-          shortGammaPockets: null,
-          vannaBias: null,
-          charmBias: null
+          totalGex: null, gammaState: null, gammaFlip: null,
+          callWall: null, putWall: null, magnets: null,
+          shortGammaPockets: null, vannaBias: null, charmBias: null
         };
       }
 
-      let totalGex = 0;
-      let callWall = 0;
-      let putWall = 0;
-      let maxCallOi = 0;
-      let maxPutOi = 0;
-
+      let totalGex = 0, callWall = 0, putWall = 0, maxCallOi = 0, maxPutOi = 0;
       options.forEach(opt => {
         if (opt.gammaExposure) totalGex += opt.gammaExposure;
-        
-        if (opt.optionType === "call") {
-          if (opt.openInterest > maxCallOi) {
-            maxCallOi = opt.openInterest;
-            callWall = opt.strike;
-          }
-        } else {
-          if (opt.openInterest > maxPutOi) {
-            maxPutOi = opt.openInterest;
-            putWall = opt.strike;
-          }
+        if (opt.optionType === "call" && opt.openInterest > maxCallOi) {
+          maxCallOi = opt.openInterest;
+          callWall = opt.strike;
+        } else if (opt.optionType === "put" && opt.openInterest > maxPutOi) {
+          maxPutOi = opt.openInterest;
+          putWall = opt.strike;
         }
       });
 
       return {
         totalGex: totalGex || null,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
-        gammaFlip: null,
-        callWall: callWall || null,
-        putWall: putWall || null,
-        magnets: null,
-        shortGammaPockets: null,
-        vannaBias: null,
-        charmBias: null
+        gammaFlip: null, callWall: callWall || null, putWall: putWall || null,
+        magnets: null, shortGammaPockets: null, vannaBias: null, charmBias: null
       };
     } catch (e) {
-      console.error("[DeribitGateway] Summary error:", e);
       return {
-        totalGex: null,
-        gammaState: null,
-        gammaFlip: null,
-        callWall: null,
-        putWall: null,
-        magnets: null,
-        shortGammaPockets: null,
-        vannaBias: null,
-        charmBias: null
+        totalGex: null, gammaState: null, gammaFlip: null,
+        callWall: null, putWall: null, magnets: null,
+        shortGammaPockets: null, vannaBias: null, charmBias: null
       };
     }
   }
