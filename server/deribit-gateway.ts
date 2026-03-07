@@ -157,6 +157,13 @@ export const optionsSummarySchema = z.object({
     positionSizeSuggestion: z.enum(["FULL", "REDUCED", "PROBE_ONLY", "NO_TRADE"]),
     executionReason: z.array(z.string())
   }).optional(),
+  liquidityCascadeEngine: z.object({
+    cascadeRisk: z.enum(["LOW", "MEDIUM", "HIGH", "EXTREME"]),
+    cascadeDirection: z.enum(["UP", "DOWN", "TWO_SIDED", "NONE"]),
+    cascadeTrigger: z.string(),
+    liquidationPocket: z.string(),
+    cascadeDrivers: z.array(z.string())
+  }).optional(),
   source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()
 });
 
@@ -1350,6 +1357,121 @@ export class DeribitOptionsGateway {
         riskLevel,
         positionSizeSuggestion,
         executionReason
+      };
+
+      // --- Liquidity Cascade Engine ---
+      type CascadeRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "EXTREME";
+      type CascadeDirType = "UP" | "DOWN" | "TWO_SIDED" | "NONE";
+
+      let lcCascadeRisk: CascadeRiskLevel = "LOW";
+      let cascadeDirection: CascadeDirType = "NONE";
+      let cascadeTrigger = "";
+      let liquidationPocket = "--";
+      const cascadeDrivers: string[] = [];
+
+      const cliffsBelow = engineCliffs.filter(c => spotPrice ? c.strike < spotPrice && Math.abs(c.strike - spotPrice) <= 5000 : false);
+      const cliffsAbove = engineCliffs.filter(c => spotPrice ? c.strike > spotPrice && Math.abs(c.strike - spotPrice) <= 5000 : false);
+      const hasNearbyCliffsBelow = cliffsBelow.length > 0;
+      const hasNearbyCliffsAbove = cliffsAbove.length > 0;
+
+      let cascadeScore = 0;
+      if (isShortGamma) cascadeScore += 2;
+      if (gammaRegimeBand === "SHORT_GAMMA_RISK" || gammaRegimeBand === "DEEP_SHORT_GAMMA") cascadeScore += 2;
+      if (dealerSensitivity === "HIGH") cascadeScore += 2;
+      else if (dealerSensitivity === "MEDIUM") cascadeScore += 1;
+      if (hasNearbyCliffsBelow || hasNearbyCliffsAbove) cascadeScore += 2;
+      if (expansionProbability > 0.7) cascadeScore += 2;
+      else if (expansionProbability > 0.5) cascadeScore += 1;
+      if (cascadeRisk === "HIGH") cascadeScore += 2;
+      else if (cascadeRisk === "MEDIUM") cascadeScore += 1;
+      if (isCompressing && pinningStrength > 0.6) cascadeScore -= 3;
+
+      if (cascadeScore >= 10) lcCascadeRisk = "EXTREME";
+      else if (cascadeScore >= 7) lcCascadeRisk = "HIGH";
+      else if (cascadeScore >= 4) lcCascadeRisk = "MEDIUM";
+      else lcCascadeRisk = "LOW";
+
+      if (isCompressing && isLongGamma) {
+        cascadeDirection = "NONE";
+      } else if (isTransition && isExpanding) {
+        cascadeDirection = "TWO_SIDED";
+      } else if (institutionalBias.includes("BEARISH") || (expansionDirection === "DOWN" && isShortGamma)) {
+        cascadeDirection = "DOWN";
+      } else if (institutionalBias.includes("BULLISH") || (expansionDirection === "UP" && isShortGamma)) {
+        cascadeDirection = "UP";
+      } else if (isExpanding) {
+        cascadeDirection = "TWO_SIDED";
+      }
+
+      const formatK = (p: number) => p >= 1000 ? `${(p / 1000).toFixed(1)}k` : `${p}`;
+
+      if (cascadeDirection === "DOWN" || cascadeDirection === "TWO_SIDED") {
+        if (gammaFlip && spotPrice && spotPrice > gammaFlip) {
+          cascadeTrigger = `Break below dealer pivot at ${formatK(gammaFlip)}`;
+        } else if (putWall) {
+          cascadeTrigger = `Loss of put wall support at ${formatK(putWall)}`;
+        } else if (gammaMagnets && gammaMagnets.length > 0) {
+          const belowMagnets = gammaMagnets.filter(m => spotPrice ? m < spotPrice : false).sort((a, b) => b - a);
+          if (belowMagnets.length > 0) {
+            cascadeTrigger = `Loss of gamma magnet support at ${formatK(belowMagnets[0])}`;
+          } else {
+            cascadeTrigger = "Break below current support structure";
+          }
+        } else {
+          cascadeTrigger = "Break below current support structure";
+        }
+      } else if (cascadeDirection === "UP") {
+        if (callWall) {
+          cascadeTrigger = `Break above call wall at ${formatK(callWall)}`;
+        } else if (gammaMagnets && gammaMagnets.length > 0) {
+          const aboveMagnets = gammaMagnets.filter(m => spotPrice ? m > spotPrice : false).sort((a, b) => a - b);
+          if (aboveMagnets.length > 0) {
+            cascadeTrigger = `Reclaim gamma magnet at ${formatK(aboveMagnets[0])}`;
+          } else {
+            cascadeTrigger = "Break above current resistance structure";
+          }
+        } else {
+          cascadeTrigger = "Break above current resistance structure";
+        }
+      } else {
+        cascadeTrigger = "No cascade trigger — compression dominant";
+      }
+
+      if (spotPrice && (hasNearbyCliffsBelow || hasNearbyCliffsAbove)) {
+        const targetCliffs = cascadeDirection === "UP" ? cliffsAbove : cliffsBelow.length > 0 ? cliffsBelow : cliffsAbove;
+        if (targetCliffs.length > 0) {
+          const sorted = [...targetCliffs].sort((a, b) => Math.abs(a.strength) - Math.abs(b.strength));
+          const strongest = sorted[sorted.length - 1];
+          const pocketStart = strongest.strike - 500;
+          const pocketEnd = strongest.strike + 500;
+          liquidationPocket = `${formatK(pocketStart)} – ${formatK(pocketEnd)}`;
+        }
+      } else if (spotPrice) {
+        if (cascadeDirection === "DOWN" && putWall) {
+          liquidationPocket = `${formatK(putWall - 1000)} – ${formatK(putWall)}`;
+        } else if (cascadeDirection === "UP" && callWall) {
+          liquidationPocket = `${formatK(callWall)} – ${formatK(callWall + 1000)}`;
+        }
+      }
+
+      if (isShortGamma) cascadeDrivers.push("Short gamma regime");
+      else if (isLongGamma) cascadeDrivers.push("Long gamma regime");
+      if (hasNearbyCliffsBelow) cascadeDrivers.push("Gamma cliff below spot");
+      if (hasNearbyCliffsAbove) cascadeDrivers.push("Gamma cliff above spot");
+      if (highSensitivity) cascadeDrivers.push("Dealer sensitivity elevated");
+      if (expansionProbability > 0.5) cascadeDrivers.push("Expansion probability rising");
+      if (cascadeRisk === "HIGH") cascadeDrivers.push("Hedging cascade risk high");
+      if (isExpanding) cascadeDrivers.push("Volatility expanding");
+      if (isCompressing && pinningStrength > 0.5) cascadeDrivers.push("Compression and pinning suppressing cascade");
+      while (cascadeDrivers.length < 3) cascadeDrivers.push("Standard market conditions");
+      if (cascadeDrivers.length > 5) cascadeDrivers.length = 5;
+
+      const liquidityCascadeEngine = {
+        cascadeRisk: lcCascadeRisk,
+        cascadeDirection,
+        cascadeTrigger,
+        liquidationPocket,
+        cascadeDrivers
       };
 
       return {

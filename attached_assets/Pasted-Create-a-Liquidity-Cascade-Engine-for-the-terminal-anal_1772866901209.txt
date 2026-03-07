@@ -1,0 +1,111 @@
+Create a Liquidity Cascade Engine for the terminal analytics system.
+
+Goal:
+Detect potential liquidation cascades and identify the price levels that could trigger accelerated market moves.
+
+Use existing analytics already available in the terminal.
+
+Inputs available:
+
+spot price
+gammaCliffs
+gammaSlope
+gammaRegimeBand
+dealerSensitivity
+cascadeRisk
+expansionProbability
+expansionDirection
+gammaMagnets
+callWall
+putWall
+trapZones
+OI concentration
+currentPlaybook
+institutionalBias
+tradeDirection
+
+Compute the following outputs:
+
+1. cascadeRisk
+
+Return:
+
+LOW
+MEDIUM
+HIGH
+EXTREME
+
+Rules:
+- HIGH or EXTREME when short gamma conditions exist with nearby gamma cliffs and elevated dealer sensitivity
+- MEDIUM when mixed signals exist
+- LOW when long gamma compression dominates
+
+2. cascadeDirection
+
+Return:
+
+UP
+DOWN
+TWO_SIDED
+NONE
+
+Rules:
+- DOWN when bearish expansion signals dominate
+- UP when bullish expansion signals dominate
+- TWO_SIDED when volatility expansion exists in transition regimes
+- NONE when compression dominates
+
+3. cascadeTrigger
+
+Return a short text describing the trigger level.
+
+Examples:
+
+"Break below dealer pivot"
+"Break above call wall"
+"Loss of gamma magnet support"
+
+Use the nearest structural level relative to spot.
+
+4. liquidationPocket
+
+Return a price range where the cascade could accelerate.
+
+Examples:
+
+"64.5k – 65.5k"
+"71k – 72k"
+
+Prefer ranges near gamma cliffs or OI clusters.
+
+5. cascadeDrivers
+
+Return 3–5 short bullet-style explanations.
+
+Example:
+
+[
+"Short gamma regime",
+"Gamma cliff below spot",
+"Dealer sensitivity elevated",
+"Expansion probability rising"
+]
+
+Integration:
+
+Add these fields to:
+
+/api/options/summary
+/api/terminal/state
+
+Fields to add:
+
+cascadeRisk
+cascadeDirection
+cascadeTrigger
+liquidationPocket
+cascadeDrivers
+
+Do not remove any existing analytics.
+Do not modify existing engines.
+Only extend the analytics pipeline and expose the new fields to terminal state.
