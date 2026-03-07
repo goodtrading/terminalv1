@@ -42,7 +42,6 @@ export function LeftSidebar() {
   const alerts = useMemo(() => {
     const list: Alert[] = [];
     
-    // 1. Regime Alert
     if (market?.gammaRegime === "SHORT GAMMA") {
       list.push({
         id: 1,
@@ -53,7 +52,6 @@ export function LeftSidebar() {
       });
     }
 
-    // 2. Flow Intensity Alert
     if (flow?.hedgeFlowIntensity === "HIGH") {
       list.push({
         id: 2,
@@ -64,7 +62,6 @@ export function LeftSidebar() {
       });
     }
 
-    // 3. Pressure Alert
     if (dealer?.gammaPressure && parseFloat(dealer.gammaPressure) > 0.7) {
       list.push({
         id: 3,
@@ -75,7 +72,6 @@ export function LeftSidebar() {
       });
     }
 
-    // 4. Concentration Alert
     if (dealer && dealer.gammaConcentration > 0.8) {
       list.push({
         id: 4,
@@ -86,7 +82,6 @@ export function LeftSidebar() {
       });
     }
 
-    // 5. Acceleration Risk
     if (flow?.accelerationRisk === "HIGH") {
       list.push({
         id: 5,
@@ -107,28 +102,28 @@ export function LeftSidebar() {
         <div className="p-3 space-y-2">
           {alerts.length === 0 ? (
             <div className="py-4 px-2 border border-dashed border-white/10 rounded-sm text-center bg-terminal-panel/30">
-              <div className="text-[10px] font-bold text-white uppercase tracking-wider mb-1">NO ACTIVE ALERTS</div>
-              <div className="text-[9px] text-terminal-muted leading-tight">System monitoring flow conditions...</div>
+              <div className="terminal-text-label mb-1">NO ACTIVE ALERTS</div>
+              <div className="text-[9px] terminal-text-muted leading-tight">System monitoring flow conditions...</div>
             </div>
           ) : (
             alerts.map((alert) => (
               <div 
                 key={alert.id} 
                 className={cn(
-                  "p-3 rounded-sm border-l-4 bg-terminal-panel border border-terminal-border",
+                  "p-3 terminal-card border-l-4",
                   alert.type === "warning" ? "border-l-yellow-500" : 
-                  alert.type === "error" ? "border-l-red-500" : "border-l-blue-500"
+                  alert.type === "error" ? "border-l-terminal-negative" : "border-l-blue-500"
                 )}
               >
                 <div className="flex justify-between items-start mb-1">
                   <span className={cn(
                     "text-[10px] font-bold uppercase tracking-tight leading-none",
                     alert.type === "warning" ? "text-yellow-500" : 
-                    alert.type === "error" ? "text-red-500" : "text-blue-500"
+                    alert.type === "error" ? "text-terminal-negative" : "text-blue-500"
                   )}>{alert.title}</span>
-                  <span className="text-[8px] font-mono text-terminal-muted leading-none">{alert.timestamp}</span>
+                  <span className="text-[8px] font-mono terminal-text-muted leading-none">{alert.timestamp}</span>
                 </div>
-                <div className="text-[10px] text-white/90 font-medium leading-tight">
+                <div className="text-[10px] terminal-text-secondary font-medium leading-tight">
                   {alert.message}
                 </div>
               </div>
@@ -173,14 +168,14 @@ export function LeftSidebar() {
       <TerminalPanel title="KEY LEVELS">
         <div className="space-y-4">
           <div>
-            <div className="text-[9px] uppercase tracking-[0.2em] text-terminal-muted mb-2 font-bold">GAMMA MAGNETS</div>
+            <div className="terminal-text-label mb-2">GAMMA MAGNETS</div>
             <div className="flex space-x-2 font-mono text-xs">
               {levels?.gammaMagnets.map((m, i) => (
-                <span key={i} className="bg-terminal-panel border border-terminal-border px-2 py-1 rounded-sm text-white font-bold">
+                <span key={i} className="terminal-card px-2 py-1 terminal-text-primary font-bold">
                   {(m/1000).toFixed(0)}k
                 </span>
               ))}
-              {!levels && <span className="text-terminal-muted">--</span>}
+              {!levels && <span className="terminal-text-muted">--</span>}
             </div>
           </div>
           
@@ -191,9 +186,9 @@ export function LeftSidebar() {
             </div>
           </div>
 
-          <div className="p-2 bg-terminal-panel border border-terminal-border rounded-sm">
-            <div className="text-[9px] uppercase tracking-[0.2em] text-terminal-muted mb-1 font-bold">DEEP RISK POCKET</div>
-            <div className="font-mono text-xs text-white/80 font-bold">
+          <div className="p-2 terminal-card">
+            <div className="terminal-text-label mb-1 text-[9px]">DEEP RISK POCKET</div>
+            <div className="font-mono text-xs terminal-text-secondary font-bold">
               {levels ? `${levels.deepRiskPocketStart.toLocaleString()} – ${levels.deepRiskPocketEnd.toLocaleString()}` : "--"}
             </div>
           </div>

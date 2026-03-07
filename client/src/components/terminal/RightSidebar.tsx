@@ -458,7 +458,7 @@ OR dealer hedge flow accelerates
       <TerminalPanel title="FLOW EVENTS">
         <div className="space-y-4">
           {engineData.flowEvents.length === 0 ? (
-            <div className="text-[10px] text-terminal-muted italic py-2">No significant flow events detected</div>
+            <div className="text-[10px] terminal-text-muted italic py-2">No significant flow events detected</div>
           ) : (
             engineData.flowEvents.map((event, i) => (
               <div key={i} className="border-l-2 border-white/10 pl-3 space-y-1">
@@ -472,7 +472,7 @@ OR dealer hedge flow accelerates
                   </span>
                   <span className="text-[8px] font-mono opacity-50">{event.status}</span>
                 </div>
-                <div className="text-[9px] text-white/70 leading-tight">
+                <div className="text-[9px] terminal-text-secondary leading-tight">
                   {event.description}
                 </div>
                 <div className={cn(
@@ -495,8 +495,8 @@ OR dealer hedge flow accelerates
               key={scenario.id}
               onClick={() => handleScenarioClick(scenario)}
               className={cn(
-                "border cursor-pointer bg-terminal-panel rounded-sm overflow-hidden flex flex-col group transition-all",
-                selectedId === scenario.id ? "border-terminal-accent ring-1 ring-terminal-accent/30" : "border-terminal-border hover:border-white/20",
+                "terminal-card-interactive flex flex-col overflow-hidden",
+                selectedId === scenario.id && "terminal-card-selected",
               )}
             >
               <div className={cn(
@@ -512,42 +512,42 @@ OR dealer hedge flow accelerates
                     scenario.type === "ALT" ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" : 
                     "bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]"
                   )}></div>
-                  <span className="text-[10px] font-bold text-white/90 uppercase tracking-wider">{scenario.type} CASE</span>
+                  <span className="text-[10px] font-bold terminal-text-secondary uppercase tracking-wider">{scenario.type} CASE</span>
                 </div>
                 <span className={cn(
-                  "px-1.5 py-0.5 rounded-sm text-[9px] font-mono font-bold",
-                  scenario.type === "BASE" ? "bg-blue-500/20 text-blue-400" : 
-                  scenario.type === "ALT" ? "bg-green-500/20 text-green-400" : 
-                  "bg-orange-500/20 text-orange-400"
+                  "terminal-badge",
+                  scenario.type === "BASE" ? "terminal-badge-info" : 
+                  scenario.type === "ALT" ? "terminal-badge-success" : 
+                  "terminal-badge-warning"
                 )}>
                   {scenario.probability}% PROB
                 </span>
               </div>
               <div className="p-3 text-[11px] space-y-3">
-                <div className="font-bold text-white leading-tight">
+                <div className="font-bold terminal-text-primary leading-tight">
                   {scenario.thesis}
                 </div>
-                <div className="space-y-3 opacity-100">
+                <div className="space-y-3">
                   <div className="flex flex-col mt-1 mb-2">
-                    <span className="text-white/60 uppercase text-[9px] font-bold tracking-wider">Levels</span>
-                    <span className="text-xs font-mono font-bold text-white mt-1 block leading-normal">
+                    <span className="terminal-text-label text-[9px]">Levels</span>
+                    <span className="text-xs font-mono font-bold terminal-text-primary mt-1 block leading-normal">
                       {scenario.levels.map(formatLevel).join(" / ")}
                     </span>
                   </div>
                   
                   <div className="grid grid-cols-[75px_1fr] gap-2">
-                    <span className="text-white/60 uppercase text-[9px] font-bold">Confirm</span>
-                    <span className="text-white font-medium italic">{scenario.confirmation.join(", ")}</span>
+                    <span className="terminal-text-label text-[9px]">Confirm</span>
+                    <span className="terminal-text-secondary font-medium italic">{scenario.confirmation.join(", ")}</span>
                   </div>
                   <div className="grid grid-cols-[75px_1fr] gap-2">
-                    <span className="text-white/60 uppercase text-[9px] font-bold">Invalid</span>
+                    <span className="terminal-text-label text-[9px]">Invalid</span>
                     <span className="text-terminal-negative font-bold">{scenario.invalidation}</span>
                   </div>
                 </div>
               </div>
             </div>
           ))}
-          {!scenarios && <div className="text-xs text-terminal-muted p-4">Loading scenarios...</div>}
+          {!scenarios && <div className="text-xs terminal-text-muted p-4">Loading scenarios...</div>}
         </div>
       </TerminalPanel>
 
@@ -558,17 +558,17 @@ OR dealer hedge flow accelerates
           headerExtra={
             <button 
               onClick={() => setIsTradingPlanOpen(false)}
-              className="text-[9px] font-mono font-bold text-terminal-muted hover:text-white uppercase flex items-center"
+              className="text-[9px] font-mono font-bold terminal-text-muted hover:text-white uppercase flex items-center"
             >
               [ CLOSE ]
             </button>
           }
         >
           <div className="p-4 space-y-3">
-            <div className="text-white font-bold text-[11px] mb-2 uppercase border-b border-white/10 pb-1">
+            <div className="terminal-text-primary font-bold text-[11px] mb-2 uppercase border-b border-white/10 pb-1">
               TRADING PLAN ACTIVE
             </div>
-            <pre className="text-[10px] font-mono font-bold text-white/90 leading-relaxed whitespace-pre-wrap">
+            <pre className="text-[10px] font-mono font-bold terminal-text-secondary leading-relaxed whitespace-pre-wrap">
               {tradingPlan}
             </pre>
           </div>
@@ -581,7 +581,7 @@ OR dealer hedge flow accelerates
             <div key={i} className="flex items-center justify-between group cursor-pointer" onClick={() => toggleConfirmation(label)}>
               <span className={cn(
                 "text-[10px] uppercase font-bold tracking-wider transition-colors",
-                isActive ? "text-white" : "text-terminal-muted group-hover:text-white/60"
+                isActive ? "terminal-text-primary" : "terminal-text-muted group-hover:text-white/60"
               )}>
                 {label}
               </span>
@@ -604,7 +604,7 @@ OR dealer hedge flow accelerates
           <Button 
             onClick={generateTradingPlan}
             variant="outline" 
-            className="w-full justify-start text-[10px] font-bold uppercase tracking-[0.15em] h-10 bg-terminal-panel border-terminal-border text-terminal-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/10 transition-all rounded-sm no-default-hover-elevate"
+            className="w-full justify-start text-[10px] font-bold uppercase tracking-[0.15em] h-10 bg-terminal-panel border-terminal-border terminal-text-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/10 transition-all rounded-sm no-default-hover-elevate"
           >
             <span className="mr-3 opacity-50">█</span> {isTradingPlanOpen ? "Refresh Trading Plan" : "Generate Trading Plan"}
           </Button>
@@ -612,7 +612,7 @@ OR dealer hedge flow accelerates
             <Button 
               key={text}
               variant="outline" 
-              className="w-full justify-start text-[10px] font-bold uppercase tracking-[0.15em] h-10 bg-terminal-panel border-terminal-border text-terminal-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/10 transition-all rounded-sm no-default-hover-elevate"
+              className="w-full justify-start text-[10px] font-bold uppercase tracking-[0.15em] h-10 bg-terminal-panel border-terminal-border terminal-text-muted hover:border-terminal-accent hover:text-white hover:bg-terminal-accent/10 transition-all rounded-sm no-default-hover-elevate"
             >
               <span className="mr-3 opacity-50">█</span> {text}
             </Button>
