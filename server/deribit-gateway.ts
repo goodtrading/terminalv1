@@ -798,16 +798,22 @@ export class DeribitOptionsGateway {
         volExpansionState = "PRE_BREAKOUT";
       }
 
-      // 2. expansionDirection
+      // 2. expansionDirection — uses tradeBias, trapZones, shortGammaZones, liquidityPressure
       if (volExpansionState !== "COMPRESSING") {
         const trapBias = activeTrapContext?.misleadingDirection;
         const shortGammaBelow = shortGammaZones.some(z => spotPrice ? spotPrice > z.endStrike : false);
         const shortGammaAbove = shortGammaZones.some(z => spotPrice ? spotPrice < z.startStrike : false);
 
-        if (tradeBias === "LONG" || tradeBias === "MEAN_REVERSION" && totalVanna > 0) {
+        if (tradeBias === "LONG" || (tradeBias === "MEAN_REVERSION" && totalVanna > 0)) {
           expansionDirection = "UP";
         } else if (tradeBias === "SHORT") {
           expansionDirection = "DOWN";
+        }
+
+        if (liquidityPressure === "CASCADE_RISK" && expansionDirection === "NEUTRAL") {
+          expansionDirection = tradeBias === "SHORT" ? "DOWN" : (tradeBias === "LONG" ? "UP" : "DOWN");
+        } else if (liquidityPressure === "EXPANSION" && expansionDirection === "NEUTRAL") {
+          expansionDirection = totalVanna > 0 ? "UP" : "DOWN";
         }
 
         if (trapBias === "UP" && activeTrapContext && activeTrapContext.confidence > 70) {
@@ -823,40 +829,64 @@ export class DeribitOptionsGateway {
         }
       }
 
-      // 3. expansionProbability
-      let expProb = 0.3;
-      if (volExpansionState === "EXPANDING") expProb += 0.3;
-      else if (volExpansionState === "PRE_BREAKOUT") expProb += 0.15;
-      if (cascadeRisk === "HIGH") expProb += 0.2;
-      else if (cascadeRisk === "MEDIUM") expProb += 0.1;
-      if (hedgingStressScore > 0.6) expProb += 0.1;
-      if (hedgingSpeedScore > 0.5) expProb += 0.05;
-      if (pinningStrength > 0.7) expProb -= 0.2;
-      if (dealerRegime === "LONG_GAMMA") expProb -= 0.15;
+      // 3. expansionProbability — cascadeRisk, hedgingStressScore, proximity to shortGammaZones, regimeConfidence drop
+      let expProb = 0.2;
+      if (cascadeRisk === "HIGH") expProb += 0.25;
+      else if (cascadeRisk === "MEDIUM") expProb += 0.12;
+      expProb += hedgingStressScore * 0.25;
+      if (spotPrice && shortGammaZones.length > 0) {
+        const minDistToShort = Math.min(...shortGammaZones.map(z =>
+          Math.min(Math.abs(spotPrice - z.startStrike), Math.abs(spotPrice - z.endStrike))
+        ));
+        const proximityBoost = Math.max(0, 1 - minDistToShort / 3000) * 0.2;
+        expProb += proximityBoost;
+      }
+      if (regimeConfidence < 60) expProb += (60 - regimeConfidence) / 100 * 0.2;
+      if (volExpansionState === "EXPANDING") expProb += 0.15;
+      else if (volExpansionState === "PRE_BREAKOUT") expProb += 0.05;
+      if (pinningStrength > 0.7) expProb -= 0.15;
+      if (dealerRegime === "LONG_GAMMA" && cascadeRisk === "LOW") expProb -= 0.1;
       expansionProbability = Math.max(0, Math.min(1, expProb));
 
-      // 4 & 5. playbookShiftSuggested + suggestedPlaybook
-      if (volExpansionState === "EXPANDING" && strategyType !== "VOLATILITY_EXPANSION" && strategyType !== "MOMENTUM_BREAKOUT") {
-        playbookShiftSuggested = true;
+      // 4. playbookShiftSuggested — true when EXPANDING or probability > 0.65
+      playbookShiftSuggested = volExpansionState === "EXPANDING" || expansionProbability > 0.65;
+
+      // 5. suggestedPlaybook
+      if (volExpansionState === "EXPANDING") {
         suggestedPlaybook = cascadeRisk === "HIGH" ? "VOLATILITY_EXPANSION" : "MOMENTUM_BREAKOUT";
-      } else if (volExpansionState === "COMPRESSING" && strategyType !== "RANGE_SCALPING" && strategyType !== "FADE_EXTREMES") {
-        playbookShiftSuggested = true;
+      } else if (volExpansionState === "COMPRESSING") {
         suggestedPlaybook = pinningStrength > 0.7 ? "RANGE_SCALPING" : "FADE_EXTREMES";
-      } else if (volExpansionState === "PRE_BREAKOUT" && strategyType === "RANGE_SCALPING" && hedgingStressScore > 0.5) {
-        playbookShiftSuggested = true;
+      } else if (expansionProbability > 0.65) {
         suggestedPlaybook = "LIQUIDITY_SWEEP_REVERSAL";
       }
 
-      // 6. expansionTriggerZone
-      if (spotPrice && gammaFlip && volExpansionState !== "COMPRESSING") {
-        const nearestShortZone = shortGammaZones
-          .map(z => ({ ...z, dist: Math.min(Math.abs((spotPrice || 0) - z.startStrike), Math.abs((spotPrice || 0) - z.endStrike)) }))
-          .sort((a, b) => a.dist - b.dist)[0];
+      // 6. expansionTriggerZone — shortGammaZones, trapZones, gammaMagnets, gammaFlip proximity
+      if (spotPrice) {
+        const candidateZones: { start: number, end: number, dist: number }[] = [];
 
-        if (nearestShortZone) {
-          expansionTriggerZone = { start: nearestShortZone.startStrike, end: nearestShortZone.endStrike };
-        } else if (gammaFlip) {
-          expansionTriggerZone = { start: gammaFlip - 500, end: gammaFlip + 500 };
+        shortGammaZones.forEach(z => {
+          const dist = Math.min(Math.abs(spotPrice - z.startStrike), Math.abs(spotPrice - z.endStrike));
+          candidateZones.push({ start: z.startStrike, end: z.endStrike, dist });
+        });
+
+        trapZones.forEach((tz: any) => {
+          const dist = Math.min(Math.abs(spotPrice - tz.startPrice), Math.abs(spotPrice - tz.endPrice));
+          candidateZones.push({ start: tz.startPrice, end: tz.endPrice, dist });
+        });
+
+        gammaMagnets?.forEach(m => {
+          const dist = Math.abs(spotPrice - m);
+          candidateZones.push({ start: m - 500, end: m + 500, dist });
+        });
+
+        if (gammaFlip) {
+          const dist = Math.abs(spotPrice - gammaFlip);
+          candidateZones.push({ start: gammaFlip - 500, end: gammaFlip + 500, dist });
+        }
+
+        candidateZones.sort((a, b) => a.dist - b.dist);
+        if (candidateZones.length > 0) {
+          expansionTriggerZone = { start: candidateZones[0].start, end: candidateZones[0].end };
         }
       }
 

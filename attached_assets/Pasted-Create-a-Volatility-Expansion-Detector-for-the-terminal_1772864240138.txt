@@ -1,0 +1,112 @@
+Create a Volatility Expansion Detector for the terminal analytics system.
+
+Goal:
+Detect when the market is moving from compression (dealer stabilization) into volatility expansion conditions where trend or squeeze behavior becomes more likely.
+
+Use existing analytics already available in the terminal.
+
+Inputs available:
+- dealerRegime
+- gammaState
+- gammaFlip
+- gammaMagnets
+- shortGammaZones
+- trapZones
+- tradeBias
+- liquidityPressure
+- volatilityState
+- regimeConfidence
+- hedgingSpeedScore
+- hedgingStressScore
+- cascadeRisk
+- pinningStrength
+- spot price
+- currentPlaybook
+
+Compute the following outputs:
+
+1. volExpansionState
+
+Return one of:
+- "COMPRESSING"
+- "PRE_BREAKOUT"
+- "EXPANDING"
+
+Rules:
+- COMPRESSING when long gamma dominates, pinningStrength is high and cascadeRisk is low
+- PRE_BREAKOUT when the market is in transition or hedgingStressScore and liquidityPressure are rising
+- EXPANDING when short gamma conditions dominate or cascadeRisk becomes high
+
+2. expansionDirection
+
+Return:
+- "UP"
+- "DOWN"
+- "NEUTRAL"
+
+Use:
+- tradeBias
+- trapZones
+- shortGammaZones
+- liquidityPressure
+
+3. expansionProbability
+
+Return a number between 0 and 1 representing confidence of volatility expansion.
+
+Base this on:
+- cascadeRisk
+- hedgingStressScore
+- proximity to shortGammaZones
+- regimeConfidence drop
+
+4. playbookShiftSuggested
+
+Return:
+true | false
+
+True when volExpansionState == EXPANDING or expansionProbability > 0.65
+
+5. suggestedPlaybook
+
+Return one of the existing strategy types:
+
+- RANGE_SCALPING
+- FADE_EXTREMES
+- MOMENTUM_BREAKOUT
+- VOLATILITY_EXPANSION
+- LIQUIDITY_SWEEP_REVERSAL
+
+6. expansionTriggerZone
+
+Return:
+
+{ start: number, end: number } or null
+
+This should represent the price zone where volatility expansion is most likely to trigger.
+
+Use:
+- shortGammaZones
+- trapZones
+- gammaMagnets
+- gammaFlip proximity
+
+Integration:
+
+Add the following fields to the analytics pipeline and terminal state:
+
+- volExpansionState
+- expansionDirection
+- expansionProbability
+- playbookShiftSuggested
+- suggestedPlaybook
+- expansionTriggerZone
+
+Ensure these values are included in:
+
+/api/options/summary  
+/api/terminal/state
+
+Do not remove or change existing analytics.
+Do not redesign the UI yet.
+Only extend the analytics engine.
