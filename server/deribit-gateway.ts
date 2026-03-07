@@ -47,7 +47,11 @@ export const optionsSummarySchema = z.object({
   magnets: z.array(z.number()).nullable(),
   shortGammaPockets: z.array(z.object({ start: z.number(), end: z.number() })).nullable(),
   vannaBias: z.enum(["BULLISH", "BEARISH"]).nullable(),
-  charmBias: z.enum(["BULLISH", "BEARISH"]).nullable()
+  charmBias: z.enum(["BULLISH", "BEARISH"]).nullable(),
+  dealerGammaState: z.enum(["LONG_GAMMA", "SHORT_GAMMA"]).nullable(),
+  dealerHedgeDirection: z.string().nullable(),
+  volatilityRegime: z.enum(["HIGH_VOL", "LOW_VOL", "TRANSITION"]).nullable(),
+  dealerFlowScore: z.number().nullable()
 });
 
 export type NormalizedOption = z.infer<typeof normalizedOptionSchema>;
@@ -125,23 +129,27 @@ export class DeribitOptionsGateway {
     }
   }
 
-  static async getSummary(options: NormalizedOption[]): Promise<OptionsSummary> {
+  static async getSummary(options: NormalizedOption[], spotPrice?: number): Promise<OptionsSummary> {
     try {
       if (options.length === 0) {
         return {
           totalGex: null, gammaState: null, gammaFlip: null,
           callWall: null, putWall: null, magnets: null,
           shortGammaPockets: null, vannaBias: null, charmBias: null,
-          gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: []
+          gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
+          dealerGammaState: null, dealerHedgeDirection: null, volatilityRegime: null, dealerFlowScore: null
         };
       }
 
       let totalGex = 0, callWall = 0, putWall = 0, maxCallOi = 0, maxPutOi = 0;
+      let totalVanna = 0, totalCharm = 0;
       const strikeMap = new Map<number, { gex: number, oi: number }>();
 
       options.forEach(opt => {
         // Global GEX
         if (opt.gammaExposure) totalGex += opt.gammaExposure;
+        if (opt.vannaExposure) totalVanna += opt.vannaExposure;
+        if (opt.charmExposure) totalCharm += opt.charmExposure;
 
         // Strike aggregation
         const existing = strikeMap.get(opt.strike) || { gex: 0, oi: 0 };
@@ -181,7 +189,6 @@ export class DeribitOptionsGateway {
         const next = gammaCurve[i + 1];
         if ((current.cumulativeGamma <= 0 && next.cumulativeGamma > 0) || 
             (current.cumulativeGamma >= 0 && next.cumulativeGamma < 0)) {
-          // Simple linear interpolation for flip strike
           gammaFlip = current.strike + (next.strike - current.strike) * 
             (Math.abs(current.cumulativeGamma) / (Math.abs(current.cumulativeGamma) + Math.abs(next.cumulativeGamma)));
           break;
@@ -197,7 +204,7 @@ export class DeribitOptionsGateway {
 
       // 4. Short Gamma Pockets
       const shortGammaZones: { startStrike: number, endStrike: number }[] = [];
-      const threshold = -1000000; // Define a "strongly negative" threshold
+      const threshold = -1000000; 
       let currentZone: { startStrike: number, endStrike: number } | null = null;
 
       gammaByStrike.forEach(s => {
@@ -216,6 +223,29 @@ export class DeribitOptionsGateway {
       });
       if (currentZone) shortGammaZones.push(currentZone);
 
+      // --- Advanced Hedging Dynamics ---
+      const dealerGammaState = totalGex >= 0 ? "LONG_GAMMA" : "SHORT_GAMMA";
+      let dealerHedgeDirection = "NEUTRAL";
+      
+      if (spotPrice && gammaFlip) {
+        if (dealerGammaState === "SHORT_GAMMA") {
+          dealerHedgeDirection = spotPrice > gammaFlip ? "BUY TO HEDGE (Rising Price)" : "SELL TO HEDGE (Falling Price)";
+        } else {
+          dealerHedgeDirection = spotPrice > gammaFlip ? "SELL VOLATILITY (Rising Price)" : "BUY DIPS (Falling Price)";
+        }
+      }
+
+      let volatilityRegime: "HIGH_VOL" | "LOW_VOL" | "TRANSITION" = "TRANSITION";
+      if (dealerGammaState === "LONG_GAMMA") volatilityRegime = "LOW_VOL";
+      else if (dealerGammaState === "SHORT_GAMMA") volatilityRegime = "HIGH_VOL";
+
+      // Normalized dealer flow score (-1 to +1)
+      // Combining gamma, vanna, charm
+      const gexScore = Math.tanh(totalGex / 10000000); 
+      const vannaScore = Math.tanh(totalVanna / 5000000);
+      const charmScore = Math.tanh(totalCharm / 2000000);
+      const dealerFlowScore = (gexScore + vannaScore + charmScore) / 3;
+
       return {
         totalGex: totalGex || null,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -228,17 +258,22 @@ export class DeribitOptionsGateway {
         gammaFlip,
         gammaMagnets,
         shortGammaZones,
-        magnets: gammaMagnets, // Aliased for backward compatibility if needed
+        magnets: gammaMagnets, 
         shortGammaPockets: shortGammaZones.map(z => ({ start: z.startStrike, end: z.endStrike })),
-        vannaBias: null, 
-        charmBias: null
+        vannaBias: totalVanna >= 0 ? "BULLISH" : "BEARISH",
+        charmBias: totalCharm >= 0 ? "BULLISH" : "BEARISH",
+        dealerGammaState,
+        dealerHedgeDirection,
+        volatilityRegime,
+        dealerFlowScore
       };
     } catch (e) {
       return {
         totalGex: null, gammaState: null, gammaFlip: null,
         callWall: null, putWall: null, magnets: null,
         shortGammaPockets: null, vannaBias: null, charmBias: null,
-        gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: []
+        gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
+        dealerGammaState: null, dealerHedgeDirection: null, volatilityRegime: null, dealerFlowScore: null
       };
     }
   }

@@ -22,7 +22,8 @@ export async function registerRoutes(
   app.get("/api/options/summary", async (_req, res) => {
     try {
       const data = await DeribitOptionsGateway.ingestLatestCSV();
-      const summary = await DeribitOptionsGateway.getSummary(data);
+      const ticker = await MarketDataGateway.getCachedTicker();
+      const summary = await DeribitOptionsGateway.getSummary(data, ticker?.price);
       res.json(summary);
     } catch (e: any) {
       res.status(500).json({ error: "SUMMARY_FAILED", details: e.message });
