@@ -177,6 +177,13 @@ export const optionsSummarySchema = z.object({
     marketModeConfidence: z.number(),
     marketModeReason: z.array(z.string())
   }).optional(),
+  dealerHedgingFlowMap: z.object({
+    hedgingFlowDirection: z.enum(["BUYING", "SELLING", "NEUTRAL"]),
+    hedgingFlowStrength: z.enum(["LOW", "MEDIUM", "HIGH", "EXTREME"]),
+    hedgingAccelerationRisk: z.enum(["LOW", "MEDIUM", "HIGH"]),
+    hedgingTriggerZone: z.string(),
+    hedgingFlowSummary: z.array(z.string())
+  }).optional(),
   source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()
 });
 
@@ -512,6 +519,13 @@ export class DeribitOptionsGateway {
             marketMode: "FRAGILE_TRANSITION" as const,
             marketModeConfidence: 0,
             marketModeReason: ["Insufficient data", "Awaiting options ingestion"]
+          },
+          dealerHedgingFlowMap: {
+            hedgingFlowDirection: "NEUTRAL" as const,
+            hedgingFlowStrength: "LOW" as const,
+            hedgingAccelerationRisk: "LOW" as const,
+            hedgingTriggerZone: "Awaiting options data ingestion",
+            hedgingFlowSummary: ["Insufficient data", "Awaiting options ingestion"]
           },
           source: dataSource
         };
@@ -1716,6 +1730,117 @@ export class DeribitOptionsGateway {
 
       const marketModeEngine = { marketMode, marketModeConfidence, marketModeReason };
 
+      // ═══ ENGINE #19: Dealer Hedging Flow Map ═══
+      const dhfIsLongGamma = dealerGammaState === "LONG_GAMMA";
+      const dhfIsShortGamma = dealerGammaState === "SHORT_GAMMA";
+      const dhfSpot = spotPrice || 0;
+      const dhfDPivot = dealerPivot || 0;
+      const dhfExpDir = volatilityExpansionDetector?.expansionDirection || "NEUTRAL";
+      const dhfExpProb = volatilityExpansionDetector?.expansionProbability ?? 0.5;
+      const dhfCascade = liquidityCascadeEngine?.cascadeRisk || "LOW";
+      const dhfSqProb = squeezeProbabilityEngine?.squeezeProbability ?? 0;
+      const dhfDSens = gammaCurveEngine?.dealerSensitivity || "MEDIUM";
+      const dhfGSlope = gammaCurveEngine?.gammaSlope ?? 0;
+      const dhfInstBias = institutionalBiasEngine?.institutionalBias || "NEUTRAL_CHOP";
+      const dhfTDir = tradeDecisionEngine?.tradeDirection || "NEUTRAL";
+      const dhfPlaybook = tradingPlaybook?.currentPlaybook?.strategyType || "RANGE_SCALPING";
+      const dhfCW = callWall || 0;
+      const dhfPW = putWall || 0;
+      const dhfMagnets = gammaMagnets?.map((m: any) => typeof m === "number" ? m : m?.strike).filter(Boolean) || [];
+      const dhfCliffs = gammaCurveEngine?.gammaCliffs || [];
+
+      let hedgingFlowDirection: "BUYING" | "SELLING" | "NEUTRAL" = "NEUTRAL";
+      if (dhfIsLongGamma) {
+        if (dhfSpot < dhfDPivot) hedgingFlowDirection = "BUYING";
+        else if (dhfSpot > dhfDPivot) hedgingFlowDirection = "SELLING";
+        else hedgingFlowDirection = "NEUTRAL";
+      } else if (dhfIsShortGamma) {
+        if (dhfExpDir === "DOWN" || dhfTDir === "SHORT") hedgingFlowDirection = "SELLING";
+        else if (dhfExpDir === "UP" || dhfTDir === "LONG") hedgingFlowDirection = "BUYING";
+        else hedgingFlowDirection = "NEUTRAL";
+      }
+      if (dhfInstBias === "BULLISH_ACCUMULATION" && hedgingFlowDirection === "NEUTRAL") hedgingFlowDirection = "BUYING";
+      if (dhfInstBias === "BEARISH_DISTRIBUTION" && hedgingFlowDirection === "NEUTRAL") hedgingFlowDirection = "SELLING";
+
+      let dhfStrengthScore = 0;
+      if (dhfDSens === "HIGH") dhfStrengthScore += 2;
+      else if (dhfDSens === "MEDIUM") dhfStrengthScore += 1;
+      if (Math.abs(dhfGSlope) > 2000) dhfStrengthScore += 2;
+      else if (Math.abs(dhfGSlope) > 1000) dhfStrengthScore += 1;
+      if (dhfExpProb > 0.8) dhfStrengthScore += 2;
+      else if (dhfExpProb > 0.5) dhfStrengthScore += 1;
+      if (dhfCascade === "HIGH" || dhfCascade === "EXTREME") dhfStrengthScore += 2;
+      else if (dhfCascade === "MEDIUM") dhfStrengthScore += 1;
+      if (dhfSqProb > 60) dhfStrengthScore += 2;
+      else if (dhfSqProb > 30) dhfStrengthScore += 1;
+      let hedgingFlowStrength: "LOW" | "MEDIUM" | "HIGH" | "EXTREME" =
+        dhfStrengthScore >= 8 ? "EXTREME" : dhfStrengthScore >= 5 ? "HIGH" : dhfStrengthScore >= 3 ? "MEDIUM" : "LOW";
+
+      let hedgingAccelerationRisk: "LOW" | "MEDIUM" | "HIGH" = "LOW";
+      if (dhfIsShortGamma && (dhfDSens === "HIGH" || dhfCascade === "HIGH" || dhfCascade === "EXTREME" || dhfExpProb > 0.7)) {
+        hedgingAccelerationRisk = "HIGH";
+      } else if (dhfIsShortGamma || (dhfDSens === "HIGH" && dhfExpProb > 0.5)) {
+        hedgingAccelerationRisk = "MEDIUM";
+      } else if (dhfIsLongGamma) {
+        hedgingAccelerationRisk = "LOW";
+      }
+
+      let hedgingTriggerZone = "--";
+      if (dhfIsLongGamma) {
+        if (dhfSpot > dhfDPivot && dhfCW > 0) hedgingTriggerZone = `Near call wall at ${(dhfCW / 1000).toFixed(dhfCW % 1000 === 0 ? 0 : 1)}k`;
+        else if (dhfSpot < dhfDPivot && dhfPW > 0) hedgingTriggerZone = `Near put wall at ${(dhfPW / 1000).toFixed(dhfPW % 1000 === 0 ? 0 : 1)}k`;
+        else if (dhfDPivot > 0) hedgingTriggerZone = `Around dealer pivot at ${(dhfDPivot / 1000).toFixed(dhfDPivot % 1000 === 0 ? 0 : 1)}k`;
+      } else if (dhfIsShortGamma) {
+        const nearCliff = dhfCliffs
+          .filter((c: any) => c.strike)
+          .sort((a: any, b: any) => Math.abs(a.strike - dhfSpot) - Math.abs(b.strike - dhfSpot))[0];
+        if (nearCliff) {
+          const cliffDir = nearCliff.strike > dhfSpot ? "above" : "below";
+          hedgingTriggerZone = `Gamma cliff ${cliffDir} spot at ${(nearCliff.strike / 1000).toFixed(nearCliff.strike % 1000 === 0 ? 0 : 1)}k`;
+        } else if (dhfPW > 0 && hedgingFlowDirection === "SELLING") {
+          hedgingTriggerZone = `Loss of put wall support at ${(dhfPW / 1000).toFixed(dhfPW % 1000 === 0 ? 0 : 1)}k`;
+        } else if (dhfCW > 0 && hedgingFlowDirection === "BUYING") {
+          hedgingTriggerZone = `Break above call wall at ${(dhfCW / 1000).toFixed(dhfCW % 1000 === 0 ? 0 : 1)}k`;
+        } else {
+          hedgingTriggerZone = "Short gamma zone — all strikes active";
+        }
+      } else {
+        if (dhfDPivot > 0) hedgingTriggerZone = `Around dealer pivot at ${(dhfDPivot / 1000).toFixed(dhfDPivot % 1000 === 0 ? 0 : 1)}k`;
+      }
+
+      const hedgingFlowSummary: string[] = [];
+      if (dhfIsLongGamma) {
+        if (hedgingFlowDirection === "BUYING") {
+          hedgingFlowSummary.push("Dealers likely buy dips");
+          hedgingFlowSummary.push("Hedging flow may stabilize price");
+        } else if (hedgingFlowDirection === "SELLING") {
+          hedgingFlowSummary.push("Dealers likely sell rallies");
+          hedgingFlowSummary.push("Hedging flow caps upside");
+        } else {
+          hedgingFlowSummary.push("Dealers balanced near pivot");
+          hedgingFlowSummary.push("Hedging flow supports range-bound action");
+        }
+      } else if (dhfIsShortGamma) {
+        if (hedgingFlowDirection === "SELLING") {
+          hedgingFlowSummary.push("Dealers likely sell weakness");
+          hedgingFlowSummary.push("Hedging flow may accelerate downside");
+        } else if (hedgingFlowDirection === "BUYING") {
+          hedgingFlowSummary.push("Dealers likely chase upside");
+          hedgingFlowSummary.push("Hedging flow may accelerate rally");
+        } else {
+          hedgingFlowSummary.push("Dealers reactive in both directions");
+          hedgingFlowSummary.push("Short gamma amplifies any move");
+        }
+      } else {
+        hedgingFlowSummary.push("Dealer hedging direction unclear");
+        hedgingFlowSummary.push("Transitional regime — mixed flow signals");
+      }
+      if (hedgingAccelerationRisk === "HIGH") hedgingFlowSummary.push("Acceleration risk elevated");
+      else if (hedgingFlowStrength === "EXTREME") hedgingFlowSummary.push("Extreme hedging pressure detected");
+      if (hedgingFlowSummary.length > 4) hedgingFlowSummary.length = 4;
+
+      const dealerHedgingFlowMap = { hedgingFlowDirection, hedgingFlowStrength, hedgingAccelerationRisk, hedgingTriggerZone, hedgingFlowSummary };
+
       return {
         totalGex: totalGex || 0,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -1755,6 +1880,7 @@ export class DeribitOptionsGateway {
         liquidityCascadeEngine,
         squeezeProbabilityEngine,
         marketModeEngine,
+        dealerHedgingFlowMap,
         source: dataSource
       };
     } catch (e) {
@@ -1825,6 +1951,13 @@ export class DeribitOptionsGateway {
           marketMode: "FRAGILE_TRANSITION",
           marketModeConfidence: 0,
           marketModeReason: ["Analytics engine error", "Using fallback values"]
+        },
+        dealerHedgingFlowMap: {
+          hedgingFlowDirection: "NEUTRAL",
+          hedgingFlowStrength: "LOW",
+          hedgingAccelerationRisk: "LOW",
+          hedgingTriggerZone: "Analytics engine recovery required",
+          hedgingFlowSummary: ["Analytics engine error", "Using fallback values"]
         },
         source: dataSource
       } as any;

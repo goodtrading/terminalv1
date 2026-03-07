@@ -37,6 +37,7 @@ export async function getTerminalState(): Promise<TerminalState> {
   let liveLiquidityCascade = null;
   let liveSqueezeProbability = null;
   let liveMarketMode = null;
+  let liveDealerHedgingFlowMap = null;
   let liveHeatmap = null;
   let optionsSource: string | null = null;
   try {
@@ -51,6 +52,7 @@ export async function getTerminalState(): Promise<TerminalState> {
     liveLiquidityCascade = summary.liquidityCascadeEngine || null;
     liveSqueezeProbability = summary.squeezeProbabilityEngine || null;
     liveMarketMode = summary.marketModeEngine || null;
+    liveDealerHedgingFlowMap = summary.dealerHedgingFlowMap || null;
     optionsSource = summary.source || source;
 
     if (cachedTicker?.price) {
@@ -71,7 +73,7 @@ export async function getTerminalState(): Promise<TerminalState> {
     console.error("[TerminalState] Options injection failed:", e);
   }
 
-  const enrichedPositioning = positioning ? { ...positioning, tradingPlaybook: livePlaybook, volatilityExpansionDetector: liveVolExpansion, gammaCurveEngine: liveGammaCurve, institutionalBiasEngine: liveInstitutionalBias, tradeDecisionEngine: liveTradeDecision, liquidityCascadeEngine: liveLiquidityCascade, squeezeProbabilityEngine: liveSqueezeProbability, marketModeEngine: liveMarketMode, liquidityHeatmap: liveHeatmap, optionsSource } : positioning;
+  const enrichedPositioning = positioning ? { ...positioning, tradingPlaybook: livePlaybook, volatilityExpansionDetector: liveVolExpansion, gammaCurveEngine: liveGammaCurve, institutionalBiasEngine: liveInstitutionalBias, tradeDecisionEngine: liveTradeDecision, liquidityCascadeEngine: liveLiquidityCascade, squeezeProbabilityEngine: liveSqueezeProbability, marketModeEngine: liveMarketMode, dealerHedgingFlowMap: liveDealerHedgingFlowMap, liquidityHeatmap: liveHeatmap, optionsSource } : positioning;
 
   // Read from in-memory cache ONLY (deterministic latency, no side effects)
   const ticker = MarketDataGateway.getCachedTicker();

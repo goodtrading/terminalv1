@@ -1,0 +1,115 @@
+Create a Dealer Hedging Flow Map engine for the terminal analytics system.
+
+Goal:
+Estimate when dealer hedging is likely to force buying or selling in BTC, and whether that hedging flow may stabilize or accelerate price movement.
+
+Use existing analytics already available in the system.
+
+Inputs available:
+- gammaRegime
+- gammaRegimeBand
+- totalGex
+- gammaFlip
+- gammaSlope
+- dealerSensitivity
+- volExpansionState
+- expansionDirection
+- expansionProbability
+- cascadeRisk
+- squeezeProbability
+- institutionalBias
+- tradeDirection
+- currentPlaybook
+- spot price
+- dealerPivot
+- gammaMagnets
+- gammaCliffs
+- callWall
+- putWall
+
+Compute the following outputs:
+
+1. hedgingFlowDirection
+
+Return one of:
+- BUYING
+- SELLING
+- NEUTRAL
+
+Rules:
+- In long gamma, dealers tend to buy dips and sell rallies
+- In short gamma, dealers tend to amplify the move
+- Use expansionDirection and spot position relative to key levels
+
+2. hedgingFlowStrength
+
+Return one of:
+- LOW
+- MEDIUM
+- HIGH
+- EXTREME
+
+Base this on:
+- dealerSensitivity
+- gammaSlope
+- expansionProbability
+- cascadeRisk
+- squeezeProbability
+
+3. hedgingAccelerationRisk
+
+Return one of:
+- LOW
+- MEDIUM
+- HIGH
+
+Rules:
+- HIGH when short gamma + elevated dealer sensitivity + expansion/cascade conditions dominate
+- LOW when long gamma stabilization dominates
+
+4. hedgingTriggerZone
+
+Return a short description of the key zone where dealer hedging flow may become more active.
+
+Examples:
+- "Below dealer pivot"
+- "Above gamma magnet"
+- "Loss of put wall support"
+- "Break above call wall"
+
+Use nearest relevant structural level.
+
+5. hedgingFlowSummary
+
+Return 2–4 short readable strings for users.
+
+Examples:
+[
+  "Dealers likely buy dips",
+  "Hedging flow may stabilize price"
+]
+
+or
+
+[
+  "Dealers likely sell weakness",
+  "Hedging flow may accelerate downside"
+]
+
+Integration:
+
+Add these fields to:
+
+/api/options/summary
+/api/terminal/state
+
+Fields to add:
+- hedgingFlowDirection
+- hedgingFlowStrength
+- hedgingAccelerationRisk
+- hedgingTriggerZone
+- hedgingFlowSummary
+
+Do not remove or modify existing analytics.
+Do not redesign the UI yet.
+Only extend the analytics pipeline.
