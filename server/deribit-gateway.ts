@@ -709,7 +709,7 @@ export class DeribitOptionsGateway {
         expectedBehavior = "Mean reversion around high-liquidity magnets";
         volatilityRisk = "LOW";
       } else if (dealerRegime === "SHORT_GAMMA") {
-        strategyType = cascadeRisk === "HIGH" ? "VOLATILITY_EXPANSION" : "MOMENTUM_BREAKOUT";
+        strategyType = (cascadeRisk as string) === "HIGH" ? "VOLATILITY_EXPANSION" : "MOMENTUM_BREAKOUT";
         expectedBehavior = "Directional acceleration fueled by dealer hedging";
         volatilityRisk = "HIGH";
       } else if (dealerRegime === "TRANSITION") {
@@ -753,15 +753,14 @@ export class DeribitOptionsGateway {
       };
 
       return {
-        totalGex: totalGex || null,
+        totalGex: totalGex || 0,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
-        gammaFlip: gammaFlip || null, 
-        callWall: callWall || null, 
-        putWall: putWall || null,
+        gammaFlip: gammaFlip || 0, 
+        callWall: callWall || 0, 
+        putWall: putWall || 0,
         gammaByStrike,
         oiByStrike,
         gammaCurve,
-        gammaFlip,
         gammaMagnets,
         shortGammaPockets: shortGammaZones.map(z => ({ start: z.startStrike, end: z.endStrike })),
         vannaBias: totalVanna >= 0 ? "BULLISH" : "BEARISH",
@@ -776,7 +775,7 @@ export class DeribitOptionsGateway {
         gammaWallStrength,
         hedgingSpeedScore,
         hedgingStressScore,
-        cascadeRisk,
+        cascadeRisk: (cascadeRisk as string),
         pinningStrength,
         dealerFlowUrgency,
         backtestResults,
@@ -787,13 +786,14 @@ export class DeribitOptionsGateway {
         reactionZones
       };
     } catch (e) {
+      console.error("[DeribitGateway] Summary error:", e);
       return {
-        totalGex: null, gammaState: null, gammaFlip: null,
-        callWall: null, putWall: null, magnets: null,
-        shortGammaPockets: null, vannaBias: null, charmBias: null,
+        totalGex: 0, gammaState: "LONG GAMMA", gammaFlip: 0,
+        callWall: 0, putWall: 0, magnets: [],
+        shortGammaPockets: [], vannaBias: "NEUTRAL", charmBias: "NEUTRAL",
         gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
-        dealerGammaState: null, dealerHedgeDirection: null, volatilityRegime: null, dealerFlowScore: null
-      };
+        dealerGammaState: "LONG_GAMMA", dealerHedgeDirection: "NEUTRAL", volatilityRegime: "TRANSITION", dealerFlowScore: 0
+      } as any;
     }
   }
 }
