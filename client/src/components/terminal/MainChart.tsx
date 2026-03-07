@@ -58,7 +58,7 @@ export function MainChart() {
     if (filteredPoints.length > 0) {
       const min = Math.min(...filteredPoints);
       const max = Math.max(...filteredPoints);
-      const margin = (max - min) * 0.1 || currentPrice * 0.01;
+      const margin = (max - min) * 0.3 || currentPrice * 0.02; // Increased margin
       const newRange = { from: min - margin, to: max + margin };
       setManualPriceRange(newRange);
       chartRef.current.priceScale("right").applyOptions({ autoScale: false });
@@ -105,7 +105,7 @@ export function MainChart() {
     if (prices.length > 0) {
       const min = Math.min(...prices);
       const max = Math.max(...prices);
-      const margin = (max - min) * 0.2 || prices[0] * 0.02;
+      const margin = (max - min) * 0.4 || prices[0] * 0.03; // Increased margin for scenarios
       setManualPriceRange({ from: min - margin, to: max + margin });
     }
   }, [selectedScenario]);
@@ -180,8 +180,8 @@ export function MainChart() {
           fontFamily: "JetBrains Mono, monospace",
         },
         grid: {
-          vertLines: { color: "#111111" },
-          horzLines: { color: "#111111" },
+          vertLines: { color: "#0a0a0a" }, // Subtler grid lines
+          horzLines: { color: "#0a0a0a" },
         },
         width: chartContainerRef.current.clientWidth || 800,
         height: chartContainerRef.current.clientHeight || 500,
@@ -189,29 +189,29 @@ export function MainChart() {
           borderColor: "#1a1a1a",
           timeVisible: true,
           secondsVisible: false,
-          barSpacing: 8,
-          rightOffset: 12,
+          barSpacing: 12, // Improved candle spacing
+          rightOffset: 15,
         },
         rightPriceScale: {
           visible: true,
           autoScale: true,
           borderColor: "#1a1a1a",
           scaleMargins: {
-            top: 0.1,
-            bottom: 0.2,
+            top: 0.2, // More top margin
+            bottom: 0.25, // More bottom margin
           },
           minimumWidth: 100,
         },
         crosshair: {
           mode: 0,
           vertLine: {
-            color: "#444",
+            color: "#333", // Subtler crosshair
             width: 1,
             style: LineStyle.Solid,
             labelBackgroundColor: "#000",
           },
           horzLine: {
-            color: "#444",
+            color: "#333",
             width: 1,
             style: LineStyle.Solid,
             labelBackgroundColor: "#000",
@@ -244,7 +244,7 @@ export function MainChart() {
       });
 
       const volumeSeries = chart.addSeries(HistogramSeries, {
-        color: 'rgba(38, 166, 154, 0.3)',
+        color: 'rgba(38, 166, 154, 0.2)', // More subtle volume
         priceFormat: {
           type: 'volume',
         },
@@ -253,7 +253,7 @@ export function MainChart() {
 
       volumeSeries.priceScale().applyOptions({
         scaleMargins: {
-          top: 0.85,
+          top: 0.88, // Even lower volume bars
           bottom: 0,
         },
       });
@@ -311,6 +311,7 @@ export function MainChart() {
           chartRef.current.priceScale("right").applyOptions({ autoScale: true });
           chartRef.current.timeScale().fitContent();
           setIsInitialLoad(false);
+          // Small delay to let it settle then disable autoScale if needed
           setTimeout(() => {
             if (chartRef.current) {
               chartRef.current.priceScale("right").applyOptions({ autoScale: false });
@@ -330,7 +331,7 @@ export function MainChart() {
           livePriceLineRef.current = candleSeriesRef.current.createPriceLine({
             price: lastCandle.close,
             color: color,
-            lineWidth: 2,
+            lineWidth: 1, // Cleaner live price line
             lineStyle: LineStyle.Solid,
             axisLabelVisible: true,
             title: "",
@@ -345,7 +346,7 @@ export function MainChart() {
             return {
               time: c.time,
               value: Math.abs(pressure),
-              color: pressure >= 0 ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)',
+              color: pressure >= 0 ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
             };
           });
           volumeSeriesRef.current.setData(pressureData);
@@ -415,19 +416,19 @@ export function MainChart() {
 
     try {
       if (toggles.flip && market?.gammaFlip) {
-        addLevel(market.gammaFlip, "#eab308", "FLIP", LineStyle.Solid, 2);
+        addLevel(market.gammaFlip, "rgba(234, 179, 8, 0.6)", "FLIP", LineStyle.Solid, 1);
       }
 
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
-        addZone(market.transitionZoneStart, market.transitionZoneEnd, "rgba(255, 255, 255, 0.05)", "TRANSITION");
+        addZone(market.transitionZoneStart, market.transitionZoneEnd, "rgba(255, 255, 255, 0.03)", "TRANSITION");
       }
 
       if (toggles.walls) {
         if (positioning?.callWall) {
-          addLevel(positioning.callWall, "#ef4444", "CALL WALL", LineStyle.Solid, 2);
+          addLevel(positioning.callWall, "rgba(239, 68, 68, 0.6)", "CALL WALL", LineStyle.Solid, 1);
         }
         if (positioning?.putWall) {
-          addLevel(positioning.putWall, "#22c55e", "PUT WALL", LineStyle.Solid, 2);
+          addLevel(positioning.putWall, "rgba(34, 197, 94, 0.6)", "PUT WALL", LineStyle.Solid, 1);
         }
       }
 
@@ -444,35 +445,35 @@ export function MainChart() {
 
         grouped.forEach((group) => {
           const avg = group.reduce((a, b) => a + b, 0) / group.length;
-          addLevel(avg, "rgba(59, 130, 246, 0.3)", group.length > 1 ? `MAGNETS (${group.length})` : "MAGNET", LineStyle.Solid, 1);
+          addLevel(avg, "rgba(59, 130, 246, 0.2)", group.length > 1 ? `MAGNETS (${group.length})` : "MAGNET", LineStyle.Solid, 1);
         });
       }
 
       if (toggles.pockets && levels) {
         if (levels.shortGammaPocketStart && levels.shortGammaPocketEnd) {
-          addZone(levels.shortGammaPocketStart, levels.shortGammaPocketEnd, "rgba(249, 115, 22, 0.08)", "SHORT GAMMA POCKET");
+          addZone(levels.shortGammaPocketStart, levels.shortGammaPocketEnd, "rgba(249, 115, 22, 0.05)", "SHORT GAMMA POCKET");
         }
         if (levels.deepRiskPocketStart && levels.deepRiskPocketEnd) {
-          addZone(levels.deepRiskPocketStart, levels.deepRiskPocketEnd, "rgba(168, 85, 247, 0.08)", "DEEP RISK POCKET");
+          addZone(levels.deepRiskPocketStart, levels.deepRiskPocketEnd, "rgba(168, 85, 247, 0.05)", "DEEP RISK POCKET");
         }
       }
 
       if (toggles.dealer && positioning?.dealerPivot) {
-        addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.5)", "DEALER PIVOT", LineStyle.Solid, 2);
+        addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.3)", "DEALER PIVOT", LineStyle.Solid, 1);
       }
 
       if (toggles.hedgeMap && market && positioning) {
         const pivot = positioning.dealerPivot || currentPrice;
         if (market.gammaRegime === "LONG GAMMA") {
           const absorptionWidth = currentPrice * 0.015; 
-          addZone(pivot - absorptionWidth, pivot + absorptionWidth, "rgba(59, 130, 246, 0.12)", "ABSORPTION");
+          addZone(pivot - absorptionWidth, pivot + absorptionWidth, "rgba(59, 130, 246, 0.08)", "ABSORPTION");
         }
         if (market.gammaFlip) {
-          addLevel(market.gammaFlip, "#fbbf24", "EXPANSION", LineStyle.Solid, 1);
+          addLevel(market.gammaFlip, "rgba(251, 191, 36, 0.4)", "EXPANSION", LineStyle.Solid, 1);
         }
         if (market.transitionZoneStart && market.transitionZoneEnd) {
           const shiftPadding = currentPrice * 0.002; 
-          addZone(market.transitionZoneStart - shiftPadding, market.transitionZoneEnd + shiftPadding, "rgba(255, 255, 255, 0.22)", "HEDGE SHIFT");
+          addZone(market.transitionZoneStart - shiftPadding, market.transitionZoneEnd + shiftPadding, "rgba(255, 255, 255, 0.15)", "HEDGE SHIFT");
         }
       }
     } catch (err) {
@@ -486,9 +487,9 @@ export function MainChart() {
     : "0.00";
 
   const regimeColor = market?.gammaRegime === 'LONG GAMMA' 
-    ? 'rgba(30, 58, 138, 0.05)' 
+    ? 'rgba(30, 58, 138, 0.03)' 
     : market?.gammaRegime === 'SHORT GAMMA' 
-      ? 'rgba(127, 29, 29, 0.05)' 
+      ? 'rgba(127, 29, 29, 0.03)' 
       : 'transparent';
 
   return (
