@@ -1,0 +1,89 @@
+Implement Scenario → Chart Overlay interaction.
+
+IMPORTANT:
+Do NOT modify backend.
+Use the existing /api/scenarios response.
+Do NOT remove existing structural overlays from the chart.
+
+====================================================
+GOAL
+====================================================
+
+When the user clicks a scenario card in the right sidebar:
+
+1. the card becomes selected/highlighted
+2. that scenario's levels are drawn on the chart
+3. the chart keeps all existing structural overlays
+4. scenario lines are added as a secondary overlay layer
+
+====================================================
+SCENARIO COLORS
+====================================================
+
+Use these colors:
+
+- BASE → blue
+- ALT → green
+- VOL → orange
+
+====================================================
+LEVEL OVERLAY BEHAVIOR
+====================================================
+
+For the selected scenario:
+
+- render each level as a horizontal line
+- add a label on the right side:
+  BASE 67k
+  ALT 71000
+  VOL 55000
+
+If levels are strings like:
+["67k","69k","68k"]
+
+convert them safely to numeric values:
+67k → 67000
+69k → 69000
+68k → 68000
+
+If levels are already numeric, use them directly.
+
+====================================================
+UI INTERACTION
+====================================================
+
+1. Clicking a scenario card toggles it active
+2. Active card gets a visible highlight/border
+3. Only one scenario can be active at a time
+4. Clicking the active scenario again may deselect it (optional)
+
+====================================================
+CHART BEHAVIOR
+====================================================
+
+- Do not remove existing overlays
+- Scenario levels are additional temporary overlays
+- If possible, lightly center/focus the chart around scenario levels
+- Keep RESET and FIT LEVELS working
+
+====================================================
+STYLING
+====================================================
+
+Maintain terminal style:
+- clean
+- minimal
+- institutional
+- no clutter
+
+Scenario overlay lines should be thinner/lighter than major structural lines.
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+- scenario card is clickable
+- selected scenario is visually highlighted
+- selected scenario levels appear on chart
+- colors match scenario type
+- existing chart structure remains intact

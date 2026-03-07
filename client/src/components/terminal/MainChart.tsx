@@ -75,20 +75,32 @@ export function MainChart() {
                   selectedScenario.type === "ALT" ? "#22c55e" : "#f97316";
 
     selectedScenario.levels.forEach((levelStr) => {
-      const price = parseFloat(levelStr);
+      // Helper to convert "67k" -> 67000, "71,000" -> 71000, etc.
+      const parseLevel = (val: string): number => {
+        const clean = val.toLowerCase().replace(/,/g, '').trim();
+        if (clean.endsWith('k')) {
+          return parseFloat(clean.slice(0, -1)) * 1000;
+        }
+        return parseFloat(clean);
+      };
+
+      const price = parseLevel(levelStr);
       if (isNaN(price)) return;
       const line = candleSeriesRef.current.createPriceLine({
         price,
         color,
-        lineWidth: 2,
+        lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `${selectedScenario.type} LVL`,
+        title: `${selectedScenario.type} ${levelStr}`,
       });
       scenarioLevelsRef.current.push(line);
     });
 
-    const prices = selectedScenario.levels.map(l => parseFloat(l)).filter(p => !isNaN(p));
+    const prices = selectedScenario.levels.map(l => {
+      const clean = l.toLowerCase().replace(/,/g, '').trim();
+      return clean.endsWith('k') ? parseFloat(clean.slice(0, -1)) * 1000 : parseFloat(clean);
+    }).filter(p => !isNaN(p));
     if (prices.length > 0) {
       const min = Math.min(...prices);
       const max = Math.max(...prices);
