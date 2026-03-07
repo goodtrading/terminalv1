@@ -1,0 +1,85 @@
+Add a manual Scale Control System to the chart so the user can control vertical price navigation without relying on dragging the right price axis.
+
+IMPORTANT:
+Do NOT modify backend.
+Do NOT remove overlays.
+Do NOT change the chart library.
+Keep the chart in free navigation mode.
+
+====================================================
+GOAL
+====================================================
+
+Since direct right-axis drag scaling is unreliable in this environment, add explicit chart scale controls near the existing top-right controls.
+
+Add these buttons:
+
+- RESET
+- FIT LEVELS
+- ZOOM +
+- ZOOM -
+- PAN UP
+- PAN DOWN
+
+====================================================
+FUNCTIONALITY
+====================================================
+
+1. RESET
+Restore a sensible default chart scale around the visible candles.
+
+2. FIT LEVELS
+Adjust the visible vertical range to include key structural levels:
+- gammaFlip
+- transitionZoneStart
+- transitionZoneEnd
+- dealerPivot
+- callWall
+- putWall
+- gammaMagnets
+- shortGammaPocketStart
+- shortGammaPocketEnd
+- deepRiskPocketStart
+- deepRiskPocketEnd
+
+3. ZOOM +
+Tighten the current visible vertical range by a reasonable percentage.
+
+4. ZOOM -
+Expand the current visible vertical range by a reasonable percentage.
+
+5. PAN UP
+Shift the current visible vertical range upward.
+
+6. PAN DOWN
+Shift the current visible vertical range downward.
+
+====================================================
+IMPLEMENTATION NOTES
+====================================================
+
+Use the existing chartRef and price scale APIs.
+
+If Lightweight Charts does not expose direct price-range controls cleanly, implement this by tracking a custom visible price range state and applying it safely.
+
+Keep interactions smooth and simple.
+Do not re-enable constant autoscale.
+
+====================================================
+UI
+====================================================
+
+Place the buttons alongside the existing top-right chart controls.
+Keep styling minimal and consistent with the terminal look.
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+The user can manually:
+- reset scale
+- fit structural levels
+- zoom in/out vertically
+- pan up/down vertically
+
+without relying on dragging the right price axis.

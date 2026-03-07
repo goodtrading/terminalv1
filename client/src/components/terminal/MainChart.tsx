@@ -29,6 +29,61 @@ export function MainChart() {
     setIsInitialLoad(true);
   };
 
+  const fitLevels = () => {
+    if (!chartRef.current || !candles || candles.length === 0) return;
+    const currentPrice = candles[candles.length - 1].close;
+    const threshold = currentPrice * 0.15;
+    const points: number[] = [currentPrice];
+
+    if (market?.gammaFlip) points.push(market.gammaFlip);
+    if (market?.transitionZoneStart) points.push(market.transitionZoneStart);
+    if (market?.transitionZoneEnd) points.push(market.transitionZoneEnd);
+    if (positioning?.callWall) points.push(positioning.callWall);
+    if (positioning?.putWall) points.push(positioning.putWall);
+    if (positioning?.dealerPivot) points.push(positioning.dealerPivot);
+    if (levels?.gammaMagnets) points.push(...levels.gammaMagnets);
+    if (levels?.shortGammaPocketStart) points.push(levels.shortGammaPocketStart);
+    if (levels?.shortGammaPocketEnd) points.push(levels.shortGammaPocketEnd);
+    if (levels?.deepRiskPocketStart) points.push(levels.deepRiskPocketStart);
+    if (levels?.deepRiskPocketEnd) points.push(levels.deepRiskPocketEnd);
+
+    const filteredPoints = points.filter(p => Math.abs(p - currentPrice) <= threshold);
+    if (filteredPoints.length > 0) {
+      const min = Math.min(...filteredPoints);
+      const max = Math.max(...filteredPoints);
+      const margin = (max - min) * 0.1 || currentPrice * 0.01;
+      chartRef.current.priceScale("right").setVisibleRange({
+        from: min - margin,
+        to: max + margin
+      });
+    }
+  };
+
+  const zoomVertical = (factor: number) => {
+    if (!chartRef.current) return;
+    const scale = chartRef.current.priceScale("right");
+    const range = scale.getVisiblePriceRange();
+    if (!range) return;
+    const center = (range.from + range.to) / 2;
+    const halfHeight = ((range.to - range.from) / 2) * factor;
+    scale.setVisibleRange({
+      from: center - halfHeight,
+      to: center + halfHeight
+    });
+  };
+
+  const panVertical = (direction: number) => {
+    if (!chartRef.current) return;
+    const scale = chartRef.current.priceScale("right");
+    const range = scale.getVisiblePriceRange();
+    if (!range) return;
+    const shift = (range.to - range.from) * 0.1 * direction;
+    scale.setVisibleRange({
+      from: range.from + shift,
+      to: range.to + shift
+    });
+  };
+
 
   const { data: positioning } = useQuery<OptionsPositioning>({ 
     queryKey: ["/api/options-positioning"],
@@ -415,14 +470,14 @@ export function MainChart() {
                   {tf}
                 </button>
               ))}
+              <button onClick={() => panVertical(1)} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white">PAN UP</button>
+              <button onClick={() => panVertical(-1)} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white">PAN DN</button>
+              <button onClick={() => zoomVertical(0.8)} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white text-terminal-positive">ZOOM +</button>
+              <button onClick={() => zoomVertical(1.2)} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white text-terminal-negative">ZOOM -</button>
+              <button onClick={fitLevels} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/10 border-terminal-accent/30 text-terminal-accent hover:bg-terminal-accent/20">FIT LEVELS</button>
+              <button onClick={resetScale} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/20 border-terminal-accent text-white hover:bg-terminal-accent/40">RESET</button>
             </div>
-            <div className="flex flex-wrap justify-end gap-1 max-w-[200px]">
-              <button 
-                onClick={resetScale}
-                className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/20 border-terminal-accent text-white hover:bg-terminal-accent/40"
-              >
-                Reset Scale
-              </button>
+            <div className="flex space-x-1">
               {Object.entries(toggles).map(([key, val]) => (
                 <button 
                   key={key} 
