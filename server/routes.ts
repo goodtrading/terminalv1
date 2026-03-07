@@ -45,10 +45,13 @@ export async function registerRoutes(
       const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
       const response = await fetch(url);
       
+      // IF BINANCE IS BLOCKED (451), WE DO NOT USE MOCK DATA.
+      // WE RETURN THE ERROR TO THE FRONTEND TO SHOW "MARKET DATA OFFLINE".
       if (!response.ok) {
+        console.error(`Binance API returned ${response.status} for ${url}`);
         return res.status(response.status).json({ 
           error: "FAILED_TO_FETCH_BINANCE", 
-          details: `Binance API returned ${response.status}` 
+          details: `Binance API returned ${response.status}. The environment may be restricted.` 
         });
       }
       
