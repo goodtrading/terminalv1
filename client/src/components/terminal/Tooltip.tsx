@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { cn } from "@/lib/utils";
+import { useLearnMode } from "@/hooks/useLearnMode";
 
 const TOOLTIPS: Record<string, { title: string; text: string }> = {
   "Gamma Regime": {
@@ -72,14 +73,13 @@ interface TooltipWrapperProps {
 
 export function TooltipWrapper({ concept, children, className }: TooltipWrapperProps) {
   const [show, setShow] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const { learnMode } = useLearnMode();
   const tip = TOOLTIPS[concept];
 
-  if (!tip) return <>{children}</>;
+  if (!tip || !learnMode) return <>{children}</>;
 
   return (
     <div
-      ref={ref}
       className={cn("relative inline-flex", className)}
       onMouseEnter={() => setShow(true)}
       onMouseLeave={() => setShow(false)}
@@ -95,5 +95,13 @@ export function TooltipWrapper({ concept, children, className }: TooltipWrapperP
         </div>
       )}
     </div>
+  );
+}
+
+export function LearnHelper({ text }: { text: string }) {
+  const { learnMode } = useLearnMode();
+  if (!learnMode) return null;
+  return (
+    <div className="text-[9px] text-white/30 italic leading-relaxed mt-1 pl-0.5">{text}</div>
   );
 }

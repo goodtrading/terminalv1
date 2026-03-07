@@ -1,7 +1,8 @@
 import { cn } from "@/lib/utils";
 import { useTerminalState } from "@/hooks/useTerminalState";
 import { useMemo } from "react";
-import { TooltipWrapper } from "./Tooltip";
+import { TooltipWrapper, LearnHelper } from "./Tooltip";
+import { useLearnMode } from "@/hooks/useLearnMode";
 
 type Structure = "RANGE CONTROL" | "TRANSITION" | "VOLATILITY EXPANSION" | "SQUEEZE RISK";
 type VolLevel = "LOW VOL" | "MEDIUM VOL" | "HIGH VOL";
@@ -97,13 +98,29 @@ export function MarketStructureBar() {
   const vColor = volColors[vol];
   const dColor = dealerColors[dealer];
 
+  const { learnMode } = useLearnMode();
+
+  const structureHelper: Record<string, string> = {
+    "SQUEEZE RISK": "Fast directional move possible.",
+    "VOLATILITY EXPANSION": "Market is expanding — larger moves expected.",
+    "TRANSITION": "Market is shifting between regimes.",
+    "RANGE CONTROL": "Price is more likely to stay contained.",
+  };
+
   return (
-    <div className="flex items-center gap-2 px-2 py-1.5 bg-terminal-panel border-b border-terminal-border shrink-0" data-testid="bar-market-structure">
-      <Pill label="Structure" value={structure} colorClass={sColor} />
-      <div className="w-px h-4 bg-white/[0.06]" />
-      <Pill label="Volatility" value={vol} colorClass={vColor} />
-      <div className="w-px h-4 bg-white/[0.06]" />
-      <Pill label="Dealers" value={dealer} colorClass={dColor} />
+    <div className="flex flex-col bg-terminal-panel border-b border-terminal-border shrink-0" data-testid="bar-market-structure">
+      <div className="flex items-center gap-2 px-2 py-1.5">
+        <Pill label="Structure" value={structure} colorClass={sColor} />
+        <div className="w-px h-4 bg-white/[0.06]" />
+        <Pill label="Volatility" value={vol} colorClass={vColor} />
+        <div className="w-px h-4 bg-white/[0.06]" />
+        <Pill label="Dealers" value={dealer} colorClass={dColor} />
+      </div>
+      {learnMode && structureHelper[structure] && (
+        <div className="px-3 pb-1.5">
+          <LearnHelper text={structureHelper[structure]} />
+        </div>
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { TradingScenario } from "@shared/schema";
 import { useTerminalState } from "@/hooks/useTerminalState";
+import { LearnHelper } from "./Tooltip";
 
 interface RightSidebarProps {
   onScenarioSelect?: (scenario: TradingScenario | null) => void;
@@ -75,6 +76,26 @@ function deriveEdge(positioning: any, market: any): string {
   return "LOW";
 }
 
+function getStatusHelper(val: string): string {
+  if (val === "EXECUTE") return "Conditions are aligned for a trade.";
+  if (val === "PREPARE") return "Setup is forming, not ready yet.";
+  if (val === "WAIT") return "No clear edge yet.";
+  if (val === "AVOID") return "Conditions are unfavorable for trading.";
+  return "";
+}
+
+function getVolRiskHelper(val: string): string {
+  if (val === "LOW") return "Lower probability of explosive movement.";
+  if (val === "HIGH") return "Larger moves are more likely.";
+  return "Moderate volatility expected.";
+}
+
+const SCENARIO_HELPERS: Record<string, string> = {
+  "BASE": "Most likely path if conditions remain stable.",
+  "ALT": "Alternative path if momentum shifts.",
+  "VOL": "High-volatility path if the market destabilizes.",
+};
+
 export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const { data: state } = useTerminalState();
@@ -121,7 +142,10 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
 
       <SidebarPanel title="Trading State">
         <div className="flex flex-col divide-y divide-white/[0.04]">
-          <StatusValue label="Status" value={statusVal} color={getStatusColor(statusVal)} />
+          <div>
+            <StatusValue label="Status" value={statusVal} color={getStatusColor(statusVal)} />
+            <LearnHelper text={getStatusHelper(statusVal)} />
+          </div>
           <StatusValue label="Direction" value={directionVal} color={getDirectionColor(directionVal)} />
           <StatusValue label="Risk" value={riskVal} color={getRiskColor(riskVal)} />
           <StatusValue label="Size" value={sizeVal} color={sizeVal === "FULL" ? "green" : sizeVal === "NO_TRADE" ? "red" : "yellow"} />
@@ -137,11 +161,14 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
             color={tradeSetup.condition === "CONFIRMED" ? "green" : tradeSetup.condition === "DEVELOPING" ? "yellow" : "red"}
           />
           <StatusValue label="Flow State" value={tradeSetup.flowState} />
-          <StatusValue
-            label="Volatility Risk"
-            value={tradeSetup.volRisk}
-            color={getRiskColor(tradeSetup.volRisk)}
-          />
+          <div>
+            <StatusValue
+              label="Volatility Risk"
+              value={tradeSetup.volRisk}
+              color={getRiskColor(tradeSetup.volRisk)}
+            />
+            <LearnHelper text={getVolRiskHelper(tradeSetup.volRisk)} />
+          </div>
         </div>
       </SidebarPanel>
 
@@ -177,6 +204,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
               </div>
               <div className="px-3 py-2.5">
                 <p className="text-[10px] text-white/60 leading-relaxed">{scenario.thesis}</p>
+                <LearnHelper text={SCENARIO_HELPERS[scenario.type] || ""} />
               </div>
             </div>
           ))}

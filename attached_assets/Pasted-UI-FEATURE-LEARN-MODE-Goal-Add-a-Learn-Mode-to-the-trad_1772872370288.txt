@@ -1,0 +1,148 @@
+UI FEATURE — LEARN MODE
+
+Goal:
+Add a Learn Mode to the trading terminal so beginner users can understand the platform more easily without changing the professional layout.
+
+Important:
+Do NOT modify backend analytics or calculations.
+Only add a UI education layer that can be toggled on and off.
+
+------------------------------------------------
+
+STEP 1 — ADD LEARN MODE TOGGLE
+
+Add a small toggle in the top terminal UI called:
+
+LEARN MODE
+
+States:
+ON
+OFF
+
+Default:
+OFF
+
+The toggle should match the current dark institutional style.
+
+------------------------------------------------
+
+STEP 2 — LEARN MODE BEHAVIOR
+
+When Learn Mode is ON:
+
+1. Enable educational tooltips on key concepts
+2. Show short contextual helper text inside major panels
+3. Keep the chart clean and avoid heavy overlays
+
+When Learn Mode is OFF:
+
+- Tooltips remain minimal or hidden
+- Helper text is hidden
+- Terminal stays in professional mode
+
+------------------------------------------------
+
+STEP 3 — ADD CONTEXTUAL HELPERS
+
+Add small helper text only when Learn Mode is ON.
+
+Examples:
+
+TRADING STATE
+If STATUS = WAIT
+show helper:
+"No clear edge yet."
+
+If STATUS = EXECUTE
+show helper:
+"Conditions are aligned for a trade."
+
+MARKET MODE
+If mode = SQUEEZE RISK
+show helper:
+"Fast directional move possible."
+
+If mode = RANGE CONTROL
+show helper:
+"Price is more likely to stay contained."
+
+TRADE SETUP
+If Volatility Risk = LOW
+show helper:
+"Lower probability of explosive movement."
+
+If Volatility Risk = HIGH
+show helper:
+"Larger moves are more likely."
+
+DAILY SCENARIOS
+Add one short explanation under each scenario card in Learn Mode.
+
+Base Case:
+"Most likely path if conditions remain stable."
+
+Alt Case:
+"Alternative path if momentum shifts."
+
+Vol Case:
+"High-volatility path if the market destabilizes."
+
+------------------------------------------------
+
+STEP 4 — EDUCATIONAL TOOLTIPS
+
+When Learn Mode is ON, enable tooltips for:
+
+Gamma Regime
+Gamma Flip
+Call Wall
+Put Wall
+Magnet
+Dealer Pivot
+Squeeze Risk
+Transition Zone
+
+Use the tooltip texts already created in the tooltip system.
+
+------------------------------------------------
+
+STEP 5 — VISUAL RULES
+
+Learn Mode UI must be:
+
+- subtle
+- compact
+- educational
+- non-intrusive
+
+Do NOT add large popups.
+Do NOT cover the chart.
+Do NOT clutter the interface.
+
+Helper text should be:
+- small
+- muted color
+- easy to read
+
+------------------------------------------------
+
+STEP 6 — DO NOT CHANGE
+
+Do NOT:
+- modify analytics engines
+- change API responses
+- redesign chart overlays
+- change trading logic
+
+Only add a toggleable educational UI layer.
+
+------------------------------------------------
+
+Expected result:
+
+Users can switch between:
+
+1. Professional mode
+2. Beginner-friendly educational mode
+
+without changing the core terminal layout.

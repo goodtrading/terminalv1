@@ -1,6 +1,7 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 import { TooltipWrapper } from "./Tooltip";
+import { useLearnMode } from "@/hooks/useLearnMode";
 
 interface TerminalPanelProps extends React.HTMLAttributes<HTMLDivElement> {
   title?: string;
@@ -52,7 +53,8 @@ export function TerminalValue({
   isBadge?: boolean;
   tooltip?: string;
 }) {
-  const labelEl = tooltip ? (
+  const { learnMode } = useLearnMode();
+  const labelEl = tooltip && learnMode ? (
     <TooltipWrapper concept={tooltip}>
       <span className="terminal-text-label text-[10px] transition-colors cursor-help border-b border-dashed border-white/10">{label}</span>
     </TooltipWrapper>
