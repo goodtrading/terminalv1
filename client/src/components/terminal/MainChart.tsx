@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createChart, ColorType, LineStyle, CandlestickSeries, HistogramSeries } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels, DealerExposure, TradingScenario } from "@shared/schema";
+import { cn } from "@/lib/utils";
 
 export function MainChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -21,6 +22,7 @@ export function MainChart() {
     magnets: true,
     pockets: true,
     dealer: true,
+    hedgeMap: false,
   });
 
   const [manualPriceRange, setManualPriceRange] = useState<{from: number, to: number} | null>(null);
@@ -441,6 +443,26 @@ export function MainChart() {
       if (toggles.dealer && positioning?.dealerPivot) {
         addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.5)", "DEALER PIVOT", LineStyle.Dotted, 2);
       }
+
+      if (toggles.hedgeMap && market && positioning) {
+        const pivot = positioning.dealerPivot || currentPrice;
+        
+        // 1. ABSORPTION ZONE (LONG GAMMA focus)
+        if (market.gammaRegime === "LONG GAMMA") {
+          const absorptionWidth = currentPrice * 0.02; // 2% band
+          addZone(pivot - absorptionWidth, pivot + absorptionWidth, "rgba(59, 130, 246, 0.15)", "ABSORPTION");
+        }
+
+        // 2. EXPANSION TRIGGERS
+        if (market.gammaFlip) {
+          addLevel(market.gammaFlip, "#f59e0b", "EXPANSION (FLIP)", LineStyle.Dashed, 2);
+        }
+        
+        // 3. HEDGE SHIFT ZONE
+        if (market.transitionZoneStart && market.transitionZoneEnd) {
+          addZone(market.transitionZoneStart, market.transitionZoneEnd, "rgba(156, 163, 175, 0.1)", "HEDGE SHIFT");
+        }
+      }
     } catch (err) {
       console.error("[MainChart] Overlay update failed:", err);
     }
@@ -534,9 +556,12 @@ export function MainChart() {
                 <button 
                   key={key} 
                   onClick={() => setToggles(prev => ({ ...prev, [key]: !val }))}
-                  className={`px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase transition-all ${val ? 'bg-terminal-accent/20 border-terminal-accent text-white' : 'bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white'}`}
+                  className={cn(
+                    "px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase transition-all",
+                    val ? "bg-terminal-accent/20 border-terminal-accent text-white" : "bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white"
+                  )}
                 >
-                  {key}
+                  {key === 'hedgeMap' ? 'HEDGE MAP' : key}
                 </button>
               ))}
             </div>

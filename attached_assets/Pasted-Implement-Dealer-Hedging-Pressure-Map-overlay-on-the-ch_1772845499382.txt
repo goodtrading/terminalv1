@@ -1,0 +1,112 @@
+Implement Dealer Hedging Pressure Map overlay on the chart.
+
+IMPORTANT:
+Do NOT modify backend APIs unless a small derived helper endpoint is truly necessary.
+Do NOT remove existing overlays.
+Do NOT redesign the chart.
+Use the current data already available from:
+- /api/market-state
+- /api/dealer-exposure
+- /api/dealer-hedging-flow
+- /api/options-positioning
+- /api/key-levels
+
+====================================================
+GOAL
+====================================================
+
+Add an additional overlay layer that visualizes dealer reaction structure:
+
+1. ABSORPTION ZONE
+2. EXPANSION TRIGGER
+3. HEDGE SHIFT ZONE
+
+These should help the trader understand where dealer hedging is likely to:
+- stabilize price
+- accelerate price
+- change directional behavior
+
+====================================================
+LOGIC
+====================================================
+
+Use existing data to derive the zones:
+
+1. Absorption Zone
+If gammaRegime is LONG GAMMA:
+- create an absorption band centered around dealerPivot and nearby magnets
+- this represents where dealers are likely to buy dips / sell rips and stabilize
+
+If gammaRegime is SHORT GAMMA:
+- absorption zone should be weaker/smaller or optional
+
+2. Expansion Trigger
+Use:
+- gammaFlip
+- transition zone edges
+- flowTriggerUp
+- flowTriggerDown
+
+These are the levels where hedge behavior can become more aggressive.
+Mark them as trigger lines or trigger bands.
+
+3. Hedge Shift Zone
+Create a band around the dealerPivot or around the transition structure where the bias may flip from:
+- supportive
+to
+- suppressive
+
+Use a moderate width and subtle styling.
+
+====================================================
+VISUAL STYLE
+====================================================
+
+Render in institutional style:
+
+ABSORPTION ZONE
+- soft blue/gray translucent band
+- label: ABSORPTION
+
+EXPANSION TRIGGER
+- orange or amber dashed line/band
+- label: EXPANSION
+
+HEDGE SHIFT ZONE
+- subtle white/gray band
+- label: HEDGE SHIFT
+
+Do not overpower:
+- call wall
+- put wall
+- flip
+- scenario overlays
+
+These new overlays should feel secondary but useful.
+
+====================================================
+INTERACTION
+====================================================
+
+Add a chart toggle button:
+
+HEDGE MAP
+
+When ON:
+- show these new dealer pressure zones
+
+When OFF:
+- hide them
+
+Keep existing toggles working.
+
+====================================================
+SUCCESS CRITERIA
+====================================================
+
+The chart gains a new dealer pressure layer showing:
+- absorption zone
+- expansion trigger
+- hedge shift zone
+
+These overlays must be clean, readable, and compatible with the current terminal style.
