@@ -233,59 +233,53 @@ export function MainChart() {
     priceLinesRef.current = [];
     const price = lastCandle.close;
     const threshold = price * 0.15;
-
-    const addLevel = (p: number, color: string, title: string, style = LineStyle.Solid, width = 1) => {
-      if (Math.abs(p - price) > threshold) return;
-      const line = series.createPriceLine({ price: p, color, lineWidth: width as any, lineStyle: style, axisLabelVisible: true, title });
-      if (line) priceLinesRef.current.push(line);
-    };
+    const fmtK = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(p);
 
     const sweepDetector = positioning_engines?.liquiditySweepDetector;
     const sweepActive = sweepDetector && (sweepDetector.sweepRisk === "HIGH" || sweepDetector.sweepRisk === "EXTREME") && sweepDetector.sweepDirection !== "NONE";
     const sweepDirColor = sweepDetector?.sweepDirection === "UP" ? "34, 197, 94" : sweepDetector?.sweepDirection === "DOWN" ? "239, 68, 68" : "168, 85, 247";
-    const sweepDirArrow = sweepDetector?.sweepDirection === "UP" ? " ↑" : sweepDetector?.sweepDirection === "DOWN" ? " ↓" : " ↕";
     const dim = (base: number, factor: number) => sweepActive ? +(base * factor).toFixed(2) : base;
 
+    type LevelEntry = { price: number; priority: number; label: string; shortLabel: string; color: string; style: number; width: number; axisLabel: boolean; isBandFill?: boolean };
+    const entries: LevelEntry[] = [];
+
+    const pushEntry = (p: number, priority: number, label: string, shortLabel: string, color: string, style = LineStyle.Solid, width = 1, isBandFill = false) => {
+      if (Math.abs(p - price) > threshold) return;
+      entries.push({ price: p, priority, label, shortLabel, color, style, width, axisLabel: !isBandFill, isBandFill });
+    };
+
     if (mapMode === "LEVELS") {
-      if (positioning?.callWall) addLevel(positioning.callWall, `rgba(239, 68, 68, ${dim(0.6, 0.7)})`, "CALL WALL");
-      if (positioning?.putWall) addLevel(positioning.putWall, `rgba(34, 197, 94, ${dim(0.6, 0.7)})`, "PUT WALL");
+      if (positioning?.callWall) pushEntry(positioning.callWall, 1, "CALL WALL", "CW", `rgba(239, 68, 68, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
+      if (positioning?.putWall) pushEntry(positioning.putWall, 1, "PUT WALL", "PW", `rgba(34, 197, 94, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
       if (levels?.gammaMagnets) {
-        levels.gammaMagnets.forEach(m => addLevel(m, `rgba(59, 130, 246, ${dim(0.4, 0.5)})`, "MAGNET", LineStyle.Dashed));
+        levels.gammaMagnets.forEach((m, i) => pushEntry(m, 3, `MAG ${fmtK(m)}`, "M", `rgba(59, 130, 246, ${dim(0.4, 0.5)})`, LineStyle.Dashed));
       }
-      if (positioning?.dealerPivot) addLevel(positioning.dealerPivot, `rgba(255, 255, 255, ${dim(0.3, 0.7)})`, "DEALER PIVOT", LineStyle.Dashed);
+      if (positioning?.dealerPivot) pushEntry(positioning.dealerPivot, 2, "PIVOT", "PV", `rgba(255, 255, 255, ${dim(0.3, 0.7)})`, LineStyle.Dashed);
     }
 
     if (mapMode === "GAMMA") {
-      if (market?.gammaFlip) addLevel(market.gammaFlip, `rgba(250, 240, 180, ${dim(0.85, 0.7)})`, "GAMMA FLIP", LineStyle.Solid, 2);
+      if (market?.gammaFlip) pushEntry(market.gammaFlip, 1, "GAMMA FLIP", "FLIP", `rgba(250, 240, 180, ${dim(0.85, 0.7)})`, LineStyle.Solid, 2);
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
-        addLevel(market.transitionZoneStart, `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, "TRANSITION LOW", LineStyle.Dashed);
-        addLevel(market.transitionZoneEnd, `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, "TRANSITION HIGH", LineStyle.Dashed);
+        pushEntry(market.transitionZoneStart, 4, "TR LO", "TL", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
+        pushEntry(market.transitionZoneEnd, 4, "TR HI", "TH", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
       }
       const gammaCliffs = positioning_engines?.gammaCurveEngine?.gammaCliffs;
       if (gammaCliffs && Array.isArray(gammaCliffs)) {
-        const above = gammaCliffs
-          .filter((c: any) => c.strike > price)
-          .sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength))
-          .slice(0, 3);
-        const below = gammaCliffs
-          .filter((c: any) => c.strike < price)
-          .sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength))
-          .slice(0, 3);
+        const above = gammaCliffs.filter((c: any) => c.strike > price).sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength)).slice(0, 3);
+        const below = gammaCliffs.filter((c: any) => c.strike < price).sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength)).slice(0, 3);
         const maxAbove = Math.max(...above.map((c: any) => Math.abs(c.strength)), 1);
         const maxBelow = Math.max(...below.map((c: any) => Math.abs(c.strength)), 1);
         above.forEach((cliff: { strike: number; strength: number }, i: number) => {
-          const label = `CLIFF ↑ ${cliff.strike >= 1000 ? (cliff.strike / 1000).toFixed(cliff.strike % 1000 === 0 ? 0 : 1) + "k" : cliff.strike}`;
           const isStrongest = i === 0;
           const ratio = Math.abs(cliff.strength) / maxAbove;
           const opacity = dim(isStrongest ? 0.7 : ratio > 0.5 ? 0.45 : 0.25, 0.6);
-          addLevel(cliff.strike, `rgba(249, 115, 22, ${opacity})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
+          pushEntry(cliff.strike, isStrongest ? 3 : 4, `↑${fmtK(cliff.strike)}`, "↑", `rgba(249, 115, 22, ${opacity})`, LineStyle.Dotted, isStrongest ? 2 : 1);
         });
         below.forEach((cliff: { strike: number; strength: number }, i: number) => {
-          const label = `CLIFF ↓ ${cliff.strike >= 1000 ? (cliff.strike / 1000).toFixed(cliff.strike % 1000 === 0 ? 0 : 1) + "k" : cliff.strike}`;
           const isStrongest = i === 0;
           const ratio = Math.abs(cliff.strength) / maxBelow;
           const opacity = dim(isStrongest ? 0.7 : ratio > 0.5 ? 0.45 : 0.25, 0.6);
-          addLevel(cliff.strike, `rgba(56, 189, 248, ${opacity})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
+          pushEntry(cliff.strike, isStrongest ? 3 : 4, `↓${fmtK(cliff.strike)}`, "↓", `rgba(56, 189, 248, ${opacity})`, LineStyle.Dotted, isStrongest ? 2 : 1);
         });
       }
     }
@@ -294,11 +288,11 @@ export function MainChart() {
       const cascade = positioning_engines?.liquidityCascadeEngine;
       if (cascade) {
         const triggerPrice = extractPriceFromText(cascade.cascadeTrigger);
-        if (triggerPrice) addLevel(triggerPrice, "rgba(239, 68, 68, 0.7)", "CASCADE TRIGGER");
+        if (triggerPrice) pushEntry(triggerPrice, 1, "CASCADE", "CSC", "rgba(239, 68, 68, 0.7)");
         const pocketPrices = extractRangeFromText(cascade.liquidationPocket);
         if (pocketPrices) {
-          addLevel(pocketPrices.start, "rgba(239, 68, 68, 0.3)", "LIQ POCKET LOW", LineStyle.Dashed);
-          addLevel(pocketPrices.end, "rgba(239, 68, 68, 0.3)", "LIQ POCKET HIGH", LineStyle.Dashed);
+          pushEntry(pocketPrices.start, 3, "LIQ LO", "LL", "rgba(239, 68, 68, 0.3)", LineStyle.Dashed);
+          pushEntry(pocketPrices.end, 3, "LIQ HI", "LH", "rgba(239, 68, 68, 0.3)", LineStyle.Dashed);
         }
       }
     }
@@ -307,23 +301,24 @@ export function MainChart() {
       const squeeze = positioning_engines?.squeezeProbabilityEngine;
       if (squeeze) {
         const triggerPrice = extractPriceFromText(squeeze.squeezeTrigger);
-        if (triggerPrice) addLevel(triggerPrice, "rgba(168, 85, 247, 0.7)", "SQUEEZE TRIGGER");
+        if (triggerPrice) pushEntry(triggerPrice, 1, "SQ TRIGGER", "SQT", "rgba(168, 85, 247, 0.7)");
         const targetPrice = extractPriceFromText(squeeze.squeezeTarget);
-        if (targetPrice) addLevel(targetPrice, "rgba(168, 85, 247, 0.4)", "SQUEEZE TARGET", LineStyle.Dashed);
+        if (targetPrice) pushEntry(targetPrice, 2, "SQ TARGET", "SQG", "rgba(168, 85, 247, 0.4)", LineStyle.Dashed);
       }
     }
 
     const sweepZoneRange = sweepActive ? extractRangeFromText(sweepDetector.sweepTargetZone) : null;
+    const sweepDirArrow = sweepDetector?.sweepDirection === "UP" ? "↑" : sweepDetector?.sweepDirection === "DOWN" ? "↓" : "↕";
 
     if (sweepActive && sweepZoneRange) {
-      const bandStep = (sweepZoneRange.end - sweepZoneRange.start) / 8;
-      for (let i = 0; i <= 8; i++) {
+      const bandStep = (sweepZoneRange.end - sweepZoneRange.start) / 6;
+      for (let i = 0; i <= 6; i++) {
         const p = sweepZoneRange.start + bandStep * i;
-        const isBorder = i === 0 || i === 8;
-        const opacity = isBorder ? 0.35 : 0.12;
-        const title = i === 8 ? `SWEEP ZONE${sweepDirArrow}` : "";
-        addLevel(p, `rgba(${sweepDirColor}, ${opacity})`, title, LineStyle.Solid, 1);
+        const isBorder = i === 0 || i === 6;
+        const opacity = isBorder ? 0.3 : 0.08;
+        pushEntry(p, 2, "", "", `rgba(${sweepDirColor}, ${opacity})`, LineStyle.Solid, 1, true);
       }
+      pushEntry(sweepZoneRange.end, 2, `SWEEP ${sweepDirArrow}`, "SW", `rgba(${sweepDirColor}, 0.4)`, LineStyle.Solid, 1);
     }
 
     if (sweepActive) {
@@ -334,7 +329,6 @@ export function MainChart() {
       if (levels?.gammaMagnets) knownLevels.push(...levels.gammaMagnets);
       const heatmapZones = positioning_engines?.liquidityHeatmap?.liquidityHeatZones || [];
       heatmapZones.filter((z: any) => z.intensity >= 0.5).forEach((z: any) => knownLevels.push((z.priceStart + z.priceEnd) / 2));
-
       const triggerText = sweepDetector.sweepTrigger || "";
       const triggerPrice = extractPriceFromText(triggerText);
       let bestTrigger: number | null = null;
@@ -348,7 +342,7 @@ export function MainChart() {
         if (!bestTrigger && Math.abs(triggerPrice - price) <= threshold) bestTrigger = triggerPrice;
       }
       if (bestTrigger) {
-        addLevel(bestTrigger, `rgba(${sweepDirColor}, 0.6)`, "SWEEP TRIGGER", LineStyle.Dashed, 2);
+        pushEntry(bestTrigger, 2, "SW TRIG", "SWT", `rgba(${sweepDirColor}, 0.5)`, LineStyle.Dashed, 2);
       }
     }
 
@@ -361,20 +355,20 @@ export function MainChart() {
         const binSize = price > 50000 ? 250 : price > 10000 ? 100 : 50;
 
         const gammaLevels: { price: number; label: string }[] = [];
-        if (positioning?.putWall) gammaLevels.push({ price: positioning.putWall, label: "Put Wall" });
-        if (positioning?.callWall) gammaLevels.push({ price: positioning.callWall, label: "Call Wall" });
-        if (positioning?.dealerPivot) gammaLevels.push({ price: positioning.dealerPivot, label: "Dealer Pivot" });
-        if (positioning?.gammaMagnet) gammaLevels.push({ price: positioning.gammaMagnet, label: "Gamma Magnet" });
+        if (positioning?.putWall) gammaLevels.push({ price: positioning.putWall, label: "PW" });
+        if (positioning?.callWall) gammaLevels.push({ price: positioning.callWall, label: "CW" });
+        if (positioning?.dealerPivot) gammaLevels.push({ price: positioning.dealerPivot, label: "PV" });
+        if (positioning?.gammaMagnet) gammaLevels.push({ price: positioning.gammaMagnet, label: "M" });
         if (levels?.gammaMagnets) {
           levels.gammaMagnets.forEach((m: any) => {
             const p = typeof m === "number" ? m : m?.strike;
-            if (p) gammaLevels.push({ price: p, label: "Gamma Magnet" });
+            if (p) gammaLevels.push({ price: p, label: "M" });
           });
         }
         if (positioning?.gammaMagnets) {
           (Array.isArray(positioning.gammaMagnets) ? positioning.gammaMagnets : []).forEach((m: any) => {
             const p = typeof m === "number" ? m : m?.strike;
-            if (p && !gammaLevels.some(g => g.price === p)) gammaLevels.push({ price: p, label: "Gamma Magnet" });
+            if (p && !gammaLevels.some(g => g.price === p)) gammaLevels.push({ price: p, label: "M" });
           });
         }
         if (positioning_engines?.gammaCurveEngine?.gammaCliffs) {
@@ -382,7 +376,7 @@ export function MainChart() {
             .filter((c: any) => Math.abs(c.strike - price) <= price * 0.04)
             .sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength))
             .slice(0, 8)
-            .forEach((c: any) => gammaLevels.push({ price: c.strike, label: "Gamma Cliff" }));
+            .forEach((c: any) => gammaLevels.push({ price: c.strike, label: "GC" }));
         }
 
         const allHeatZones: any[] = heatmap.liquidityHeatZones || [];
@@ -394,10 +388,7 @@ export function MainChart() {
           for (const zone of allHeatZones) {
             const zMid = (zone.priceStart + zone.priceEnd) / 2;
             const dist = Math.abs(gl.price - zMid);
-            if (dist < bestDist) {
-              bestDist = dist;
-              bestZone = zone;
-            }
+            if (dist < bestDist) { bestDist = dist; bestZone = zone; }
           }
           if (!bestZone) continue;
           const zMid = (bestZone.priceStart + bestZone.priceEnd) / 2;
@@ -409,22 +400,15 @@ export function MainChart() {
           const proximityBoost = Math.max(0, 1 - proximityPct / 0.06);
           const opacity = Math.min(0.85, 0.3 + bestZone.intensity * 0.3 + proximityBoost * 0.25);
           const width = (bestZone.intensity >= 0.5 && proximityPct < 0.02) ? 3 : 2;
-          const fmtPrice = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(p);
-          const label = `γ ${gl.label.toUpperCase()} ${fmtPrice(zMid)}`;
-          addLevel(zMid, `rgba(168, 85, 247, ${opacity.toFixed(2)})`, label, LineStyle.Solid, width);
+          const label = `γ${gl.label} ${fmtK(zMid)}`;
+          pushEntry(zMid, 2, label, `γ${gl.label}`, `rgba(168, 85, 247, ${opacity.toFixed(2)})`, LineStyle.Solid, width);
           for (let p = bestZone.priceStart - binSize; p <= bestZone.priceEnd + binSize; p += binSize) {
             confluenceSet.add(Math.round(Math.floor(p / binSize) * binSize));
           }
         }
 
-        const bidZones = (heatmap.liquidityHeatZones || [])
-          .filter((z: any) => z.side === "BID" && z.intensity >= 0.02)
-          .sort((a: any, b: any) => b.intensity - a.intensity)
-          .slice(0, 8);
-        const askZones = (heatmap.liquidityHeatZones || [])
-          .filter((z: any) => z.side === "ASK" && z.intensity >= 0.02)
-          .sort((a: any, b: any) => b.intensity - a.intensity)
-          .slice(0, 8);
+        const bidZones = (heatmap.liquidityHeatZones || []).filter((z: any) => z.side === "BID" && z.intensity >= 0.02).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 8);
+        const askZones = (heatmap.liquidityHeatZones || []).filter((z: any) => z.side === "ASK" && z.intensity >= 0.02).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 8);
 
         const nearThreshold = price * 0.005;
         const intensityToWidth = (int: number, near: boolean) => {
@@ -452,8 +436,7 @@ export function MainChart() {
           const near = Math.abs(mid - price) <= nearThreshold;
           const opacity = intensityToOpacity(zone.intensity, near);
           const width = intensityToWidth(zone.intensity, near);
-          const label = `BID ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
-          addLevel(mid, `rgba(34, 197, 94, ${opacity.toFixed(2)})`, label, intensityToStyle(zone.intensity, near), width);
+          pushEntry(mid, zone.intensity >= 0.5 ? 3 : 4, `B ${fmtK(mid)}`, "B", `rgba(34, 197, 94, ${opacity.toFixed(2)})`, intensityToStyle(zone.intensity, near), width);
         });
 
         askZones.forEach((zone: any) => {
@@ -462,10 +445,43 @@ export function MainChart() {
           const near = Math.abs(mid - price) <= nearThreshold;
           const opacity = intensityToOpacity(zone.intensity, near);
           const width = intensityToWidth(zone.intensity, near);
-          const label = `ASK ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
-          addLevel(mid, `rgba(239, 68, 68, ${opacity.toFixed(2)})`, label, intensityToStyle(zone.intensity, near), width);
+          pushEntry(mid, zone.intensity >= 0.5 ? 3 : 4, `A ${fmtK(mid)}`, "A", `rgba(239, 68, 68, ${opacity.toFixed(2)})`, intensityToStyle(zone.intensity, near), width);
         });
       }
+    }
+
+    const labeledEntries = entries.filter(e => !e.isBandFill && e.label);
+    labeledEntries.sort((a, b) => a.price - b.price);
+    const minGap = price * 0.004;
+    const usedSlots: { price: number; priority: number }[] = [];
+
+    for (const entry of labeledEntries) {
+      const collision = usedSlots.find(s => Math.abs(s.price - entry.price) < minGap);
+      if (collision) {
+        if (entry.priority > collision.priority) {
+          entry.axisLabel = false;
+          entry.label = entry.shortLabel;
+        } else if (entry.priority < collision.priority) {
+          const orig = labeledEntries.find(e => e.price === collision.price && e.axisLabel);
+          if (orig) { orig.axisLabel = false; orig.label = orig.shortLabel; }
+          collision.priority = entry.priority;
+          collision.price = entry.price;
+        }
+      } else {
+        usedSlots.push({ price: entry.price, priority: entry.priority });
+      }
+    }
+
+    for (const entry of entries) {
+      const line = series.createPriceLine({
+        price: entry.price,
+        color: entry.color,
+        lineWidth: entry.width as any,
+        lineStyle: entry.style,
+        axisLabelVisible: entry.axisLabel,
+        title: entry.label
+      });
+      if (line) priceLinesRef.current.push(line);
     }
   }, [market, positioning, levels, lastCandle, mapMode, positioning_engines]);
 
@@ -580,34 +596,25 @@ export function MainChart() {
           const sd = positioning_engines?.liquiditySweepDetector;
           const isActive = sd && (sd.sweepRisk === "HIGH" || sd.sweepRisk === "EXTREME") && sd.sweepDirection !== "NONE";
           if (!isActive) return null;
-          const dirClr = sd.sweepDirection === "UP" ? "text-green-400 border-green-500/20 bg-green-500/10" : sd.sweepDirection === "DOWN" ? "text-red-400 border-red-500/20 bg-red-500/10" : "text-purple-400 border-purple-500/20 bg-purple-500/10";
-          const arrow = sd.sweepDirection === "UP" ? "↑" : sd.sweepDirection === "DOWN" ? "↓" : "↕";
-          const arrowColor = sd.sweepDirection === "UP" ? "text-green-400/25" : sd.sweepDirection === "DOWN" ? "text-red-400/25" : "text-purple-400/25";
+          const arrowColor = sd.sweepDirection === "UP" ? "text-green-400/20" : sd.sweepDirection === "DOWN" ? "text-red-400/20" : "text-purple-400/20";
           const showUp = sd.sweepDirection === "UP" || sd.sweepDirection === "TWO_SIDED";
           const showDown = sd.sweepDirection === "DOWN" || sd.sweepDirection === "TWO_SIDED";
           return (
             <>
-              <div className="absolute bottom-3 right-28 z-10 pointer-events-none">
-                <TooltipWrapper concept="Sweep Zone">
-                  <div className={cn("flex items-center gap-1.5 border rounded px-2 py-1 backdrop-blur-sm", dirClr)} style={{ pointerEvents: learnMode ? "auto" : "none" }}>
-                    <span className={cn("text-[10px] font-mono font-semibold tracking-wider opacity-85", dirClr.split(" ")[0])}>SWEEP ZONE {arrow}</span>
-                    <span className="text-[8px] font-mono text-white/30">{sd.sweepTargetZone}</span>
-                  </div>
-                </TooltipWrapper>
-                {learnMode && (
-                  <div className="mt-1 text-[8px] text-white/25 font-mono text-right italic">Area where price may move quickly</div>
-                )}
-              </div>
-              <div className="absolute left-1/2 -translate-x-1/2 z-[5] pointer-events-none flex flex-col items-center gap-1" style={{ top: "38%" }}>
-                {showUp && [0, 1, 2].map(i => (
-                  <span key={`up-${i}`} className={cn("text-[10px] font-mono leading-none select-none", arrowColor)} style={{ opacity: 0.15 + i * 0.05 }}>▲</span>
-                ))}
-              </div>
-              <div className="absolute left-1/2 -translate-x-1/2 z-[5] pointer-events-none flex flex-col items-center gap-1" style={{ bottom: "28%" }}>
-                {showDown && [0, 1, 2].map(i => (
-                  <span key={`dn-${i}`} className={cn("text-[10px] font-mono leading-none select-none", arrowColor)} style={{ opacity: 0.15 + i * 0.05 }}>▼</span>
-                ))}
-              </div>
+              {showUp && (
+                <div className="absolute left-1/2 -translate-x-1/2 z-[5] pointer-events-none flex flex-col items-center gap-0.5" style={{ top: "40%" }}>
+                  {[0, 1].map(i => (
+                    <span key={`up-${i}`} className={cn("text-[9px] font-mono leading-none select-none", arrowColor)} style={{ opacity: 0.12 + i * 0.06 }}>▲</span>
+                  ))}
+                </div>
+              )}
+              {showDown && (
+                <div className="absolute left-1/2 -translate-x-1/2 z-[5] pointer-events-none flex flex-col items-center gap-0.5" style={{ bottom: "30%" }}>
+                  {[0, 1].map(i => (
+                    <span key={`dn-${i}`} className={cn("text-[9px] font-mono leading-none select-none", arrowColor)} style={{ opacity: 0.12 + i * 0.06 }}>▼</span>
+                  ))}
+                </div>
+              )}
             </>
           );
         })()}

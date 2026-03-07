@@ -1,0 +1,90 @@
+Refactor the chart right-side level labeling system to improve readability, hierarchy, and institutional visual quality.
+
+Current issues to fix:
+1. Right-side labels are overcrowded and stacked too tightly.
+2. Sweep Zone is rendered redundantly (one side tag + one floating bottom tag).
+3. Magnet / Wall / Pivot / Sweep labels visually compete with each other.
+4. The price axis area looks cluttered and loses clarity.
+5. Nearby levels are not intelligently grouped or spaced.
+
+Goal:
+Create a smart label layout engine for chart overlays that preserves price readability and makes important levels visually dominant.
+
+Implement the following rules:
+
+1. Collision avoidance
+- Detect overlapping or near-overlapping level tags on the right axis.
+- Minimum vertical spacing between labels: 18px.
+- If two labels collide, auto-stack them with consistent spacing.
+- Never allow text boxes to overlap.
+
+2. Priority system
+Assign label priority:
+- Priority 1: Call Wall, Put Wall, Gamma Flip
+- Priority 2: Sweep Zone, Dealer Pivot
+- Priority 3: Magnet levels
+- Priority 4: secondary contextual labels
+
+When spacing is tight:
+- Higher priority labels keep full size and full opacity
+- Lower priority labels shrink or collapse into compact pills
+
+3. Compact rendering for clustered levels
+If 2 or more levels are within a very small price distance:
+- Group them into one compact vertical cluster
+- Example:
+  MAGNET
+  SWEEP
+  PIVOT
+instead of rendering 3 separate wide boxes
+
+4. Sweep zone rendering cleanup
+- Render Sweep Zone only once as a proper horizontal band on chart
+- Keep only one associated label on the right side
+- Remove the floating duplicate bottom label unless explicitly used as a hover tooltip
+- Sweep band should feel like a zone, not a sticker
+
+5. Visual hierarchy
+Style levels as follows:
+- Major walls: largest tags, strongest opacity
+- Sweep zone: medium tag + translucent band
+- Magnets: smaller compact tags
+- Dealer pivot: neutral minimal tag
+- Secondary labels: subtle and reduced prominence
+
+6. Axis cleanliness
+- Keep labels aligned in a dedicated right overlay lane
+- Do not let labels invade candle space more than necessary
+- Preserve clean visibility of the price scale
+
+7. Responsive behavior
+- On dense clusters, switch automatically to compact mode
+- Compact mode:
+  smaller font
+  reduced padding
+  fixed narrow width
+  abbreviated text if needed
+
+8. Rendering consistency
+- All right-side labels must share:
+  same border radius
+  same padding logic
+  same font sizing system
+  same alignment grid
+
+Implementation request:
+- Create a reusable layout function for all chart level tags
+- Separate data calculation from visual placement
+- Use deterministic placement so labels do not jump randomly on every render
+
+Suggested architecture:
+- overlay/levelLayoutEngine.ts
+- overlay/renderLevelTags.ts
+- overlay/renderSweepZone.ts
+
+Acceptance criteria:
+- No overlapping labels
+- No duplicate sweep zone labels
+- Cleaner right-side structure
+- Major levels visually dominant
+- Chart feels institutional, minimal, and readable
