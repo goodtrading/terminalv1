@@ -58,7 +58,7 @@ export function MainChart() {
     if (filteredPoints.length > 0) {
       const min = Math.min(...filteredPoints);
       const max = Math.max(...filteredPoints);
-      const margin = (max - min) * 0.3 || currentPrice * 0.02; // Increased margin
+      const margin = (max - min) * 0.3 || currentPrice * 0.02;
       const newRange = { from: min - margin, to: max + margin };
       setManualPriceRange(newRange);
       chartRef.current.priceScale("right").applyOptions({ autoScale: false });
@@ -105,7 +105,7 @@ export function MainChart() {
     if (prices.length > 0) {
       const min = Math.min(...prices);
       const max = Math.max(...prices);
-      const margin = (max - min) * 0.4 || prices[0] * 0.03; // Increased margin for scenarios
+      const margin = (max - min) * 0.4 || prices[0] * 0.03;
       setManualPriceRange({ from: min - margin, to: max + margin });
     }
   }, [selectedScenario]);
@@ -180,7 +180,7 @@ export function MainChart() {
           fontFamily: "JetBrains Mono, monospace",
         },
         grid: {
-          vertLines: { color: "#0a0a0a" }, // Subtler grid lines
+          vertLines: { color: "#0a0a0a" },
           horzLines: { color: "#0a0a0a" },
         },
         width: chartContainerRef.current.clientWidth || 800,
@@ -189,7 +189,7 @@ export function MainChart() {
           borderColor: "#1a1a1a",
           timeVisible: true,
           secondsVisible: false,
-          barSpacing: 12, // Improved candle spacing
+          barSpacing: 12,
           rightOffset: 15,
         },
         rightPriceScale: {
@@ -197,15 +197,15 @@ export function MainChart() {
           autoScale: true,
           borderColor: "#1a1a1a",
           scaleMargins: {
-            top: 0.2, // More top margin
-            bottom: 0.25, // More bottom margin
+            top: 0.2,
+            bottom: 0.25,
           },
           minimumWidth: 100,
         },
         crosshair: {
           mode: 0,
           vertLine: {
-            color: "#333", // Subtler crosshair
+            color: "#333",
             width: 1,
             style: LineStyle.Solid,
             labelBackgroundColor: "#000",
@@ -241,10 +241,16 @@ export function MainChart() {
         wickDownColor: "#ef4444",
         priceLineVisible: false,
         lastValueVisible: true,
+        autoscaleInfoProvider: () => ({
+          priceRange: {
+            minValue: Math.min(...(candles?.map((c: any) => c.low) || [])),
+            maxValue: Math.max(...(candles?.map((c: any) => c.high) || [])),
+          },
+        }),
       });
 
       const volumeSeries = chart.addSeries(HistogramSeries, {
-        color: 'rgba(38, 166, 154, 0.2)', // More subtle volume
+        color: 'rgba(38, 166, 154, 0.2)',
         priceFormat: {
           type: 'volume',
         },
@@ -253,7 +259,7 @@ export function MainChart() {
 
       volumeSeries.priceScale().applyOptions({
         scaleMargins: {
-          top: 0.88, // Even lower volume bars
+          top: 0.88,
           bottom: 0,
         },
       });
@@ -284,7 +290,7 @@ export function MainChart() {
     } catch (error) {
       console.error("[MainChart] Chart initialization failed:", error);
     }
-  }, []);
+  }, [candles]); // Added candles to dependency to update autoscaleInfoProvider
 
   useEffect(() => {
     if (chartRef.current && manualPriceRange) {
@@ -311,7 +317,6 @@ export function MainChart() {
           chartRef.current.priceScale("right").applyOptions({ autoScale: true });
           chartRef.current.timeScale().fitContent();
           setIsInitialLoad(false);
-          // Small delay to let it settle then disable autoScale if needed
           setTimeout(() => {
             if (chartRef.current) {
               chartRef.current.priceScale("right").applyOptions({ autoScale: false });
@@ -331,7 +336,7 @@ export function MainChart() {
           livePriceLineRef.current = candleSeriesRef.current.createPriceLine({
             price: lastCandle.close,
             color: color,
-            lineWidth: 1, // Cleaner live price line
+            lineWidth: 1,
             lineStyle: LineStyle.Solid,
             axisLabelVisible: true,
             title: "",
