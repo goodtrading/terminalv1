@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { useTerminalState } from "@/hooks/useTerminalState";
 import { TooltipWrapper } from "./Tooltip";
 
-type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE";
+type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
 
 export function MainChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -304,6 +304,45 @@ export function MainChart() {
         if (targetPrice) addLevel(targetPrice, "rgba(168, 85, 247, 0.4)", "SQUEEZE TARGET", LineStyle.Dashed);
       }
     }
+
+    if (mapMode === "HEATMAP") {
+      const heatmap = positioning_engines?.liquidityHeatmap;
+      if (heatmap) {
+        const bidZones = (heatmap.liquidityHeatZones || [])
+          .filter((z: any) => z.side === "BID")
+          .sort((a: any, b: any) => b.intensity - a.intensity)
+          .slice(0, 5);
+        const askZones = (heatmap.liquidityHeatZones || [])
+          .filter((z: any) => z.side === "ASK")
+          .sort((a: any, b: any) => b.intensity - a.intensity)
+          .slice(0, 5);
+
+        bidZones.forEach((zone: any, i: number) => {
+          const mid = (zone.priceStart + zone.priceEnd) / 2;
+          const isStrongest = i === 0;
+          const opacity = isStrongest ? 0.6 : zone.intensity > 0.5 ? 0.4 : 0.2;
+          const label = `BID ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
+          addLevel(mid, `rgba(34, 197, 94, ${opacity})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
+        });
+
+        askZones.forEach((zone: any, i: number) => {
+          const mid = (zone.priceStart + zone.priceEnd) / 2;
+          const isStrongest = i === 0;
+          const opacity = isStrongest ? 0.6 : zone.intensity > 0.5 ? 0.4 : 0.2;
+          const label = `ASK ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
+          addLevel(mid, `rgba(239, 68, 68, ${opacity})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
+        });
+
+        const confluenceZones = (heatmap.liquidityConfluenceZones || [])
+          .sort((a: any, b: any) => b.confluenceScore - a.confluenceScore)
+          .slice(0, 3);
+        confluenceZones.forEach((cz: any) => {
+          const mid = (cz.priceStart + cz.priceEnd) / 2;
+          const label = `CONFLUENCE ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
+          addLevel(mid, "rgba(168, 85, 247, 0.55)", label, LineStyle.Solid, 2);
+        });
+      }
+    }
   }, [market, positioning, levels, lastCandle, mapMode, positioning_engines]);
 
   if (historyError) {
@@ -321,7 +360,7 @@ export function MainChart() {
   }
 
   const isLive = !!ticker && !tickerError;
-  const modes: MapMode[] = ["LEVELS", "GAMMA", "CASCADE", "SQUEEZE"];
+  const modes: MapMode[] = ["LEVELS", "GAMMA", "CASCADE", "SQUEEZE", "HEATMAP"];
 
   return (
     <div className="flex-1 w-full h-full flex flex-col relative">
@@ -367,6 +406,9 @@ export function MainChart() {
               {mapMode === "GAMMA" && (
                 <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Showing Flip, Transition Zone, and Key Gamma Cliffs</div>
               )}
+              {mapMode === "HEATMAP" && (
+                <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Order book liquidity zones with gamma confluence</div>
+              )}
             </div>
           </div>
         </div>
@@ -388,6 +430,24 @@ export function MainChart() {
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(56, 189, 248, 0.7)" }} />
                 <span className="text-[9px] font-mono text-white/50">Cliff ↓</span>
+              </div>
+            </div>
+          </div>
+        )}
+        {mapMode === "HEATMAP" && (
+          <div className="absolute bottom-3 left-3 z-10 pointer-events-none">
+            <div className="flex items-center gap-3 bg-black/50 border border-white/[0.06] rounded px-2.5 py-1.5 backdrop-blur-sm">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(34, 197, 94, 0.6)" }} />
+                <span className="text-[9px] font-mono text-white/50">Bid</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(239, 68, 68, 0.6)" }} />
+                <span className="text-[9px] font-mono text-white/50">Ask</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(168, 85, 247, 0.55)" }} />
+                <span className="text-[9px] font-mono text-white/50">Confluence</span>
               </div>
             </div>
           </div>

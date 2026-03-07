@@ -2,6 +2,7 @@ import { z } from "zod";
 import { storage } from "./storage";
 import { MarketDataGateway, tickerSchema } from "./market-gateway";
 import { DeribitOptionsGateway } from "./deribit-gateway";
+import { OrderBookGateway } from "./orderbook-gateway";
 
 export const terminalStateSchema = z.object({
   market: z.any(),
@@ -36,6 +37,7 @@ export async function getTerminalState(): Promise<TerminalState> {
   let liveLiquidityCascade = null;
   let liveSqueezeProbability = null;
   let liveMarketMode = null;
+  let liveHeatmap = null;
   let optionsSource: string | null = null;
   try {
     const { options: rawOptions, source } = await DeribitOptionsGateway.ingestOptions();
@@ -50,11 +52,26 @@ export async function getTerminalState(): Promise<TerminalState> {
     liveSqueezeProbability = summary.squeezeProbabilityEngine || null;
     liveMarketMode = summary.marketModeEngine || null;
     optionsSource = summary.source || source;
+
+    if (cachedTicker?.price) {
+      try {
+        const gammaData = {
+          gammaMagnets: summary.gammaMagnets?.map((m: any) => typeof m === "number" ? m : m.strike).filter(Boolean) || [],
+          callWall: summary.callWall || undefined,
+          putWall: summary.putWall || undefined,
+          dealerPivot: (summary as any).dealerPivot || undefined,
+          gammaCliffs: summary.gammaCurveEngine?.gammaCliffs || []
+        };
+        liveHeatmap = await OrderBookGateway.getLiquidityHeatmap(cachedTicker.price, gammaData);
+      } catch (heatErr) {
+        console.warn("[TerminalState] Heatmap injection failed:", heatErr);
+      }
+    }
   } catch (e) {
     console.error("[TerminalState] Options injection failed:", e);
   }
 
-  const enrichedPositioning = positioning ? { ...positioning, tradingPlaybook: livePlaybook, volatilityExpansionDetector: liveVolExpansion, gammaCurveEngine: liveGammaCurve, institutionalBiasEngine: liveInstitutionalBias, tradeDecisionEngine: liveTradeDecision, liquidityCascadeEngine: liveLiquidityCascade, squeezeProbabilityEngine: liveSqueezeProbability, marketModeEngine: liveMarketMode, optionsSource } : positioning;
+  const enrichedPositioning = positioning ? { ...positioning, tradingPlaybook: livePlaybook, volatilityExpansionDetector: liveVolExpansion, gammaCurveEngine: liveGammaCurve, institutionalBiasEngine: liveInstitutionalBias, tradeDecisionEngine: liveTradeDecision, liquidityCascadeEngine: liveLiquidityCascade, squeezeProbabilityEngine: liveSqueezeProbability, marketModeEngine: liveMarketMode, liquidityHeatmap: liveHeatmap, optionsSource } : positioning;
 
   // Read from in-memory cache ONLY (deterministic latency, no side effects)
   const ticker = MarketDataGateway.getCachedTicker();

@@ -47,11 +47,21 @@ High-density institutional crypto derivatives trading dashboard with real BTC ma
 17. Squeeze Probability Engine (squeezeProbability, squeezeDirection, squeezeType, squeezeTrigger, squeezeTarget, squeezeDrivers)
 18. Market Mode Engine (marketMode, marketModeConfidence, marketModeReason) — classifies market into GAMMA_PIN, MEAN_REVERSION, VOL_EXPANSION, SQUEEZE_RISK, CASCADE_RISK, or FRAGILE_TRANSITION using scoring system across all engines
 
+## Liquidity Heatmap Engine
+- `server/orderbook-gateway.ts` — Live order book gateway + heatmap computation
+- **Data Sources**: Binance (geo-blocked), Bybit, Coinbase (primary fallback)
+- **Cache**: 15-second TTL on order book data
+- **Outputs**: liquidityHeatZones, liquidityConfluenceZones, liquidityPressure, heatmapSummary
+- **Confluence**: Combines order book clusters with gamma levels (callWall, putWall, dealerPivot, gammaMagnets, gammaCliffs)
+- **API**: `/api/liquidity/heatmap` (standalone) + injected into `positioning.liquidityHeatmap` in terminal state
+- **Chart Mode**: HEATMAP — shows bid zones (green), ask zones (red), confluence zones (purple) with legend
+
 ## Terminal State Data Flow
 `getTerminalState()` in `terminal-state.ts`:
 - Reads DB for market, exposure, positioning, levels, scenarios
 - Calls `DeribitOptionsGateway.ingestOptions()` (live API primary, CSV fallback)
-- Injects `tradingPlaybook`, `volatilityExpansionDetector`, `gammaCurveEngine`, `institutionalBiasEngine`, `tradeDecisionEngine`, `liquidityCascadeEngine`, `squeezeProbabilityEngine`, `marketModeEngine`, and `optionsSource` into `positioning`
+- Calls `OrderBookGateway.getLiquidityHeatmap()` with gamma data for confluence computation
+- Injects `tradingPlaybook`, `volatilityExpansionDetector`, `gammaCurveEngine`, `institutionalBiasEngine`, `tradeDecisionEngine`, `liquidityCascadeEngine`, `squeezeProbabilityEngine`, `marketModeEngine`, `liquidityHeatmap`, and `optionsSource` into `positioning`
 - Reads cached ticker from MarketDataGateway
 - Returns unified state at `/api/terminal/state`
 
@@ -60,3 +70,4 @@ High-density institutional crypto derivatives trading dashboard with real BTC ma
 - `tickerStatus`: "fresh" if age < 10s
 - Tailwind v4: `@utility` only
 - lightweight-charts v5.1.0: `chart.addSeries(CandlestickSeries)`
+- Chart modes: LEVELS, GAMMA, CASCADE, SQUEEZE, HEATMAP

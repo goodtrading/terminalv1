@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { MarketDataGateway } from "./market-gateway";
 import { getTerminalState } from "./terminal-state";
 import { DeribitOptionsGateway } from "./deribit-gateway";
+import { OrderBookGateway } from "./orderbook-gateway";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -101,6 +102,30 @@ export async function registerRoutes(
         error: "MARKET_DATA_UNAVAILABLE",
         details: error.message
       });
+    }
+  });
+
+  app.get("/api/liquidity/heatmap", async (_req, res) => {
+    try {
+      const ticker = MarketDataGateway.getCachedTicker();
+      const spotPrice = ticker?.price;
+      if (!spotPrice) {
+        res.status(503).json({ error: "SPOT_PRICE_UNAVAILABLE" });
+        return;
+      }
+      const { options, source } = await DeribitOptionsGateway.ingestOptions();
+      const summary = await DeribitOptionsGateway.getSummary(options, spotPrice, source);
+      const gammaData = {
+        gammaMagnets: summary.gammaMagnets?.map((m: any) => typeof m === "number" ? m : m.strike).filter(Boolean) || [],
+        callWall: summary.callWall || undefined,
+        putWall: summary.putWall || undefined,
+        dealerPivot: (summary as any).dealerPivot || undefined,
+        gammaCliffs: summary.gammaCurveEngine?.gammaCliffs || []
+      };
+      const heatmap = await OrderBookGateway.getLiquidityHeatmap(spotPrice, gammaData);
+      res.json(heatmap);
+    } catch (e: any) {
+      res.status(500).json({ error: "HEATMAP_FAILED", details: e.message });
     }
   });
 
