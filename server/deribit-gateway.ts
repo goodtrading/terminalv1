@@ -56,6 +56,11 @@ export const optionsSummarySchema = z.object({
   gammaAccelerationByStrike: z.array(z.object({ strike: z.number(), acceleration: z.number() })).optional(),
   gammaCliffs: z.array(z.object({ strike: z.number(), strength: z.number() })).optional(),
   gammaWallStrength: z.array(z.object({ strike: z.number(), strengthScore: z.number() })).optional(),
+  hedgingSpeedScore: z.number().optional(),
+  hedgingStressScore: z.number().optional(),
+  cascadeRisk: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
+  pinningStrength: z.number().optional(),
+  dealerFlowUrgency: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
   reactionZones: z.array(z.object({
     startStrike: z.number(),
     endStrike: z.number(),
@@ -369,6 +374,46 @@ export class DeribitOptionsGateway {
         }
       }
 
+      // --- Delta Hedging Speed Engine ---
+      let hedgingSpeedScore = 0;
+      let hedgingStressScore = 0;
+      let cascadeRisk: "LOW" | "MEDIUM" | "HIGH" = "LOW";
+      let pinningStrength = 0;
+      let dealerFlowUrgency: "LOW" | "MEDIUM" | "HIGH" = "LOW";
+
+      if (spotPrice) {
+        // 1. Hedging Speed Score
+        const localSlope = gammaSlopeByStrike.find(s => Math.abs(s.strike - spotPrice) <= 1000)?.slope || 0;
+        hedgingSpeedScore = Math.min(1, Math.abs(localSlope) / 10000);
+
+        // 2. Hedging Stress Score
+        const distToFlip = gammaFlip ? Math.abs(spotPrice - gammaFlip) : 10000;
+        const flipStress = Math.max(0, 1 - distToFlip / 5000);
+        const inShortZone = shortGammaZones.some(z => spotPrice >= z.startStrike && spotPrice <= z.endStrike);
+        const shortZoneStress = inShortZone ? 0.5 : 0;
+        const cliffStress = (gammaCliffs.find(c => Math.abs(c.strike - spotPrice) <= 2000)?.strength || 0) / 10000;
+        
+        hedgingStressScore = Math.min(1, (flipStress + shortZoneStress + Math.abs(cliffStress) + (Math.abs(totalVanna) / 10000000)) / 2);
+
+        // 3. Cascade Risk
+        if ((inShortZone && Math.abs(cliffStress) > 0.3) || (localSlope < -5000 && (totalVanna < 0 || totalCharm < 0))) {
+          cascadeRisk = "HIGH";
+        } else if (inShortZone || Math.abs(localSlope) > 3000) {
+          cascadeRisk = "MEDIUM";
+        }
+
+        // 4. Pinning Strength
+        const nearMagnet = gammaMagnets.some(m => Math.abs(spotPrice - m) <= 1000);
+        const wallStrength = (gammaWallStrength.find(w => Math.abs(w.strike - spotPrice) <= 1000)?.strengthScore || 0);
+        pinningStrength = Math.min(1, (nearMagnet ? 0.4 : 0) + (wallStrength * 2) + (dealerGammaState === "LONG_GAMMA" ? 0.3 : 0));
+        if (inShortZone) pinningStrength *= 0.2;
+
+        // 5. Dealer Flow Urgency
+        const totalStress = hedgingSpeedScore + hedgingStressScore;
+        if (totalStress > 1.2) dealerFlowUrgency = "HIGH";
+        else if (totalStress > 0.6) dealerFlowUrgency = "MEDIUM";
+      }
+
       return {
         totalGex: totalGex || null,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -393,6 +438,11 @@ export class DeribitOptionsGateway {
         gammaAccelerationByStrike,
         gammaCliffs,
         gammaWallStrength,
+        hedgingSpeedScore,
+        hedgingStressScore,
+        cascadeRisk,
+        pinningStrength,
+        dealerFlowUrgency,
         reactionZones
       };
     } catch (e) {
