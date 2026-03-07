@@ -144,13 +144,24 @@ export function MainChart() {
     queryFn: async () => {
       const res = await fetch("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=300");
       const data = await res.json();
-      return data.map((d: any) => ({
-        time: (d[0] / 1000) as any,
-        open: parseFloat(d[1]),
-        high: parseFloat(d[2]),
-        low: parseFloat(d[3]),
-        close: parseFloat(d[4]),
-      }));
+      return data
+        .map((d: any) => ({
+          time: (Math.floor(d[0] / 1000)) as any,
+          open: parseFloat(d[1]),
+          high: parseFloat(d[2]),
+          low: parseFloat(d[3]),
+          close: parseFloat(d[4]),
+        }))
+        .filter((c: any) => 
+          c.time !== undefined && 
+          c.time !== null && 
+          !isNaN(c.time) &&
+          !isNaN(c.open) && 
+          !isNaN(c.high) && 
+          !isNaN(c.low) && 
+          !isNaN(c.close)
+        )
+        .sort((a: any, b: any) => a.time - b.time);
     },
     refetchInterval: 10000
   });
@@ -290,8 +301,13 @@ export function MainChart() {
   }, [manualPriceRange]);
 
   useEffect(() => {
-    if (candleSeriesRef.current && candles) {
-      candleSeriesRef.current.setData(candles);
+    if (candleSeriesRef.current && candles && candles.length > 0) {
+      try {
+        candleSeriesRef.current.setData(candles);
+      } catch (err) {
+        console.error("[MainChart] setData failed:", err);
+        return;
+      }
       
       if (isInitialLoad && candles.length > 0) {
         chartRef.current.priceScale("right").applyOptions({ autoScale: true });
@@ -340,7 +356,7 @@ export function MainChart() {
   }, [candles, toggles.price, market?.totalGex, isInitialLoad]);
 
   useEffect(() => {
-    if (!candleSeriesRef.current || !candles) return;
+    if (!candleSeriesRef.current || !candles || candles.length === 0) return;
 
     priceLinesRef.current.forEach(line => {
       candleSeriesRef.current.removePriceLine(line);
@@ -472,7 +488,7 @@ export function MainChart() {
     }
   }, [market, positioning, levels, candles, toggles]);
 
-  const currentPrice = candles?.[candles.length - 1]?.close || 0;
+  const currentPrice = candles && candles.length > 0 ? candles[candles.length - 1].close : 0;
   const priceChange = candles && candles.length > 1 
     ? ((currentPrice - candles[0].close) / candles[0].close * 100).toFixed(2)
     : "0.00";
