@@ -32,6 +32,18 @@ export function MainChart() {
   const [selectedScenario, setSelectedScenario] = useState<TradingScenario | null>(null);
   const scenarioLevelsRef = useRef<any[]>([]);
 
+  // Fetch History
+  const { data: history, error: historyError, isLoading: historyLoading } = useQuery({
+    queryKey: ["btc-history"],
+    queryFn: async () => {
+      const res = await fetch("/api/chart/history?symbol=BTCUSDT&interval=15m&limit=500");
+      if (!res.ok) throw new Error("History fetch failed");
+      return res.json();
+    },
+    retry: 3,
+    refetchOnWindowFocus: false
+  });
+
   const resetScale = () => {
     if (!chartRef.current) return;
     setManualPriceRange(null);
@@ -40,10 +52,10 @@ export function MainChart() {
   };
 
   const fitLevels = () => {
-    if (!chartRef.current || !lastCandle) return;
-    const currentPriceVal = lastCandle.close;
-    const threshold = currentPriceVal * 0.15;
-    const points: number[] = [currentPriceVal];
+    const price = lastCandle?.close;
+    if (!chartRef.current || !price) return;
+    const threshold = price * 0.15;
+    const points: number[] = [price];
 
     if (market?.gammaFlip) points.push(market.gammaFlip);
     if (market?.transitionZoneStart) points.push(market.transitionZoneStart);
@@ -57,64 +69,53 @@ export function MainChart() {
     if (levels?.deepRiskPocketStart) points.push(levels.deepRiskPocketStart);
     if (levels?.deepRiskPocketEnd) points.push(levels.deepRiskPocketEnd);
 
-    const filteredPoints = points.filter(p => Math.abs(p - currentPriceVal) <= threshold);
+    const filteredPoints = points.filter(p => Math.abs(p - price) <= threshold);
     if (filteredPoints.length > 0) {
       const min = Math.min(...filteredPoints);
       const max = Math.max(...filteredPoints);
-      const margin = (max - min) * 0.3 || currentPriceVal * 0.02;
+      const margin = (max - min) * 0.3 || price * 0.02;
       const newRange = { from: min - margin, to: max + margin };
       setManualPriceRange(newRange);
       chartRef.current.priceScale("right").applyOptions({ autoScale: false });
     }
   };
 
+  // WebSocket Connection
   useEffect(() => {
+    if (historyLoading || !history) return;
+
     const connectWS = () => {
-      console.log("[WS] Connecting to Binance...");
+      // Re-initialize websocket
       const ws = new WebSocket("wss://stream.binance.com:9443/ws/btcusdt@kline_15m");
       wsRef.current = ws;
 
-      ws.onopen = () => {
-        console.log("[WS] Connected");
-        setWsStatus("OPEN");
-      };
-
+      ws.onopen = () => setWsStatus("OPEN");
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.e === "kline") {
           const k = data.k;
-          const candle = {
+          setLastCandle({
             time: Math.floor(k.t / 1000),
             open: parseFloat(k.o),
             high: parseFloat(k.h),
             low: parseFloat(k.l),
             close: parseFloat(k.c),
-            volume: parseFloat(k.v),
-            isClosed: k.x
-          };
-          setLastCandle(candle);
+            volume: parseFloat(k.v)
+          });
         }
       };
-
-      ws.onerror = (error) => {
-        console.error("[WS] Error:", error);
-        setWsStatus("ERROR");
-      };
-
+      ws.onerror = () => setWsStatus("ERROR");
       ws.onclose = () => {
-        console.log("[WS] Closed");
         setWsStatus("CLOSED");
-        // Simple reconnect after 5s
         setTimeout(connectWS, 5000);
       };
     };
 
     connectWS();
-    return () => {
-      if (wsRef.current) wsRef.current.close();
-    };
-  }, []);
+    return () => wsRef.current?.close();
+  }, [history, historyLoading]);
 
+  // Handle Scenario Selection
   useEffect(() => {
     if (!candleSeriesRef.current) return;
     scenarioLevelsRef.current.forEach(line => candleSeriesRef.current?.removePriceLine(line));
@@ -154,162 +155,150 @@ export function MainChart() {
   const { data: levels } = useQuery<KeyLevels>({ queryKey: ["/api/key-levels"], refetchInterval: 5000 });
   const { data: exposure } = useQuery<DealerExposure>({ queryKey: ["/api/dealer-exposure"], refetchInterval: 5000 });
 
+  // Initialize Chart
   useEffect(() => {
     if (!chartContainerRef.current) return;
-    try {
-      const chart = createChart(chartContainerRef.current, {
-        layout: { background: { type: ColorType.Solid, color: "#000000" }, textColor: "#ffffff", fontSize: 12, fontFamily: "JetBrains Mono, monospace" },
-        grid: { vertLines: { color: "#0a0a0a" }, horzLines: { color: "#0a0a0a" } },
-        width: chartContainerRef.current.clientWidth || 800,
-        height: chartContainerRef.current.clientHeight || 500,
-        timeScale: { borderColor: "#1a1a1a", timeVisible: true, secondsVisible: false, barSpacing: 12, rightOffset: 15 },
-        rightPriceScale: { visible: true, autoScale: true, borderColor: "#1a1a1a", scaleMargins: { top: 0.2, bottom: 0.25 }, minimumWidth: 100, borderVisible: true, alignLabels: true },
-        crosshair: { mode: 0, vertLine: { color: "#333", width: 1, style: LineStyle.Solid, labelBackgroundColor: "#000" }, horzLine: { color: "#333", width: 1, style: LineStyle.Solid, labelBackgroundColor: "#000" } },
-      });
-      const candleSeries = chart.addSeries(CandlestickSeries, { upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444", priceLineVisible: false, lastValueVisible: true });
-      const volumeSeries = chart.addSeries(HistogramSeries, { color: 'rgba(38, 166, 154, 0.2)', priceFormat: { type: 'volume' }, priceScaleId: '' });
-      volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.88, bottom: 0 } });
-      chartRef.current = chart; candleSeriesRef.current = candleSeries; volumeSeriesRef.current = volumeSeries;
-      const handleResize = () => { if (chartContainerRef.current && chartRef.current) chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth, height: chartContainerRef.current.clientHeight }); };
-      window.addEventListener("resize", handleResize);
-      return () => { window.removeEventListener("resize", handleResize); if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; } };
-    } catch (error) { console.error("Chart initialization failed:", error); }
+    const chart = createChart(chartContainerRef.current, {
+      layout: { background: { type: ColorType.Solid, color: "#000000" }, textColor: "#ffffff", fontSize: 12, fontFamily: "JetBrains Mono, monospace" },
+      grid: { vertLines: { color: "#0a0a0a" }, horzLines: { color: "#0a0a0a" } },
+      width: chartContainerRef.current.clientWidth,
+      height: chartContainerRef.current.clientHeight,
+      timeScale: { borderColor: "#1a1a1a", timeVisible: true, barSpacing: 12, rightOffset: 15 },
+      rightPriceScale: { borderColor: "#1a1a1a", scaleMargins: { top: 0.2, bottom: 0.25 }, minimumWidth: 100 },
+      crosshair: { mode: 0 },
+    });
+    const candleSeries = chart.addSeries(CandlestickSeries, { upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444", priceLineVisible: false });
+    const volumeSeries = chart.addSeries(HistogramSeries, { color: 'rgba(38, 166, 154, 0.2)', priceFormat: { type: 'volume' }, priceScaleId: '' });
+    volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.88, bottom: 0 } });
+    
+    chartRef.current = chart; 
+    candleSeriesRef.current = candleSeries; 
+    volumeSeriesRef.current = volumeSeries;
+
+    const handleResize = () => {
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ 
+          width: chartContainerRef.current.clientWidth, 
+          height: chartContainerRef.current.clientHeight 
+        });
+      }
+    };
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      chart.remove();
+    };
   }, []);
 
+  // Set Historical Data
+  useEffect(() => {
+    if (candleSeriesRef.current && history && history.length > 0) {
+      candleSeriesRef.current.setData(history);
+      if (isInitialLoad) {
+        chartRef.current?.timeScale().fitContent();
+        setIsInitialLoad(false);
+      }
+      // Set last candle from history as initial point if ws hasn't updated yet
+      if (!lastCandle) {
+        setLastCandle(history[history.length - 1]);
+      }
+    }
+  }, [history]);
+
+  // Update with Live Data
   useEffect(() => {
     if (candleSeriesRef.current && lastCandle) {
-      try {
-        candleSeriesRef.current.update(lastCandle);
-        if (isInitialLoad) {
-          chartRef.current?.timeScale().fitContent();
-          setIsInitialLoad(false);
-        }
-        
-        const isUp = lastCandle.close >= lastCandle.open;
-        const color = isUp ? "#22c55e" : "#ef4444";
-        if (livePriceLineRef.current) candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
-        if (toggles.price) livePriceLineRef.current = candleSeriesRef.current.createPriceLine({ price: lastCandle.close, color: color, lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: true, title: "" });
-      } catch (err) { console.error("update failed:", err); }
+      candleSeriesRef.current.update(lastCandle);
+      const isUp = lastCandle.close >= lastCandle.open;
+      if (livePriceLineRef.current) candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
+      if (toggles.price) {
+        livePriceLineRef.current = candleSeriesRef.current.createPriceLine({
+          price: lastCandle.close,
+          color: isUp ? "#22c55e" : "#ef4444",
+          lineWidth: 1,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: ""
+        });
+      }
     }
   }, [lastCandle, toggles.price]);
 
+  // Handle Manual Range
   useEffect(() => {
     if (chartRef.current && manualPriceRange) {
-      try {
-        chartRef.current.priceScale("right").applyOptions({ autoScale: false });
-        chartRef.current.priceScale("right").setVisibleRange(manualPriceRange);
-      } catch (e) { console.error("Failed to set manual range:", e); }
+      chartRef.current.priceScale("right").applyOptions({ autoScale: false });
+      chartRef.current.priceScale("right").setVisibleRange(manualPriceRange);
     }
   }, [manualPriceRange]);
 
+  // Render Overlays
   useEffect(() => {
-    if (!candleSeriesRef.current || !lastCandle) return;
-    priceLinesRef.current.forEach(line => candleSeriesRef.current?.removePriceLine(line));
+    const series = candleSeriesRef.current;
+    if (!series || !lastCandle) return;
+    priceLinesRef.current.forEach(line => series.removePriceLine(line));
     priceLinesRef.current = [];
-    const currentPriceVal = lastCandle.close;
-    const threshold = currentPriceVal * 0.15;
-    const addLevel = (price: number, color: string, title: string, style: LineStyle = LineStyle.Solid, lineWidth: number = 1) => {
-      if (Math.abs(price - currentPriceVal) > threshold) return;
-      const line = candleSeriesRef.current?.createPriceLine({ price, color, lineWidth, lineStyle: style, axisLabelVisible: true, title });
+    const price = lastCandle.close;
+    const threshold = price * 0.15;
+
+    const addLevel = (p: number, color: string, title: string, style = LineStyle.Solid) => {
+      if (Math.abs(p - price) > threshold) return;
+      const line = series.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title });
       if (line) priceLinesRef.current.push(line);
     };
-    const addZone = (start: number, end: number, color: string, title: string) => {
-      if (Math.abs(start - currentPriceVal) > threshold && Math.abs(end - currentPriceVal) > threshold) return;
-      const mid = (start + end) / 2;
-      const line = candleSeriesRef.current?.createPriceLine({ price: mid, color: "transparent", lineWidth: 0, axisLabelVisible: true, title });
-      if (line) priceLinesRef.current.push(line);
-      const upper = candleSeriesRef.current?.createPriceLine({ price: Math.max(start, end), color, lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: false, title: "" });
-      const lower = candleSeriesRef.current?.createPriceLine({ price: Math.min(start, end), color, lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: false, title: "" });
-      if (upper) priceLinesRef.current.push(upper);
-      if (lower) priceLinesRef.current.push(lower);
-    };
-    try {
-      if (toggles.flip && market?.gammaFlip) addLevel(market.gammaFlip, "rgba(234, 179, 8, 0.6)", "FLIP", LineStyle.Solid, 1);
-      if (market?.transitionZoneStart && market?.transitionZoneEnd) addZone(market.transitionZoneStart, market.transitionZoneEnd, "rgba(255, 255, 255, 0.03)", "TRANSITION");
-      if (toggles.walls) {
-        if (positioning?.callWall) addLevel(positioning.callWall, "rgba(239, 68, 68, 0.6)", "CALL WALL", LineStyle.Solid, 1);
-        if (positioning?.putWall) addLevel(positioning.putWall, "rgba(34, 197, 94, 0.6)", "PUT WALL", LineStyle.Solid, 1);
-      }
-      if (toggles.magnets && levels?.gammaMagnets) {
-        const sortedMagnets = [...levels.gammaMagnets].sort((a, b) => a - b);
-        const grouped: number[][] = [];
-        sortedMagnets.forEach(m => { if (grouped.length === 0 || m - grouped[grouped.length-1][grouped[grouped.length-1].length-1] > 500) grouped.push([m]); else grouped[grouped.length-1].push(m); });
-        grouped.forEach((group) => { const avg = group.reduce((a, b) => a + b, 0) / group.length; addLevel(avg, "rgba(59, 130, 246, 0.2)", group.length > 1 ? `MAGNETS (${group.length})` : "MAGNET", LineStyle.Solid, 1); });
-      }
-      if (toggles.pockets && levels) {
-        if (levels.shortGammaPocketStart && levels.shortGammaPocketEnd) addZone(levels.shortGammaPocketStart, levels.shortGammaPocketEnd, "rgba(249, 115, 22, 0.05)", "SHORT GAMMA POCKET");
-        if (levels.deepRiskPocketStart && levels.deepRiskPocketEnd) addZone(levels.deepRiskPocketStart, levels.deepRiskPocketEnd, "rgba(168, 85, 247, 0.05)", "DEEP RISK POCKET");
-      }
-      if (toggles.dealer && positioning?.dealerPivot) addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.3)", "DEALER PIVOT", LineStyle.Solid, 1);
-      if (toggles.hedgeMap && market && positioning) {
-        const pivot = positioning.dealerPivot || currentPriceVal;
-        if (market.gammaRegime === "LONG GAMMA") { const absorptionWidth = currentPriceVal * 0.015; addZone(pivot - absorptionWidth, pivot + absorptionWidth, "rgba(59, 130, 246, 0.08)", "ABSORPTION"); }
-        if (market.gammaFlip) addLevel(market.gammaFlip, "rgba(251, 191, 36, 0.4)", "EXPANSION", LineStyle.Solid, 1);
-        if (market.transitionZoneStart && market.transitionZoneEnd) { const shiftPadding = currentPriceVal * 0.002; addZone(market.transitionZoneStart - shiftPadding, market.transitionZoneEnd + shiftPadding, "rgba(255, 255, 255, 0.15)", "HEDGE SHIFT"); }
-      }
-    } catch (err) { console.error("Overlay update failed:", err); }
+
+    if (toggles.flip && market?.gammaFlip) addLevel(market.gammaFlip, "rgba(234, 179, 8, 0.6)", "FLIP");
+    if (toggles.walls) {
+      if (positioning?.callWall) addLevel(positioning.callWall, "rgba(239, 68, 68, 0.6)", "CALL WALL");
+      if (positioning?.putWall) addLevel(positioning.putWall, "rgba(34, 197, 94, 0.6)", "PUT WALL");
+    }
+    if (toggles.magnets && levels?.gammaMagnets) {
+      levels.gammaMagnets.forEach(m => addLevel(m, "rgba(59, 130, 246, 0.2)", "MAGNET"));
+    }
+    if (toggles.dealer && positioning?.dealerPivot) addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.3)", "DEALER PIVOT");
   }, [market, positioning, levels, lastCandle, toggles]);
 
-  const currentPriceValFinal = lastCandle ? lastCandle.close : 0;
-  const regimeColor = market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : market?.gammaRegime === 'SHORT GAMMA' ? 'rgba(127, 29, 29, 0.03)' : 'transparent';
-
-  if (wsStatus === "ERROR" || wsStatus === "CLOSED") {
+  if (historyError) {
     return (
       <TerminalPanel className="flex-1 w-full h-full border border-terminal-border flex items-center justify-center">
         <div className="text-terminal-negative font-mono text-center">
           <p className="text-lg font-bold">MARKET DATA OFFLINE</p>
-          <p className="text-xs opacity-70 mt-2">WebSocket {wsStatus}</p>
-          <button 
-            onClick={() => window.location.reload()}
-            className="mt-4 px-4 py-2 border border-terminal-negative/30 hover:bg-terminal-negative/10 text-[10px] uppercase"
-          >
-            Reconnect Terminal
-          </button>
+          <p className="text-xs opacity-70 mt-2">History Fetch Error</p>
+          <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 border border-terminal-negative/30 text-[10px] uppercase">Reconnect</button>
         </div>
       </TerminalPanel>
     );
   }
 
   return (
-    <TerminalPanel className="flex-1 w-full h-full border border-terminal-border relative" noPadding style={{ backgroundColor: regimeColor }}>
+    <TerminalPanel className="flex-1 w-full h-full border border-terminal-border relative" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
       <div className="absolute inset-0 pointer-events-none z-10">
         <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start">
           <div className="flex flex-col">
             <div className="flex items-baseline space-x-3">
               <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
-              <span className={`text-2xl font-mono font-bold ${wsStatus === 'OPEN' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{currentPriceValFinal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span className={`text-2xl font-mono font-bold ${wsStatus === 'OPEN' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{(lastCandle?.close || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
               <span className="text-[10px] font-mono font-bold opacity-80 text-terminal-muted ml-2">{wsStatus}</span>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
               <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>
               <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span><span className="text-[11px] font-bold font-mono text-white">{market?.distanceToFlip?.toFixed(2) || "0.00"}%</span></div>
-              <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Pressure</span><span className={`text-[11px] font-bold font-mono ${exposure?.gammaPressure?.startsWith('+') ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{exposure?.gammaPressure || "0.00"}</span></div>
-              <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Vanna/Charm</span><span className="text-[11px] font-bold font-mono text-white">{exposure?.vannaBias?.charAt(0)}/{exposure?.charmBias?.charAt(0)}</span></div>
             </div>
           </div>
           <div className="flex flex-col items-end space-y-2 pointer-events-auto mr-32">
             <div className="flex space-x-1">
-              <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">PAN UP</button>
-              <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">PAN DN</button>
-              <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">ZOOM +</button>
-              <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">ZOOM -</button>
               <button onClick={() => { setSelectedScenario(null); fitLevels(); }} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/10 border-terminal-accent/30 text-terminal-accent hover:bg-terminal-accent/20">FIT LEVELS</button>
               <button onClick={() => { setSelectedScenario(null); resetScale(); }} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/20 border-terminal-accent text-white hover:bg-terminal-accent/40">RESET</button>
             </div>
             <div className="flex space-x-1">
               {Object.entries(toggles).map(([key, val]) => (
-                <button key={key} onClick={() => setToggles(prev => ({ ...prev, [key]: !val }))} className={cn("px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase transition-all", val ? "bg-terminal-accent/20 border-terminal-accent text-white" : "bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white")}>{key === 'hedgeMap' ? 'HEDGE MAP' : key}</button>
+                <button key={key} onClick={() => setToggles(prev => ({ ...prev, [key]: !val }))} className={cn("px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase transition-all", val ? "bg-terminal-accent/20 border-terminal-accent text-white" : "bg-terminal-panel border-terminal-border text-terminal-muted")}>{key}</button>
               ))}
             </div>
           </div>
         </div>
-        <div className="absolute bottom-4 left-4 flex space-x-4">
-          <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase">Call Wall</span><span className="text-[12px] font-bold font-mono text-terminal-negative">{positioning?.callWall?.toLocaleString()}</span></div>
-          <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase">Put Wall</span><span className="text-[12px] font-bold font-mono text-terminal-positive">{positioning?.putWall?.toLocaleString()}</span></div>
-          <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase">Dealer Pivot</span><span className="text-[12px] font-bold font-mono text-white/70">{positioning?.dealerPivot?.toLocaleString()}</span></div>
-        </div>
       </div>
-      <div ref={chartContainerRef} className="absolute inset-0 chart-container-root pr-[100px]" style={{ pointerEvents: 'auto' }} />
+      <div ref={chartContainerRef} className="absolute inset-0 pr-[100px]" style={{ pointerEvents: 'auto' }} />
     </TerminalPanel>
   );
 }
