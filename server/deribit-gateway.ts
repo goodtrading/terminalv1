@@ -61,6 +61,13 @@ export const optionsSummarySchema = z.object({
   cascadeRisk: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
   pinningStrength: z.number().optional(),
   dealerFlowUrgency: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
+  marketRegime: z.object({
+    dealerRegime: z.enum(["LONG_GAMMA", "SHORT_GAMMA", "TRANSITION"]),
+    liquidityPressure: z.enum(["PINNING", "NEUTRAL", "EXPANSION", "CASCADE_RISK"]),
+    volatilityState: z.enum(["COMPRESSING", "NORMAL", "EXPANDING"]),
+    tradeBias: z.enum(["LONG", "SHORT", "MEAN_REVERSION", "NEUTRAL"]),
+    regimeConfidence: z.number()
+  }).optional(),
   liquidationConfluence: z.object({
     zones: z.array(z.object({
       startPrice: z.number(),
@@ -539,6 +546,43 @@ export class DeribitOptionsGateway {
         liquidationSweepRisk
       };
 
+      // --- Market Regime Engine ---
+      let dealerRegime: "LONG_GAMMA" | "SHORT_GAMMA" | "TRANSITION" = "TRANSITION";
+      const gexThreshold = 1000000;
+      if (totalGex > gexThreshold) dealerRegime = "LONG_GAMMA";
+      else if (totalGex < -gexThreshold) dealerRegime = "SHORT_GAMMA";
+      else if (spotPrice && gammaFlip && Math.abs(spotPrice - gammaFlip) < 2000) dealerRegime = "TRANSITION";
+
+      let liquidityPressure: "PINNING" | "NEUTRAL" | "EXPANSION" | "CASCADE_RISK" = "NEUTRAL";
+      if (cascadeRisk === "HIGH") liquidityPressure = "CASCADE_RISK";
+      else if (pinningStrength > 0.7) liquidityPressure = "PINNING";
+      else if (hedgingStressScore > 0.6) liquidityPressure = "EXPANSION";
+
+      let volatilityState: "COMPRESSING" | "NORMAL" | "EXPANDING" = "NORMAL";
+      if (dealerRegime === "LONG_GAMMA") volatilityState = "COMPRESSING";
+      else if (dealerRegime === "SHORT_GAMMA" || cascadeRisk === "HIGH") volatilityState = "EXPANDING";
+
+      let tradeBias: "LONG" | "SHORT" | "MEAN_REVERSION" | "NEUTRAL" = "NEUTRAL";
+      if (dealerRegime === "LONG_GAMMA" && pinningStrength > 0.6) tradeBias = "MEAN_REVERSION";
+      else if (totalVanna > 0 && dealerRegime === "LONG_GAMMA") tradeBias = "LONG";
+      else if (totalVanna < 0 && dealerRegime === "SHORT_GAMMA") tradeBias = "SHORT";
+
+      // Confidence score based on signal alignment
+      let alignmentCount = 0;
+      if (dealerRegime === "LONG_GAMMA" && volatilityState === "COMPRESSING") alignmentCount++;
+      if (dealerRegime === "SHORT_GAMMA" && volatilityState === "EXPANDING") alignmentCount++;
+      if (liquidityPressure === "CASCADE_RISK" && volatilityState === "EXPANDING") alignmentCount++;
+      if (liquidityPressure === "PINNING" && tradeBias === "MEAN_REVERSION") alignmentCount++;
+      const regimeConfidence = Math.min(100, 40 + (alignmentCount * 20));
+
+      const marketRegime = {
+        dealerRegime,
+        liquidityPressure,
+        volatilityState,
+        tradeBias,
+        regimeConfidence
+      };
+
       return {
         totalGex: totalGex || null,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -568,6 +612,7 @@ export class DeribitOptionsGateway {
         dealerFlowUrgency,
         backtestResults,
         liquidationConfluence,
+        marketRegime,
         reactionZones
       };
     } catch (e) {
