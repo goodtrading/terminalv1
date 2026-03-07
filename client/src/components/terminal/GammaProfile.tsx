@@ -1,18 +1,11 @@
 import { TerminalPanel } from "./TerminalPanel";
 import { cn } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
-import { OptionsPositioning, MarketState } from "@shared/schema";
+import { useTerminalState } from "@/hooks/useTerminalState";
 
 export function GammaProfile() {
-  const { data: positioning } = useQuery<OptionsPositioning>({ 
-    queryKey: ["/api/options-positioning"],
-    refetchInterval: 5000
-  });
-
-  const { data: market } = useQuery<MarketState>({ 
-    queryKey: ["/api/market-state"],
-    refetchInterval: 5000
-  });
+  const { data: state } = useTerminalState();
+  const positioning = state?.positioning;
+  const market = state?.market;
 
   // Expand range to cover more strikes, centering around spot/walls
   const strikes = Array.from({ length: 41 }, (_, i) => 60000 + i * 500);

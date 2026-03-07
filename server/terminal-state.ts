@@ -7,6 +7,7 @@ export const terminalStateSchema = z.object({
   exposure: z.any(),
   positioning: z.any(),
   levels: z.any(),
+  scenarios: z.array(z.any()),
   ticker: tickerSchema.nullable(),
   tickerStatus: z.enum(["fresh", "stale", "unavailable"]),
   timestamp: z.number()
@@ -18,11 +19,12 @@ const STALE_THRESHOLD_MS = 10000; // 10 seconds
 
 export async function getTerminalState(): Promise<TerminalState> {
   // Aggregated quantitative state from DB (fast read)
-  const [market, exposure, positioning, levels] = await Promise.all([
+  const [market, exposure, positioning, levels, scenarios] = await Promise.all([
     storage.getMarketState(),
     storage.getDealerExposure(),
     storage.getOptionsPositioning(),
-    storage.getKeyLevels()
+    storage.getKeyLevels(),
+    storage.getTradingScenarios()
   ]);
 
   // Read from in-memory cache ONLY (deterministic latency, no side effects)
@@ -40,6 +42,7 @@ export async function getTerminalState(): Promise<TerminalState> {
     exposure,
     positioning,
     levels,
+    scenarios,
     ticker,
     tickerStatus,
     timestamp: now

@@ -1,8 +1,7 @@
 import { TerminalPanel, TerminalValue } from "./TerminalPanel";
-import { cn } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
-import { OptionsPositioning, MarketState, TradingScenario, KeyLevels, DealerExposure } from "@shared/schema";
+import { useTerminalState } from "@/hooks/useTerminalState";
 import { useMemo, useState, useEffect } from "react";
+import { TradingScenario } from "@shared/schema";
 
 export function TradingPlan() {
   const [selectedScenario, setSelectedScenario] = useState<TradingScenario | null>(null);
@@ -15,15 +14,9 @@ export function TradingPlan() {
     return () => window.removeEventListener('scenario-select', handleScenarioSelect);
   }, []);
 
-  const { data: market } = useQuery<MarketState>({ 
-    queryKey: ["/api/market-state"],
-    refetchInterval: 5000
-  });
-
-  const { data: exposure } = useQuery<DealerExposure>({ 
-    queryKey: ["/api/dealer-exposure"],
-    refetchInterval: 5000
-  });
+  const { data: state } = useTerminalState();
+  const market = state?.market;
+  const exposure = state?.exposure;
 
   const planData = useMemo(() => {
     if (!selectedScenario) return null;
@@ -58,7 +51,7 @@ export function TradingPlan() {
             Market Context
           </div>
           <div className="space-y-4">
-            <TerminalValue label="Bias" value={planData?.bias} trend={planData?.bias.includes("BULLISH") ? "positive" : "neutral"} isBadge />
+            <TerminalValue label="Bias" value={planData?.bias} trend={planData?.bias?.includes("BULLISH") ? "positive" : "neutral"} isBadge />
             <TerminalValue label="Regime" value={planData?.regime} trend={planData?.regime === "LONG GAMMA" ? "positive" : "negative"} />
             <div className="flex justify-between items-center py-2 border-b border-white/[0.03] last:border-0">
                <span className="terminal-text-label text-[10px]">Vanna/Charm</span>
