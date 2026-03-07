@@ -1,0 +1,121 @@
+UI FEATURE — EDUCATIONAL TOOLTIPS
+
+Goal:
+Add simple educational tooltips that appear when users hover over key trading concepts.
+
+This is designed to help beginner traders understand the terminal.
+
+Do NOT change backend logic or calculations.
+Only add UI tooltips.
+
+------------------------------------------------
+
+STEP 1 — ADD TOOLTIP SYSTEM
+
+Add hover tooltips to the following elements:
+
+Gamma Regime
+Gamma Flip
+Call Wall
+Put Wall
+Magnet
+Dealer Pivot
+Squeeze Risk
+Transition Zone
+
+------------------------------------------------
+
+STEP 2 — TOOLTIP STYLE
+
+Tooltips should be:
+
+• small
+• dark themed
+• readable
+• short educational text
+
+Position:
+near the hovered element
+
+------------------------------------------------
+
+STEP 3 — TOOLTIP CONTENT
+
+Gamma Regime
+
+LONG GAMMA
+Dealers hedge against price moves.
+This usually stabilizes price and creates mean reversion.
+
+------------------------------------------------
+
+Gamma Flip
+
+GAMMA FLIP
+Level where dealer positioning changes from stabilizing
+the market to amplifying volatility.
+
+------------------------------------------------
+
+Call Wall
+
+CALL WALL
+Large concentration of call options.
+Often acts as resistance due to dealer hedging.
+
+------------------------------------------------
+
+Put Wall
+
+PUT WALL
+Large concentration of put options.
+Often acts as support due to dealer hedging.
+
+------------------------------------------------
+
+Magnet
+
+GAMMA MAGNET
+Strike with heavy options positioning.
+Price often gravitates toward these levels.
+
+------------------------------------------------
+
+Dealer Pivot
+
+DEALER PIVOT
+Key level where dealer hedging flow may shift direction.
+
+------------------------------------------------
+
+Squeeze Risk
+
+SQUEEZE RISK
+Market conditions where hedging flows may accelerate
+price movement rapidly.
+
+------------------------------------------------
+
+Transition Zone
+
+TRANSITION ZONE
+Area where the market moves between long gamma
+and short gamma regimes.
+
+------------------------------------------------
+
+STEP 4 — UX RULES
+
+Tooltips must:
+
+• appear instantly on hover
+• disappear when mouse leaves
+• not block the chart
+• remain compact
+
+------------------------------------------------
+
+Expected result:
+
+Beginner users can hover any concept
+and instantly understand what it means.

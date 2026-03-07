@@ -133,11 +133,11 @@ export function LeftSidebar() {
       </TerminalPanel>
 
       <TerminalPanel title="MARKET STATE">
-        <TerminalValue label="Gamma Regime" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge />
+        <TerminalValue label="Gamma Regime" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge tooltip="Gamma Regime" />
         <TerminalValue label="Total GEX" value={market ? `${(market.totalGex / 1e9).toFixed(2)}B` : "--"} trend={market && market.totalGex > 0 ? "positive" : "negative"} />
-        <TerminalValue label="Gamma Flip" value={market?.gammaFlip ?? "--"} />
+        <TerminalValue label="Gamma Flip" value={market?.gammaFlip ?? "--"} tooltip="Gamma Flip" />
         <TerminalValue label="Dist. to Flip" value={market?.distanceToFlip != null ? `${market.distanceToFlip.toFixed(2)}%` : "--"} trend={market && market.distanceToFlip < 5 ? "positive" : "neutral"} />
-        <TerminalValue label="Transition Zone" value={market?.transitionZoneStart != null && market?.transitionZoneEnd != null ? `${Math.round(market.transitionZoneStart)} - ${Math.round(market.transitionZoneEnd)}` : "--"} />
+        <TerminalValue label="Transition Zone" value={market?.transitionZoneStart != null && market?.transitionZoneEnd != null ? `${Math.round(market.transitionZoneStart)} - ${Math.round(market.transitionZoneEnd)}` : "--"} tooltip="Transition Zone" />
         <TerminalValue label="Gamma Accel" value={market?.gammaAcceleration ?? "--"} trend="positive" />
       </TerminalPanel>
 
@@ -159,10 +159,10 @@ export function LeftSidebar() {
       </TerminalPanel>
 
       <TerminalPanel title="OPTIONS POSITIONING">
-        <TerminalValue label="Call Wall" value={positioning?.callWall ? positioning.callWall.toLocaleString() : "--"} trend="negative" />
-        <TerminalValue label="Put Wall" value={positioning?.putWall ? positioning.putWall.toLocaleString() : "--"} trend="positive" />
+        <TerminalValue label="Call Wall" value={positioning?.callWall ? positioning.callWall.toLocaleString() : "--"} trend="negative" tooltip="Call Wall" />
+        <TerminalValue label="Put Wall" value={positioning?.putWall ? positioning.putWall.toLocaleString() : "--"} trend="positive" tooltip="Put Wall" />
         <TerminalValue label="OI Concentration" value={positioning?.oiConcentration ? positioning.oiConcentration.toLocaleString() : "--"} />
-        <TerminalValue label="Dealer Pivot" value={positioning?.dealerPivot ?? "--"} />
+        <TerminalValue label="Dealer Pivot" value={positioning?.dealerPivot ?? "--"} tooltip="Dealer Pivot" />
       </TerminalPanel>
 
       <TerminalPanel title="KEY LEVELS">

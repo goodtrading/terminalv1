@@ -5,6 +5,7 @@ import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels, DealerExposure, TradingScenario } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { useTerminalState } from "@/hooks/useTerminalState";
+import { TooltipWrapper } from "./Tooltip";
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE";
 
@@ -305,19 +306,20 @@ export function MainChart() {
     <div className="flex-1 w-full h-full flex flex-col relative">
       <div className="flex items-center gap-1 px-2 py-1 bg-terminal-panel border border-terminal-border border-b-0 shrink-0" data-testid="toggle-map-mode">
         {modes.map(mode => (
-          <button
-            key={mode}
-            onClick={() => setMapMode(mode)}
-            className={cn(
-              "px-3 py-1 text-[10px] font-bold font-mono uppercase tracking-wider rounded-sm transition-all",
-              mapMode === mode
-                ? "bg-terminal-accent/20 border border-terminal-accent text-white"
-                : "border border-transparent text-white/40 hover:text-white/60 hover:bg-white/[0.03]"
-            )}
-            data-testid={`button-mode-${mode.toLowerCase()}`}
-          >
-            {mode}
-          </button>
+          <TooltipWrapper key={mode} concept={mode}>
+            <button
+              onClick={() => setMapMode(mode)}
+              className={cn(
+                "px-3 py-1 text-[10px] font-bold font-mono uppercase tracking-wider rounded-sm transition-all",
+                mapMode === mode
+                  ? "bg-terminal-accent/20 border border-terminal-accent text-white"
+                  : "border border-transparent text-white/40 hover:text-white/60 hover:bg-white/[0.03]"
+              )}
+              data-testid={`button-mode-${mode.toLowerCase()}`}
+            >
+              {mode}
+            </button>
+          </TooltipWrapper>
         ))}
         <div className="flex-1" />
         <div className="flex items-center gap-1">

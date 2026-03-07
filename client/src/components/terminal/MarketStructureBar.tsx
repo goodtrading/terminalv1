@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { useTerminalState } from "@/hooks/useTerminalState";
 import { useMemo } from "react";
+import { TooltipWrapper } from "./Tooltip";
 
 type Structure = "RANGE CONTROL" | "TRANSITION" | "VOLATILITY EXPANSION" | "SQUEEZE RISK";
 type VolLevel = "LOW VOL" | "MEDIUM VOL" | "HIGH VOL";
@@ -109,12 +110,14 @@ export function MarketStructureBar() {
 
 function Pill({ label, value, colorClass }: { label: string; value: string; colorClass: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-[9px] uppercase tracking-wider text-white/30 font-medium hidden sm:inline">{label}</span>
-      <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-bold font-mono tracking-wide", colorClass)}>
-        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", getDotColor(colorClass))} />
-        {value}
-      </span>
-    </div>
+    <TooltipWrapper concept={label}>
+      <div className="flex items-center gap-2 cursor-help">
+        <span className="text-[9px] uppercase tracking-wider text-white/30 font-medium hidden sm:inline">{label}</span>
+        <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-bold font-mono tracking-wide", colorClass)}>
+          <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", getDotColor(colorClass))} />
+          {value}
+        </span>
+      </div>
+    </TooltipWrapper>
   );
 }

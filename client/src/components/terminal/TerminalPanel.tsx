@@ -1,5 +1,6 @@
 import React from "react";
 import { cn } from "@/lib/utils";
+import { TooltipWrapper } from "./Tooltip";
 
 interface TerminalPanelProps extends React.HTMLAttributes<HTMLDivElement> {
   title?: string;
@@ -42,16 +43,26 @@ export function TerminalValue({
   label, 
   value, 
   trend,
-  isBadge = false
+  isBadge = false,
+  tooltip
 }: { 
   label: string; 
   value: React.ReactNode;
   trend?: "positive" | "negative" | "neutral";
   isBadge?: boolean;
+  tooltip?: string;
 }) {
+  const labelEl = tooltip ? (
+    <TooltipWrapper concept={tooltip}>
+      <span className="terminal-text-label text-[10px] transition-colors cursor-help border-b border-dashed border-white/10">{label}</span>
+    </TooltipWrapper>
+  ) : (
+    <span className="terminal-text-label text-[10px] transition-colors">{label}</span>
+  );
+
   return (
     <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03] last:border-0 group">
-      <span className="terminal-text-label text-[10px] transition-colors">{label}</span>
+      {labelEl}
       {isBadge ? (
         <span className={cn(
           "terminal-badge",
