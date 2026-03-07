@@ -1,0 +1,160 @@
+UI REFACTOR — RIGHT SIDEBAR (TRADING TERMINAL)
+
+Goal:
+Improve readability and usability of the right sidebar for beginner and intermediate traders without changing any backend logic.
+
+Important:
+Do NOT modify backend logic, data models, or API calls.
+Only refactor the UI presentation.
+
+Current panels in the sidebar:
+
+1. Trade Setup Quality
+2. Execution State
+3. Daily Scenarios
+
+We will improve hierarchy, spacing, and clarity.
+
+------------------------------------------------
+
+STEP 1 — MAKE EXECUTION STATE THE PRIMARY PANEL
+
+Execution State represents the actual trading decision and must be visually dominant.
+
+Changes:
+
+• Increase font size of STATUS value
+• Increase spacing between rows
+• Make values visually stronger than labels
+
+Target layout:
+
+EXECUTION STATE
+
+STATUS        EXECUTE
+DIRECTION     SHORT
+RISK          MEDIUM
+
+Implementation guidelines:
+
+- Labels: small uppercase text
+- Values: larger font-weight (bold)
+- Add spacing between rows (8–12px)
+
+------------------------------------------------
+
+STEP 2 — ADD SEMANTIC COLORS
+
+Use clear color semantics for beginners.
+
+Rules:
+
+STATUS
+EXECUTE → green
+AVOID ENTRY → red
+WAIT → yellow
+
+DIRECTION
+LONG → green
+SHORT → red
+
+RISK
+LOW → green
+MEDIUM → yellow
+HIGH → red
+
+Apply color only to the value, not the label.
+
+------------------------------------------------
+
+STEP 3 — SIMPLIFY TRADE SETUP PANEL
+
+Rename visually to:
+
+TRADE SETUP
+
+Fields should display clearly:
+
+Market Condition
+Flow State
+Volatility Risk
+
+Example layout:
+
+TRADE SETUP
+
+Market Condition   DEVELOPING
+Flow State         STABLE
+Volatility Risk    LOW
+
+Reduce visual noise:
+• consistent spacing
+• aligned values
+• no extra decoration
+
+------------------------------------------------
+
+STEP 4 — CLEAN DAILY SCENARIOS
+
+Improve readability.
+
+Layout should be:
+
+DAILY SCENARIOS
+
+Base Case
+Range-bound mean reversion toward 67k magnet
+
+Alt Case
+Upside range extension to 71k call wall
+
+Vol Case
+Tail risk acceleration / gamma squeeze
+
+Rules:
+
+• Case titles slightly bold
+• Description smaller text
+• Keep vertical spacing between scenarios
+
+------------------------------------------------
+
+STEP 5 — CONSISTENT PANEL STYLE
+
+Ensure all three panels share:
+
+• same padding
+• same header style
+• same spacing between rows
+• same typography scale
+
+Panel headers:
+
+font-weight: 600
+letter-spacing: small
+uppercase
+
+------------------------------------------------
+
+STEP 6 — DO NOT MODIFY
+
+Do NOT change:
+
+tradeDecision logic
+terminal state data
+API responses
+engine calculations
+
+Only adjust presentation.
+
+------------------------------------------------
+
+Expected result:
+
+A cleaner right sidebar that clearly communicates:
+
+1. Market condition
+2. Trade decision
+3. Probable scenarios
+
+Optimized for traders who are not experts in options or gamma analytics.

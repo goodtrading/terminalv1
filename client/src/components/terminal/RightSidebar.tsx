@@ -1,5 +1,4 @@
 import { useState, useMemo } from "react";
-import { TerminalPanel, TerminalValue } from "./TerminalPanel";
 import { cn } from "@/lib/utils";
 import { TradingScenario } from "@shared/schema";
 import { useTerminalState } from "@/hooks/useTerminalState";
@@ -8,140 +7,78 @@ interface RightSidebarProps {
   onScenarioSelect?: (scenario: TradingScenario | null) => void;
 }
 
+function SidebarPanel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-terminal-panel border border-terminal-border">
+      <div className="px-4 py-2.5 border-b border-terminal-border">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] terminal-text-primary">{title}</span>
+      </div>
+      <div className="px-4 py-3">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function StatusValue({ label, value, color }: { label: string; value: string; color?: string }) {
+  const colorClass = color === "green" ? "text-green-400"
+    : color === "red" ? "text-red-400"
+    : color === "yellow" ? "text-yellow-400"
+    : "terminal-text-primary";
+
+  return (
+    <div className="flex justify-between items-center py-[6px]" data-testid={`status-${label.toLowerCase().replace(/\s/g, "-")}`}>
+      <span className="text-[10px] uppercase tracking-wider text-white/40 font-medium">{label}</span>
+      <span className={cn("text-[13px] font-mono font-bold", colorClass)}>{value}</span>
+    </div>
+  );
+}
+
+function getStatusColor(val: string): string {
+  if (val === "EXECUTE") return "green";
+  if (val === "AVOID") return "red";
+  if (val === "WAIT" || val === "PREPARE") return "yellow";
+  return "";
+}
+
+function getDirectionColor(val: string): string {
+  if (val === "LONG") return "green";
+  if (val === "SHORT") return "red";
+  return "";
+}
+
+function getRiskColor(val: string): string {
+  if (val === "LOW") return "green";
+  if (val === "MEDIUM") return "yellow";
+  if (val === "HIGH") return "red";
+  return "";
+}
+
 export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
-
-  const { data: state, isLoading: stateLoading } = useTerminalState();
+  const { data: state } = useTerminalState();
 
   const market = state?.market;
   const positioning = state?.positioning;
   const exposure = state?.exposure;
-  const levels = state?.levels;
-  const currentPrice = state?.ticker?.price || 0;
   const tradeDecision = (positioning as any)?.tradeDecisionEngine;
-
-  // We still need scenarios, but they aren't in the terminal state yet.
-  // Wait, let's check if they should be. The user said "derive their data from the shared hook".
-  // The terminal state endpoint currently does NOT include scenarios.
-  // I should check server/terminal-state.ts again.
-  // Actually, I'll add scenarios to the terminal state endpoint in the next step or assume they are coming soon.
-  // For now, I'll keep the scenarios query if it's not in the state.
-  // Looking at the previous server/terminal-state.ts write, it didn't have scenarios.
-  // I will add scenarios to the terminal state endpoint to be thorough.
-  
   const scenarios = state?.market && (state as any).scenarios ? (state as any).scenarios : [];
 
-  const activeScenario = useMemo(() => 
-    (scenarios as TradingScenario[])?.find(s => s.id === selectedId) || null,
-    [scenarios, selectedId]
-  );
-
-  const parseLevel = (val: string): number => {
-    const clean = val.toLowerCase().replace(/,/g, '').trim();
-    const match = clean.match(/(\d+\.?\d*)/);
-    if (!match) return NaN;
-    let num = parseFloat(match[1]);
-    if (clean.includes('k')) {
-      num *= 1000;
-    }
-    return num;
-  };
-
-  const formatLevelDisplay = (price: number): string => {
-    if (isNaN(price)) return "--";
-    return price >= 1000 ? `${(price / 1000).toFixed(1)}k` : price.toString();
-  };
-
-  const engineData = useMemo(() => {
-    let score = 0;
-    
-    if (activeScenario) {
-      if (activeScenario.probability >= 60) score += 2;
-      else if (activeScenario.probability >= 40) score += 1;
-      else score -= 1;
-    }
-
-    if (market?.gammaRegime === "LONG GAMMA") score += 1;
-    if (exposure?.gammaPressure.startsWith("+")) score += 1;
-    if (exposure && (exposure as any).gammaConcentration > 0.7) score += 1;
-
-    // Hedging flow was removed from terminal state write? 
-    // I should check server/terminal-state.ts. It used storage.getDealerHedgingFlow()? 
-    // No, it used getMarketState, getDealerExposure, getOptionsPositioning, getKeyLevels.
-    // I'll add hedging flow to the state too.
-
-    const activeConfCount = 0;
-
-    let quality: "A" | "B" | "C" | "D" = "D";
-    if (score >= 8) quality = "A";
-    else if (score >= 6) quality = "B";
-    else if (score >= 4) quality = "C";
-
+  const tradeSetup = useMemo(() => {
     let condition = "WEAK";
-    if (activeScenario && activeConfCount >= 3) condition = "CONFIRMED";
-    else if (activeConfCount >= 1) condition = "DEVELOPING";
+    if (market?.gammaRegime === "LONG GAMMA" && exposure?.gammaPressure?.startsWith("+")) {
+      condition = "CONFIRMED";
+    } else if (market?.gammaRegime || exposure?.gammaPressure) {
+      condition = "DEVELOPING";
+    }
 
     let flowState = "STABLE";
     let volRisk = "MEDIUM";
     if (market?.gammaRegime === "LONG GAMMA") volRisk = "LOW";
-    if (market?.gammaRegime === "SHORT GAMMA") volRisk = "HIGH";
+    if (market?.gammaRegime === "SHORT GAMMA") { volRisk = "HIGH"; flowState = "VOLATILE"; }
 
-    let status = "AVOID ENTRY";
-    let bias: "LONG" | "SHORT" | "NEUTRAL" = "NEUTRAL";
-    let entryZone = "--";
-    let trigger = "NONE";
-    let target = "--";
-    let invalidationDisplay = "--";
-
-    if (activeScenario) {
-      const scenarioLevels = activeScenario.levels.map(parseLevel).filter(l => !isNaN(l));
-      const firstLevel = scenarioLevels[0];
-      const lastLevel = scenarioLevels[scenarioLevels.length - 1];
-      
-      if (activeScenario.type === "VOL") bias = "NEUTRAL";
-      else if (lastLevel > firstLevel) bias = "LONG";
-      else bias = "SHORT";
-
-      const potentialEntryPoints = [...scenarioLevels];
-      if (levels?.gammaMagnets) potentialEntryPoints.push(...levels.gammaMagnets);
-      if (positioning?.dealerPivot) potentialEntryPoints.push(positioning.dealerPivot);
-      
-      const nearestEntry = potentialEntryPoints.reduce((prev, curr) => 
-        Math.abs(curr - currentPrice) < Math.abs(prev - currentPrice) ? curr : prev, 
-        potentialEntryPoints[0] || NaN
-      );
-      entryZone = formatLevelDisplay(nearestEntry);
-
-      const potentialTargets = [...scenarioLevels];
-      if (levels?.gammaMagnets) potentialTargets.push(...levels.gammaMagnets);
-      if (positioning?.callWall) potentialTargets.push(positioning.callWall);
-      if (positioning?.putWall) potentialTargets.push(positioning.putWall);
-      
-      let nextTarget = NaN;
-      if (bias === "LONG") {
-        const longTargets = potentialTargets.filter(t => t > currentPrice).sort((a, b) => a - b);
-        nextTarget = longTargets[0] || lastLevel;
-      } else if (bias === "SHORT") {
-        const shortTargets = potentialTargets.filter(t => t < currentPrice).sort((a, b) => b - a);
-        nextTarget = shortTargets[0] || lastLevel;
-      }
-      target = formatLevelDisplay(nextTarget);
-
-      const invNum = parseLevel(activeScenario.invalidation);
-      invalidationDisplay = isNaN(invNum) ? activeScenario.invalidation : `${formatLevelDisplay(invNum)} FLIP`;
-
-      const priceNearEntry = Math.abs(currentPrice - nearestEntry) < (currentPrice * 0.015);
-      if ((quality === "A" || quality === "B") && condition === "CONFIRMED" && priceNearEntry) {
-        status = "READY TO EXECUTE";
-      } else if (activeScenario.probability >= 50) {
-        status = "STRUCTURE DEVELOPING";
-      }
-    }
-
-    if (quality === "D") status = "AVOID ENTRY";
-
-    return { quality, condition, flowState, volRisk, score, status, bias, entryZone, trigger, target, invalidationDisplay };
-  }, [activeScenario, market, exposure, currentPrice, levels, positioning]);
+    return { condition, flowState, volRisk };
+  }, [market, exposure]);
 
   const handleScenarioClick = (scenario: TradingScenario) => {
     const newId = selectedId === scenario.id ? null : scenario.id;
@@ -151,125 +88,79 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
     }
   };
 
+  const statusVal = tradeDecision?.tradeState || "WAIT";
+  const directionVal = tradeDecision?.tradeDirection || "NEUTRAL";
+  const riskVal = tradeDecision?.riskLevel || "MEDIUM";
+  const sizeVal = tradeDecision?.positionSizeSuggestion || "NO_TRADE";
+
   return (
-    <div className="w-80 h-full flex flex-col gap-1 overflow-y-auto p-1 border-l border-terminal-border bg-terminal-bg shrink-0">
-      <TerminalPanel title="TRADE SETUP QUALITY">
-        <div className="space-y-1.5">
-          <TerminalValue 
-            label="Setup Quality" 
-            value={engineData.quality} 
-            trend={engineData.quality === "A" ? "positive" : engineData.quality === "B" ? "neutral" : "negative"} 
-            isBadge 
+    <div className="w-80 h-full flex flex-col gap-2 overflow-y-auto p-2 border-l border-terminal-border bg-terminal-bg shrink-0">
+
+      <SidebarPanel title="Execution State">
+        <div className="flex flex-col divide-y divide-white/[0.04]">
+          <StatusValue label="Status" value={statusVal} color={getStatusColor(statusVal)} />
+          <StatusValue label="Direction" value={directionVal} color={getDirectionColor(directionVal)} />
+          <StatusValue label="Risk" value={riskVal} color={getRiskColor(riskVal)} />
+          <StatusValue label="Size" value={sizeVal} color={sizeVal === "FULL" ? "green" : sizeVal === "NO_TRADE" ? "red" : "yellow"} />
+        </div>
+      </SidebarPanel>
+
+      <SidebarPanel title="Trade Setup">
+        <div className="flex flex-col divide-y divide-white/[0.04]">
+          <StatusValue
+            label="Market Condition"
+            value={tradeSetup.condition}
+            color={tradeSetup.condition === "CONFIRMED" ? "green" : tradeSetup.condition === "DEVELOPING" ? "yellow" : "red"}
           />
-          <TerminalValue 
-            label="Condition" 
-            value={engineData.condition} 
-            trend={engineData.condition === "CONFIRMED" ? "positive" : engineData.condition === "DEVELOPING" ? "neutral" : "negative"} 
-          />
-          <TerminalValue label="Flow State" value={engineData.flowState} />
-          <TerminalValue 
-            label="Vol Risk" 
-            value={engineData.volRisk} 
-            trend={engineData.volRisk === "LOW" ? "positive" : engineData.volRisk === "MEDIUM" ? "neutral" : "negative"} 
-          />
-          <TerminalValue 
-            label="Active Scenario" 
-            value={activeScenario ? `${activeScenario.type} ${activeScenario.probability}%` : "NONE"} 
+          <StatusValue label="Flow State" value={tradeSetup.flowState} />
+          <StatusValue
+            label="Volatility Risk"
+            value={tradeSetup.volRisk}
+            color={getRiskColor(tradeSetup.volRisk)}
           />
         </div>
-      </TerminalPanel>
+      </SidebarPanel>
 
-      <TerminalPanel title="EXECUTION STATE">
-        <div className="space-y-1.5">
-          <TerminalValue 
-            label="Status" 
-            value={tradeDecision?.tradeState || "WAIT"} 
-            trend={
-              tradeDecision?.tradeState === "EXECUTE" ? "positive" : 
-              tradeDecision?.tradeState === "PREPARE" ? "neutral" : 
-              tradeDecision?.tradeState === "WAIT" ? "neutral" : "negative"
-            }
-            isBadge
-            data-testid="status-trade-state"
-          />
-          <TerminalValue 
-            label="Direction" 
-            value={tradeDecision?.tradeDirection || "NEUTRAL"} 
-            trend={tradeDecision?.tradeDirection === "LONG" ? "positive" : tradeDecision?.tradeDirection === "SHORT" ? "negative" : "neutral"}
-            data-testid="status-trade-direction"
-          />
-          <TerminalValue 
-            label="Risk" 
-            value={tradeDecision?.riskLevel || "MEDIUM"} 
-            trend={tradeDecision?.riskLevel === "LOW" ? "positive" : tradeDecision?.riskLevel === "HIGH" ? "negative" : "neutral"}
-            data-testid="status-risk-level"
-          />
-          <TerminalValue 
-            label="Size" 
-            value={tradeDecision?.positionSizeSuggestion || "NO_TRADE"} 
-            trend={
-              tradeDecision?.positionSizeSuggestion === "FULL" ? "positive" : 
-              tradeDecision?.positionSizeSuggestion === "REDUCED" ? "neutral" : "negative"
-            }
-            isBadge
-            data-testid="status-position-size"
-          />
-        </div>
-      </TerminalPanel>
-
-      <TerminalPanel title="DAILY SCENARIOS">
-        <div className="space-y-3">
+      <SidebarPanel title="Daily Scenarios">
+        <div className="flex flex-col gap-3">
           {(scenarios as TradingScenario[])?.map((scenario) => (
-            <div 
+            <div
               key={scenario.id}
               onClick={() => handleScenarioClick(scenario)}
               className={cn(
-                "terminal-card-interactive flex flex-col overflow-hidden",
-                selectedId === scenario.id && "terminal-card-selected",
+                "cursor-pointer rounded border border-white/[0.06] transition-colors hover:border-white/[0.12]",
+                selectedId === scenario.id && "border-terminal-accent/40 bg-terminal-accent/[0.04]"
               )}
+              data-testid={`card-scenario-${scenario.id}`}
             >
               <div className={cn(
-                "flex justify-between items-center p-1.5 border-b border-white/10",
-                scenario.type === "BASE" ? "bg-blue-900/40" : 
-                scenario.type === "ALT" ? "bg-green-900/40" : 
-                "bg-orange-900/40"
+                "px-3 py-2 border-b border-white/[0.06]",
+                scenario.type === "BASE" ? "bg-blue-900/20" :
+                scenario.type === "ALT" ? "bg-green-900/20" :
+                "bg-orange-900/20"
               )}>
-                <div className="flex items-center space-x-1.5">
-                  <div className={cn(
-                    "w-1 h-1 rounded-full",
-                    scenario.type === "BASE" ? "bg-blue-400" : 
-                    scenario.type === "ALT" ? "bg-green-400" : 
-                    "bg-orange-400"
-                  )}></div>
-                  <span className="text-[9px] font-bold terminal-text-primary uppercase tracking-wider">{scenario.type} CASE</span>
+                <div className="flex justify-between items-center">
+                  <span className={cn(
+                    "text-[10px] font-semibold uppercase tracking-wider",
+                    scenario.type === "BASE" ? "text-blue-400" :
+                    scenario.type === "ALT" ? "text-green-400" :
+                    "text-orange-400"
+                  )}>
+                    {scenario.type} Case
+                  </span>
+                  <span className="text-[9px] font-mono text-white/40">{scenario.probability}%</span>
                 </div>
-                <span className={cn(
-                  "terminal-badge",
-                  scenario.type === "BASE" ? "terminal-badge-info" : 
-                  scenario.type === "ALT" ? "terminal-badge-success" : 
-                  "terminal-badge-warning"
-                )}>
-                  {scenario.probability}% PROB
-                </span>
               </div>
-              <div className="p-2 text-[10px] space-y-2">
-                <div className="font-bold terminal-text-primary leading-tight">
-                  {scenario.thesis}
-                </div>
-                <div className="space-y-2">
-                  <div className="flex flex-col">
-                    <span className="terminal-text-label text-[8px]">Levels</span>
-                    <span className="text-[9px] font-mono font-bold terminal-text-primary block leading-normal">
-                      {scenario.levels.join(" / ")}
-                    </span>
-                  </div>
-                </div>
+              <div className="px-3 py-2">
+                <p className="text-[10px] text-white/60 leading-relaxed">{scenario.thesis}</p>
               </div>
             </div>
           ))}
-          {(!scenarios || (scenarios as any).length === 0) && <div className="text-[10px] terminal-text-muted p-3">No scenarios available</div>}
+          {(!scenarios || (scenarios as any).length === 0) && (
+            <div className="text-[10px] text-white/30 italic py-2">No scenarios available</div>
+          )}
         </div>
-      </TerminalPanel>
+      </SidebarPanel>
 
     </div>
   );
