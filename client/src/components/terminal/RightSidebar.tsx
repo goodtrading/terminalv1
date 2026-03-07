@@ -94,18 +94,19 @@ RISK PROFILE: MODERATE`;
                 <div className="font-bold text-white leading-tight">
                   {scenario.thesis}
                 </div>
-                <div className="space-y-1.5 opacity-80">
-                  <div className="grid grid-cols-[75px_1fr] gap-2">
-                    <span className="text-terminal-muted uppercase text-[9px] font-bold">Levels</span>
-                    <span className="font-mono font-bold text-white text-xs">
+                <div className="space-y-3 opacity-100">
+                  <div className="flex flex-col">
+                    <span className="text-terminal-muted uppercase text-[9px] font-bold tracking-wider">Levels</span>
+                    <span className="font-mono font-bold text-white text-[13px] mt-1 block leading-normal bg-white/5 p-1 rounded-sm border border-white/5">
                       {scenario.levels.map(formatLevel).join(" / ")}
                     </span>
                   </div>
-                  <div className="grid grid-cols-[75px_1fr] gap-2">
+                  
+                  <div className="grid grid-cols-[75px_1fr] gap-2 opacity-80">
                     <span className="text-terminal-muted uppercase text-[9px] font-bold">Confirm</span>
                     <span className="text-white/90 italic">{scenario.confirmation.join(", ")}</span>
                   </div>
-                  <div className="grid grid-cols-[75px_1fr] gap-2">
+                  <div className="grid grid-cols-[75px_1fr] gap-2 opacity-80">
                     <span className="text-terminal-muted uppercase text-[9px] font-bold">Invalid</span>
                     <span className="text-terminal-negative font-bold">{scenario.invalidation}</span>
                   </div>
