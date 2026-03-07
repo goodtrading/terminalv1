@@ -249,6 +249,38 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         })()}
       </SidebarPanel>
 
+      <SidebarPanel title="Dealer Hedging Flow">
+        {(() => {
+          const dhf = (positioning as any)?.dealerHedgingFlowMap;
+          const dir = dhf?.hedgingFlowDirection || "NEUTRAL";
+          const str = dhf?.hedgingFlowStrength || "LOW";
+          const accel = dhf?.hedgingAccelerationRisk || "LOW";
+          const trigger = dhf?.hedgingTriggerZone || "--";
+          const summary: string[] = dhf?.hedgingFlowSummary || [];
+          const dirColor = dir === "BUYING" ? "green" : dir === "SELLING" ? "red" : "gray";
+          const strColor = str === "EXTREME" ? "red" : str === "HIGH" ? "orange" : str === "MEDIUM" ? "yellow" : "gray";
+          const accelColor = accel === "HIGH" ? "red" : accel === "MEDIUM" ? "yellow" : "green";
+          return (
+            <div className="flex flex-col gap-2">
+              <StatusValue label="Direction" value={dir} color={dirColor} />
+              <StatusValue label="Strength" value={str} color={strColor} />
+              <StatusValue label="Acceleration" value={accel} color={accelColor} />
+              <StatusValue label="Trigger" value={trigger} color="purple" />
+              {summary.length > 0 && (
+                <div className="flex flex-col gap-0.5 mt-1">
+                  {summary.map((line: string, i: number) => (
+                    <div key={i} className="flex items-start gap-1.5">
+                      <span className="text-[8px] mt-[3px] text-cyan-400">•</span>
+                      <span className="text-[10px] text-white/50 font-mono leading-snug">{line}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </SidebarPanel>
+
       <SidebarPanel title="Daily Scenarios">
         <div className="flex flex-col gap-3">
           {(scenarios as TradingScenario[])?.map((scenario) => (
