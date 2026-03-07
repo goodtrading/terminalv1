@@ -185,21 +185,27 @@ export function TooltipWrapper({ concept, children, className }: TooltipWrapperP
   const [pos, setPos] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const triggerRef = useRef<HTMLSpanElement>(null);
   const { learnMode } = useLearnMode();
-  const tip = CONCEPTS[concept];
 
-  if (!tip || !learnMode) return <>{children}</>;
+  const tip = CONCEPTS[concept] ?? null;
+  const isEnabled = Boolean(tip && learnMode);
 
   const handleEnter = useCallback(() => {
+    if (!isEnabled) return;
     if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
       setPos({ x: rect.left + rect.width / 2, y: rect.top, w: rect.width, h: rect.height });
     }
     setShow(true);
-  }, []);
+  }, [isEnabled]);
 
   const handleLeave = useCallback(() => {
+    if (!isEnabled) return;
     setShow(false);
-  }, []);
+  }, [isEnabled]);
+
+  if (!isEnabled) {
+    return <>{children}</>;
+  }
 
   return (
     <>
@@ -212,7 +218,7 @@ export function TooltipWrapper({ concept, children, className }: TooltipWrapperP
       >
         {children}
       </span>
-      {show && pos && createPortal(
+      {show && pos && tip && createPortal(
         <TooltipPanel tip={tip} anchor={pos} />,
         document.body
       )}
