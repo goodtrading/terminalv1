@@ -27,6 +27,19 @@ export async function getTerminalState(): Promise<TerminalState> {
     storage.getTradingScenarios()
   ]);
 
+  // Inject live playbook from Deribit Gateway for the frontend
+  let livePlaybook = null;
+  try {
+    const rawOptions = await DeribitOptionsGateway.ingestLatestCSV();
+    const ticker = MarketDataGateway.getCachedTicker();
+    const summary = await DeribitOptionsGateway.getSummary(rawOptions, ticker?.price);
+    livePlaybook = summary.tradingPlaybook;
+  } catch (e) {
+    console.error("[TerminalState] Playbook injection failed:", e);
+  }
+
+  const enrichedPositioning = positioning ? { ...positioning, tradingPlaybook: livePlaybook } : positioning;
+
   // Read from in-memory cache ONLY (deterministic latency, no side effects)
   const ticker = MarketDataGateway.getCachedTicker();
   const now = Date.now();
@@ -40,7 +53,7 @@ export async function getTerminalState(): Promise<TerminalState> {
   return {
     market,
     exposure,
-    positioning,
+    positioning: enrichedPositioning,
     levels,
     scenarios,
     ticker,
