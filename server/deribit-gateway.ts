@@ -86,6 +86,21 @@ export const optionsSummarySchema = z.object({
       confidence: z.number()
     }).nullable()
   }).optional(),
+  tradingPlaybook: z.object({
+    currentPlaybook: z.object({
+      regime: z.string(),
+      expectedBehavior: z.string(),
+      volatilityRisk: z.enum(["LOW", "MEDIUM", "HIGH"]),
+      directionalBias: z.enum(["LONG", "SHORT", "NEUTRAL"]),
+      strategyType: z.enum(["FADE_EXTREMES", "MOMENTUM_BREAKOUT", "RANGE_SCALPING", "LIQUIDITY_SWEEP_REVERSAL", "VOLATILITY_EXPANSION"])
+    }),
+    tradeZones: z.object({
+      longZones: z.array(z.object({ start: z.number(), end: z.number() })),
+      shortZones: z.array(z.object({ start: z.number(), end: z.number() }))
+    }),
+    invalidationLevel: z.number(),
+    regimeShiftTrigger: z.string()
+  }).optional(),
   liquidationConfluence: z.object({
     zones: z.array(z.object({
       startPrice: z.number(),
@@ -683,6 +698,60 @@ export class DeribitOptionsGateway {
         activeTrapContext
       };
 
+      // --- Trading Playbook Engine ---
+      let strategyType: "FADE_EXTREMES" | "MOMENTUM_BREAKOUT" | "RANGE_SCALPING" | "LIQUIDITY_SWEEP_REVERSAL" | "VOLATILITY_EXPANSION" = "RANGE_SCALPING";
+      let directionalBias: "LONG" | "SHORT" | "NEUTRAL" = tradeBias as any || "NEUTRAL";
+      let expectedBehavior = "Sideways consolidation with institutional absorption";
+      let volatilityRisk: "LOW" | "MEDIUM" | "HIGH" = "LOW";
+
+      if (dealerRegime === "LONG_GAMMA") {
+        strategyType = pinningStrength > 0.6 ? "RANGE_SCALPING" : "FADE_EXTREMES";
+        expectedBehavior = "Mean reversion around high-liquidity magnets";
+        volatilityRisk = "LOW";
+      } else if (dealerRegime === "SHORT_GAMMA") {
+        strategyType = cascadeRisk === "HIGH" ? "VOLATILITY_EXPANSION" : "MOMENTUM_BREAKOUT";
+        expectedBehavior = "Directional acceleration fueled by dealer hedging";
+        volatilityRisk = "HIGH";
+      } else if (dealerRegime === "TRANSITION") {
+        strategyType = "LIQUIDITY_SWEEP_REVERSAL";
+        expectedBehavior = "Volatility spikes followed by sharp reversals at key levels";
+        volatilityRisk = "MEDIUM";
+      }
+
+      const longZones: {start: number, end: number}[] = [];
+      const shortZones: {start: number, end: number}[] = [];
+
+      if (putWall && spotPrice) {
+        longZones.push({ start: putWall - 1000, end: putWall + 500 });
+      }
+      if (callWall && spotPrice) {
+        shortZones.push({ start: callWall - 500, end: callWall + 1000 });
+      }
+
+      gammaMagnets?.forEach(m => {
+        if (m < (spotPrice || 0)) longZones.push({ start: m - 500, end: m + 500 });
+        else shortZones.push({ start: m - 500, end: m + 500 });
+      });
+
+      const invalidationLevel = gammaFlip || (spotPrice ? spotPrice * 0.95 : 0);
+      const regimeShiftTrigger = dealerRegime === "LONG_GAMMA" ? "Price break below Gamma Flip" : "Volatility compression and GEX returning to positive";
+
+      const tradingPlaybook = {
+        currentPlaybook: {
+          regime: dealerRegime,
+          expectedBehavior,
+          volatilityRisk,
+          directionalBias,
+          strategyType
+        },
+        tradeZones: {
+          longZones,
+          shortZones
+        },
+        invalidationLevel,
+        regimeShiftTrigger
+      };
+
       return {
         totalGex: totalGex || null,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -714,6 +783,7 @@ export class DeribitOptionsGateway {
         liquidationConfluence,
         marketRegime,
         dealerTrapEngine,
+        tradingPlaybook,
         reactionZones
       };
     } catch (e) {
