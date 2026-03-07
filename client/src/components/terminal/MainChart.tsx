@@ -449,18 +449,20 @@ export function MainChart() {
         
         // 1. ABSORPTION ZONE (LONG GAMMA focus)
         if (market.gammaRegime === "LONG GAMMA") {
-          const absorptionWidth = currentPrice * 0.02; // 2% band
-          addZone(pivot - absorptionWidth, pivot + absorptionWidth, "rgba(59, 130, 246, 0.15)", "ABSORPTION");
+          const absorptionWidth = currentPrice * 0.015; // 1.5% band
+          addZone(pivot - absorptionWidth, pivot + absorptionWidth, "rgba(59, 130, 246, 0.12)", "ABSORPTION");
         }
 
         // 2. EXPANSION TRIGGERS
         if (market.gammaFlip) {
-          addLevel(market.gammaFlip, "#f59e0b", "EXPANSION (FLIP)", LineStyle.Dashed, 2);
+          // Expansion trigger is distinct from FLIP
+          addLevel(market.gammaFlip, "#fbbf24", "EXPANSION", LineStyle.Dashed, 2);
         }
         
         // 3. HEDGE SHIFT ZONE
         if (market.transitionZoneStart && market.transitionZoneEnd) {
-          addZone(market.transitionZoneStart, market.transitionZoneEnd, "rgba(156, 163, 175, 0.1)", "HEDGE SHIFT");
+          // Increased opacity and clear labeling for Shift Zone
+          addZone(market.transitionZoneStart, market.transitionZoneEnd, "rgba(255, 255, 255, 0.15)", "HEDGE SHIFT");
         }
       }
     } catch (err) {
