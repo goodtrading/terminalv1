@@ -77,7 +77,6 @@ export function MainChart() {
                   selectedScenario.type === "ALT" ? "#22c55e" : "#f97316";
 
     selectedScenario.levels.forEach((levelStr) => {
-      // Helper to convert "67k" -> 67000, "71,000" -> 71000, etc.
       const parseLevel = (val: string): number => {
         const clean = val.toLowerCase().replace(/,/g, '').trim();
         if (clean.endsWith('k')) {
@@ -142,11 +141,8 @@ export function MainChart() {
   const { data: candles } = useQuery({
     queryKey: ["btc-candles-lightweight"],
     queryFn: async () => {
-      // Use a relative path to trigger the development proxy instead of direct Binance URL
-      // This helps avoid CORS issues in the Replit environment
       const res = await fetch("/api/proxy/binance/klines?symbol=BTCUSDT&interval=15m&limit=300");
       if (!res.ok) {
-        // Fallback to direct Binance if proxy is not yet implemented
         const directRes = await fetch("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=300");
         return directRes.json();
       }
@@ -188,8 +184,8 @@ export function MainChart() {
           vertLines: { color: "#111111" },
           horzLines: { color: "#111111" },
         },
-        width: chartContainerRef.current.clientWidth,
-        height: chartContainerRef.current.clientHeight,
+        width: chartContainerRef.current.clientWidth || 800,
+        height: chartContainerRef.current.clientHeight || 500,
         timeScale: {
           borderColor: "#1a1a1a",
           timeVisible: true,
@@ -309,7 +305,6 @@ export function MainChart() {
 
   useEffect(() => {
     if (candleSeriesRef.current && candles) {
-      const rawCount = candles.length;
       const safeCandles = candles.filter((c: any) => {
         const hasValidTime = c.time !== undefined && c.time !== null;
         const hasValidPrices = 
@@ -330,11 +325,6 @@ export function MainChart() {
         }
         return { ...c, time: normalizedTime };
       }).sort((a: any, b: any) => a.time - b.time);
-
-      const filteredCount = rawCount - safeCandles.length;
-      if (filteredCount > 0) {
-        console.warn(`[MainChart] Filtered out ${filteredCount} malformed candles`);
-      }
 
       if (safeCandles.length > 0) {
         try {
@@ -498,23 +488,14 @@ export function MainChart() {
 
       if (toggles.hedgeMap && market && positioning) {
         const pivot = positioning.dealerPivot || currentPrice;
-        
-        // 1. ABSORPTION ZONE (LONG GAMMA focus)
         if (market.gammaRegime === "LONG GAMMA") {
-          const absorptionWidth = currentPrice * 0.015; // 1.5% band
+          const absorptionWidth = currentPrice * 0.015; 
           addZone(pivot - absorptionWidth, pivot + absorptionWidth, "rgba(59, 130, 246, 0.12)", "ABSORPTION");
         }
-
-        // 2. EXPANSION TRIGGERS
         if (market.gammaFlip) {
-          // Expansion trigger is distinct from FLIP
           addLevel(market.gammaFlip, "#fbbf24", "EXPANSION", LineStyle.Solid, 1);
         }
-        
-        // 3. HEDGE SHIFT ZONE
         if (market.transitionZoneStart && market.transitionZoneEnd) {
-          // Increased opacity and clear labeling for Shift Zone
-          // Added a small buffer to ensure vertical thickness is noticeable
           const shiftPadding = currentPrice * 0.002; 
           addZone(market.transitionZoneStart - shiftPadding, market.transitionZoneEnd + shiftPadding, "rgba(255, 255, 255, 0.22)", "HEDGE SHIFT");
         }
@@ -537,11 +518,11 @@ export function MainChart() {
 
   return (
     <TerminalPanel 
-      className="flex-[2] border border-terminal-border relative overflow-hidden" 
+      className="flex-1 w-full h-full border border-terminal-border relative overflow-hidden" 
       noPadding
       style={{ backgroundColor: regimeColor }}
     >
-      <div className="absolute top-0 left-0 right-0 bottom-0 pointer-events-none z-10">
+      <div className="absolute inset-0 pointer-events-none z-10">
         <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start">
           <div className="flex flex-col">
             <div className="flex items-baseline space-x-3">
@@ -569,8 +550,8 @@ export function MainChart() {
               </div>
               <div className="flex flex-col">
                 <span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Pressure</span>
-                <span className="text-[11px] font-bold font-mono text-terminal-accent">
-                  {exposure?.gammaPressure || "LOW"}
+                <span className={`text-[11px] font-bold font-mono ${exposure?.gammaPressure?.startsWith('+') ? 'text-terminal-positive' : 'text-terminal-negative'}`}>
+                  {exposure?.gammaPressure || "0.00"}
                 </span>
               </div>
               <div className="flex flex-col">
@@ -642,7 +623,7 @@ export function MainChart() {
       
       <div 
         ref={chartContainerRef} 
-        className="w-full h-full chart-container-root"
+        className="absolute inset-0 chart-container-root"
         style={{ pointerEvents: 'auto' }}
       />
     </TerminalPanel>

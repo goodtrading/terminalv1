@@ -31,7 +31,7 @@ export function TerminalPanel({ title, children, className, noPadding = false, h
           </div>
         </div>
       )}
-      <div className={cn("flex-1 overflow-auto", !noPadding && "p-4")}>
+      <div className={cn("flex-1 overflow-hidden flex flex-col", !noPadding && "p-4 overflow-auto")}>
         {children}
       </div>
     </div>

@@ -13,9 +13,11 @@ export default function TerminalLayout() {
       <div className="flex-1 flex overflow-hidden">
         <LeftSidebar />
         
-        <div className="flex-1 flex flex-col p-1 gap-1 min-w-0 overflow-hidden bg-terminal-bg relative">
-          <MainChart />
-          <div className="flex gap-1 h-80 shrink-0">
+        <div className="flex-1 flex flex-col p-1 gap-1 min-w-0 bg-terminal-bg relative overflow-hidden">
+          <div className="flex-1 min-h-[400px] relative overflow-hidden">
+            <MainChart />
+          </div>
+          <div className="flex gap-1 h-72 shrink-0">
             <GammaProfile />
             <TradingPlan />
           </div>
