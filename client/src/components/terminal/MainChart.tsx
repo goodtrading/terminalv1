@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createChart, ColorType, LineStyle, CandlestickSeries, HistogramSeries } from "lightweight-charts";
+import { createChart, ColorType, LineStyle, CandlestickSeries, HistogramSeries, IChartApi, ISeriesApi } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels, DealerExposure, TradingScenario } from "@shared/schema";
 import { cn } from "@/lib/utils";
 
 export function MainChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<any>(null);
-  const candleSeriesRef = useRef<any>(null);
-  const volumeSeriesRef = useRef<any>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLinesRef = useRef<any[]>([]);
   const livePriceLineRef = useRef<any>(null);
 
@@ -87,7 +87,7 @@ export function MainChart() {
 
       const price = parseLevel(levelStr);
       if (isNaN(price)) return;
-      const line = candleSeriesRef.current.createPriceLine({
+      const line = candleSeriesRef.current?.createPriceLine({
         price,
         color,
         lineWidth: 1,
@@ -95,7 +95,7 @@ export function MainChart() {
         axisLabelVisible: true,
         title: `${selectedScenario.type} ${levelStr}`,
       });
-      scenarioLevelsRef.current.push(line);
+      if (line) scenarioLevelsRef.current.push(line);
     });
 
     const prices = selectedScenario.levels.map(l => {
@@ -145,25 +145,41 @@ export function MainChart() {
       if (!res.ok) {
         throw new Error("Failed to fetch klines");
       }
-      const data = await res.json();
-      return data
-        .map((d: any) => ({
-          time: (Math.floor(d[0] / 1000)) as any,
-          open: parseFloat(d[1]),
-          high: parseFloat(d[2]),
-          low: parseFloat(d[3]),
-          close: parseFloat(d[4]),
-        }))
-        .filter((c: any) => 
-          c.time !== undefined && 
-          c.time !== null && 
-          !isNaN(c.time) &&
-          !isNaN(c.open) && 
-          !isNaN(c.high) && 
-          !isNaN(c.low) && 
-          !isNaN(c.close)
-        )
-        .sort((a: any, b: any) => a.time - b.time);
+      const rawData = await res.json();
+      
+      const seen = new Set<number>();
+      const normalizedCandles = rawData
+        .map((d: any) => {
+          const time = Math.floor(Number(d[0]) / 1000);
+          const open = Number(d[1]);
+          const high = Number(d[2]);
+          const low = Number(d[3]);
+          const close = Number(d[4]);
+          
+          if (isNaN(time) || isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close)) {
+            return null;
+          }
+          
+          return {
+            time: time as any,
+            open,
+            high,
+            low,
+            close
+          };
+        })
+        .filter((c: any) => {
+          if (!c || seen.has(c.time as number)) return false;
+          seen.add(c.time as number);
+          return true;
+        })
+        .sort((a: any, b: any) => (a.time as number) - (b.time as number));
+
+      if (normalizedCandles.length > 0) {
+        console.log("PIPELINE_VERIFIED_CANDLE:", normalizedCandles[0]);
+      }
+      
+      return normalizedCandles;
     },
     refetchInterval: 10000
   });
@@ -200,7 +216,7 @@ export function MainChart() {
             top: 0.2,
             bottom: 0.25,
           },
-          minimumWidth: 100, // Slightly more width to be safe
+          minimumWidth: 100,
           borderVisible: true,
           alignLabels: true,
         },
@@ -243,12 +259,6 @@ export function MainChart() {
         wickDownColor: "#ef4444",
         priceLineVisible: false,
         lastValueVisible: true,
-        autoscaleInfoProvider: () => ({
-          priceRange: {
-            minValue: Math.min(...(candles?.map((c: any) => c.low) || [0])),
-            maxValue: Math.max(...(candles?.map((c: any) => c.high) || [100000])),
-          },
-        }),
       });
 
       const volumeSeries = chart.addSeries(HistogramSeries, {
@@ -287,10 +297,24 @@ export function MainChart() {
           chartRef.current.remove();
           chartRef.current = null;
           candleSeriesRef.current = null;
+          volumeSeriesRef.current = null;
         }
       };
     } catch (error) {
       console.error("[MainChart] Chart initialization failed:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (candleSeriesRef.current && candles && candles.length > 0) {
+      candleSeriesRef.current.applyOptions({
+        autoscaleInfoProvider: () => ({
+          priceRange: {
+            minValue: Math.min(...candles.map((c: any) => c.low)),
+            maxValue: Math.max(...candles.map((c: any) => c.high)),
+          },
+        }),
+      });
     }
   }, [candles]);
 
@@ -301,9 +325,7 @@ export function MainChart() {
       });
       try {
         const scale = chartRef.current.priceScale("right");
-        if (typeof scale.setVisibleRange === 'function') {
-          scale.setVisibleRange(manualPriceRange);
-        }
+        scale.setVisibleRange(manualPriceRange);
       } catch (e) {
         console.error("Failed to set manual range:", e);
       }
@@ -316,8 +338,8 @@ export function MainChart() {
         candleSeriesRef.current.setData(candles);
         
         if (isInitialLoad) {
-          chartRef.current.priceScale("right").applyOptions({ autoScale: true });
-          chartRef.current.timeScale().fitContent();
+          chartRef.current?.priceScale("right").applyOptions({ autoScale: true });
+          chartRef.current?.timeScale().fitContent();
           setIsInitialLoad(false);
           setTimeout(() => {
             if (chartRef.current) {
@@ -346,7 +368,7 @@ export function MainChart() {
         }
 
         if (volumeSeriesRef.current && market?.totalGex) {
-          const pressureData = candles.map((c, i) => {
+          const pressureData = candles.map((c: any, i: number) => {
             const prevClose = i > 0 ? candles[i-1].close : c.open;
             const move = c.close - prevClose;
             const pressure = (market.totalGex / 1e9) * move; 
@@ -368,7 +390,7 @@ export function MainChart() {
     if (!candleSeriesRef.current || !candles || candles.length === 0) return;
 
     priceLinesRef.current.forEach(line => {
-      candleSeriesRef.current.removePriceLine(line);
+      candleSeriesRef.current?.removePriceLine(line);
     });
     priceLinesRef.current = [];
 
@@ -378,7 +400,7 @@ export function MainChart() {
     const addLevel = (price: number, color: string, title: string, style: LineStyle = LineStyle.Solid, lineWidth: number = 1) => {
       if (Math.abs(price - currentPrice) > threshold) return;
       
-      const line = candleSeriesRef.current.createPriceLine({
+      const line = candleSeriesRef.current?.createPriceLine({
         price,
         color,
         lineWidth,
@@ -386,23 +408,23 @@ export function MainChart() {
         axisLabelVisible: true,
         title,
       });
-      priceLinesRef.current.push(line);
+      if (line) priceLinesRef.current.push(line);
     };
 
     const addZone = (start: number, end: number, color: string, title: string) => {
       if (Math.abs(start - currentPrice) > threshold && Math.abs(end - currentPrice) > threshold) return;
       
       const mid = (start + end) / 2;
-      const line = candleSeriesRef.current.createPriceLine({
+      const line = candleSeriesRef.current?.createPriceLine({
         price: mid,
         color: "transparent",
         lineWidth: 0,
         axisLabelVisible: true,
         title,
       });
-      priceLinesRef.current.push(line);
+      if (line) priceLinesRef.current.push(line);
 
-      const upper = candleSeriesRef.current.createPriceLine({
+      const upper = candleSeriesRef.current?.createPriceLine({
         price: Math.max(start, end),
         color,
         lineWidth: 1,
@@ -410,7 +432,7 @@ export function MainChart() {
         axisLabelVisible: false,
         title: "",
       });
-      const lower = candleSeriesRef.current.createPriceLine({
+      const lower = candleSeriesRef.current?.createPriceLine({
         price: Math.min(start, end),
         color,
         lineWidth: 1,
@@ -418,7 +440,8 @@ export function MainChart() {
         axisLabelVisible: false,
         title: "",
       });
-      priceLinesRef.current.push(upper, lower);
+      if (upper) priceLinesRef.current.push(upper);
+      if (lower) priceLinesRef.current.push(lower);
     };
 
     try {
