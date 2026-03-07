@@ -34,6 +34,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   const exposure = state?.exposure;
   const levels = state?.levels;
   const currentPrice = state?.ticker?.price || 0;
+  const tradeDecision = (positioning as any)?.tradeDecisionEngine;
 
   // We still need scenarios, but they aren't in the terminal state yet.
   // Wait, let's check if they should be. The user said "derive their data from the shared hook".
@@ -208,23 +209,52 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         <div className="space-y-1.5">
           <TerminalValue 
             label="Status" 
-            value={engineData.status} 
+            value={tradeDecision?.tradeState || "WAIT"} 
             trend={
-              engineData.status === "READY TO EXECUTE" ? "positive" : 
-              engineData.status === "WAIT FOR CONFIRMATION" ? "neutral" : 
-              engineData.status === "STRUCTURE DEVELOPING" ? "neutral" : "negative"
+              tradeDecision?.tradeState === "EXECUTE" ? "positive" : 
+              tradeDecision?.tradeState === "PREPARE" ? "neutral" : 
+              tradeDecision?.tradeState === "WAIT" ? "neutral" : "negative"
             }
             isBadge
+            data-testid="status-trade-state"
           />
           <TerminalValue 
-            label="Bias" 
-            value={engineData.bias} 
-            trend={engineData.bias === "LONG" ? "positive" : engineData.bias === "SHORT" ? "negative" : "neutral"}
+            label="Direction" 
+            value={tradeDecision?.tradeDirection || "NEUTRAL"} 
+            trend={tradeDecision?.tradeDirection === "LONG" ? "positive" : tradeDecision?.tradeDirection === "SHORT" ? "negative" : "neutral"}
+            data-testid="status-trade-direction"
           />
-          <TerminalValue label="Entry Zone" value={engineData.entryZone} />
-          <TerminalValue label="Trigger" value={engineData.trigger} />
-          <TerminalValue label="Target" value={engineData.target} />
-          <TerminalValue label="Invalidation" value={engineData.invalidationDisplay} />
+          <TerminalValue 
+            label="Risk" 
+            value={tradeDecision?.riskLevel || "MEDIUM"} 
+            trend={tradeDecision?.riskLevel === "LOW" ? "positive" : tradeDecision?.riskLevel === "HIGH" ? "negative" : "neutral"}
+            data-testid="status-risk-level"
+          />
+          <TerminalValue 
+            label="Size" 
+            value={tradeDecision?.positionSizeSuggestion || "NO_TRADE"} 
+            trend={
+              tradeDecision?.positionSizeSuggestion === "FULL" ? "positive" : 
+              tradeDecision?.positionSizeSuggestion === "REDUCED" ? "neutral" : "negative"
+            }
+            isBadge
+            data-testid="status-position-size"
+          />
+        </div>
+      </TerminalPanel>
+
+      <TerminalPanel title="EXECUTION DRIVERS">
+        <div className="space-y-1" data-testid="section-execution-drivers">
+          {(tradeDecision?.executionReason || []).length > 0 ? (
+            (tradeDecision.executionReason as string[]).map((reason: string, i: number) => (
+              <div key={i} className="flex items-start gap-1.5 py-0.5" data-testid={`text-execution-reason-${i}`}>
+                <span className="text-terminal-accent text-[10px] mt-[1px] shrink-0">&bull;</span>
+                <span className="text-[10px] terminal-text-secondary font-medium leading-tight">{reason}</span>
+              </div>
+            ))
+          ) : (
+            <div className="text-[9px] terminal-text-muted italic py-1.5">No execution drivers available</div>
+          )}
         </div>
       </TerminalPanel>
 
