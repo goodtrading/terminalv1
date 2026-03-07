@@ -1,0 +1,141 @@
+UI IMPROVEMENT — MARKET STRUCTURE BAR
+
+Goal:
+Add a high-level Market Structure Bar above the chart so users can understand the current market context instantly.
+
+Important:
+Do NOT change backend logic or analytics calculations.
+Only create a new UI summary bar using existing terminal state values.
+
+------------------------------------------------
+
+STEP 1 — ADD A NEW BAR ABOVE THE MAIN CHART
+
+Create a compact horizontal summary bar positioned above the chart area.
+
+Title is not necessary.
+It should look like a professional market state strip.
+
+The bar must show 3 summary blocks:
+
+1. Market Structure
+2. Volatility
+3. Dealer Context
+
+------------------------------------------------
+
+STEP 2 — MARKET STRUCTURE BLOCK
+
+Derive a simplified readable label from existing analytics.
+
+Possible display values:
+
+RANGE CONTROL
+TRANSITION
+VOLATILITY EXPANSION
+SQUEEZE RISK
+
+Use existing values such as:
+- institutionalBias
+- gammaRegimeBand
+- volExpansionState
+- cascadeRisk
+
+Show only one final readable label.
+
+Color rules:
+
+RANGE CONTROL → blue
+TRANSITION → yellow
+VOLATILITY EXPANSION → orange
+SQUEEZE RISK → red
+
+------------------------------------------------
+
+STEP 3 — VOLATILITY BLOCK
+
+Display a simple volatility summary.
+
+Possible values:
+
+LOW VOL
+MEDIUM VOL
+HIGH VOL
+
+Use existing values such as:
+- volRisk
+- volatilityState
+- expansionProbability
+- cascadeRisk
+
+Color rules:
+
+LOW VOL → green
+MEDIUM VOL → yellow
+HIGH VOL → red
+
+------------------------------------------------
+
+STEP 4 — DEALER CONTEXT BLOCK
+
+Display a simplified dealer interpretation.
+
+Possible values:
+
+DEALERS LONG GAMMA
+DEALERS SHORT GAMMA
+FRAGILE STRUCTURE
+DEALER TRANSITION
+
+Use existing values such as:
+- gammaRegime
+- gammaRegimeBand
+- dealerSensitivity
+- dealerRegime
+
+Color rules:
+
+LONG GAMMA → green
+SHORT GAMMA → red
+FRAGILE STRUCTURE → orange
+DEALER TRANSITION → yellow
+
+------------------------------------------------
+
+STEP 5 — VISUAL DESIGN
+
+The Market Structure Bar should:
+
+- sit cleanly above the chart
+- use compact pills or segmented blocks
+- be easy to read in one glance
+- match the current dark institutional aesthetic
+- not clutter the chart itself
+
+Use:
+- bold value text
+- smaller labels if needed
+- consistent spacing and padding
+
+------------------------------------------------
+
+STEP 6 — DO NOT CHANGE
+
+Do NOT:
+- modify backend analytics
+- add new calculations
+- redesign unrelated panels
+
+Only create the Market Structure Bar in the UI based on existing data.
+
+------------------------------------------------
+
+Expected Result Example:
+
+RANGE CONTROL | LOW VOL | DEALERS LONG GAMMA
+
+or
+
+VOLATILITY EXPANSION | HIGH VOL | DEALERS SHORT GAMMA
+
+This must be readable and helpful for beginner traders.

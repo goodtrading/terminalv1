@@ -4,6 +4,7 @@ import { RightSidebar } from "@/components/terminal/RightSidebar";
 import { MainChart } from "@/components/terminal/MainChart";
 import { GammaProfile } from "@/components/terminal/GammaProfile";
 import { TradingPlan } from "@/components/terminal/TradingPlan";
+import { MarketStructureBar } from "@/components/terminal/MarketStructureBar";
 
 export default function TerminalLayout() {
   return (
@@ -14,6 +15,7 @@ export default function TerminalLayout() {
         <LeftSidebar />
         
         <div className="flex-1 flex flex-col p-1 gap-1 min-w-0 bg-terminal-bg relative overflow-hidden">
+          <MarketStructureBar />
           <div className="flex-1 min-h-[400px] relative overflow-hidden">
             <MainChart />
           </div>
