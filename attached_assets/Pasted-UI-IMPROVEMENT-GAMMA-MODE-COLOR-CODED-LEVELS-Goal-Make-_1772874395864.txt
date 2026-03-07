@@ -1,0 +1,85 @@
+UI IMPROVEMENT — GAMMA MODE COLOR-CODED LEVELS
+
+Goal:
+Make GAMMA mode easier to interpret visually by giving each gamma level type its own semantic color and clearer visual identity.
+
+Do NOT modify gamma calculations.
+Only improve rendering and visual styling.
+
+------------------------------------------------
+
+STEP 1 — KEEP THESE GAMMA MODE ELEMENTS
+
+Keep showing only:
+
+- Gamma Flip
+- Transition High / Transition Low
+- Key Gamma Cliffs above spot
+- Key Gamma Cliffs below spot
+
+Do not add more levels.
+
+------------------------------------------------
+
+STEP 2 — ASSIGN SEMANTIC COLORS
+
+Use different colors for each type of gamma level:
+
+1. Gamma Flip
+Color: yellow or off-white
+Purpose: main regime shift level
+
+2. Transition Zone
+Color: soft yellow / amber with lower opacity
+Purpose: fragile regime transition band
+
+3. Gamma Cliffs above spot
+Color: orange
+Purpose: upside sensitivity / acceleration zones
+
+4. Gamma Cliffs below spot
+Color: cyan or light blue
+Purpose: downside support / sensitivity zones
+
+------------------------------------------------
+
+STEP 3 — LABEL STYLING
+
+Use compact labels such as:
+
+GAMMA FLIP
+TRANSITION HIGH
+TRANSITION LOW
+CLIFF ↑ 75.5k
+CLIFF ↓ 67k
+
+Do not show long numeric labels or raw strength values on the chart.
+
+------------------------------------------------
+
+STEP 4 — VISUAL HIERARCHY
+
+Strongest cliff above and strongest cliff below:
+- brighter label
+- slightly thicker line
+
+Secondary cliffs:
+- lower opacity
+- thinner line
+
+------------------------------------------------
+
+STEP 5 — KEEP THE CHART CLEAN
+
+Do not clutter the chart.
+Do not add more text.
+Use color and hierarchy so users can interpret the levels quickly.
+
+------------------------------------------------
+
+Expected Result:
+
+Gamma mode should feel visually similar to a professional gamma terminal:
+- regime shift level clearly visible
+- transition zone clearly distinct
+- upside and downside gamma cliffs easy to differentiate at a glance

@@ -232,9 +232,9 @@ export function MainChart() {
     const price = lastCandle.close;
     const threshold = price * 0.15;
 
-    const addLevel = (p: number, color: string, title: string, style = LineStyle.Solid) => {
+    const addLevel = (p: number, color: string, title: string, style = LineStyle.Solid, width = 1) => {
       if (Math.abs(p - price) > threshold) return;
-      const line = series.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title });
+      const line = series.createPriceLine({ price: p, color, lineWidth: width as any, lineStyle: style, axisLabelVisible: true, title });
       if (line) priceLinesRef.current.push(line);
     };
 
@@ -248,7 +248,7 @@ export function MainChart() {
     }
 
     if (mapMode === "GAMMA") {
-      if (market?.gammaFlip) addLevel(market.gammaFlip, "rgba(234, 179, 8, 0.8)", "GAMMA FLIP");
+      if (market?.gammaFlip) addLevel(market.gammaFlip, "rgba(250, 240, 180, 0.85)", "GAMMA FLIP", LineStyle.Solid, 2);
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
         addLevel(market.transitionZoneStart, "rgba(234, 179, 8, 0.25)", "TRANSITION LOW", LineStyle.Dashed);
         addLevel(market.transitionZoneEnd, "rgba(234, 179, 8, 0.25)", "TRANSITION HIGH", LineStyle.Dashed);
@@ -263,15 +263,21 @@ export function MainChart() {
           .filter((c: any) => c.strike < price)
           .sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength))
           .slice(0, 3);
-        const keyCliffs = [...above, ...below];
-        const maxStrength = Math.max(...keyCliffs.map((c: any) => Math.abs(c.strength)), 1);
-        keyCliffs.forEach((cliff: { strike: number; strength: number }) => {
-          const isAbove = cliff.strike > price;
-          const arrow = isAbove ? "↑" : "↓";
-          const label = `CLIFF ${arrow} ${cliff.strike >= 1000 ? (cliff.strike / 1000).toFixed(cliff.strike % 1000 === 0 ? 0 : 1) + "k" : cliff.strike}`;
-          const ratio = Math.abs(cliff.strength) / maxStrength;
-          const opacity = ratio > 0.7 ? 0.55 : ratio > 0.4 ? 0.35 : 0.2;
-          addLevel(cliff.strike, `rgba(249, 115, 22, ${opacity})`, label, LineStyle.Dotted);
+        const maxAbove = Math.max(...above.map((c: any) => Math.abs(c.strength)), 1);
+        const maxBelow = Math.max(...below.map((c: any) => Math.abs(c.strength)), 1);
+        above.forEach((cliff: { strike: number; strength: number }, i: number) => {
+          const label = `CLIFF ↑ ${cliff.strike >= 1000 ? (cliff.strike / 1000).toFixed(cliff.strike % 1000 === 0 ? 0 : 1) + "k" : cliff.strike}`;
+          const isStrongest = i === 0;
+          const ratio = Math.abs(cliff.strength) / maxAbove;
+          const opacity = isStrongest ? 0.7 : ratio > 0.5 ? 0.45 : 0.25;
+          addLevel(cliff.strike, `rgba(249, 115, 22, ${opacity})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
+        });
+        below.forEach((cliff: { strike: number; strength: number }, i: number) => {
+          const label = `CLIFF ↓ ${cliff.strike >= 1000 ? (cliff.strike / 1000).toFixed(cliff.strike % 1000 === 0 ? 0 : 1) + "k" : cliff.strike}`;
+          const isStrongest = i === 0;
+          const ratio = Math.abs(cliff.strength) / maxBelow;
+          const opacity = isStrongest ? 0.7 : ratio > 0.5 ? 0.45 : 0.25;
+          addLevel(cliff.strike, `rgba(56, 189, 248, ${opacity})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
         });
       }
     }
