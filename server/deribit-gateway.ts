@@ -51,7 +51,16 @@ export const optionsSummarySchema = z.object({
   dealerGammaState: z.enum(["LONG_GAMMA", "SHORT_GAMMA"]).nullable(),
   dealerHedgeDirection: z.string().nullable(),
   volatilityRegime: z.enum(["HIGH_VOL", "LOW_VOL", "TRANSITION"]).nullable(),
-  dealerFlowScore: z.number().nullable()
+  dealerFlowScore: z.number().nullable(),
+  reactionZones: z.array(z.object({
+    startStrike: z.number(),
+    endStrike: z.number(),
+    zoneType: z.enum(["PINNING", "TRANSITION", "EXPANSION", "SQUEEZE_RISK"]),
+    dealerReaction: z.enum(["BUY_DIPS", "SELL_RALLIES", "BUY_BREAKOUT", "SELL_WEAKNESS"]),
+    expectedBehavior: z.enum(["MEAN_REVERSION", "VOLATILITY_EXPANSION", "ACCELERATION_UP", "ACCELERATION_DOWN"]),
+    volatilityRisk: z.enum(["LOW", "MEDIUM", "HIGH"]),
+    tradeBias: z.enum(["LONG", "SHORT", "NEUTRAL"])
+  })).optional()
 });
 
 export type NormalizedOption = z.infer<typeof normalizedOptionSchema>;
@@ -240,11 +249,76 @@ export class DeribitOptionsGateway {
       else if (dealerGammaState === "SHORT_GAMMA") volatilityRegime = "HIGH_VOL";
 
       // Normalized dealer flow score (-1 to +1)
-      // Combining gamma, vanna, charm
       const gexScore = Math.tanh(totalGex / 10000000); 
       const vannaScore = Math.tanh(totalVanna / 5000000);
       const charmScore = Math.tanh(totalCharm / 2000000);
       const dealerFlowScore = (gexScore + vannaScore + charmScore) / 3;
+
+      // --- Dealer Reaction Map ---
+      const reactionZones: any[] = [];
+      const strikes = gammaByStrike.map(s => s.strike);
+      
+      if (strikes.length > 0) {
+        const minStrike = Math.min(...strikes);
+        const maxStrike = Math.max(...strikes);
+        const step = 1000;
+
+        for (let s = minStrike; s < maxStrike; s += step) {
+          const zoneStart = s;
+          const zoneEnd = s + step;
+          const midPoint = (zoneStart + zoneEnd) / 2;
+          
+          let zoneType: "PINNING" | "TRANSITION" | "EXPANSION" | "SQUEEZE_RISK" = "TRANSITION";
+          let dealerReaction: "BUY_DIPS" | "SELL_RALLIES" | "BUY_BREAKOUT" | "SELL_WEAKNESS" = "SELL_RALLIES";
+          let expectedBehavior: "MEAN_REVERSION" | "VOLATILITY_EXPANSION" | "ACCELERATION_UP" | "ACCELERATION_DOWN" = "MEAN_REVERSION";
+          let volatilityRisk: "LOW" | "MEDIUM" | "HIGH" = "MEDIUM";
+          let tradeBias: "LONG" | "SHORT" | "NEUTRAL" = "NEUTRAL";
+
+          const isNearMagnet = gammaMagnets.some(m => Math.abs(midPoint - m) <= step);
+          const isNearFlip = gammaFlip ? Math.abs(midPoint - gammaFlip) <= step : false;
+          const isInShortPocket = shortGammaZones.some(z => midPoint >= z.startStrike && midPoint <= z.endStrike);
+
+          if (isNearMagnet && dealerGammaState === "LONG_GAMMA") {
+            zoneType = "PINNING";
+            dealerReaction = "BUY_DIPS";
+            expectedBehavior = "MEAN_REVERSION";
+            volatilityRisk = "LOW";
+            tradeBias = totalVanna > 0 ? "LONG" : "NEUTRAL";
+          } else if (isInShortPocket || (gammaFlip && midPoint < gammaFlip && dealerGammaState === "SHORT_GAMMA")) {
+            zoneType = "EXPANSION";
+            dealerReaction = "SELL_WEAKNESS";
+            expectedBehavior = "VOLATILITY_EXPANSION";
+            volatilityRisk = "HIGH";
+            tradeBias = "SHORT";
+          } else if (isNearFlip) {
+            zoneType = "TRANSITION";
+            dealerReaction = "BUY_BREAKOUT";
+            expectedBehavior = "VOLATILITY_EXPANSION";
+            volatilityRisk = "MEDIUM";
+            tradeBias = "NEUTRAL";
+          } else if (midPoint > callWall) {
+            zoneType = "SQUEEZE_RISK";
+            dealerReaction = "BUY_BREAKOUT";
+            expectedBehavior = "ACCELERATION_UP";
+            volatilityRisk = "HIGH";
+            tradeBias = "LONG";
+          }
+
+          // Tilt based on vanna/charm
+          if (totalVanna > 1000000 && tradeBias === "NEUTRAL") tradeBias = "LONG";
+          if (totalCharm < -1000000 && expectedBehavior === "MEAN_REVERSION") expectedBehavior = "VOLATILITY_EXPANSION";
+
+          reactionZones.push({
+            startStrike: zoneStart,
+            endStrike: zoneEnd,
+            zoneType,
+            dealerReaction,
+            expectedBehavior,
+            volatilityRisk,
+            tradeBias
+          });
+        }
+      }
 
       return {
         totalGex: totalGex || null,
@@ -265,7 +339,8 @@ export class DeribitOptionsGateway {
         dealerGammaState,
         dealerHedgeDirection,
         volatilityRegime,
-        dealerFlowScore
+        dealerFlowScore,
+        reactionZones
       };
     } catch (e) {
       return {
