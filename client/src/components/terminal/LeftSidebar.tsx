@@ -1,6 +1,16 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel, TerminalValue } from "./TerminalPanel";
 import { MarketState, DealerExposure, OptionsPositioning, KeyLevels, DealerHedgingFlow } from "@shared/schema";
+import { cn } from "@/lib/utils";
+
+interface Alert {
+  id: number;
+  title: string;
+  message: string;
+  timestamp: string;
+  type: "info" | "warning" | "error";
+}
 
 export function LeftSidebar() {
   const { data: market } = useQuery<MarketState>({ 
@@ -28,12 +38,63 @@ export function LeftSidebar() {
     refetchInterval: 5000 
   });
 
-  console.log("[LeftSidebar] marketData:", market);
-  console.log("[LeftSidebar] positioningData:", positioning);
+  // Derived alerts logic
+  const alerts = useMemo(() => {
+    const list: Alert[] = [];
+    if (market?.gammaRegime === "SHORT GAMMA") {
+      list.push({
+        id: 1,
+        title: "VOLATILITY RISK",
+        message: "Short Gamma regime active. Expect accelerated moves.",
+        timestamp: new Date().toLocaleTimeString(),
+        type: "warning"
+      });
+    }
+    if (flow?.hedgeFlowIntensity === "HIGH") {
+      list.push({
+        id: 2,
+        title: "HIGH FLOW INTENSITY",
+        message: "Dealer hedging flow is accelerating.",
+        timestamp: new Date().toLocaleTimeString(),
+        type: "info"
+      });
+    }
+    return list;
+  }, [market, flow]);
 
   return (
     <div className="w-64 h-full flex flex-col gap-2 overflow-y-auto p-2 border-r border-terminal-border bg-terminal-bg shrink-0">
       
+      <TerminalPanel title="ALERT CENTER">
+        <div className="p-3 space-y-2">
+          {alerts.length === 0 ? (
+            <div className="py-4 px-2 border border-dashed border-white/10 rounded-sm text-center">
+              <div className="text-[10px] font-bold text-white uppercase tracking-wider mb-1">NO ACTIVE ALERTS</div>
+              <div className="text-[9px] text-terminal-muted leading-tight">System monitoring flow conditions...</div>
+            </div>
+          ) : (
+            alerts.map((alert) => (
+              <div 
+                key={alert.id} 
+                className={cn(
+                  "p-3 rounded-sm border-l-4 bg-white",
+                  alert.type === "warning" ? "border-yellow-500" : 
+                  alert.type === "error" ? "border-red-500" : "border-blue-500"
+                )}
+              >
+                <div className="flex justify-between items-start mb-1">
+                  <span className="text-[10px] font-bold text-black uppercase tracking-tight leading-none">{alert.title}</span>
+                  <span className="text-[8px] font-mono text-gray-500 leading-none">{alert.timestamp}</span>
+                </div>
+                <div className="text-[10px] text-black font-medium leading-tight">
+                  {alert.message}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </TerminalPanel>
+
       <TerminalPanel title="MARKET STATE">
         <TerminalValue label="Gamma Regime" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge />
         <TerminalValue label="Total GEX" value={market ? `${(market.totalGex / 1e9).toFixed(2)}B` : "--"} trend={market && market.totalGex > 0 ? "positive" : "negative"} />
