@@ -186,10 +186,15 @@ OR dealer hedge flow accelerates
       </TerminalPanel>
 
       {tradingPlan && (
-        <TerminalPanel title="ACTIVE TRADING PLAN" className="border-terminal-accent/50 bg-terminal-accent/5">
-          <pre className="text-[10px] font-mono text-white leading-relaxed whitespace-pre-wrap">
-            {tradingPlan}
-          </pre>
+        <TerminalPanel title="ACTIVE TRADING PLAN" className="border-terminal-accent/50 bg-white">
+          <div className="p-4 space-y-3">
+            <div className="text-black font-bold text-[11px] mb-2 uppercase border-b border-black/10 pb-1">
+              TRADING PLAN ACTIVE
+            </div>
+            <pre className="text-[10px] font-mono font-bold text-black leading-relaxed whitespace-pre-wrap">
+              {tradingPlan}
+            </pre>
+          </div>
         </TerminalPanel>
       )}
 
