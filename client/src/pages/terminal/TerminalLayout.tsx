@@ -17,7 +17,9 @@ export default function TerminalLayout() {
           <GammaProfile />
         </div>
 
-        <RightSidebar />
+        <RightSidebar onScenarioSelect={(s) => {
+          window.dispatchEvent(new CustomEvent('scenario-select', { detail: s }));
+        }} />
       </div>
     </div>
   );

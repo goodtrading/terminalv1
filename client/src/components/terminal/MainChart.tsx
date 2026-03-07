@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createChart, ColorType, version, LineStyle, CandlestickSeries, HistogramSeries } from "lightweight-charts";
+import { createChart, ColorType, LineStyle, CandlestickSeries, HistogramSeries } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
-import { OptionsPositioning, MarketState, KeyLevels, DealerExposure } from "@shared/schema";
+import { OptionsPositioning, MarketState, KeyLevels, DealerExposure, TradingScenario } from "@shared/schema";
 
 export function MainChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -24,6 +24,8 @@ export function MainChart() {
   });
 
   const [manualPriceRange, setManualPriceRange] = useState<{from: number, to: number} | null>(null);
+  const [selectedScenario, setSelectedScenario] = useState<TradingScenario | null>(null);
+  const scenarioLevelsRef = useRef<any[]>([]);
 
   const resetScale = () => {
     if (!chartRef.current) return;
@@ -61,32 +63,47 @@ export function MainChart() {
     }
   };
 
-  const zoomVertical = (factor: number) => {
-    if (!chartRef.current || !candles || candles.length === 0) return;
-    const currentPrice = candles[candles.length - 1].close;
+  useEffect(() => {
+    if (!candleSeriesRef.current) return;
     
-    // Fallback range if null
-    const range = manualPriceRange || { from: currentPrice * 0.95, to: currentPrice * 1.05 };
-    const center = (range.from + range.to) / 2;
-    const halfHeight = ((range.to - range.from) / 2) * factor;
-    
-    const newRange = { from: center - halfHeight, to: center + halfHeight };
-    setManualPriceRange(newRange);
-    chartRef.current.priceScale("right").applyOptions({ autoScale: false });
-  };
+    scenarioLevelsRef.current.forEach(line => candleSeriesRef.current?.removePriceLine(line));
+    scenarioLevelsRef.current = [];
 
-  const panVertical = (direction: number) => {
-    if (!chartRef.current || !candles || candles.length === 0) return;
-    const currentPrice = candles[candles.length - 1].close;
+    if (!selectedScenario) return;
 
-    const range = manualPriceRange || { from: currentPrice * 0.95, to: currentPrice * 1.05 };
-    const shift = (range.to - range.from) * 0.1 * direction;
-    
-    const newRange = { from: range.from + shift, to: range.to + shift };
-    setManualPriceRange(newRange);
-    chartRef.current.priceScale("right").applyOptions({ autoScale: false });
-  };
+    const color = selectedScenario.type === "BASE" ? "#3b82f6" : 
+                  selectedScenario.type === "ALT" ? "#22c55e" : "#f97316";
 
+    selectedScenario.levels.forEach((levelStr) => {
+      const price = parseFloat(levelStr);
+      if (isNaN(price)) return;
+      const line = candleSeriesRef.current.createPriceLine({
+        price,
+        color,
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `${selectedScenario.type} LVL`,
+      });
+      scenarioLevelsRef.current.push(line);
+    });
+
+    const prices = selectedScenario.levels.map(l => parseFloat(l)).filter(p => !isNaN(p));
+    if (prices.length > 0) {
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      const margin = (max - min) * 0.2 || prices[0] * 0.02;
+      setManualPriceRange({ from: min - margin, to: max + margin });
+    }
+  }, [selectedScenario]);
+
+  useEffect(() => {
+    const handleScenarioSelect = (e: any) => {
+      setSelectedScenario(e.detail);
+    };
+    window.addEventListener('scenario-select', handleScenarioSelect);
+    return () => window.removeEventListener('scenario-select', handleScenarioSelect);
+  }, []);
 
   const { data: positioning } = useQuery<OptionsPositioning>({ 
     queryKey: ["/api/options-positioning"],
@@ -248,19 +265,9 @@ export function MainChart() {
         autoScale: false,
       });
       try {
-        chartRef.current.priceScale("right").applyOptions({
-          visible: true,
-        });
-        // Correct way to set price range in v4+ is via priceScale().applyOptions({ Math.min/max or similar })
-        // but setVisibleRange is the high-level API for IPriceScale
         const scale = chartRef.current.priceScale("right");
         if (typeof scale.setVisibleRange === 'function') {
           scale.setVisibleRange(manualPriceRange);
-        } else {
-          // Fallback if setVisibleRange is not directly available on the object returned by priceScale
-          scale.applyOptions({
-            autoScale: false,
-          });
         }
       } catch (e) {
         console.error("Failed to set manual range:", e);
@@ -270,14 +277,12 @@ export function MainChart() {
 
   useEffect(() => {
     if (candleSeriesRef.current && candles) {
-      // Only set data, do not force range or fitContent
       candleSeriesRef.current.setData(candles);
       
       if (isInitialLoad && candles.length > 0) {
         chartRef.current.priceScale("right").applyOptions({ autoScale: true });
         chartRef.current.timeScale().fitContent();
         setIsInitialLoad(false);
-        // After fitting, disable autoscale to allow free movement
         setTimeout(() => {
           if (chartRef.current) {
             chartRef.current.priceScale("right").applyOptions({ autoScale: false });
@@ -318,7 +323,7 @@ export function MainChart() {
         volumeSeriesRef.current.setData(pressureData);
       }
     }
-  }, [candles, toggles.price, market?.totalGex]);
+  }, [candles, toggles.price, market?.totalGex, isInitialLoad]);
 
   useEffect(() => {
     if (!candleSeriesRef.current || !candles) return;
@@ -329,7 +334,7 @@ export function MainChart() {
     priceLinesRef.current = [];
 
     const currentPrice = candles[candles.length - 1].close;
-    const threshold = currentPrice * 0.15; // Increased threshold for institutional view
+    const threshold = currentPrice * 0.15;
 
     const addLevel = (price: number, color: string, title: string, style: LineStyle = LineStyle.Solid, lineWidth: number = 1) => {
       if (Math.abs(price - currentPrice) > threshold) return;
@@ -358,7 +363,6 @@ export function MainChart() {
       });
       priceLinesRef.current.push(line);
 
-      // Shading via boundaries
       const upper = candleSeriesRef.current.createPriceLine({
         price: Math.max(start, end),
         color,
@@ -379,10 +383,6 @@ export function MainChart() {
     };
 
     try {
-      const activeLevels: number[] = [];
-      const candlesMin = Math.min(...candles.map(c => c.low));
-      const candlesMax = Math.max(...candles.map(c => c.high));
-
       if (toggles.flip && market?.gammaFlip) {
         addLevel(market.gammaFlip, "#eab308", "FLIP", LineStyle.LargeDashed, 2);
       }
@@ -411,7 +411,7 @@ export function MainChart() {
           }
         });
 
-        grouped.forEach((group, i) => {
+        grouped.forEach((group) => {
           const avg = group.reduce((a, b) => a + b, 0) / group.length;
           addLevel(avg, "rgba(59, 130, 246, 0.3)", group.length > 1 ? `MAGNETS (${group.length})` : "MAGNET", LineStyle.Solid, 1);
         });
@@ -494,24 +494,35 @@ export function MainChart() {
           
           <div className="flex flex-col items-end space-y-2 pointer-events-auto mr-20">
             <div className="flex space-x-1">
-              {["1M", "15M", "1H", "4H", "1D"].map(tf => (
-                <button key={tf} className={`px-2 py-0.5 text-[9px] font-bold font-mono border rounded-sm transition-all ${tf === '15M' ? 'bg-terminal-accent/20 border-terminal-accent text-white' : 'bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white'}`}>
-                  {tf}
-                </button>
-              ))}
               <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">PAN UP</button>
               <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">PAN DN</button>
               <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">ZOOM +</button>
               <button disabled className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-panel/40 border-terminal-border/40 text-terminal-muted/50 cursor-not-allowed">ZOOM -</button>
-              <button onClick={fitLevels} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/10 border-terminal-accent/30 text-terminal-accent hover:bg-terminal-accent/20">FIT LEVELS</button>
-              <button onClick={resetScale} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/20 border-terminal-accent text-white hover:bg-terminal-accent/40">RESET</button>
+              <button 
+                onClick={() => {
+                  setSelectedScenario(null);
+                  fitLevels();
+                }} 
+                className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/10 border-terminal-accent/30 text-terminal-accent hover:bg-terminal-accent/20"
+              >
+                FIT LEVELS
+              </button>
+              <button 
+                onClick={() => {
+                  setSelectedScenario(null);
+                  resetScale();
+                }} 
+                className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/20 border-terminal-accent text-white hover:bg-terminal-accent/40"
+              >
+                RESET
+              </button>
             </div>
             <div className="flex space-x-1">
               {Object.entries(toggles).map(([key, val]) => (
                 <button 
                   key={key} 
                   onClick={() => setToggles(prev => ({ ...prev, [key]: !val }))}
-                  className={`px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase transition-all ${val ? 'bg-white/10 border-white/20 text-white' : 'bg-transparent border-terminal-border text-terminal-muted'}`}
+                  className={`px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase transition-all ${val ? 'bg-terminal-accent/20 border-terminal-accent text-white' : 'bg-terminal-panel border-terminal-border text-terminal-muted hover:text-white'}`}
                 >
                   {key}
                 </button>
@@ -519,13 +530,28 @@ export function MainChart() {
             </div>
           </div>
         </div>
-      </div>
 
-      <div ref={chartContainerRef} className="w-full h-full relative z-0" style={{ pointerEvents: 'auto' }} />
-      
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.01] z-0">
-        <span className="text-[12rem] font-bold tracking-tighter italic font-mono uppercase">QUANTUM</span>
+        <div className="absolute bottom-4 left-4 flex space-x-4">
+          <div className="flex flex-col">
+            <span className="text-[9px] text-terminal-muted font-mono uppercase">Call Wall</span>
+            <span className="text-[12px] font-bold font-mono text-terminal-negative">{positioning?.callWall?.toLocaleString()}</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-terminal-muted font-mono uppercase">Put Wall</span>
+            <span className="text-[12px] font-bold font-mono text-terminal-positive">{positioning?.putWall?.toLocaleString()}</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-terminal-muted font-mono uppercase">Dealer Pivot</span>
+            <span className="text-[12px] font-bold font-mono text-white/70">{positioning?.dealerPivot?.toLocaleString()}</span>
+          </div>
+        </div>
       </div>
+      
+      <div 
+        ref={chartContainerRef} 
+        className="w-full h-full"
+        style={{ pointerEvents: 'auto' }}
+      />
     </TerminalPanel>
   );
 }
