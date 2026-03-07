@@ -1,0 +1,131 @@
+Refactor the LEARN mode system to improve educational clarity and tooltip rendering.
+
+Current problems:
+- Several concepts shown on the chart have no explanation.
+- Tooltip panels sometimes appear truncated.
+- Text is cut off due to container overflow or width limits.
+- Some tooltips do not adapt to viewport edges.
+
+Goal:
+Create a fully functional educational overlay that explains every visible concept clearly and renders tooltips correctly.
+
+----------------------------------------
+1. Ensure every concept has an explanation
+----------------------------------------
+
+All key concepts displayed in the terminal must have a Learn definition.
+
+Minimum required entries:
+
+CALL WALL
+PUT WALL
+GAMMA FLIP
+MAGNET
+CLIFF
+SWEEP ZONE
+DEALER PIVOT
+BID LIQUIDITY
+VOID
+POCKET
+LONG GAMMA
+SHORT GAMMA
+DEALER HEDGING FLOW
+VOL EXPANSION
+
+Each concept must contain:
+
+{
+  title
+  definition
+  interpretation
+  tradingUse
+}
+
+Example:
+
+CALL WALL
+
+definition:
+Large concentration of call options at a specific strike.
+
+interpretation:
+Dealers may hedge by selling spot as price approaches this level, creating resistance.
+
+tradingUse:
+Watch for absorption, rejection, or liquidity sweeps when price tests this zone.
+
+----------------------------------------
+2. Fix tooltip truncation
+----------------------------------------
+
+Tooltips must never be clipped.
+
+Implement:
+
+max-width: 320px
+word-wrap: break-word
+white-space: normal
+
+Remove any overflow:hidden that cuts tooltip text.
+
+----------------------------------------
+3. Smart tooltip positioning
+----------------------------------------
+
+Tooltips must automatically reposition based on screen edges.
+
+Rules:
+
+If tooltip overflows right edge:
+→ render to left side of anchor.
+
+If tooltip overflows left edge:
+→ render to right side.
+
+If near top:
+→ render below.
+
+If near bottom:
+→ render above.
+
+----------------------------------------
+4. Responsive tooltip sizing
+----------------------------------------
+
+Tooltip height should expand dynamically.
+
+Use:
+
+max-height: 60vh
+overflow-y: auto
+
+This prevents clipping on smaller screens.
+
+----------------------------------------
+5. Improve readability
+----------------------------------------
+
+Use structured layout:
+
+TITLE
+Definition
+Interpretation
+How to trade it
+
+Spacing between sections must be clear.
+
+----------------------------------------
+6. Prevent tooltip flicker
+----------------------------------------
+
+Tooltips should not jump position between renders.
+
+Anchor them to the chart element that triggered them.
+
+----------------------------------------
+Acceptance criteria:
+
+- No tooltip text is truncated.
+- All visible trading concepts have explanations.
+- Tooltips reposition automatically to stay inside the viewport.
+- Learn mode feels like a guided educational layer rather than random hints.
