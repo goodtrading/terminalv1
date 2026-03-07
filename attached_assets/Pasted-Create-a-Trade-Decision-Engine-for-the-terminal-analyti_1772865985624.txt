@@ -1,0 +1,128 @@
+Create a Trade Decision Engine for the terminal analytics system.
+
+Goal:
+Translate the existing institutional analytics into a concrete execution decision for the trader.
+
+Use existing analytics already available in the terminal.
+
+Inputs available:
+- institutionalBias
+- biasConfidence
+- biasDrivers
+- biasInvalidation
+- biasHorizon
+- dealerRegime
+- gammaRegimeBand
+- volatilityState
+- volExpansionState
+- expansionDirection
+- expansionProbability
+- currentPlaybook
+- tradeBias
+- regimeConfidence
+- cascadeRisk
+- pinningStrength
+- dealerSensitivity
+- trapZones
+- currentTrapRisk
+- activeTrapContext
+- tradeZones
+- invalidationLevel
+- regimeShiftTrigger
+- dealerPivot
+- gammaMagnets
+- callWall
+- putWall
+- spot price
+
+Compute the following outputs:
+
+1. tradeState
+
+Return one of:
+- EXECUTE
+- PREPARE
+- WAIT
+- AVOID
+
+Rules:
+- EXECUTE when institutional bias, volatility state, and trade direction strongly align and current trap risk is not blocking execution
+- PREPARE when the setup is directional but waiting for a trigger
+- WAIT when the market is mixed or in fragile transition
+- AVOID when trap risk is high or structure is unfavorable
+
+2. tradeDirection
+
+Return:
+- LONG
+- SHORT
+- NEUTRAL
+
+Rules:
+- Use institutionalBias, expansionDirection, tradeBias, and currentPlaybook
+
+3. entryCondition
+
+Return a short text condition describing the required trigger.
+
+Examples:
+- "Break below dealer pivot"
+- "Reject 71k call wall"
+- "Hold above 67k put wall"
+- "Reclaim gamma magnet"
+
+4. riskLevel
+
+Return:
+- LOW
+- MEDIUM
+- HIGH
+
+Rules:
+- HIGH when expansion / trap / sensitivity are elevated
+- LOW when compression and pinning dominate
+
+5. positionSizeSuggestion
+
+Return:
+- FULL
+- REDUCED
+- PROBE_ONLY
+- NO_TRADE
+
+Rules:
+- FULL only when biasConfidence is high and structure is aligned
+- REDUCED when direction is valid but volatility risk is elevated
+- PROBE_ONLY when preparing for a trigger in transition conditions
+- NO_TRADE when tradeState is AVOID
+
+6. executionReason
+
+Return 2 to 4 short bullet-style strings explaining the decision.
+
+Example:
+[
+  "Bearish expansion bias",
+  "Short gamma regime",
+  "High volatility risk",
+  "Break below dealer pivot needed"
+]
+
+Integration:
+
+Add these fields to:
+
+/api/options/summary
+/api/terminal/state
+
+Fields to add:
+- tradeState
+- tradeDirection
+- entryCondition
+- riskLevel
+- positionSizeSuggestion
+- executionReason
+
+Do not remove existing analytics.
+Do not redesign the UI yet.
+Only extend the analytics model and make the values available in terminal state.

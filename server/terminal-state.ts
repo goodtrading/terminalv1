@@ -32,6 +32,7 @@ export async function getTerminalState(): Promise<TerminalState> {
   let liveVolExpansion = null;
   let liveGammaCurve = null;
   let liveInstitutionalBias = null;
+  let liveTradeDecision = null;
   let optionsSource: string | null = null;
   try {
     const { options: rawOptions, source } = await DeribitOptionsGateway.ingestOptions();
@@ -41,12 +42,13 @@ export async function getTerminalState(): Promise<TerminalState> {
     liveVolExpansion = summary.volatilityExpansionDetector || null;
     liveGammaCurve = summary.gammaCurveEngine || null;
     liveInstitutionalBias = summary.institutionalBiasEngine || null;
+    liveTradeDecision = summary.tradeDecisionEngine || null;
     optionsSource = summary.source || source;
   } catch (e) {
     console.error("[TerminalState] Options injection failed:", e);
   }
 
-  const enrichedPositioning = positioning ? { ...positioning, tradingPlaybook: livePlaybook, volatilityExpansionDetector: liveVolExpansion, gammaCurveEngine: liveGammaCurve, institutionalBiasEngine: liveInstitutionalBias, optionsSource } : positioning;
+  const enrichedPositioning = positioning ? { ...positioning, tradingPlaybook: livePlaybook, volatilityExpansionDetector: liveVolExpansion, gammaCurveEngine: liveGammaCurve, institutionalBiasEngine: liveInstitutionalBias, tradeDecisionEngine: liveTradeDecision, optionsSource } : positioning;
 
   // Read from in-memory cache ONLY (deterministic latency, no side effects)
   const ticker = MarketDataGateway.getCachedTicker();

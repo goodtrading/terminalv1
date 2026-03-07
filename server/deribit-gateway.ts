@@ -149,6 +149,14 @@ export const optionsSummarySchema = z.object({
     biasInvalidation: z.string(),
     biasHorizon: z.enum(["INTRADAY", "SWING", "EVENT_DRIVEN"])
   }).optional(),
+  tradeDecisionEngine: z.object({
+    tradeState: z.enum(["EXECUTE", "PREPARE", "WAIT", "AVOID"]),
+    tradeDirection: z.enum(["LONG", "SHORT", "NEUTRAL"]),
+    entryCondition: z.string(),
+    riskLevel: z.enum(["LOW", "MEDIUM", "HIGH"]),
+    positionSizeSuggestion: z.enum(["FULL", "REDUCED", "PROBE_ONLY", "NO_TRADE"]),
+    executionReason: z.array(z.string())
+  }).optional(),
   source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()
 });
 
@@ -456,6 +464,14 @@ export class DeribitOptionsGateway {
             biasDrivers: ["Insufficient data", "Awaiting options ingestion", "No signal alignment"],
             biasInvalidation: "Bias will update once live options data is available",
             biasHorizon: "INTRADAY" as const
+          },
+          tradeDecisionEngine: {
+            tradeState: "WAIT" as const,
+            tradeDirection: "NEUTRAL" as const,
+            entryCondition: "Awaiting options data ingestion",
+            riskLevel: "MEDIUM" as const,
+            positionSizeSuggestion: "NO_TRADE" as const,
+            executionReason: ["Insufficient data", "No signal alignment"]
           },
           source: dataSource
         };
@@ -1216,6 +1232,126 @@ export class DeribitOptionsGateway {
         biasHorizon
       };
 
+      // --- Trade Decision Engine ---
+      type TradeStateType = "EXECUTE" | "PREPARE" | "WAIT" | "AVOID";
+      type TradeDirType = "LONG" | "SHORT" | "NEUTRAL";
+      type RiskType = "LOW" | "MEDIUM" | "HIGH";
+      type SizeType = "FULL" | "REDUCED" | "PROBE_ONLY" | "NO_TRADE";
+
+      let tradeState: TradeStateType = "WAIT";
+      let tradeDirection: TradeDirType = "NEUTRAL";
+      let entryCondition = "";
+      let riskLevel: RiskType = "MEDIUM";
+      let positionSizeSuggestion: SizeType = "PROBE_ONLY";
+      const executionReason: string[] = [];
+
+      // Derive tradeDirection from bias + expansion + tradeBias
+      if (institutionalBias.includes("BULLISH")) {
+        tradeDirection = "LONG";
+      } else if (institutionalBias.includes("BEARISH")) {
+        tradeDirection = "SHORT";
+      } else if (expansionDirection === "UP" && tradeBias === "LONG") {
+        tradeDirection = "LONG";
+      } else if (expansionDirection === "DOWN" && tradeBias === "SHORT") {
+        tradeDirection = "SHORT";
+      }
+
+      // Derive riskLevel
+      const highRiskSignals = [
+        isExpanding,
+        currentTrapRisk === "HIGH",
+        highSensitivity,
+        cascadeRisk === "HIGH",
+        volatilityState === "EXPANSION"
+      ].filter(Boolean).length;
+
+      const lowRiskSignals = [
+        isCompressing,
+        pinningStrength > 0.6,
+        cascadeRisk === "LOW",
+        dealerSensitivity === "LOW",
+        isLongGamma
+      ].filter(Boolean).length;
+
+      if (highRiskSignals >= 3) riskLevel = "HIGH";
+      else if (lowRiskSignals >= 3) riskLevel = "LOW";
+      else riskLevel = "MEDIUM";
+
+      // Derive tradeState
+      const biasAligned = institutionalBias !== "NEUTRAL_CHOP" && institutionalBias !== "FRAGILE_TRANSITION";
+      const directionAligned = tradeDirection !== "NEUTRAL";
+      const trapBlocking = currentTrapRisk === "HIGH";
+      const structureUnfavorable = trapBlocking && riskLevel === "HIGH";
+
+      if (structureUnfavorable) {
+        tradeState = "AVOID";
+      } else if (biasAligned && directionAligned && biasConfidence >= 65 && !trapBlocking) {
+        tradeState = "EXECUTE";
+      } else if (biasAligned && directionAligned && biasConfidence >= 40) {
+        tradeState = "PREPARE";
+      } else {
+        tradeState = "WAIT";
+      }
+
+      // Derive positionSizeSuggestion
+      if (tradeState === "AVOID") {
+        positionSizeSuggestion = "NO_TRADE";
+      } else if (tradeState === "EXECUTE" && biasConfidence >= 75 && riskLevel !== "HIGH") {
+        positionSizeSuggestion = "FULL";
+      } else if (tradeState === "EXECUTE" || (tradeState === "PREPARE" && riskLevel !== "HIGH")) {
+        positionSizeSuggestion = "REDUCED";
+      } else {
+        positionSizeSuggestion = "PROBE_ONLY";
+      }
+
+      // Derive entryCondition based on direction + key levels
+      const dealerPivot = gammaFlip || 0;
+      const nearestMagnet = gammaMagnets && gammaMagnets.length > 0 && spotPrice
+        ? gammaMagnets.reduce((closest, m) => Math.abs(m - spotPrice) < Math.abs(closest - spotPrice) ? m : closest, gammaMagnets[0])
+        : null;
+
+      if (tradeDirection === "SHORT") {
+        if (dealerPivot && spotPrice && spotPrice > dealerPivot) {
+          entryCondition = `Break below dealer pivot at ${Math.round(dealerPivot).toLocaleString()}`;
+        } else if (callWall) {
+          entryCondition = `Reject ${Math.round(callWall).toLocaleString()} call wall`;
+        } else {
+          entryCondition = "Confirm downside momentum below current range";
+        }
+      } else if (tradeDirection === "LONG") {
+        if (putWall) {
+          entryCondition = `Hold above ${Math.round(putWall).toLocaleString()} put wall`;
+        } else if (nearestMagnet) {
+          entryCondition = `Reclaim gamma magnet at ${Math.round(nearestMagnet).toLocaleString()}`;
+        } else {
+          entryCondition = "Confirm upside momentum above current range";
+        }
+      } else {
+        entryCondition = "Wait for directional signal alignment";
+      }
+
+      // Build executionReason
+      if (institutionalBias !== "NEUTRAL_CHOP") {
+        executionReason.push(`${institutionalBias.replace(/_/g, " ").toLowerCase().replace(/^\w/, c => c.toUpperCase())} bias`);
+      }
+      if (isShortGamma) executionReason.push("Short gamma regime");
+      else if (isLongGamma) executionReason.push("Long gamma regime");
+      if (riskLevel === "HIGH") executionReason.push("High volatility risk");
+      else if (riskLevel === "LOW") executionReason.push("Low volatility environment");
+      if (entryCondition) executionReason.push(entryCondition);
+      if (trapBlocking) executionReason.push("Dealer trap risk blocking");
+      while (executionReason.length < 2) executionReason.push("Standard market conditions");
+      if (executionReason.length > 4) executionReason.length = 4;
+
+      const tradeDecisionEngine = {
+        tradeState,
+        tradeDirection,
+        entryCondition,
+        riskLevel,
+        positionSizeSuggestion,
+        executionReason
+      };
+
       return {
         totalGex: totalGex || 0,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
@@ -1251,6 +1387,7 @@ export class DeribitOptionsGateway {
         gammaCurveEngine,
         volatilityExpansionDetector,
         institutionalBiasEngine,
+        tradeDecisionEngine,
         source: dataSource
       };
     } catch (e) {
@@ -1293,6 +1430,14 @@ export class DeribitOptionsGateway {
           biasDrivers: ["Analytics engine error", "Using fallback values", "No signal alignment"],
           biasInvalidation: "Bias will update once analytics engine recovers",
           biasHorizon: "INTRADAY"
+        },
+        tradeDecisionEngine: {
+          tradeState: "WAIT",
+          tradeDirection: "NEUTRAL",
+          entryCondition: "Analytics engine recovery required",
+          riskLevel: "MEDIUM",
+          positionSizeSuggestion: "NO_TRADE",
+          executionReason: ["Analytics engine error", "No signal alignment"]
         },
         source: dataSource
       } as any;
