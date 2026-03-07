@@ -12,10 +12,8 @@ export function MainChart() {
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLinesRef = useRef<any[]>([]);
   const livePriceLineRef = useRef<any>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [wsStatus, setWsStatus] = useState<"CONNECTING" | "OPEN" | "CLOSED" | "ERROR">("CONNECTING");
   const [lastCandle, setLastCandle] = useState<any>(null);
 
   const [toggles, setToggles] = useState({
@@ -32,7 +30,7 @@ export function MainChart() {
   const [selectedScenario, setSelectedScenario] = useState<TradingScenario | null>(null);
   const scenarioLevelsRef = useRef<any[]>([]);
 
-  // Fetch History from NEW GATEWAY
+  // History Query
   const { data: history, error: historyError, isLoading: historyLoading } = useQuery({
     queryKey: ["btc-history"],
     queryFn: async () => {
@@ -44,8 +42,53 @@ export function MainChart() {
       return res.json();
     },
     retry: 1,
-    refetchOnWindowFocus: false
+    refetchOnWindowFocus: false,
+    refetchInterval: 60000 // Refresh full history every minute
   });
+
+  // Ticker Query (Replaces direct WebSocket)
+  const { data: ticker, error: tickerError } = useQuery({
+    queryKey: ["btc-ticker"],
+    queryFn: async () => {
+      const res = await fetch("/api/market/ticker?symbol=BTCUSDT");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.details || "Ticker fetch failed");
+      }
+      return res.json();
+    },
+    refetchInterval: 2000, // 2s polling for real-time feel
+    enabled: !historyLoading && !!history
+  });
+
+  // Update lastCandle from Ticker
+  useEffect(() => {
+    if (ticker && history && history.length > 0) {
+      const latestFromHistory = history[history.length - 1];
+      const tickerTime = Math.floor(ticker.timestamp / (15 * 60 * 1000)) * (15 * 60);
+      
+      setLastCandle((prev: any) => {
+        // If ticker is within the same 15m candle block
+        if (prev && tickerTime === prev.time) {
+          return {
+            ...prev,
+            close: ticker.price,
+            high: Math.max(prev.high, ticker.price),
+            low: Math.min(prev.low, ticker.price)
+          };
+        } 
+        // If ticker started a new 15m block
+        return {
+          time: tickerTime,
+          open: ticker.price,
+          high: ticker.price,
+          low: ticker.price,
+          close: ticker.price,
+          volume: 0 // We don't have real-time volume from ticker
+        };
+      });
+    }
+  }, [ticker, history]);
 
   const resetScale = () => {
     if (!chartRef.current) return;
@@ -82,40 +125,6 @@ export function MainChart() {
       chartRef.current.priceScale("right").applyOptions({ autoScale: false });
     }
   };
-
-  // WebSocket Connection
-  useEffect(() => {
-    if (historyLoading || !history) return;
-
-    const connectWS = () => {
-      const ws = new WebSocket("wss://stream.binance.com:9443/ws/btcusdt@kline_15m");
-      wsRef.current = ws;
-
-      ws.onopen = () => setWsStatus("OPEN");
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.e === "kline") {
-          const k = data.k;
-          setLastCandle({
-            time: Math.floor(k.t / 1000),
-            open: parseFloat(k.o),
-            high: parseFloat(k.h),
-            low: parseFloat(k.l),
-            close: parseFloat(k.c),
-            volume: parseFloat(k.v)
-          });
-        }
-      };
-      ws.onerror = () => setWsStatus("ERROR");
-      ws.onclose = () => {
-        setWsStatus("CLOSED");
-        setTimeout(connectWS, 10000);
-      };
-    };
-
-    connectWS();
-    return () => wsRef.current?.close();
-  }, [history, historyLoading]);
 
   // Handle Scenario Selection
   useEffect(() => {
@@ -155,7 +164,6 @@ export function MainChart() {
   const { data: positioning } = useQuery<OptionsPositioning>({ queryKey: ["/api/options-positioning"], refetchInterval: 5000 });
   const { data: market } = useQuery<MarketState>({ queryKey: ["/api/market-state"], refetchInterval: 5000 });
   const { data: levels } = useQuery<KeyLevels>({ queryKey: ["/api/key-levels"], refetchInterval: 5000 });
-  const { data: exposure } = useQuery<DealerExposure>({ queryKey: ["/api/dealer-exposure"], refetchInterval: 5000 });
 
   // Initialize Chart
   useEffect(() => {
@@ -273,6 +281,8 @@ export function MainChart() {
     );
   }
 
+  const isLive = !!ticker && !tickerError;
+
   return (
     <TerminalPanel className="flex-1 w-full h-full border border-terminal-border relative" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
       <div className="absolute inset-0 pointer-events-none z-10">
@@ -280,10 +290,10 @@ export function MainChart() {
           <div className="flex flex-col">
             <div className="flex items-baseline space-x-3">
               <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
-              <span className={`text-2xl font-mono font-bold ${wsStatus === 'OPEN' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{(lastCandle?.close || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              <span className={`text-2xl font-mono font-bold ${isLive ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{(lastCandle?.close || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
               <div className="flex items-center ml-2">
-                <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", wsStatus === 'OPEN' ? "bg-terminal-positive" : "bg-terminal-negative")} />
-                <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", wsStatus === 'OPEN' ? "text-terminal-positive" : "text-terminal-negative")}>{wsStatus === 'OPEN' ? 'Live' : 'Live Feed Offline'}</span>
+                <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", isLive ? "bg-terminal-positive" : "bg-terminal-negative")} />
+                <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? `Live (${ticker?.source})` : 'Live Feed Offline'}</span>
               </div>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
@@ -293,12 +303,12 @@ export function MainChart() {
           </div>
           <div className="flex flex-col items-end space-y-2 pointer-events-auto mr-32">
             <div className="flex space-x-1">
-              <button onClick={() => { setSelectedScenario(null); fitLevels(); }} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/10 border-terminal-accent/30 text-terminal-accent hover:bg-terminal-accent/20">FIT LEVELS</button>
-              <button onClick={() => { setSelectedScenario(null); resetScale(); }} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/20 border-terminal-accent text-white hover:bg-terminal-accent/40">RESET</button>
+              <button data-testid="button-fit-levels" onClick={() => { setSelectedScenario(null); fitLevels(); }} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/10 border-terminal-accent/30 text-terminal-accent hover:bg-terminal-accent/20">FIT LEVELS</button>
+              <button data-testid="button-reset-chart" onClick={() => { setSelectedScenario(null); resetScale(); }} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/20 border-terminal-accent text-white hover:bg-terminal-accent/40">RESET</button>
             </div>
             <div className="flex space-x-1">
               {Object.entries(toggles).map(([key, val]) => (
-                <button key={key} onClick={() => setToggles(prev => ({ ...prev, [key]: !val }))} className={cn("px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase transition-all", val ? "bg-terminal-accent/20 border-terminal-accent text-white" : "bg-terminal-panel border-terminal-border text-terminal-muted")}>{key}</button>
+                <button data-testid={`button-toggle-${key}`} key={key} onClick={() => setToggles(prev => ({ ...prev, [key]: !val }))} className={cn("px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase transition-all", val ? "bg-terminal-accent/20 border-terminal-accent text-white" : "bg-terminal-panel border-terminal-border text-terminal-muted")}>{key}</button>
               ))}
             </div>
           </div>
