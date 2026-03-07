@@ -92,7 +92,7 @@ export function MainChart() {
         price,
         color,
         lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
+        lineStyle: LineStyle.Solid,
         axisLabelVisible: true,
         title: `${selectedScenario.type} ${levelStr}`,
       });
@@ -194,13 +194,13 @@ export function MainChart() {
           vertLine: {
             color: "#444",
             width: 1,
-            style: LineStyle.LargeDashed,
+            style: LineStyle.Solid,
             labelBackgroundColor: "#000",
           },
           horzLine: {
             color: "#444",
             width: 1,
-            style: LineStyle.LargeDashed,
+            style: LineStyle.Solid,
             labelBackgroundColor: "#000",
           },
         },
@@ -398,7 +398,7 @@ export function MainChart() {
 
     try {
       if (toggles.flip && market?.gammaFlip) {
-        addLevel(market.gammaFlip, "#eab308", "FLIP", LineStyle.LargeDashed, 2);
+        addLevel(market.gammaFlip, "#eab308", "FLIP", LineStyle.Solid, 2);
       }
 
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
@@ -441,7 +441,7 @@ export function MainChart() {
       }
 
       if (toggles.dealer && positioning?.dealerPivot) {
-        addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.5)", "DEALER PIVOT", LineStyle.Dotted, 2);
+        addLevel(positioning.dealerPivot, "rgba(255, 255, 255, 0.5)", "DEALER PIVOT", LineStyle.Solid, 2);
       }
 
       if (toggles.hedgeMap && market && positioning) {
@@ -456,7 +456,7 @@ export function MainChart() {
         // 2. EXPANSION TRIGGERS
         if (market.gammaFlip) {
           // Expansion trigger is distinct from FLIP
-          addLevel(market.gammaFlip, "#fbbf24", "EXPANSION", LineStyle.Dashed, 2);
+          addLevel(market.gammaFlip, "#fbbf24", "EXPANSION", LineStyle.Solid, 1);
         }
         
         // 3. HEDGE SHIFT ZONE
