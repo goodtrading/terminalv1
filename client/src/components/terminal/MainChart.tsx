@@ -354,61 +354,62 @@ export function MainChart() {
         const confluenceSet = new Set<number>();
         const binSize = price > 50000 ? 250 : price > 10000 ? 100 : 50;
 
-        const gammaLevels: { price: number; label: string }[] = [];
-        if (positioning?.putWall) gammaLevels.push({ price: positioning.putWall, label: "PW" });
-        if (positioning?.callWall) gammaLevels.push({ price: positioning.callWall, label: "CW" });
-        if (positioning?.dealerPivot) gammaLevels.push({ price: positioning.dealerPivot, label: "PV" });
-        if (positioning?.gammaMagnet) gammaLevels.push({ price: positioning.gammaMagnet, label: "M" });
+        if (positioning?.callWall && Math.abs(positioning.callWall - price) <= threshold) {
+          pushEntry(positioning.callWall, 1, "CALL WALL", "CW", `rgba(239, 68, 68, ${dim(0.55, 0.7)})`, LineStyle.Solid, 2);
+          const cw = positioning.callWall;
+          for (let p = cw - binSize; p <= cw + binSize; p += binSize) confluenceSet.add(Math.round(Math.floor(p / binSize) * binSize));
+        }
+        if (positioning?.putWall && Math.abs(positioning.putWall - price) <= threshold) {
+          pushEntry(positioning.putWall, 1, "PUT WALL", "PW", `rgba(34, 197, 94, ${dim(0.55, 0.7)})`, LineStyle.Solid, 2);
+          const pw = positioning.putWall;
+          for (let p = pw - binSize; p <= pw + binSize; p += binSize) confluenceSet.add(Math.round(Math.floor(p / binSize) * binSize));
+        }
+        if (market?.gammaFlip && Math.abs(market.gammaFlip - price) <= threshold) {
+          pushEntry(market.gammaFlip, 1, "GAMMA FLIP", "FLIP", `rgba(250, 240, 180, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
+          const gf = market.gammaFlip;
+          for (let p = gf - binSize; p <= gf + binSize; p += binSize) confluenceSet.add(Math.round(Math.floor(p / binSize) * binSize));
+        }
+
         if (levels?.gammaMagnets) {
-          levels.gammaMagnets.forEach((m: any) => {
+          const magnets = levels.gammaMagnets.filter((m: any) => {
             const p = typeof m === "number" ? m : m?.strike;
-            if (p) gammaLevels.push({ price: p, label: "M" });
+            return p && Math.abs(p - price) <= threshold;
+          });
+          magnets.forEach((m: any) => {
+            const p = typeof m === "number" ? m : m?.strike;
+            if (!p) return;
+            pushEntry(p, 4, `MAGNET ${fmtK(p)}`, "MAG", `rgba(59, 130, 246, ${dim(0.35, 0.5)})`, LineStyle.Dashed);
+            for (let pp = p - binSize; pp <= p + binSize; pp += binSize) confluenceSet.add(Math.round(Math.floor(pp / binSize) * binSize));
           });
         }
-        if (positioning?.gammaMagnets) {
-          (Array.isArray(positioning.gammaMagnets) ? positioning.gammaMagnets : []).forEach((m: any) => {
-            const p = typeof m === "number" ? m : m?.strike;
-            if (p && !gammaLevels.some(g => g.price === p)) gammaLevels.push({ price: p, label: "M" });
-          });
+
+        if (positioning?.dealerPivot && Math.abs(positioning.dealerPivot - price) <= threshold) {
+          pushEntry(positioning.dealerPivot, 5, "PIVOT", "PV", `rgba(255, 255, 255, ${dim(0.25, 0.7)})`, LineStyle.Dashed);
+          const dp = positioning.dealerPivot;
+          for (let p = dp - binSize; p <= dp + binSize; p += binSize) confluenceSet.add(Math.round(Math.floor(p / binSize) * binSize));
         }
+
         if (positioning_engines?.gammaCurveEngine?.gammaCliffs) {
-          positioning_engines.gammaCurveEngine.gammaCliffs
-            .filter((c: any) => Math.abs(c.strike - price) <= price * 0.04)
+          const nearCliffs = positioning_engines.gammaCurveEngine.gammaCliffs
+            .filter((c: any) => Math.abs(c.strike - price) <= price * 0.03)
             .sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength))
-            .slice(0, 8)
-            .forEach((c: any) => gammaLevels.push({ price: c.strike, label: "GC" }));
+            .slice(0, 2);
+          nearCliffs.forEach((cliff: any) => {
+            const dir = cliff.strike > price ? "↑" : "↓";
+            pushEntry(cliff.strike, 5, `CLIFF ${dir}${fmtK(cliff.strike)}`, "CLF", `rgba(249, 115, 22, ${dim(0.35, 0.6)})`, LineStyle.Dotted);
+            for (let p = cliff.strike - binSize; p <= cliff.strike + binSize; p += binSize) confluenceSet.add(Math.round(Math.floor(p / binSize) * binSize));
+          });
+        }
+
+        const voidInfo = heatmap.heatmapSummary;
+        if (voidInfo?.nearestVoid && Math.abs(voidInfo.nearestVoid - price) <= threshold) {
+          const voidLabel = `VOID ${voidInfo.voidSide === "BELOW" ? "↓" : "↑"}${fmtK(voidInfo.nearestVoid)}`;
+          pushEntry(voidInfo.nearestVoid, 3, voidLabel, "VOID", "rgba(255, 200, 50, 0.3)", LineStyle.Dotted);
         }
 
         const allHeatZones: any[] = heatmap.liquidityHeatZones || [];
-        const seen = new Set<number>();
-
-        for (const gl of gammaLevels) {
-          let bestZone: any = null;
-          let bestDist = Infinity;
-          for (const zone of allHeatZones) {
-            const zMid = (zone.priceStart + zone.priceEnd) / 2;
-            const dist = Math.abs(gl.price - zMid);
-            if (dist < bestDist) { bestDist = dist; bestZone = zone; }
-          }
-          if (!bestZone) continue;
-          const zMid = (bestZone.priceStart + bestZone.priceEnd) / 2;
-          const midKey = Math.round(zMid);
-          if (seen.has(midKey)) continue;
-          const proximityPct = bestDist / price;
-          if (proximityPct > 0.06) continue;
-          seen.add(midKey);
-          const proximityBoost = Math.max(0, 1 - proximityPct / 0.06);
-          const opacity = Math.min(0.85, 0.3 + bestZone.intensity * 0.3 + proximityBoost * 0.25);
-          const width = (bestZone.intensity >= 0.5 && proximityPct < 0.02) ? 3 : 2;
-          const label = `γ${gl.label} ${fmtK(zMid)}`;
-          pushEntry(zMid, 2, label, `γ${gl.label}`, `rgba(168, 85, 247, ${opacity.toFixed(2)})`, LineStyle.Solid, width);
-          for (let p = bestZone.priceStart - binSize; p <= bestZone.priceEnd + binSize; p += binSize) {
-            confluenceSet.add(Math.round(Math.floor(p / binSize) * binSize));
-          }
-        }
-
-        const bidZones = (heatmap.liquidityHeatZones || []).filter((z: any) => z.side === "BID" && z.intensity >= 0.02).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 8);
-        const askZones = (heatmap.liquidityHeatZones || []).filter((z: any) => z.side === "ASK" && z.intensity >= 0.02).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 8);
+        const bidZones = allHeatZones.filter((z: any) => z.side === "BID" && z.intensity >= 0.05).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 5);
+        const askZones = allHeatZones.filter((z: any) => z.side === "ASK" && z.intensity >= 0.05).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 5);
 
         const nearThreshold = price * 0.005;
         const intensityToWidth = (int: number, near: boolean) => {
@@ -436,7 +437,7 @@ export function MainChart() {
           const near = Math.abs(mid - price) <= nearThreshold;
           const opacity = intensityToOpacity(zone.intensity, near);
           const width = intensityToWidth(zone.intensity, near);
-          pushEntry(mid, zone.intensity >= 0.5 ? 3 : 4, `B ${fmtK(mid)}`, "B", `rgba(34, 197, 94, ${opacity.toFixed(2)})`, intensityToStyle(zone.intensity, near), width);
+          pushEntry(mid, zone.intensity >= 0.5 ? 3 : 4, `BID ${fmtK(mid)}`, "BID", `rgba(34, 197, 94, ${opacity.toFixed(2)})`, intensityToStyle(zone.intensity, near), width);
         });
 
         askZones.forEach((zone: any) => {
@@ -445,7 +446,7 @@ export function MainChart() {
           const near = Math.abs(mid - price) <= nearThreshold;
           const opacity = intensityToOpacity(zone.intensity, near);
           const width = intensityToWidth(zone.intensity, near);
-          pushEntry(mid, zone.intensity >= 0.5 ? 3 : 4, `A ${fmtK(mid)}`, "A", `rgba(239, 68, 68, ${opacity.toFixed(2)})`, intensityToStyle(zone.intensity, near), width);
+          pushEntry(mid, zone.intensity >= 0.5 ? 3 : 4, `ASK ${fmtK(mid)}`, "ASK", `rgba(239, 68, 68, ${opacity.toFixed(2)})`, intensityToStyle(zone.intensity, near), width);
         });
       }
     }
