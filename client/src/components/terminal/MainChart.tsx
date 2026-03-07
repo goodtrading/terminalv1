@@ -370,6 +370,28 @@ export function MainChart() {
             </div>
           </div>
         </div>
+        {mapMode === "GAMMA" && (
+          <div className="absolute bottom-3 left-3 z-10 pointer-events-none">
+            <div className="flex items-center gap-3 bg-black/50 border border-white/[0.06] rounded px-2.5 py-1.5 backdrop-blur-sm">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(250, 240, 180, 0.85)" }} />
+                <span className="text-[9px] font-mono text-white/50">Flip</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(234, 179, 8, 0.5)" }} />
+                <span className="text-[9px] font-mono text-white/50">Transition</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(249, 115, 22, 0.7)" }} />
+                <span className="text-[9px] font-mono text-white/50">Cliff ↑</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(56, 189, 248, 0.7)" }} />
+                <span className="text-[9px] font-mono text-white/50">Cliff ↓</span>
+              </div>
+            </div>
+          </div>
+        )}
         <div ref={chartContainerRef} className="absolute inset-0 pr-[100px]" style={{ pointerEvents: 'auto' }} />
       </TerminalPanel>
     </div>
