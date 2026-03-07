@@ -308,38 +308,44 @@ export function MainChart() {
     if (mapMode === "HEATMAP") {
       const heatmap = positioning_engines?.liquidityHeatmap;
       if (heatmap) {
+        const confluenceSet = new Set<number>();
+        const confluenceZones = (heatmap.liquidityConfluenceZones || [])
+          .sort((a: any, b: any) => b.confluenceScore - a.confluenceScore)
+          .slice(0, 4);
+        confluenceZones.forEach((cz: any) => {
+          const mid = (cz.priceStart + cz.priceEnd) / 2;
+          const label = `γ CONFLUENCE ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
+          addLevel(mid, "rgba(168, 85, 247, 0.6)", label, LineStyle.Solid, 2);
+          for (let p = cz.priceStart; p <= cz.priceEnd; p += 250) {
+            confluenceSet.add(Math.round(Math.floor(p / 250) * 250));
+          }
+        });
+
         const bidZones = (heatmap.liquidityHeatZones || [])
-          .filter((z: any) => z.side === "BID")
+          .filter((z: any) => z.side === "BID" && z.intensity >= 0.02)
           .sort((a: any, b: any) => b.intensity - a.intensity)
-          .slice(0, 5);
+          .slice(0, 8);
         const askZones = (heatmap.liquidityHeatZones || [])
-          .filter((z: any) => z.side === "ASK")
+          .filter((z: any) => z.side === "ASK" && z.intensity >= 0.02)
           .sort((a: any, b: any) => b.intensity - a.intensity)
-          .slice(0, 5);
+          .slice(0, 8);
 
         bidZones.forEach((zone: any, i: number) => {
           const mid = (zone.priceStart + zone.priceEnd) / 2;
+          if (confluenceSet.has(zone.priceStart)) return;
           const isStrongest = i === 0;
-          const opacity = isStrongest ? 0.6 : zone.intensity > 0.5 ? 0.4 : 0.2;
+          const opacity = isStrongest ? 0.6 : 0.12 + zone.intensity * 0.45;
           const label = `BID ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
-          addLevel(mid, `rgba(34, 197, 94, ${opacity})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
+          addLevel(mid, `rgba(34, 197, 94, ${opacity.toFixed(2)})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
         });
 
         askZones.forEach((zone: any, i: number) => {
           const mid = (zone.priceStart + zone.priceEnd) / 2;
+          if (confluenceSet.has(zone.priceStart)) return;
           const isStrongest = i === 0;
-          const opacity = isStrongest ? 0.6 : zone.intensity > 0.5 ? 0.4 : 0.2;
+          const opacity = isStrongest ? 0.6 : 0.12 + zone.intensity * 0.45;
           const label = `ASK ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
-          addLevel(mid, `rgba(239, 68, 68, ${opacity})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
-        });
-
-        const confluenceZones = (heatmap.liquidityConfluenceZones || [])
-          .sort((a: any, b: any) => b.confluenceScore - a.confluenceScore)
-          .slice(0, 3);
-        confluenceZones.forEach((cz: any) => {
-          const mid = (cz.priceStart + cz.priceEnd) / 2;
-          const label = `CONFLUENCE ${mid >= 1000 ? (mid / 1000).toFixed(mid % 1000 === 0 ? 0 : 1) + "k" : mid}`;
-          addLevel(mid, "rgba(168, 85, 247, 0.55)", label, LineStyle.Solid, 2);
+          addLevel(mid, `rgba(239, 68, 68, ${opacity.toFixed(2)})`, label, LineStyle.Dotted, isStrongest ? 2 : 1);
         });
       }
     }

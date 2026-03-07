@@ -40,10 +40,13 @@ export const liquidityHeatmapSchema = z.object({
     totalAskLiquidity: z.number(),
     strongestBidZone: z.number().nullable(),
     strongestAskZone: z.number().nullable(),
+    nearestVoid: z.number().nullable(),
+    voidSide: z.enum(["ABOVE", "BELOW"]).nullable(),
     bidAskRatio: z.number(),
     source: z.string(),
     timestamp: z.number()
-  })
+  }),
+  liquidityMapLines: z.array(z.string())
 });
 
 export type LiquidityHeatZone = z.infer<typeof liquidityHeatZoneSchema>;
@@ -217,7 +220,7 @@ export class OrderBookGateway {
       gammaCliffs?: { strike: number; strength: number }[];
     }
   ): LiquidityHeatmap {
-    const range = spotPrice * 0.05;
+    const range = spotPrice * 0.03;
     const binSize = spotPrice > 50000 ? 250 : spotPrice > 10000 ? 100 : 50;
 
     const bidBins = aggregateIntoBins(book.bids, spotPrice, binSize, range);
@@ -230,8 +233,8 @@ export class OrderBookGateway {
 
     for (const [binKey, qty] of bidBins) {
       const intensity = qty / maxQty;
-      if (intensity < 0.05) continue;
-      const persistence = computePersistence("BID", binKey, qty);
+      if (intensity < 0.02) continue;
+      computePersistence("BID", binKey, qty);
       heatZones.push({
         priceStart: binKey,
         priceEnd: binKey + binSize,
@@ -243,8 +246,8 @@ export class OrderBookGateway {
 
     for (const [binKey, qty] of askBins) {
       const intensity = qty / maxQty;
-      if (intensity < 0.05) continue;
-      const persistence = computePersistence("ASK", binKey, qty);
+      if (intensity < 0.02) continue;
+      computePersistence("ASK", binKey, qty);
       heatZones.push({
         priceStart: binKey,
         priceEnd: binKey + binSize,
@@ -305,8 +308,44 @@ export class OrderBookGateway {
     if (ratio > 1.3) pressure = "BID_HEAVY";
     else if (ratio < 0.7) pressure = "ASK_HEAVY";
 
+    let nearestVoid: number | null = null;
+    let voidSide: "ABOVE" | "BELOW" | null = null;
+    const numBins = Math.floor((range * 2) / binSize);
+    const lowerBound = spotPrice - range;
+    for (let i = 0; i < numBins; i++) {
+      const binKey = Math.round(Math.floor((lowerBound + i * binSize) / binSize) * binSize);
+      const hasBid = bidBins.has(binKey) && (bidBins.get(binKey)! / maxQty) > 0.02;
+      const hasAsk = askBins.has(binKey) && (askBins.get(binKey)! / maxQty) > 0.02;
+      if (!hasBid && !hasAsk) {
+        const mid = binKey + binSize / 2;
+        if (nearestVoid === null || Math.abs(mid - spotPrice) < Math.abs(nearestVoid - spotPrice)) {
+          nearestVoid = mid;
+          voidSide = mid > spotPrice ? "ABOVE" : "BELOW";
+        }
+      }
+    }
+
+    const formatK = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(Math.round(p));
+    const mapLines: string[] = [];
+    if (askZonesSorted.length > 0) {
+      const askMid = askZonesSorted[0].priceStart + binSize / 2;
+      mapLines.push(askMid > spotPrice ? `Heavy asks above spot near ${formatK(askMid)}` : `Ask cluster near ${formatK(askMid)}`);
+    }
+    if (bidZonesSorted.length > 0) {
+      const bidMid = bidZonesSorted[0].priceStart + binSize / 2;
+      mapLines.push(bidMid < spotPrice ? `Strong bids below spot near ${formatK(bidMid)}` : `Bid cluster near ${formatK(bidMid)}`);
+    }
+    if (nearestVoid !== null) {
+      mapLines.push(`Liquidity void ${voidSide?.toLowerCase()} spot near ${formatK(nearestVoid)}`);
+    }
+    if (topConfluence.length > 0) {
+      const cMid = (topConfluence[0].priceStart + topConfluence[0].priceEnd) / 2;
+      mapLines.push(`Gamma confluence at ${formatK(cMid)} (${topConfluence[0].sources[0]})`);
+    }
+    if (mapLines.length === 0) mapLines.push("Order book data limited");
+
     return {
-      liquidityHeatZones: heatZones.slice(0, 30),
+      liquidityHeatZones: heatZones.slice(0, 40),
       liquidityConfluenceZones: topConfluence,
       liquidityPressure: pressure,
       heatmapSummary: {
@@ -314,10 +353,13 @@ export class OrderBookGateway {
         totalAskLiquidity: Math.round(totalAsk * 1000) / 1000,
         strongestBidZone: bidZonesSorted[0]?.priceStart ?? null,
         strongestAskZone: askZonesSorted[0]?.priceStart ?? null,
+        nearestVoid,
+        voidSide,
         bidAskRatio: Math.round(ratio * 100) / 100,
         source: book.source,
         timestamp: book.timestamp
-      }
+      },
+      liquidityMapLines: mapLines.slice(0, 4)
     };
   }
 
@@ -331,10 +373,13 @@ export class OrderBookGateway {
         totalAskLiquidity: 0,
         strongestBidZone: null,
         strongestAskZone: null,
+        nearestVoid: null,
+        voidSide: null,
         bidAskRatio: 1,
         source: "UNAVAILABLE",
         timestamp: Date.now()
-      }
+      },
+      liquidityMapLines: ["Order book data unavailable"]
     };
   }
 }

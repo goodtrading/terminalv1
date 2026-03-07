@@ -223,6 +223,32 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         </div>
       </SidebarPanel>
 
+      <SidebarPanel title="Liquidity Map">
+        {(() => {
+          const heatmap = (positioning as any)?.liquidityHeatmap;
+          const lines: string[] = heatmap?.liquidityMapLines || [];
+          const pressure = heatmap?.liquidityPressure || "BALANCED";
+          const source = heatmap?.heatmapSummary?.source || "--";
+          const pressureColor = pressure === "BID_HEAVY" ? "green" : pressure === "ASK_HEAVY" ? "red" : "yellow";
+          return (
+            <div className="flex flex-col gap-2">
+              <StatusValue label="Pressure" value={pressure.replace(/_/g, " ")} color={pressureColor} />
+              {lines.length > 0 && (
+                <div className="flex flex-col gap-0.5">
+                  {lines.map((line: string, i: number) => (
+                    <div key={i} className="flex items-start gap-1.5">
+                      <span className="text-[8px] mt-[3px] text-purple-400">•</span>
+                      <span className="text-[10px] text-white/50 font-mono leading-snug">{line}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="text-[8px] text-white/20 font-mono">{source}</div>
+            </div>
+          );
+        })()}
+      </SidebarPanel>
+
       <SidebarPanel title="Daily Scenarios">
         <div className="flex flex-col gap-3">
           {(scenarios as TradingScenario[])?.map((scenario) => (
