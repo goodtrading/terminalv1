@@ -8,12 +8,16 @@ export const terminalStateSchema = z.object({
   positioning: z.any(),
   levels: z.any(),
   ticker: tickerSchema.nullable(),
+  tickerStatus: z.enum(["fresh", "stale", "unavailable"]),
   timestamp: z.number()
 });
 
 export type TerminalState = z.infer<typeof terminalStateSchema>;
 
+const STALE_THRESHOLD_MS = 10000; // 10 seconds
+
 export async function getTerminalState(): Promise<TerminalState> {
+  // Aggregated quantitative state from DB (fast read)
   const [market, exposure, positioning, levels] = await Promise.all([
     storage.getMarketState(),
     storage.getDealerExposure(),
@@ -21,14 +25,14 @@ export async function getTerminalState(): Promise<TerminalState> {
     storage.getKeyLevels()
   ]);
 
-  let ticker = null;
-  try {
-    // This uses the cached/last-fetched ticker from the gateway or a fast fetch
-    // To keep this endpoint read-mostly, we assume the gateway is being polled
-    // or we do a very fast fetch here.
-    ticker = await MarketDataGateway.getTicker("BTCUSDT");
-  } catch (e) {
-    console.warn("[TerminalState] Ticker fetch failed for state aggregation");
+  // Read from in-memory cache ONLY (deterministic latency, no side effects)
+  const ticker = MarketDataGateway.getCachedTicker();
+  const now = Date.now();
+  
+  let tickerStatus: "fresh" | "stale" | "unavailable" = "unavailable";
+  if (ticker) {
+    const age = now - ticker.timestamp;
+    tickerStatus = age < STALE_THRESHOLD_MS ? "fresh" : "stale";
   }
 
   return {
@@ -37,6 +41,7 @@ export async function getTerminalState(): Promise<TerminalState> {
     positioning,
     levels,
     ticker,
-    timestamp: Date.now()
+    tickerStatus,
+    timestamp: now
   };
 }

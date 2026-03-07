@@ -21,7 +21,9 @@ export const tickerSchema = z.object({
 export type Candle = z.infer<typeof candleSchema>;
 export type Ticker = z.infer<typeof tickerSchema>;
 
-// --- Provider Normalization & Fetching ---
+// --- In-Memory Cache for Deterministic Access ---
+let lastTickerCache: Ticker | null = null;
+let isRefreshing = false;
 
 export class MarketDataGateway {
   private static binanceMirrors = [
@@ -95,16 +97,11 @@ export class MarketDataGateway {
         const validated = this.validateAndSort(candles);
         
         console.log(`[Gateway] Provider: ${source} | Latency: ${latency}ms | Count: ${validated.length}`);
-        if (validated.length > 0) {
-          console.log(`[Gateway] Range: ${validated[0].time} -> ${validated[validated.length - 1].time}`);
-        }
         return validated;
       } catch (e: any) {
-        console.warn(`[Gateway] ${provider.name} failed: ${e.message}`);
         lastError = e.message;
       }
     }
-
     throw new Error(lastError || "All providers failed");
   }
 
@@ -120,13 +117,32 @@ export class MarketDataGateway {
         const { data, provider: source, latency } = await provider.fetch();
         const ticker = provider.normalize(data, source);
         const validated = tickerSchema.parse(ticker);
-        console.log(`[Gateway] Ticker: ${source} (${latency}ms)`);
+        // Cache the successful result
+        lastTickerCache = validated;
         return validated;
       } catch (e: any) {
         console.warn(`[Gateway] Ticker ${provider.name} failed: ${e.message}`);
       }
     }
     throw new Error("Ticker unavailable from all providers");
+  }
+
+  // Pure read-only access to cached ticker
+  static getCachedTicker(): Ticker | null {
+    return lastTickerCache;
+  }
+
+  // Background refresh logic
+  static async refreshTicker(symbol: string = "BTCUSDT") {
+    if (isRefreshing) return;
+    isRefreshing = true;
+    try {
+      await this.getTicker(symbol);
+    } catch (e) {
+      console.warn(`[Gateway] Background ticker refresh failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally {
+      isRefreshing = false;
+    }
   }
 
   private static normalizeBinance(data: any[]): Candle[] {
@@ -183,3 +199,8 @@ export class MarketDataGateway {
     return unique;
   }
 }
+
+// Start background ticker refresh loop
+setInterval(() => {
+  MarketDataGateway.refreshTicker("BTCUSDT");
+}, 2000);
