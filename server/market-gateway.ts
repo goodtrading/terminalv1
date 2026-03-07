@@ -31,12 +31,16 @@ export class MarketDataGateway {
     "https://api.binance.com"
   ];
 
-  private static async fetchWithMirrors(path: string): Promise<any> {
+  private static async fetchWithMirrors(path: string): Promise<{ data: any; provider: string; latency: number }> {
     let lastError = null;
     for (const mirror of this.binanceMirrors) {
+      const start = Date.now();
       try {
         const response = await fetch(`${mirror}${path}`, { signal: AbortSignal.timeout(5000) });
-        if (response.ok) return await response.json();
+        const latency = Date.now() - start;
+        if (response.ok) {
+          return { data: await response.json(), provider: mirror, latency };
+        }
         if (response.status === 451) throw new Error("GEO_BLOCKED");
         lastError = `Status ${response.status}`;
       } catch (e: any) {
@@ -48,7 +52,7 @@ export class MarketDataGateway {
   }
 
   static async getCandles(symbol: string, interval: string = "15m", limit: number = 500): Promise<Candle[]> {
-    const rawData = await this.fetchWithMirrors(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
+    const { data: rawData, provider, latency } = await this.fetchWithMirrors(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
     
     if (!Array.isArray(rawData)) throw new Error("INVALID_PROVIDER_RESPONSE");
 
@@ -81,11 +85,19 @@ export class MarketDataGateway {
       }
     }
 
+    if (uniqueCandles.length > 0) {
+      console.log(`[Gateway] Provider: ${provider}`);
+      console.log(`[Gateway] Latency: ${latency}ms`);
+      console.log(`[Gateway] Candles: ${uniqueCandles.length}`);
+      console.log(`[Gateway] First: ${uniqueCandles[0].time}`);
+      console.log(`[Gateway] Last: ${uniqueCandles[uniqueCandles.length - 1].time}`);
+    }
+
     return uniqueCandles;
   }
 
   static async getTicker(symbol: string): Promise<Ticker> {
-    const data = await this.fetchWithMirrors(`/api/v3/ticker/price?symbol=${symbol}`);
+    const { data, provider, latency } = await this.fetchWithMirrors(`/api/v3/ticker/price?symbol=${symbol}`);
     
     const ticker = {
       symbol: data.symbol,
@@ -96,6 +108,9 @@ export class MarketDataGateway {
 
     const validated = tickerSchema.parse(ticker);
     if (!Number.isFinite(validated.price)) throw new Error("INVALID_TICKER_PRICE");
+
+    console.log(`[Gateway] Ticker Provider: ${provider}`);
+    console.log(`[Gateway] Ticker Latency: ${latency}ms`);
     
     return validated;
   }
