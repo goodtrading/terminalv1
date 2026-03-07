@@ -24,6 +24,7 @@ function StatusValue({ label, value, color }: { label: string; value: string; co
   const colorClass = color === "green" ? "text-green-400"
     : color === "red" ? "text-red-400"
     : color === "yellow" ? "text-yellow-400"
+    : color === "gray" ? "text-white/50"
     : "terminal-text-primary";
 
   return (
@@ -44,7 +45,7 @@ function getStatusColor(val: string): string {
 function getDirectionColor(val: string): string {
   if (val === "LONG") return "green";
   if (val === "SHORT") return "red";
-  return "";
+  return "gray";
 }
 
 function getRiskColor(val: string): string {
@@ -52,6 +53,39 @@ function getRiskColor(val: string): string {
   if (val === "MEDIUM") return "yellow";
   if (val === "HIGH") return "red";
   return "";
+}
+
+type MarketMode = "RANGE CONTROL" | "VOLATILITY EXPANSION" | "SQUEEZE RISK" | "TRANSITION";
+
+function getMarketMode(positioning: any, market: any): MarketMode {
+  const squeeze = positioning?.squeezeProbabilityEngine;
+  const volExp = positioning?.volatilityExpansionDetector;
+  const cascade = positioning?.liquidityCascadeEngine;
+  const bias = positioning?.institutionalBiasEngine;
+
+  if (squeeze?.squeezeProbability >= 60 || cascade?.cascadeRisk === "EXTREME") {
+    return "SQUEEZE RISK";
+  }
+  if (volExp?.volExpansionState === "EXPANDING" || bias?.institutionalBias?.includes("EXPANSION")) {
+    return "VOLATILITY EXPANSION";
+  }
+  if (bias?.institutionalBias === "FRAGILE_TRANSITION" || market?.gammaRegime === "TRANSITION") {
+    return "TRANSITION";
+  }
+  return "RANGE CONTROL";
+}
+
+function getMarketModeStyle(mode: MarketMode) {
+  switch (mode) {
+    case "RANGE CONTROL":
+      return { bg: "bg-blue-500/15 border-blue-500/30", text: "text-blue-400" };
+    case "VOLATILITY EXPANSION":
+      return { bg: "bg-orange-500/15 border-orange-500/30", text: "text-orange-400" };
+    case "SQUEEZE RISK":
+      return { bg: "bg-red-500/15 border-red-500/30", text: "text-red-400" };
+    case "TRANSITION":
+      return { bg: "bg-yellow-500/15 border-yellow-500/30", text: "text-yellow-400" };
+  }
 }
 
 export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
@@ -63,6 +97,9 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
   const exposure = state?.exposure;
   const tradeDecision = (positioning as any)?.tradeDecisionEngine;
   const scenarios = state?.market && (state as any).scenarios ? (state as any).scenarios : [];
+
+  const marketMode = useMemo(() => getMarketMode(positioning, market), [positioning, market]);
+  const modeStyle = getMarketModeStyle(marketMode);
 
   const tradeSetup = useMemo(() => {
     let condition = "WEAK";
@@ -95,6 +132,13 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
 
   return (
     <div className="w-80 h-full flex flex-col gap-2 overflow-y-auto p-2 border-l border-terminal-border bg-terminal-bg shrink-0">
+
+      <div className={cn("border rounded px-4 py-4 text-center", modeStyle.bg)} data-testid="panel-market-mode">
+        <div className="text-[10px] uppercase tracking-[0.12em] text-white/40 font-medium mb-1.5">Market Mode</div>
+        <div className={cn("text-[18px] font-bold tracking-wide", modeStyle.text)} data-testid="text-market-mode">
+          {marketMode}
+        </div>
+      </div>
 
       <SidebarPanel title="Execution State">
         <div className="flex flex-col divide-y divide-white/[0.04]">
@@ -151,7 +195,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
                   <span className="text-[9px] font-mono text-white/40">{scenario.probability}%</span>
                 </div>
               </div>
-              <div className="px-3 py-2">
+              <div className="px-3 py-2.5">
                 <p className="text-[10px] text-white/60 leading-relaxed">{scenario.thesis}</p>
               </div>
             </div>

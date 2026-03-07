@@ -1,0 +1,163 @@
+UI IMPROVEMENT — MARKET MODE INDICATOR + SIDEBAR CLARITY
+
+Goal:
+Make the trading terminal easier to interpret for non-expert traders by introducing a high-level market summary and improving visual hierarchy.
+
+Important:
+Do NOT change backend calculations or analytics engines.
+Only improve the UI presentation.
+
+------------------------------------------------
+
+STEP 1 — ADD MARKET MODE INDICATOR
+
+Create a new panel at the top of the right sidebar called:
+
+MARKET MODE
+
+This panel summarizes the current market environment derived from the existing analytics engines.
+
+Example layout:
+
+MARKET MODE
+RANGE CONTROL
+
+Possible values:
+
+RANGE CONTROL
+VOLATILITY EXPANSION
+SQUEEZE RISK
+TRANSITION
+
+Styling:
+
+• Larger font than other panels
+• Center aligned
+• Color-coded background or badge
+
+Color rules:
+
+RANGE CONTROL → blue
+VOLATILITY EXPANSION → orange
+SQUEEZE RISK → red
+TRANSITION → yellow
+
+This should visually stand out as the first thing traders read.
+
+------------------------------------------------
+
+STEP 2 — EXECUTION STATE VISUAL PRIORITY
+
+Make EXECUTION STATE the most readable panel.
+
+Adjust spacing and typography.
+
+Current fields:
+
+STATUS
+DIRECTION
+RISK
+SIZE
+
+New layout example:
+
+EXECUTION STATE
+
+STATUS        WAIT
+DIRECTION     NEUTRAL
+RISK          MEDIUM
+SIZE          PROBE ONLY
+
+Rules:
+
+• Values bold
+• Labels smaller
+• Maintain color semantics
+
+Color rules:
+
+LONG → green
+SHORT → red
+NEUTRAL → gray
+
+LOW RISK → green
+MEDIUM → yellow
+HIGH → red
+
+WAIT → yellow
+EXECUTE → green
+AVOID ENTRY → red
+
+------------------------------------------------
+
+STEP 3 — CLEAN TRADE SETUP PANEL
+
+Keep only three fields:
+
+TRADE SETUP
+
+Market Condition
+Flow State
+Volatility Risk
+
+Ensure consistent spacing and alignment.
+
+Example:
+
+TRADE SETUP
+
+Market Condition   CONFIRMED
+Flow State         STABLE
+Volatility Risk    LOW
+
+Avoid extra decoration.
+
+------------------------------------------------
+
+STEP 4 — IMPROVE DAILY SCENARIOS VISUALS
+
+Daily scenarios should be visually separated.
+
+Structure:
+
+DAILY SCENARIOS
+
+Base Case
+Range-bound mean reversion toward 67k magnet
+
+Alt Case
+Upside range extension to 71k call wall
+
+Vol Case
+Tail risk acceleration / gamma squeeze event
+
+Add slight spacing between cases.
+
+------------------------------------------------
+
+STEP 5 — PANEL CONSISTENCY
+
+All sidebar panels must share:
+
+• same padding
+• same header typography
+• consistent spacing between rows
+• aligned values
+
+Panel headers:
+
+uppercase
+font-weight: 600
+slight letter spacing
+
+------------------------------------------------
+
+Expected Result:
+
+The sidebar should clearly communicate:
+
+1. Market environment
+2. Current trade decision
+3. Structural scenarios
+
+Optimized for both advanced traders and beginners.
