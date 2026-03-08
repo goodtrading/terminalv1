@@ -3,10 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { createChart, ColorType, LineStyle, CandlestickSeries, HistogramSeries, IChartApi, ISeriesApi } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels, DealerExposure, TradingScenario } from "@shared/schema";
-import { cn } from "@/lib/utils";
 import { useTerminalState } from "@/hooks/useTerminalState";
-import { TooltipWrapper } from "./Tooltip";
+import { SessionLiquidityManager } from "./overlay/SessionLiquidityManager";
+import { cn } from "@/lib/utils";
 import { useLearnMode } from "@/hooks/useLearnMode";
+import { TooltipWrapper } from "./Tooltip";
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
 
@@ -20,7 +21,40 @@ export function MainChart() {
 
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [lastCandle, setLastCandle] = useState<any>(null);
-  const [mapMode, setMapMode] = useState<MapMode>("LEVELS");
+  const [activePanels, setActivePanels] = useState<Set<MapMode>>(() => {
+  // Load from localStorage on initialization
+  const savedPanels = localStorage.getItem('terminal-activePanels');
+  if (savedPanels) {
+    try {
+      const parsed = JSON.parse(savedPanels);
+      return new Set(parsed.filter((p: string) => ["LEVELS", "GAMMA", "CASCADE", "SQUEEZE", "HEATMAP"].includes(p)));
+    } catch {
+      // Fallback to default if localStorage is corrupted
+      return new Set(["LEVELS" as MapMode]);
+    }
+  }
+  return new Set(["LEVELS" as MapMode]);
+});
+
+  // Toggle panel activation
+  const togglePanel = (panel: MapMode) => {
+    setActivePanels(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(panel)) {
+        newSet.delete(panel);
+      } else {
+        newSet.add(panel);
+      }
+      // Save to localStorage whenever panels change
+      localStorage.setItem('terminal-activePanels', JSON.stringify(Array.from(newSet)));
+      return newSet;
+    });
+  };
+
+  // Save active panels to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('terminal-activePanels', JSON.stringify(Array.from(activePanels)));
+  }, [activePanels]);
 
   const [toggles, setToggles] = useState({
     price: true,
@@ -29,6 +63,10 @@ export function MainChart() {
   const [manualPriceRange, setManualPriceRange] = useState<{from: number, to: number} | null>(null);
   const [selectedScenario, setSelectedScenario] = useState<TradingScenario | null>(null);
   const scenarioLevelsRef = useRef<any[]>([]);
+
+  const sessionLiquidityManagerRef = useRef<SessionLiquidityManager>(new SessionLiquidityManager());
+  const sessionLiquidityLinesRef = useRef<any[]>([]);
+  const boundaryBadgesRef = useRef<HTMLDivElement[]>([]);
 
   const { data: terminalState } = useTerminalState();
   const positioning_engines = terminalState?.positioning as any;
@@ -76,7 +114,7 @@ export function MainChart() {
           };
         }
         return {
-          time: tickerTime,
+          time: tickerTime / 1000, // Convert to seconds for Lightweight Charts
           open: ticker.price,
           high: ticker.price,
           low: ticker.price,
@@ -212,8 +250,8 @@ export function MainChart() {
           color: isUp ? "#22c55e" : "#ef4444",
           lineWidth: 1,
           lineStyle: LineStyle.Solid,
-          axisLabelVisible: true,
-          title: `Last ${isUp ? "High" : "Low"}: ${lastCandle.close}`
+          axisLabelVisible: false, // Hide the label to remove "Last High" / "Last Low"
+          title: "" // Empty title
         });
       } else if (livePriceLineRef.current) {
         candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
@@ -251,7 +289,7 @@ export function MainChart() {
       entries.push({ price: p, priority, label, shortLabel, color, style, width, axisLabel: !isBandFill, isBandFill });
     };
 
-    if (mapMode === "LEVELS") {
+    if (activePanels.has("LEVELS")) {
       if (positioning?.callWall) pushEntry(positioning.callWall, 1, "CALL WALL", "CW", `rgba(239, 68, 68, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
       if (positioning?.putWall) pushEntry(positioning.putWall, 1, "PUT WALL", "PW", `rgba(34, 197, 94, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
       if (levels?.gammaMagnets) {
@@ -260,7 +298,7 @@ export function MainChart() {
       if (positioning?.dealerPivot) pushEntry(positioning.dealerPivot, 2, "PIVOT", "PV", `rgba(255, 255, 255, ${dim(0.3, 0.7)})`, LineStyle.Dashed);
     }
 
-    if (mapMode === "GAMMA") {
+    if (activePanels.has("GAMMA")) {
       if (market?.gammaFlip) pushEntry(market.gammaFlip, 1, "GAMMA FLIP", "FLIP", `rgba(250, 240, 180, ${dim(0.85, 0.7)})`, LineStyle.Solid, 2);
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
         pushEntry(market.transitionZoneStart, 4, "TR LO", "TL", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
@@ -287,7 +325,7 @@ export function MainChart() {
       }
     }
 
-    if (mapMode === "CASCADE") {
+    if (activePanels.has("CASCADE")) {
       const cascade = positioning_engines?.liquidityCascadeEngine;
       if (cascade) {
         const triggerPrice = extractPriceFromText(cascade.cascadeTrigger);
@@ -300,7 +338,7 @@ export function MainChart() {
       }
     }
 
-    if (mapMode === "SQUEEZE") {
+    if (activePanels.has("SQUEEZE")) {
       const squeeze = positioning_engines?.squeezeProbabilityEngine;
       if (squeeze) {
         const triggerPrice = extractPriceFromText(squeeze.squeezeTrigger);
@@ -313,7 +351,7 @@ export function MainChart() {
     const sweepZoneRange = sweepActive ? extractRangeFromText(sweepDetector.sweepTargetZone) : null;
     const sweepDirArrow = sweepDetector?.sweepDirection === "UP" ? "↑" : sweepDetector?.sweepDirection === "DOWN" ? "↓" : "↕";
 
-    if (sweepActive && sweepZoneRange && mapMode !== "HEATMAP") {
+    if (sweepActive && activePanels.has("SQUEEZE") && sweepZoneRange && !activePanels.has("HEATMAP")) {
       const bandStep = (sweepZoneRange.end - sweepZoneRange.start) / 6;
       for (let i = 0; i <= 6; i++) {
         const p = sweepZoneRange.start + bandStep * i;
@@ -324,7 +362,7 @@ export function MainChart() {
       pushEntry(sweepZoneRange.end, 2, `SWEEP ${sweepDirArrow}`, "SW", `rgba(${sweepDirColor}, 0.4)`, LineStyle.Solid, 1);
     }
 
-    if (sweepActive) {
+    if (sweepActive && activePanels.has("SQUEEZE")) {
       const knownLevels: number[] = [];
       if (positioning?.dealerPivot) knownLevels.push(positioning.dealerPivot);
       if (positioning?.putWall) knownLevels.push(positioning.putWall);
@@ -351,7 +389,7 @@ export function MainChart() {
 
     const heatmapLineWidthCap = sweepActive ? 2 : 4;
 
-    if (mapMode === "HEATMAP") {
+    if (activePanels.has("HEATMAP")) {
       const heatmap = positioning_engines?.liquidityHeatmap;
       if (heatmap) {
         const confluenceSet = new Set<number>();
@@ -376,7 +414,7 @@ export function MainChart() {
           heatmapLevelCount++;
         }
 
-        if (sweepActive && sweepZoneRange && heatmapLevelCount < MAX_HEATMAP_LEVELS) {
+        if (sweepActive && activePanels.has("SQUEEZE") && sweepZoneRange && heatmapLevelCount < MAX_HEATMAP_LEVELS) {
           const bandLines = 5;
           const bandStep = (sweepZoneRange.end - sweepZoneRange.start) / bandLines;
           for (let i = 0; i <= bandLines; i++) {
@@ -439,7 +477,7 @@ export function MainChart() {
         const intensityToOpacity = (int: number, near: boolean) => {
           const base = Math.min(0.5, 0.08 + int * 0.4);
           const raw = near ? Math.min(0.6, base + 0.1) : base;
-          return sweepActive ? raw * 0.6 : raw;
+          return (sweepActive && activePanels.has("SQUEEZE")) ? raw * 0.6 : raw;
         };
         const intensityToStyle = (int: number, near: boolean) => (int >= 0.5 || near) ? LineStyle.Solid : LineStyle.Dotted;
 
@@ -538,7 +576,7 @@ export function MainChart() {
       });
       if (line) priceLinesRef.current.push(line);
     }
-  }, [market, positioning, levels, lastCandle, mapMode, positioning_engines]);
+  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines]);
 
   if (historyError) {
     return (
@@ -563,10 +601,10 @@ export function MainChart() {
         {modes.map(mode => (
           <TooltipWrapper key={mode} concept={mode}>
             <button
-              onClick={() => setMapMode(mode)}
+              onClick={() => togglePanel(mode)}
               className={cn(
                 "px-3 py-1 text-[10px] font-bold font-mono uppercase tracking-wider rounded-sm transition-all",
-                mapMode === mode
+                activePanels.has(mode)
                   ? "bg-terminal-accent/20 border border-terminal-accent text-white"
                   : "border border-transparent text-white/40 hover:text-white/60 hover:bg-white/[0.03]"
               )}
@@ -598,16 +636,16 @@ export function MainChart() {
                 <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>
                 <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span><span className="text-[11px] font-bold font-mono text-white">{market?.distanceToFlip?.toFixed(2) || "0.00"}%</span></div>
               </div>
-              {mapMode === "GAMMA" && (
+              {activePanels.has("GAMMA") && (
                 <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Showing Flip, Transition Zone, and Key Gamma Cliffs</div>
               )}
-              {mapMode === "HEATMAP" && (
+              {activePanels.has("HEATMAP") && (
                 <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Order book liquidity zones with gamma confluence</div>
               )}
             </div>
           </div>
         </div>
-        {mapMode === "GAMMA" && (
+        {activePanels.has("GAMMA") && (
           <div className="absolute bottom-3 left-3 z-10 pointer-events-none">
             <div className="flex items-center gap-3 bg-black/50 border border-white/[0.06] rounded px-2.5 py-1.5 backdrop-blur-sm">
               <div className="flex items-center gap-1.5">
@@ -629,7 +667,7 @@ export function MainChart() {
             </div>
           </div>
         )}
-        {mapMode === "HEATMAP" && (
+        {activePanels.has("HEATMAP") && (
           <div className="absolute bottom-3 left-3 z-10 pointer-events-none">
             <div className="flex items-center gap-3 bg-black/50 border border-white/[0.06] rounded px-2.5 py-1.5 backdrop-blur-sm">
               <div className="flex items-center gap-1.5">
@@ -650,7 +688,7 @@ export function MainChart() {
         {(() => {
           const sd = positioning_engines?.liquiditySweepDetector;
           const isActive = sd && (sd.sweepRisk === "HIGH" || sd.sweepRisk === "EXTREME") && sd.sweepDirection !== "NONE";
-          if (!isActive) return null;
+          if (!isActive || !activePanels.has("SQUEEZE")) return null;
           const arrowColor = sd.sweepDirection === "UP" ? "text-green-400/20" : sd.sweepDirection === "DOWN" ? "text-red-400/20" : "text-purple-400/20";
           const showUp = sd.sweepDirection === "UP" || sd.sweepDirection === "TWO_SIDED";
           const showDown = sd.sweepDirection === "DOWN" || sd.sweepDirection === "TWO_SIDED";
