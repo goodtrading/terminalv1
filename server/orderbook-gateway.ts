@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
+import { getOrderBook } from "./services/orderbookService";
 
 const orderBookEntrySchema = z.object({
   price: z.number(),
@@ -55,10 +56,14 @@ export const vacuumStateSchema = z.object({
   confirmedVacuumActive: z.boolean(),
 });
 
+const orderBookLevelSchema = z.object({ price: z.number(), size: z.number() });
+
 export const liquidityHeatmapSchema = z.object({
   liquidityHeatZones: z.array(liquidityHeatZoneSchema),
   liquidityConfluenceZones: z.array(liquidityConfluenceZoneSchema),
   liquidityPressure: z.enum(["BID_HEAVY", "ASK_HEAVY", "BALANCED"]),
+  bids: z.array(orderBookLevelSchema).optional(),
+  asks: z.array(orderBookLevelSchema).optional(),
   heatmapSummary: z.object({
     totalBidLiquidity: z.number(),
     totalAskLiquidity: z.number(),
@@ -206,24 +211,26 @@ export class OrderBookGateway {
     return cachedHeatmap;
   }
 
-  static async getLiquidityHeatmap(
-    spotPrice: number,
-    gammaData?: {
-      gammaMagnets?: number[];
-      callWall?: number;
-      putWall?: number;
-      dealerPivot?: number;
-      gammaCliffs?: { strike: number; strength: number }[];
-    }
-  ): Promise<LiquidityHeatmap> {
+  static async getLiquidityHeatmap(spotPrice: number): Promise<LiquidityHeatmap> {
     const now = Date.now();
     if (cachedHeatmap && now - lastFetchTime < CACHE_TTL_MS) {
       return cachedHeatmap;
     }
 
     try {
-      const book = await fetchOrderBook("BTCUSDT", 500);
-      const result = this.computeHeatmap(book, spotPrice, gammaData);
+      const ob = getOrderBook();
+      let book: OrderBook;
+      if (ob.bids.length > 0 || ob.asks.length > 0) {
+        book = {
+          bids: ob.bids.map((b) => ({ price: b.price, quantity: b.size })),
+          asks: ob.asks.map((a) => ({ price: a.price, quantity: a.size })),
+          timestamp: ob.timestamp ?? now,
+          source: "Binance-WS",
+        };
+      } else {
+        book = await fetchOrderBook("BTCUSDT", 500);
+      }
+      const result = this.computeHeatmap(book, spotPrice);
       cachedHeatmap = result;
       lastFetchTime = now;
       return result;
@@ -234,17 +241,7 @@ export class OrderBookGateway {
     }
   }
 
-  private static computeHeatmap(
-    book: OrderBook,
-    spotPrice: number,
-    gammaData?: {
-      gammaMagnets?: number[];
-      callWall?: number;
-      putWall?: number;
-      dealerPivot?: number;
-      gammaCliffs?: { strike: number; strength: number }[];
-    }
-  ): LiquidityHeatmap {
+  private static computeHeatmap(book: OrderBook, spotPrice: number): LiquidityHeatmap {
     const range = spotPrice * 0.03;
     const binSize = spotPrice > 50000 ? 250 : spotPrice > 10000 ? 100 : 50;
 
@@ -285,45 +282,6 @@ export class OrderBookGateway {
     heatZones.sort((a, b) => b.intensity - a.intensity);
 
     const confluenceZones: LiquidityConfluenceZone[] = [];
-    const gammaLevels: { price: number; label: string }[] = [];
-
-    if (gammaData?.callWall) gammaLevels.push({ price: gammaData.callWall, label: "Call Wall" });
-    if (gammaData?.putWall) gammaLevels.push({ price: gammaData.putWall, label: "Put Wall" });
-    if (gammaData?.dealerPivot) gammaLevels.push({ price: gammaData.dealerPivot, label: "Dealer Pivot" });
-    if (gammaData?.gammaMagnets) {
-      gammaData.gammaMagnets.forEach(m => gammaLevels.push({ price: m, label: "Gamma Magnet" }));
-    }
-    if (gammaData?.gammaCliffs) {
-      gammaData.gammaCliffs
-        .sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength))
-        .slice(0, 6)
-        .forEach(c => gammaLevels.push({ price: c.strike, label: "Gamma Cliff" }));
-    }
-
-    const confluenceRadius = range;
-    for (const gl of gammaLevels) {
-      const nearbyHeat = heatZones.filter(z => {
-        const zMid = (z.priceStart + z.priceEnd) / 2;
-        return Math.abs(gl.price - zMid) <= confluenceRadius;
-      });
-      if (nearbyHeat.length > 0) {
-        const totalIntensity = nearbyHeat.reduce((s, z) => s + z.intensity, 0);
-        const distFactor = 1 - Math.min(1, Math.abs(gl.price - spotPrice) / range);
-        const sources = [gl.label, ...nearbyHeat.map(z => `${z.side} liquidity`)];
-        const uniqueSources = [...new Set(sources)];
-        const dominantSide = nearbyHeat[0]?.side || "NEUTRAL";
-        const bestHeat = nearbyHeat.sort((a, b) => b.intensity - a.intensity)[0];
-        confluenceZones.push({
-          priceStart: bestHeat.priceStart,
-          priceEnd: bestHeat.priceEnd,
-          confluenceScore: Math.round(Math.min(1, totalIntensity * 0.5 + 0.3 + distFactor * 0.2) * 100) / 100,
-          sources: uniqueSources.slice(0, 4),
-          side: dominantSide as "BID" | "ASK" | "NEUTRAL"
-        });
-      }
-    }
-
-    confluenceZones.sort((a, b) => b.confluenceScore - a.confluenceScore);
     const topConfluence = confluenceZones.slice(0, 6);
 
     const totalBid = [...bidBins.values()].reduce((s, v) => s + v, 0);
@@ -367,10 +325,6 @@ export class OrderBookGateway {
     if (nearestVoid !== null) {
       mapLines.push(`Liquidity void ${voidSide?.toLowerCase()} spot near ${formatK(nearestVoid)}`);
     }
-    if (topConfluence.length > 0) {
-      const cMid = (topConfluence[0].priceStart + topConfluence[0].priceEnd) / 2;
-      mapLines.push(`Gamma confluence at ${formatK(cMid)} (${topConfluence[0].sources[0]})`);
-    }
     if (mapLines.length === 0) mapLines.push("Order book data limited");
 
     let liquidityVacuum: VacuumState | undefined;
@@ -384,6 +338,8 @@ export class OrderBookGateway {
       liquidityHeatZones: heatZones.slice(0, 40),
       liquidityConfluenceZones: topConfluence,
       liquidityPressure: pressure,
+      bids: book.bids.map((b) => ({ price: b.price, size: b.quantity })),
+      asks: book.asks.map((a) => ({ price: a.price, size: a.quantity })),
       heatmapSummary: {
         totalBidLiquidity: Math.round(totalBid * 1000) / 1000,
         totalAskLiquidity: Math.round(totalAsk * 1000) / 1000,
@@ -405,6 +361,8 @@ export class OrderBookGateway {
       liquidityHeatZones: [],
       liquidityConfluenceZones: [],
       liquidityPressure: "BALANCED",
+      bids: [],
+      asks: [],
       heatmapSummary: {
         totalBidLiquidity: 0,
         totalAskLiquidity: 0,

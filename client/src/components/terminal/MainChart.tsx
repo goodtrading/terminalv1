@@ -213,8 +213,11 @@ export function MainChart() {
           lineWidth: 1,
           lineStyle: LineStyle.Solid,
           axisLabelVisible: true,
-          title: ""
+          title: `Last ${isUp ? "High" : "Low"}: ${lastCandle.close}`
         });
+      } else if (livePriceLineRef.current) {
+        candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
+        livePriceLineRef.current = null;
       }
     }
   }, [lastCandle, toggles.price]);

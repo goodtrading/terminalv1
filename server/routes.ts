@@ -1,10 +1,16 @@
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { MarketDataGateway } from "./market-gateway";
 import { getTerminalState } from "./terminal-state";
 import { DeribitOptionsGateway } from "./deribit-gateway";
 import { OrderBookGateway } from "./orderbook-gateway";
+import { buildTaskPlan } from "./ai/task-agent";
+import { z } from "zod";
+import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
+import { getOrderBook } from "./services/orderbookService";
+// Import the service to start the WebSocket connection
+import "./services/orderbookService";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -28,6 +34,30 @@ export async function registerRoutes(
       res.json(summary);
     } catch (e: any) {
       res.status(500).json({ error: "SUMMARY_FAILED", details: e.message });
+    }
+  });
+
+  // ---- AI DEV AGENT (localhost only) ----
+  app.post("/api/ai/task-agent", async (req: Request, res: Response) => {
+    try {
+      const host = req.hostname;
+
+      if (host !== "localhost" && host !== "127.0.0.1") {
+        return res.status(403).json({ error: "AI agent disabled in production" });
+      }
+
+      const { goal } = req.body ?? {};
+
+      if (!goal || typeof goal !== "string") {
+        return res.status(400).json({ error: "Missing goal" });
+      }
+
+      const plan = buildTaskPlan({ goal });
+
+      res.json(plan);
+    } catch (err: any) {
+      console.error("AI task-agent error:", err);
+      res.status(500).json({ error: "AI agent failure" });
     }
   });
 
@@ -72,6 +102,45 @@ export async function registerRoutes(
     res.json(data);
   });
 
+  app.get("/api/orderbook", async (_req, res) => {
+    try {
+      const orderbook = getOrderBook();
+      
+      console.debug("[API] Orderbook request:", {
+        bidCount: orderbook.bids.length,
+        askCount: orderbook.asks.length,
+        hasTimestamp: !!orderbook.timestamp,
+        topBid: orderbook.bids[0],
+        topAsk: orderbook.asks[0],
+        totalBids: orderbook.bids.reduce((sum, b) => sum + b.size, 0),
+        totalAsks: orderbook.asks.reduce((sum, a) => sum + a.size, 0)
+      });
+      
+      res.json(orderbook);
+    } catch (error) {
+      console.error("[API] Orderbook fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch orderbook data" });
+    }
+  });
+
+  app.get("/api/orderbook/status", async (_req, res) => {
+    try {
+      const orderbook = getOrderBook();
+      const isConnected = orderbook.timestamp && (Date.now() - orderbook.timestamp) < 5000; // Connected if data within 5 seconds
+      
+      res.json({
+        connected: isConnected,
+        bidCount: orderbook.bids.length,
+        askCount: orderbook.asks.length,
+        lastUpdate: orderbook.timestamp,
+        age: orderbook.timestamp ? Date.now() - orderbook.timestamp : null
+      });
+    } catch (error) {
+      console.error("[API] Orderbook status error:", error);
+      res.status(500).json({ error: "Failed to get orderbook status" });
+    }
+  });
+
   // --- New Market Data Gateway Endpoints ---
 
   app.get("/api/market/candles", async (req, res) => {
@@ -113,16 +182,7 @@ export async function registerRoutes(
         res.status(503).json({ error: "SPOT_PRICE_UNAVAILABLE" });
         return;
       }
-      const { options, source } = await DeribitOptionsGateway.ingestOptions();
-      const summary = await DeribitOptionsGateway.getSummary(options, spotPrice, source);
-      const gammaData = {
-        gammaMagnets: summary.gammaMagnets?.map((m: any) => typeof m === "number" ? m : m.strike).filter(Boolean) || [],
-        callWall: summary.callWall || undefined,
-        putWall: summary.putWall || undefined,
-        dealerPivot: (summary as any).dealerPivot || undefined,
-        gammaCliffs: summary.gammaCurveEngine?.gammaCliffs || []
-      };
-      const heatmap = await OrderBookGateway.getLiquidityHeatmap(spotPrice, gammaData);
+      const heatmap = await OrderBookGateway.getLiquidityHeatmap(spotPrice);
       res.json(heatmap);
     } catch (e: any) {
       res.status(500).json({ error: "HEATMAP_FAILED", details: e.message });

@@ -3,6 +3,7 @@ import { storage } from "./storage";
 import { MarketDataGateway, tickerSchema } from "./market-gateway";
 import { DeribitOptionsGateway } from "./deribit-gateway";
 import { OrderBookGateway } from "./orderbook-gateway";
+import { LiquidityVacuumEngine } from "./engine/liquidityVacuum";
 
 export const terminalStateSchema = z.object({
   market: z.any(),
@@ -59,14 +60,7 @@ export async function getTerminalState(): Promise<TerminalState> {
 
     if (cachedTicker?.price) {
       try {
-        const gammaData = {
-          gammaMagnets: summary.gammaMagnets?.map((m: any) => typeof m === "number" ? m : m.strike).filter(Boolean) || [],
-          callWall: summary.callWall || undefined,
-          putWall: summary.putWall || undefined,
-          dealerPivot: (summary as any).dealerPivot || undefined,
-          gammaCliffs: summary.gammaCurveEngine?.gammaCliffs || []
-        };
-        liveHeatmap = await OrderBookGateway.getLiquidityHeatmap(cachedTicker.price, gammaData);
+        liveHeatmap = await OrderBookGateway.getLiquidityHeatmap(cachedTicker.price);
       } catch (heatErr) {
         console.warn("[TerminalState] Heatmap injection failed:", heatErr);
       }

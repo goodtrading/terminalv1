@@ -10,8 +10,11 @@ export function generateDynamicScenarios(
   const magnets = levels.gammaMagnets.map(m => `${(m / 1000).toFixed(0)}k`);
   const firstMagnet = magnets[0] || "Target";
   const flip = market.gammaFlip.toLocaleString();
-  const callWall = positioning.callWall.toLocaleString();
-  const putWall = positioning.putWall.toLocaleString();
+  
+  // Use numeric values for ALT CASE levels, not formatted strings
+  const callWallNumeric = positioning.callWall.toString();
+  const putWallNumeric = positioning.putWall.toString();
+  const flipNumeric = market.gammaFlip.toString();
   
   const isVannaBullish = dealer.vannaBias === "BULLISH";
   const isCharmBullish = dealer.charmBias === "BULLISH";
@@ -47,17 +50,17 @@ export function generateDynamicScenarios(
     });
   }
 
-  // 2. ALT CASE
+  // 2. ALT CASE - FIXED: Use numeric values instead of formatted strings
   scenarios.push({
     id: 2,
     type: "ALT",
     probability: 25,
     thesis: isLongGamma 
-      ? `Upside Range Extension to ${callWall} wall`
-      : `Liquidity Sweep of ${putWall} followed by mean reversion`,
-    levels: isLongGamma ? [callWall] : [putWall, flip],
+      ? `Upside Range Extension to ${callWallNumeric} wall`
+      : `Liquidity Sweep of ${putWallNumeric} followed by mean reversion`,
+    levels: isLongGamma ? [callWallNumeric] : [putWallNumeric, flipNumeric],
     confirmation: ["Wall defended on volume", "OI growth at strikes"],
-    invalidation: `Clean break of ${isLongGamma ? callWall : putWall} without rejection`,
+    invalidation: `Clean break of ${isLongGamma ? callWallNumeric : putWallNumeric} without rejection`,
     timestamp: new Date()
   });
 

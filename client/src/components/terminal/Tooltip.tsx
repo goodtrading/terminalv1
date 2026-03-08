@@ -168,9 +168,9 @@ const CONCEPTS: Record<string, ConceptEntry> = {
   },
   "HEATMAP": {
     title: "HEATMAP MODE",
-    definition: "Chart overlay showing real-time order book liquidity density.",
-    interpretation: "BID zones (green) show resting demand, ASK zones (red) show resting supply. Purple marks gamma-liquidity confluence.",
-    tradingUse: "Use to identify where real liquidity sits. Confluence zones (gamma + liquidity) are the highest-conviction levels.",
+    definition: "Bookmap-style order book depth from Binance.",
+    interpretation: "BID bands (green) show resting demand, ASK bands (red) show resting supply. Brighter = larger liquidity.",
+    tradingUse: "Use to identify where real liquidity sits. Stronger bands indicate deeper order book at that level.",
   },
   "Vanna Exposure": {
     title: "VANNA EXPOSURE",
