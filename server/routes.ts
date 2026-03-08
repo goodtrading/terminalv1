@@ -8,7 +8,11 @@ import { OrderBookGateway } from "./orderbook-gateway";
 import { buildTaskPlan } from "./ai/task-agent";
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
-import { getOrderBook } from "./services/orderbookService";
+import { getOrderBook, initializeFullDepth } from "./services/orderbookService";
+
+// Initialize full depth on server start
+initializeFullDepth().catch(console.error);
+
 // Import the service to start the WebSocket connection
 import "./services/orderbookService";
 
@@ -16,6 +20,21 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // --- Raw Order Book Endpoint ---
+  app.get("/api/orderbook/raw", (req: Request, res: Response) => {
+    try {
+      const orderBook = getOrderBook();
+      res.json({
+        bids: orderBook.bids.map(level => [level.price.toString(), level.size.toString()]),
+        asks: orderBook.asks.map(level => [level.price.toString(), level.size.toString()]),
+        timestamp: orderBook.timestamp || Date.now()
+      });
+    } catch (error) {
+      console.error("[API] Order book fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch order book" });
+    }
+  });
+
   // --- Deribit Options Gateway Endpoints ---
   app.get("/api/options/raw", async (_req, res) => {
     try {

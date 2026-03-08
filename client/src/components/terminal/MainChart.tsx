@@ -8,8 +8,27 @@ import { SessionLiquidityManager } from "./overlay/SessionLiquidityManager";
 import { cn } from "@/lib/utils";
 import { useLearnMode } from "@/hooks/useLearnMode";
 import { TooltipWrapper } from "./Tooltip";
+import { BookmapOrderBookTracker } from "./overlay/scanners/bookmapOrderBookTracker";
+import { TrackerOutput, OrderBookLevel } from "./overlay/scanners/bookmapOrderBookTypes";
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
+
+// Helper function to normalize candle time to number
+function normalizeCandleTime(input: any): number {
+  if (typeof input === 'number') return input;
+  if (typeof input === 'string') return Number(input);
+
+  if (input && typeof input === 'object') {
+    if (typeof input.time === 'number') return input.time;
+    if (typeof input.timestamp === 'number') return input.timestamp;
+    if (typeof input.valueOf === 'function') {
+      const v = input.valueOf();
+      if (typeof v === 'number') return v;
+    }
+  }
+
+  return Number(input);
+}
 
 export function MainChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -67,6 +86,52 @@ export function MainChart() {
   const sessionLiquidityManagerRef = useRef<SessionLiquidityManager>(new SessionLiquidityManager());
   const sessionLiquidityLinesRef = useRef<any[]>([]);
   const boundaryBadgesRef = useRef<HTMLDivElement[]>([]);
+  
+  // Bookmap-style order book tracker for faithful order book visualization
+  const bookmapTrackerRef = useRef<BookmapOrderBookTracker>(
+    new BookmapOrderBookTracker({
+      depth: 1000,              // Fetch 1000 levels per side
+      aggregation: {
+        enabled: false,          // Start with no aggregation for fidelity
+        priceStep: 0.1           // 0.1 BTC steps if enabled
+      },
+      persistence: {
+        threshold: 30000,        // 30 seconds persistence
+        minScore: 0.5           // 50% persistence threshold
+      },
+      filtering: {
+        minSize: 0.01,           // Track levels as small as 0.01 BTC
+        maxLevels: 500           // Store max 500 levels per side
+      }
+    })
+  );
+  const lastTrackerOutputRef = useRef<TrackerOutput | null>(null);
+  const DEBUG_ENABLED = process.env.NODE_ENV === 'development';
+
+  // Global wall hold tracking
+  const globalWallHoldTimers = useRef<Map<string, number>>(new Map());
+  const GLOBAL_WALL_HOLD_DURATION = 15000; // 15 seconds hold time
+
+  // Active global walls cache for persistent display
+  const activeGlobalWalls = useRef<Map<string, {
+    side: 'BID' | 'ASK';
+    price: number;
+    size: number;
+    label: string;
+    lastSeen: number;
+    expiresAt: number;
+  }>>(new Map());
+
+  // Main global walls cache for persistent fixed levels
+  const mainGlobalWalls = useRef<Map<string, {
+    side: 'BID' | 'ASK';
+    price: number;
+    size: number;
+    label: string;
+    detectedAt: number;
+    lastSeen: number;
+    strikes: number; // Track consecutive weak detections
+  }>>(new Map());
 
   const { data: terminalState } = useTerminalState();
   const positioning_engines = terminalState?.positioning as any;
@@ -105,7 +170,7 @@ export function MainChart() {
     if (ticker && history && history.length > 0) {
       const tickerTime = Math.floor(ticker.timestamp / (15 * 60 * 1000)) * (15 * 60);
       setLastCandle((prev: any) => {
-        if (prev && tickerTime === prev.time) {
+        if (prev && Number(prev.time) === tickerTime) {
           return {
             ...prev,
             close: ticker.price,
@@ -129,11 +194,57 @@ export function MainChart() {
   const { data: market } = useQuery<MarketState>({ queryKey: ["/api/market-state"], refetchInterval: 5000 });
   const { data: levels } = useQuery<KeyLevels>({ queryKey: ["/api/key-levels"], refetchInterval: 5000 });
 
+  // Raw order book data for Bookmap tracker
+  const { data: rawOrderBook } = useQuery({
+    queryKey: ["orderbook-raw"],
+    queryFn: async () => {
+      const res = await fetch("/api/orderbook/raw");
+      if (!res.ok) {
+        throw new Error("Failed to fetch raw order book");
+      }
+      return res.json() as Promise<{
+        bids: [string, string][];
+        asks: [string, string][];
+        timestamp: number;
+      }>;
+    },
+    refetchInterval: 1000, // Update every second for real-time tracking
+    enabled: activePanels.has("HEATMAP") // Only fetch when heatmap is active
+  });
+
   const resetScale = () => {
     if (!chartRef.current) return;
     setManualPriceRange(null);
     chartRef.current.priceScale("right").applyOptions({ autoScale: true });
     chartRef.current.timeScale().fitContent();
+  };
+
+  // Helper function to get order book data from positioning engines
+  const getOrderBookFromPositioning = (positioning_engines: any) => {
+    if (!positioning_engines?.liquidityHeatmap) {
+      return null;
+    }
+
+    // For now, extract from existing heatmap zones (to be replaced with direct order book)
+    const heatmap = positioning_engines.liquidityHeatmap;
+    const rawBids: [string, string][] = [];
+    const rawAsks: [string, string][] = [];
+
+    // Convert heatmap zones to raw order book format (temporary bridge)
+    if (heatmap.liquidityHeatZones) {
+      heatmap.liquidityHeatZones.forEach((zone: any) => {
+        const midPrice = (zone.priceStart + zone.priceEnd) / 2;
+        const size = zone.totalSize || zone.intensity * 10; // Temporary conversion
+        
+        if (zone.side === 'BID') {
+          rawBids.push([midPrice.toString(), size.toString()]);
+        } else if (zone.side === 'ASK') {
+          rawAsks.push([midPrice.toString(), size.toString()]);
+        }
+      });
+    }
+
+    return { rawBids, rawAsks };
   };
 
   const fitLevels = () => {
@@ -227,26 +338,46 @@ export function MainChart() {
   }, []);
 
   useEffect(() => {
-    if (candleSeriesRef.current && history && history.length > 0) {
+    if (history && history.length > 0) {
       candleSeriesRef.current.setData(history);
       if (isInitialLoad) {
         chartRef.current?.timeScale().fitContent();
         setIsInitialLoad(false);
       }
-      if (!lastCandle) {
-        setLastCandle(history[history.length - 1]);
+      // Set lastCandle from history, ensuring time is a number
+      const lastHistoryCandle = history[history.length - 1];
+      if (lastHistoryCandle && !lastCandle) {
+        setLastCandle({
+          ...lastHistoryCandle,
+          time: Number(lastHistoryCandle.time) // Ensure time is a number
+        });
       }
     }
   }, [history]);
 
   useEffect(() => {
-    if (candleSeriesRef.current && lastCandle) {
-      candleSeriesRef.current.update(lastCandle);
-      const isUp = lastCandle.close >= lastCandle.open;
+    if (candleSeriesRef.current && lastCandle && lastCandle.time) {
+      // Normalize candle data to ensure all values are numbers
+      const normalizedCandle = {
+        time: normalizeCandleTime(lastCandle.time),
+        open: Number(lastCandle.open),
+        high: Number(lastCandle.high),
+        low: Number(lastCandle.low),
+        close: Number(lastCandle.close)
+      };
+      
+      // Guard against invalid time values
+      if (!Number.isFinite(normalizedCandle.time)) {
+        console.error('Invalid candle time', lastCandle.time);
+        return;
+      }
+      
+      candleSeriesRef.current.update(normalizedCandle);
+      const isUp = normalizedCandle.close >= normalizedCandle.open;
       if (livePriceLineRef.current) candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
       if (toggles.price) {
         livePriceLineRef.current = candleSeriesRef.current.createPriceLine({
-          price: lastCandle.close,
+          price: normalizedCandle.close,
           color: isUp ? "#22c55e" : "#ef4444",
           lineWidth: 1,
           lineStyle: LineStyle.Solid,
@@ -390,83 +521,434 @@ export function MainChart() {
     const heatmapLineWidthCap = sweepActive ? 2 : 4;
 
     if (activePanels.has("HEATMAP")) {
+      // Bookmap-style heatmap rendering with faithful order book levels
+      if (lastCandle && rawOrderBook) {
+        const tracker = bookmapTrackerRef.current;
+        
+        // Feed tracker with exact Binance order book data (no bridge)
+        tracker.updateSnapshot(
+          rawOrderBook.bids,
+          rawOrderBook.asks,
+          rawOrderBook.timestamp
+        );
+        
+        // Get tracker output for rendering
+        const trackerOutput = tracker.getTrackerOutput();
+        lastTrackerOutputRef.current = trackerOutput;
+        
+        if (DEBUG_ENABLED && false) { // Explicitly disabled Bookmap analysis debug logs
+          console.debug('[Bookmap Heatmap] Direct Binance order book analysis:', {
+            rawBidLevels: trackerOutput.rawLevels.bids.length,
+            rawAskLevels: trackerOutput.rawLevels.asks.length,
+            persistentBidLevels: trackerOutput.persistentLevels.bids.length,
+            persistentAskLevels: trackerOutput.persistentLevels.asks.length,
+            totalBidSize: trackerOutput.stats.totalBidSize.toFixed(1),
+            totalAskSize: trackerOutput.stats.totalAskSize.toFixed(1),
+            sampleBid: trackerOutput.rawLevels.bids[0] ? `${trackerOutput.rawLevels.bids[0].price}@${trackerOutput.rawLevels.bids[0].size}` : 'none',
+            sampleAsk: trackerOutput.rawLevels.asks[0] ? `${trackerOutput.rawLevels.asks[0].price}@${trackerOutput.rawLevels.asks[0].size}` : 'none'
+          });
+        }
+        
+        // Step 2.3: Dual-layer liquidity system - Local + Global Walls
+        
+        // Clustering configuration
+        const clusterWidth = 10; // 10 USD price buckets
+        const minClusterLiquidity = 5; // Minimum 5 BTC to show as cluster
+        const maxLocalLabelsPerSide = 4; // Local levels max per side
+        
+        // Global wall configuration
+        const globalWallThreshold = 80; // Minimum 80 BTC for global wall entry
+        const globalWallExitThreshold = 60; // Exit threshold for hysteresis (60 BTC)
+        const maxGlobalLabelsPerSide = 4; // Show more global walls
+        const globalClusterWidth = 20; // Wider buckets for global detection
+        
+        // MAIN GLOBAL WALL configuration
+        const mainGlobalWallThreshold = 100; // Minimum 100 BTC for MAIN GLOBAL WALLS
+        const mainGlobalWallExitThreshold = 70; // Remove only below 70 BTC for sustained checks
+        const maxMainGlobalLabelsPerSide = 2; // MAIN GLOBAL WALLS max per side
+        
+        // Helper function to cluster liquidity levels
+        const clusterLiquidityLevels = (levels: OrderBookLevel[], width: number) => {
+          if (levels.length === 0) return [];
+          
+          // Group levels into price buckets
+          const clusters = new Map<number, {
+            totalSize: number;
+            largestLevel: OrderBookLevel; // Track largest level for label price
+            levels: OrderBookLevel[];
+            persistence: number;
+            bucketAnchor: number; // Add bucket anchor for stable cache identity
+          }>();
+          
+          levels.forEach(level => {
+            // Skip zero-size levels (removed liquidity)
+            if (level.size === 0) return;
+            
+            // Calculate cluster bucket based on price
+            const bucketKey = Math.floor(level.price / width) * width;
+            
+            if (!clusters.has(bucketKey)) {
+              clusters.set(bucketKey, {
+                totalSize: 0,
+                largestLevel: level,
+                levels: [],
+                persistence: 0,
+                bucketAnchor: bucketKey // Store bucket anchor for stable identity
+              });
+            }
+            
+            const cluster = clusters.get(bucketKey)!;
+            cluster.totalSize += level.size;
+            cluster.levels.push(level);
+            cluster.persistence = Math.max(cluster.persistence, level.persistence);
+            
+            // Track the largest level for label price selection
+            if (level.size > cluster.largestLevel.size) {
+              cluster.largestLevel = level;
+            }
+          });
+          
+          // Convert clusters to array
+          const clusteredLevels = Array.from(clusters.values())
+            .map(cluster => ({
+              price: cluster.largestLevel.price, // Use exact price of largest level
+              size: cluster.totalSize, // Total clustered liquidity
+              side: cluster.largestLevel.side,
+              persistence: cluster.persistence,
+              originalLevels: cluster.levels,
+              largestLevel: cluster.largestLevel,
+              bucketAnchor: cluster.bucketAnchor // Include bucket anchor for stable cache identity
+            }));
+          
+          // Sort by size (largest first) for label selection
+          return clusteredLevels.sort((a, b) => b.size - a.size);
+        };
+
+        // Helper function to detect MAIN GLOBAL WALLS (persistent 100+ BTC walls)
+        const detectMainGlobalWalls = (levels: OrderBookLevel[], side: 'BID' | 'ASK') => {
+          const currentTime = Date.now();
+          
+          // Cluster full book with wider buckets for main global detection
+          const globalClusters = clusterLiquidityLevels(levels, globalClusterWidth);
+          
+          // Filter by MAIN threshold (100 BTC minimum) and take top walls
+          const detectedMainWalls = globalClusters
+            .filter(cluster => cluster.size >= mainGlobalWallThreshold)
+            .slice(0, maxMainGlobalLabelsPerSide);
+          
+          // Update main global walls cache with stable keys
+          detectedMainWalls.forEach(wall => {
+            const stableKey = `${wall.side}_${wall.bucketAnchor}`;
+            
+            if (!mainGlobalWalls.current.has(stableKey)) {
+              // New main global wall - add to persistent cache
+              mainGlobalWalls.current.set(stableKey, {
+                side: wall.side,
+                price: wall.price,
+                size: wall.size,
+                label: `MAIN ${wall.side} ${wall.price.toFixed(0)} · ${wall.size.toFixed(1)} BTC`,
+                detectedAt: currentTime,
+                lastSeen: currentTime,
+                strikes: 0 // Reset strikes for new walls
+              });
+            } else {
+              // Existing main global wall - update tracking
+              const cached = mainGlobalWalls.current.get(stableKey)!;
+              cached.lastSeen = currentTime;
+              
+              // Strike logic: reset strikes if strong, increment if weak
+              if (wall.size >= mainGlobalWallExitThreshold) {
+                cached.strikes = 0; // Reset strikes on strong detection
+              } else {
+                cached.strikes = (cached.strikes || 0) + 1; // Add strike on weak detection
+              }
+              
+              // Not seen cycle tracking
+              const wallAge = currentTime - wall.lastSeen;
+              if (wallAge > 5000) {
+                cached.strikes = (cached.strikes || 0) + 1; // Add strike if not seen for >5s
+              }
+            }
+          });
+          
+          // Build final render array for main global walls
+          const finalMainGlobalWallsToRender = new Map<string, any>();
+          
+          // Insert all CURRENT main global walls
+          detectedMainWalls.forEach(wall => {
+            const stableKey = `${wall.side}_${wall.bucketAnchor}`;
+            finalMainGlobalWallsToRender.set(stableKey, wall);
+          });
+          
+          // Insert CACHED main global walls only if not already present
+          mainGlobalWalls.current.forEach((cachedWall, stableKey) => {
+            if (cachedWall.side !== side) return;
+            if (!finalMainGlobalWallsToRender.has(stableKey)) {
+              finalMainGlobalWallsToRender.set(stableKey, cachedWall);
+            }
+          });
+          
+          // Return only final merged main global walls
+          return Array.from(finalMainGlobalWallsToRender.values());
+        };
+        const detectGlobalWalls = (levels: OrderBookLevel[], side: 'BID' | 'ASK') => {
+          const currentTime = Date.now();
+          
+          // Cluster full book with wider buckets for global detection
+          const globalClusters = clusterLiquidityLevels(levels, globalClusterWidth);
+          
+          // Filter by strong threshold and take top walls
+          const detectedWalls = globalClusters
+            .filter(cluster => cluster.size >= globalWallThreshold)
+            .slice(0, maxGlobalLabelsPerSide);
+          
+          // Update active global walls cache with stable keys
+          detectedWalls.forEach(wall => {
+            const stableKey = `${wall.side}_${wall.bucketAnchor}`;
+            
+            if (!activeGlobalWalls.current.has(stableKey)) {
+              // New wall - add to cache with full TTL
+              activeGlobalWalls.current.set(stableKey, {
+                side: wall.side,
+                price: wall.price,
+                size: wall.size,
+                label: `GLOBAL ${wall.side} ${wall.price.toFixed(0)} · ${wall.size.toFixed(1)} BTC`,
+                lastSeen: currentTime,
+                expiresAt: currentTime + GLOBAL_WALL_HOLD_DURATION
+              });
+            } else {
+              // Existing wall - refresh TTL
+              const cached = activeGlobalWalls.current.get(stableKey)!;
+              cached.lastSeen = currentTime;
+              cached.expiresAt = currentTime + GLOBAL_WALL_HOLD_DURATION;
+            }
+          });
+          
+          // Build FINAL render array: current detected walls + cached walls (only if not in current)
+          const finalGlobalWallsToRender = new Map<string, any>();
+          
+          // First, insert all CURRENT detected global walls
+          detectedWalls.forEach(wall => {
+            const stableKey = `${wall.side}_${wall.bucketAnchor}`;
+            finalGlobalWallsToRender.set(stableKey, wall);
+          });
+          
+          // Then, insert CACHED global walls only if stableKey is NOT already present AND side matches
+          activeGlobalWalls.current.forEach((cachedWall, stableKey) => {
+            if (cachedWall.side !== side) return;
+            if (!finalGlobalWallsToRender.has(stableKey)) {
+              finalGlobalWallsToRender.set(stableKey, cachedWall);
+            }
+          });
+          
+          // Return ONLY the final merged array
+          return Array.from(finalGlobalWallsToRender.values());
+        };
+        
+        // Cluster bid and ask levels separately
+        const clusteredBids = clusterLiquidityLevels(trackerOutput.persistentLevels.bids, clusterWidth);
+        const clusteredAsks = clusterLiquidityLevels(trackerOutput.persistentLevels.asks, clusterWidth);
+        
+        // Detect global walls from full order book
+        const globalBidWalls = detectGlobalWalls(trackerOutput.rawLevels.bids, 'BID');
+        const globalAskWalls = detectGlobalWalls(trackerOutput.rawLevels.asks, 'ASK');
+        
+        // Detect MAIN GLOBAL WALLS (persistent 100+ BTC walls)
+        const mainBidWalls = detectMainGlobalWalls(trackerOutput.rawLevels.bids, 'BID');
+        const mainAskWalls = detectMainGlobalWalls(trackerOutput.rawLevels.asks, 'ASK');
+        
+        // A. Background liquidity bands from rawLevels (enhanced visibility)
+        const maxBandOpacity = 0.7; // Increased max opacity for better visibility
+        const minBandOpacity = 0.1; // Increased min opacity for better visibility
+        
+        // Render bid background bands
+        trackerOutput.rawLevels.bids.forEach((level) => {
+          if (Math.abs(level.price - price) > threshold) return;
+          
+          // Intensity based on real BTC size (logarithmic scale for better visibility)
+          const sizeIntensity = Math.log10(Math.max(level.size, 0.01)) / Math.log10(100); // Normalize 0.01-100 BTC range
+          const opacity = minBandOpacity + (sizeIntensity * (maxBandOpacity - minBandOpacity));
+          
+          pushEntry(
+            level.price,
+            8, // Low priority for background bands
+            '', // No label for background bands
+            '', 
+            `rgba(34, 197, 94, ${Math.min(opacity, maxBandOpacity).toFixed(3)})`, // Green for bids
+            LineStyle.Solid,
+            1,
+            true // isBandFill for background rendering
+          );
+        });
+        
+        // Render ask background bands  
+        trackerOutput.rawLevels.asks.forEach((level) => {
+          if (Math.abs(level.price - price) > threshold) return;
+          
+          // Intensity based on real BTC size (logarithmic scale)
+          const sizeIntensity = Math.log10(Math.max(level.size, 0.01)) / Math.log10(100);
+          const opacity = minBandOpacity + (sizeIntensity * (maxBandOpacity - minBandOpacity));
+          
+          pushEntry(
+            level.price,
+            8, // Low priority for background bands
+            '', // No label for background bands
+            '',
+            `rgba(239, 68, 68, ${Math.min(opacity, maxBandOpacity).toFixed(3)})`, // Red for asks
+            LineStyle.Solid,
+            1,
+            true // isBandFill for background rendering
+          );
+        });
+        
+        // B. LOCAL MAIN LEVELS (near current price)
+        const renderClusteredLevels = (clusters: any[], side: 'BID' | 'ASK') => {
+          // Filter clusters within label range
+          const labelRange = price * 0.03; // 3% range for labels
+          const clustersInRange = clusters.filter(cluster => 
+            Math.abs(cluster.price - price) <= labelRange
+          );
+          
+          // Filter out tiny clusters - minimum 3 BTC for local labels (prevent 0.0 BTC labels)
+          const meaningfulClusters = clustersInRange.filter(cluster => cluster.size >= 3);
+          
+          // Take top clusters by size
+          const topClusters = meaningfulClusters.slice(0, maxLocalLabelsPerSide);
+          
+          topClusters.forEach((cluster) => {
+            // Label with exact price of largest level and total clustered liquidity
+            const label = `${side} ${cluster.price.toFixed(1)} · ${cluster.size.toFixed(1)} BTC`;
+            
+            // Visual properties based on clustered size and persistence
+            const persistenceOpacity = 0.4 + (cluster.persistence * 0.6); // 40%-100% based on persistence
+            const lineWidth = cluster.size >= 20 ? 3 : cluster.size >= 10 ? 2.5 : 2; // Thicker lines for larger clusters
+            const baseColor = side === 'BID' ? '34, 197, 94' : '239, 68, 68';
+            
+            pushEntry(
+              cluster.price,                    // Exact price of largest level in cluster
+              2,                               // Medium priority for local levels
+              label,
+              side,
+              `rgba(${baseColor}, ${persistenceOpacity.toFixed(2)})`,
+              LineStyle.Solid,
+              lineWidth
+            );
+            
+            if (DEBUG_ENABLED && false) { // Disabled by default
+              console.debug(`[Bookmap Local] ${label} - Min: 3 BTC - No 0.0 BTC labels - Levels: ${cluster.originalLevels.length} - Largest: ${cluster.largestLevel.size.toFixed(1)}@${cluster.largestLevel.price.toFixed(1)} - Persistence: ${cluster.persistence.toFixed(2)}`);
+            }
+          });
+        };
+        
+        // C. GLOBAL MAIN WALLS (exceptional liquidity anywhere in book)
+        const renderGlobalWalls = (globalWalls: any[], side: 'BID' | 'ASK') => {
+          const currentTime = Date.now();
+          
+          globalWalls.forEach((wall) => {
+            // Check if wall should still be displayed (within hold duration)
+            const shouldDisplay = (currentTime - wall.lastSeen) <= GLOBAL_WALL_HOLD_DURATION;
+            
+            if (shouldDisplay) {
+              // Visual properties - make walls stand out clearly
+              const wallOpacity = 0.9; // High opacity for visibility
+              const wallWidth = 4; // Thicker lines for global walls
+              const wallColor = side === 'BID' ? '16, 185, 129' : '220, 38, 127'; // Distinct colors for global walls
+              
+              pushEntry(
+                wall.price,                      // Exact price of largest level in wall
+                1,                                 // High priority for global walls
+                wall.label,                        // Use cached label
+                side,
+                `rgba(${wallColor}, ${wallOpacity})`,  // Distinct colors from local levels
+                LineStyle.Solid,
+                wallWidth
+              );
+              
+              if (DEBUG_ENABLED && false) { // Disabled by default
+                const holdRemaining = Math.max(0, (GLOBAL_WALL_HOLD_DURATION - (currentTime - wall.lastSeen)) / 1000);
+                console.debug(`[Bookmap Global] ${wall.label} - Hold: ${holdRemaining.toFixed(1)}s - Expires: ${((wall.expiresAt - currentTime) / 1000).toFixed(1)}s`);
+              }
+            }
+          });
+        };
+        
+        // D. MAIN GLOBAL WALLS (persistent 100+ BTC walls)
+        const renderMainGlobalWalls = (mainGlobalWalls: any[], side: 'BID' | 'ASK') => {
+          mainGlobalWalls.forEach((wall) => {
+            // Visual properties - make MAIN walls stand out clearly
+            const wallOpacity = 1.0; // Full opacity for main walls
+            const wallWidth = 5; // Thickest lines for main walls
+            const wallColor = side === 'BID' ? '59, 130, 246' : '239, 68, 68'; // Distinct colors for main walls
+            
+            pushEntry(
+              wall.price,                      // Exact price of largest level in wall
+              0,                                 // Highest priority for main global walls
+              wall.label,                        // Use cached label
+              side,
+              `rgba(${wallColor}, ${wallOpacity})`,  // Distinct colors from global walls
+              LineStyle.Solid,
+              wallWidth
+            );
+            
+            if (DEBUG_ENABLED && false) { // Disabled by default
+              console.debug(`[Bookmap Main] ${wall.label} - Fixed: ${wall.side} - Size: ${wall.size.toFixed(1)} BTC`);
+            }
+          });
+        };
+        
+        // Render clustered bid and ask levels
+        renderClusteredLevels(clusteredBids, 'BID');
+        renderClusteredLevels(clusteredAsks, 'ASK');
+        
+        // Render MAIN GLOBAL WALLS (persistent 100+ BTC walls)
+        renderMainGlobalWalls(mainBidWalls, 'BID');
+        renderMainGlobalWalls(mainAskWalls, 'ASK');
+        
+        // Cleanup expired global walls
+        const currentTime = Date.now();
+        const expiredWalls: string[] = [];
+        activeGlobalWalls.current.forEach((wall, key) => {
+          if (currentTime > wall.expiresAt) {
+            expiredWalls.push(key);
+            activeGlobalWalls.current.delete(key);
+          }
+        });
+        
+        // Cleanup expired main global walls (strike-based removal)
+        const expiredMainWalls: string[] = [];
+        mainGlobalWalls.current.forEach((wall, key) => {
+          const wallAge = currentTime - wall.lastSeen;
+          const notSeenCycle = wallAge > 5000; // Consider not seen if > 5s
+          
+          // Strike-based removal logic
+          const shouldRemove = (
+            (wall.strikes >= 5) || // Remove after 5 consecutive weak detections
+            (notSeenCycle && wall.size < mainGlobalWallExitThreshold) // Remove if not seen and weak
+          );
+          
+          if (shouldRemove) {
+            expiredMainWalls.push(key);
+            mainGlobalWalls.current.delete(key);
+          }
+        });
+        
+        if (DEBUG_ENABLED && false) { // Disabled by default
+          if (expiredMainWalls.length > 0) {
+            console.debug(`[Bookmap Main] Cleanup: Removed ${expiredMainWalls.length} main walls (5+ strikes or not seen + weak)`);
+          }
+        }
+      }
+      
+      // Legacy background heatmap zones (preserved for non-Bookmap systems)
       const heatmap = positioning_engines?.liquidityHeatmap;
-      if (heatmap) {
+      if (heatmap && lastCandle) {
+        
+        // Background heatmap zones (preserving existing logic)
         const confluenceSet = new Set<number>();
         const binSize = price > 50000 ? 250 : price > 10000 ? 100 : 50;
         const markConfluence = (lv: number) => { for (let p = lv - binSize; p <= lv + binSize; p += binSize) confluenceSet.add(Math.round(Math.floor(p / binSize) * binSize)); };
         const MAX_HEATMAP_LEVELS = 6;
         let heatmapLevelCount = 0;
-
-        if (positioning?.callWall && Math.abs(positioning.callWall - price) <= threshold && heatmapLevelCount < MAX_HEATMAP_LEVELS) {
-          pushEntry(positioning.callWall, 1, "CALL WALL", "CW", `rgba(239, 68, 68, ${dim(0.55, 0.7)})`, LineStyle.Solid, 2);
-          markConfluence(positioning.callWall);
-          heatmapLevelCount++;
-        }
-        if (positioning?.putWall && Math.abs(positioning.putWall - price) <= threshold && heatmapLevelCount < MAX_HEATMAP_LEVELS) {
-          pushEntry(positioning.putWall, 1, "PUT WALL", "PW", `rgba(34, 197, 94, ${dim(0.55, 0.7)})`, LineStyle.Solid, 2);
-          markConfluence(positioning.putWall);
-          heatmapLevelCount++;
-        }
-        if (market?.gammaFlip && Math.abs(market.gammaFlip - price) <= threshold && heatmapLevelCount < MAX_HEATMAP_LEVELS) {
-          pushEntry(market.gammaFlip, 1, "GAMMA FLIP", "FLIP", `rgba(250, 240, 180, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
-          markConfluence(market.gammaFlip);
-          heatmapLevelCount++;
-        }
-
-        if (sweepActive && activePanels.has("SQUEEZE") && sweepZoneRange && heatmapLevelCount < MAX_HEATMAP_LEVELS) {
-          const bandLines = 5;
-          const bandStep = (sweepZoneRange.end - sweepZoneRange.start) / bandLines;
-          for (let i = 0; i <= bandLines; i++) {
-            const p = sweepZoneRange.start + bandStep * i;
-            const isBorder = i === 0 || i === bandLines;
-            pushEntry(p, 2, "", "", `rgba(168, 85, 247, ${isBorder ? 0.25 : 0.15})`, LineStyle.Solid, 1, true);
-          }
-          pushEntry(sweepZoneRange.end, 2, "SWEEP", "SW", "rgba(168, 85, 247, 0.35)", LineStyle.Solid, 1);
-          markConfluence((sweepZoneRange.start + sweepZoneRange.end) / 2);
-          heatmapLevelCount++;
-        }
-
-        if (positioning_engines?.gammaCurveEngine?.gammaCliffs && heatmapLevelCount < MAX_HEATMAP_LEVELS) {
-          const nearCliffs = positioning_engines.gammaCurveEngine.gammaCliffs
-            .filter((c: any) => Math.abs(c.strike - price) <= price * 0.03)
-            .sort((a: any, b: any) => Math.abs(b.strength) - Math.abs(a.strength))
-            .slice(0, 2);
-          nearCliffs.forEach((cliff: any) => {
-            if (heatmapLevelCount >= MAX_HEATMAP_LEVELS) return;
-            const dir = cliff.strike > price ? "↑" : "↓";
-            pushEntry(cliff.strike, 5, `CLIFF ${dir}${fmtK(cliff.strike)}`, "CLF", `rgba(139, 92, 246, ${dim(0.5, 0.6)})`, LineStyle.Dotted);
-            markConfluence(cliff.strike);
-            heatmapLevelCount++;
-          });
-        }
-
-        if (levels?.gammaMagnets) {
-          const magnets = levels.gammaMagnets.filter((m: any) => {
-            const p = typeof m === "number" ? m : m?.strike;
-            return p && Math.abs(p - price) <= threshold;
-          });
-          magnets.forEach((m: any) => {
-            if (heatmapLevelCount >= MAX_HEATMAP_LEVELS) return;
-            const p = typeof m === "number" ? m : m?.strike;
-            if (!p) return;
-            pushEntry(p, 6, `MAG ${fmtK(p)}`, "M", `rgba(96, 165, 250, ${dim(0.25, 0.5)})`, LineStyle.Dashed, 1);
-            markConfluence(p);
-            heatmapLevelCount++;
-          });
-        }
-
-        if (positioning?.dealerPivot && Math.abs(positioning.dealerPivot - price) <= threshold && heatmapLevelCount < MAX_HEATMAP_LEVELS) {
-          pushEntry(positioning.dealerPivot, 7, "PIVOT", "PV", `rgba(255, 255, 255, ${dim(0.2, 0.7)})`, LineStyle.Dashed, 1);
-          markConfluence(positioning.dealerPivot);
-          heatmapLevelCount++;
-        }
-
-        const voidInfo = heatmap.heatmapSummary;
-        if (voidInfo?.nearestVoid && Math.abs(voidInfo.nearestVoid - price) <= threshold && heatmapLevelCount < MAX_HEATMAP_LEVELS) {
-          pushEntry(voidInfo.nearestVoid, 3, `VOID ${voidInfo.voidSide === "BELOW" ? "↓" : "↑"}${fmtK(voidInfo.nearestVoid)}`, "VOID", "rgba(255, 200, 50, 0.25)", LineStyle.Dotted);
-          heatmapLevelCount++;
-        }
 
         const allHeatZones: any[] = heatmap.liquidityHeatZones || [];
         const bidZones = allHeatZones.filter((z: any) => z.side === "BID" && z.intensity >= 0.1).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 4);
@@ -576,7 +1058,7 @@ export function MainChart() {
       });
       if (line) priceLinesRef.current.push(line);
     }
-  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines]);
+  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines, rawOrderBook]);
 
   if (historyError) {
     return (

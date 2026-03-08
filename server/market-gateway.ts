@@ -169,7 +169,7 @@ export class MarketDataGateway {
 
   private static normalizeCoinbase(data: any[]): Candle[] {
     return data.map(k => ({
-      time: Number(k[0]),
+      time: Math.floor(Number(k[0]) / 1000),
       low: Number(k[1]),
       high: Number(k[2]),
       open: Number(k[3]),

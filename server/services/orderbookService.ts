@@ -1,6 +1,6 @@
 /**
  * Binance WebSocket order book service.
- * Maintains a rolling depth snapshot from wss://stream.binance.com:9443/ws/btcusdt@depth20@100ms
+ * Maintains full depth snapshot for Bookmap-style order book tracking.
  */
 
 import WebSocket from "ws";
@@ -16,9 +16,13 @@ export interface OrderBookSnapshot {
   timestamp?: number;
 }
 
-const WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@depth20@100ms";
+// Enhanced configuration for Bookmap-style tracking
+const WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@depth";
+const REST_DEPTH_URL = "https://api.binance.com/api/v3/depth";
+const DEPTH_LEVELS = 1000; // Fetch 1000 levels per side for Bookmap
+const DEBUG_ENABLED = process.env.NODE_ENV === 'development';
 
-console.debug("[OrderBookService] Using WebSocket URL:", WS_URL);
+if (DEBUG_ENABLED) console.debug("[OrderBookService] Using WebSocket URL:", WS_URL, "with depth:", DEPTH_LEVELS);
 
 let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
 let ws: WebSocket | null = null;
@@ -37,54 +41,53 @@ function parseLevels(arr: [string, string][]): OrderBookLevel[] {
       size: parseFloat(qty),
     }));
   
-  console.debug("[OrderBookService] Parsed levels:", {
-    inputCount: arr.length,
-    outputCount: levels.length,
-    sampleLevel: levels[0] || null
-  });
-  
   return levels;
 }
 
 function normalizePayload(parsed: any): { bids: [string, string][], asks: [string, string][] } {
-  console.debug("[OrderBookService] Raw payload analysis:", {
-    hasData: !!(parsed.data),
-    hasStream: !!(parsed.stream),
-    hasBids: !!(parsed.bids),
-    hasAsks: !!(parsed.asks),
-    hasB: !!(parsed.b),
-    hasA: !!(parsed.a),
-    keys: Object.keys(parsed),
-    payloadType: parsed.data ? 'wrapped' : 'direct'
-  });
-
   // Handle wrapped payload { stream: "...", data: {...} }
   const payload = parsed.data || parsed;
   
-  console.debug("[OrderBookService] Normalized payload:", {
-    hasBids: !!(payload.bids),
-    hasAsks: !!(payload.asks),
-    hasB: !!(payload.b),
-    hasA: !!(payload.a),
-    lastUpdateId: payload.lastUpdateId,
-    eventTime: payload.E
-  });
-
   // Support both partial depth (bids/asks) and diff depth (b/a)
   const rawBids = payload.bids || payload.b || [];
   const rawAsks = payload.asks || payload.a || [];
-
-  console.debug("[OrderBookService] Final arrays:", {
-    bidSource: payload.bids ? 'bids' : payload.b ? 'b' : 'none',
-    askSource: payload.asks ? 'asks' : payload.a ? 'a' : 'none',
-    bidCount: rawBids.length,
-    askCount: rawAsks.length
-  });
 
   return {
     bids: rawBids as [string, string][],
     asks: rawAsks as [string, string][]
   };
+}
+
+export async function initializeFullDepth(): Promise<void> {
+  try {
+    const response = await fetch(`${REST_DEPTH_URL}?symbol=BTCUSDT&limit=${DEPTH_LEVELS}`);
+    const data = await response.json();
+    
+    const bids = parseLevels(data.bids);
+    const asks = parseLevels(data.asks);
+    
+    snapshot = {
+      bids: bids.sort((a, b) => b.price - a.price),
+      asks: asks.sort((a, b) => a.price - b.price),
+      timestamp: data.lastUpdateId || Date.now()
+    };
+    
+    if (DEBUG_ENABLED) {
+      console.debug("[OrderBookService] Full depth initialized:", {
+        bidCount: snapshot.bids.length,
+        askCount: snapshot.asks.length,
+        topBid: snapshot.bids[0],
+        topAsk: snapshot.asks[0],
+        depthRange: {
+          bidLow: snapshot.bids[snapshot.bids.length - 1]?.price || 0,
+          askHigh: snapshot.asks[snapshot.asks.length - 1]?.price || 0
+        }
+      });
+    }
+  } catch (error) {
+    console.error("[OrderBookService] Failed to initialize full depth:", error);
+    throw error;
+  }
 }
 
 function connect(): void {
@@ -104,7 +107,6 @@ function connect(): void {
 
   ws.on("message", (data: Buffer | string) => {
     const raw = typeof data === "string" ? data : data.toString();
-    console.debug("[OrderBookService] Raw WebSocket message:", raw);
     
     try {
       const parsed = JSON.parse(raw);
@@ -119,19 +121,9 @@ function connect(): void {
           asks: asks.sort((a, b) => a.price - b.price),
           timestamp: parsed.E || Date.now(),
         };
-        
-        console.debug("[OrderBookService] Snapshot updated:", {
-          bidCount: snapshot.bids.length,
-          askCount: snapshot.asks.length,
-          topBid: snapshot.bids[0],
-          topAsk: snapshot.asks[0],
-          timestamp: snapshot.timestamp
-        });
-      } else {
-        console.debug("[OrderBookService] No valid levels in message");
       }
     } catch (e) {
-      console.warn("[OrderBookService] Parse error:", e, "Raw data:", raw);
+      console.warn("[OrderBookService] Parse error:", e, "Raw data length:", raw.length);
     }
   });
 
