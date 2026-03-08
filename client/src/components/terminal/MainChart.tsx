@@ -30,6 +30,18 @@ function normalizeCandleTime(input: any): number {
   return Number(input);
 }
 
+// Helper function to normalize full candle for chart
+function normalizeChartCandle(candle: any) {
+  const time = normalizeCandleTime(candle.time);
+  return {
+    time,
+    open: Number(candle.open),
+    high: Number(candle.high),
+    low: Number(candle.low),
+    close: Number(candle.close),
+  };
+}
+
 export function MainChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -339,7 +351,17 @@ export function MainChart() {
 
   useEffect(() => {
     if (history && history.length > 0) {
-      candleSeriesRef.current.setData(history);
+      // Normalize entire history array before setData
+      const normalizedHistory = history.map(normalizeChartCandle).filter(c => Number.isFinite(c.time));
+      
+      // Pre-update guard for setData
+      const invalidHistoryCandle = normalizedHistory.find(c => typeof c.time === 'object');
+      if (invalidHistoryCandle) {
+        console.error('Object time detected before setData', invalidHistoryCandle);
+        return;
+      }
+      
+      candleSeriesRef.current.setData(normalizedHistory);
       if (isInitialLoad) {
         chartRef.current?.timeScale().fitContent();
         setIsInitialLoad(false);
@@ -357,18 +379,16 @@ export function MainChart() {
 
   useEffect(() => {
     if (candleSeriesRef.current && lastCandle && lastCandle.time) {
-      // Normalize candle data to ensure all values are numbers
-      const normalizedCandle = {
-        time: normalizeCandleTime(lastCandle.time),
-        open: Number(lastCandle.open),
-        high: Number(lastCandle.high),
-        low: Number(lastCandle.low),
-        close: Number(lastCandle.close)
-      };
-      
-      // Guard against invalid time values
+      // Normalize live candle with the same helper as history
+      const normalizedCandle = normalizeChartCandle(lastCandle);
       if (!Number.isFinite(normalizedCandle.time)) {
-        console.error('Invalid candle time', lastCandle.time);
+        console.error('Invalid live candle time', lastCandle.time);
+        return;
+      }
+      
+      // Pre-update guard for update
+      if (typeof normalizedCandle.time === 'object') {
+        console.error('Object time detected before update', normalizedCandle);
         return;
       }
       
@@ -628,12 +648,16 @@ export function MainChart() {
         const detectMainGlobalWalls = (levels: OrderBookLevel[], side: 'BID' | 'ASK') => {
           const currentTime = Date.now();
           
+          // Use separate thresholds for BID vs ASK
+          const askEntryThreshold = side === 'ASK' ? 80 : 100;
+          const askExitThreshold = side === 'ASK' ? 60 : 70;
+          
           // Cluster full book with wider buckets for main global detection
           const globalClusters = clusterLiquidityLevels(levels, globalClusterWidth);
           
-          // Filter by MAIN threshold (100 BTC minimum) and take top walls
+          // Filter by MAIN threshold (separate for BID/ASK) and take top walls
           const detectedMainWalls = globalClusters
-            .filter(cluster => cluster.size >= mainGlobalWallThreshold)
+            .filter(cluster => cluster.size >= askEntryThreshold)
             .slice(0, maxMainGlobalLabelsPerSide);
           
           // Update main global walls cache with stable keys
@@ -657,7 +681,7 @@ export function MainChart() {
               cached.lastSeen = currentTime;
               
               // Strike logic: reset strikes if strong, increment if weak
-              if (wall.size >= mainGlobalWallExitThreshold) {
+              if (wall.size >= askExitThreshold) {
                 cached.strikes = 0; // Reset strikes on strong detection
               } else {
                 cached.strikes = (cached.strikes || 0) + 1; // Add strike on weak detection
