@@ -10,6 +10,7 @@ import { useLearnMode } from "@/hooks/useLearnMode";
 import { TooltipWrapper } from "./Tooltip";
 import { BookmapOrderBookTracker } from "./overlay/scanners/bookmapOrderBookTracker";
 import { TrackerOutput, OrderBookLevel } from "./overlay/scanners/bookmapOrderBookTypes";
+import { ScenarioOverlay } from "./overlay/ScenarioOverlay";
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
 
@@ -101,7 +102,10 @@ function normalizeCandle(input: unknown): { time: number; open: number; high: nu
   };
 }
 
-export function MainChart() {
+export function MainChart({ activeScenario, onActiveScenarioChange }: { 
+  activeScenario: "BASE" | "ALT" | "VOL";
+  onActiveScenarioChange: (scenario: "BASE" | "ALT" | "VOL") => void;
+}) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -1369,6 +1373,7 @@ export function MainChart() {
         })()}
         <div ref={chartContainerRef} className="absolute inset-0 pr-[100px]" style={{ pointerEvents: 'auto' }} />
         {SAFE_CHART_MODE && <LivePriceMarker />}
+        <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
       </TerminalPanel>
     </div>
   );

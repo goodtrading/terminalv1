@@ -3,9 +3,55 @@ import { cn } from "@/lib/utils";
 import { TradingScenario } from "@shared/schema";
 import { useTerminalState } from "@/hooks/useTerminalState";
 import { LearnHelper } from "./Tooltip";
+import { useQuery } from "@tanstack/react-query";
+
+// Import vacuum engine types
+interface VacuumAnalysisResult {
+  vacuumRisk: "LOW" | "MEDIUM" | "HIGH" | "EXTREME";
+  vacuumScore: number;
+  vacuumType: "DIRECTIONAL" | "COMPRESSION" | "NONE";
+  vacuumDirection: "UP" | "DOWN" | "NEUTRAL";
+  vacuumProximity: "FAR" | "MEDIUM" | "NEAR" | "IMMEDIATE";
+  nearestThinLiquidityZone: number | null;
+  nearestThinLiquidityDirection: "ABOVE" | "BELOW" | "NONE";
+  nearestThinLiquidityScore: number;
+  confirmedVacuumActive: boolean;
+  activeZones: Array<{
+    start: number;
+    end: number;
+    direction: "UP" | "DOWN";
+    score: number;
+    thickness: "THIN" | "VERY_THIN" | "EMPTY";
+  }>;
+  explanation: {
+    summary: string[];
+    drivers: string[];
+    invalidation: string[];
+  };
+}
+
+// Structural scenarios types
+interface StructuralScenario {
+  probability: number;
+  title: string;
+  summary: string;
+  regime: string;
+  trigger: string;
+  target: string;
+  invalidation: string;
+  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
+}
+
+interface MarketScenarios {
+  marketRegime: string;
+  baseCase: StructuralScenario;
+  altCase: StructuralScenario;
+  volCase: StructuralScenario;
+}
 
 interface RightSidebarProps {
   onScenarioSelect?: (scenario: TradingScenario | null) => void;
+  onActiveScenarioChange?: (scenario: "BASE" | "ALT" | "VOL") => void;
 }
 
 function SidebarPanel({ title, children }: { title: string; children: React.ReactNode }) {
@@ -78,6 +124,105 @@ function deriveEdge(positioning: any, market: any): string {
   return "LOW";
 }
 
+// Liquidity Map Panel Component
+function LiquidityMapPanel() {
+  const positioning_engines = useTerminalState((s: any) => s.positioning_engines);
+  const { data: vacuumData } = useQuery<VacuumAnalysisResult>({
+    queryKey: ["/api/vacuum"],
+    refetchInterval: 2000,
+    enabled: !!positioning_engines
+  });
+
+  const heatmap = (positioning_engines as any)?.liquidityHeatmap;
+  const lines: string[] = heatmap?.liquidityMapLines || [];
+  const pressure = heatmap?.liquidityPressure || "BALANCED";
+  const source = heatmap?.heatmapSummary?.source || "--";
+  const pressureColor = pressure === "BID_HEAVY" ? "green" : pressure === "ASK_HEAVY" ? "red" : "yellow";
+
+  // Use new vacuum engine data
+  const vacuum = vacuumData;
+  const vacuumRisk = vacuum?.vacuumRisk || "LOW";
+  const vacuumScore = vacuum?.vacuumScore || 0;
+  const vacuumType = vacuum?.vacuumType || "NONE";
+  const vacuumDirection = vacuum?.vacuumDirection || "NEUTRAL";
+  const vacuumProximity = vacuum?.vacuumProximity || "FAR";
+  const vacuumZones = vacuum?.activeZones?.length || 0;
+  const confirmedVacuum = vacuum?.confirmedVacuumActive || false;
+  
+  const vacuumRiskColor = vacuumRisk === "EXTREME" ? "red" : vacuumRisk === "HIGH" ? "orange" : vacuumRisk === "MEDIUM" ? "yellow" : "gray";
+  const proximityColor = vacuumProximity === "IMMEDIATE" ? "red" : vacuumProximity === "NEAR" ? "orange" : vacuumProximity === "MEDIUM" ? "yellow" : "gray";
+  
+  // Vacuum type color logic
+  const getVacuumTypeColor = () => {
+    if (vacuumType === "DIRECTIONAL") {
+      return vacuumDirection === "UP" ? "green" : vacuumDirection === "DOWN" ? "red" : "gray";
+    } else if (vacuumType === "COMPRESSION") {
+      return "purple"; // Magenta/purple for compression
+    }
+    return "gray"; // NONE
+  };
+  
+  const vacuumTypeColor = getVacuumTypeColor();
+  const directionColor = vacuumDirection === "UP" ? "green" : vacuumDirection === "DOWN" ? "red" : "gray";
+  
+  const thinZone = vacuum?.nearestThinLiquidityZone;
+  const thinDir = vacuum?.nearestThinLiquidityDirection;
+  const fmtK = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(Math.round(p));
+  const thinLabel = thinZone ? `${fmtK(thinZone)} ${thinDir === "ABOVE" ? "ABOVE" : "BELOW"}` : "--";
+  
+  return (
+    <div className="flex flex-col gap-2">
+      <StatusValue label="Pressure" value={pressure.replace(/_/g, " ")} color={pressureColor} />
+      <StatusValue label="Vacuum Risk" value={vacuumRisk} color={vacuumRiskColor} />
+      <StatusValue label="Vacuum Type" value={vacuumType} color={vacuumTypeColor} />
+      <StatusValue label="Vacuum Score" value={String(vacuumScore)} color={vacuumScore >= 50 ? "orange" : "gray"} />
+      <StatusValue label="Vacuum Direction" value={vacuumDirection} color={directionColor} />
+      <StatusValue label="Vacuum Proximity" value={vacuumProximity} color={proximityColor} />
+      <StatusValue label="Thin Liquidity" value={thinLabel} color={thinZone ? "blue" : "gray"} />
+      <StatusValue label="Vacuum Zones" value={String(vacuumZones)} color={vacuumZones > 0 ? "blue" : "gray"} />
+      <StatusValue label="Confirmed Vacuum" value={confirmedVacuum ? "ACTIVE" : "INACTIVE"} color={confirmedVacuum ? "red" : "gray"} />
+      
+      {/* Explanation bullets */}
+      {vacuum?.explanation?.summary && (
+        <div className="flex flex-col gap-0.5">
+          {vacuum.explanation.summary.slice(0, 3).map((explanation: string, i: number) => (
+            <div key={i} className="flex items-start gap-1.5">
+              <span className="text-[8px] mt-[3px] text-yellow-400">•</span>
+              <span className="text-[10px] text-white/50 font-mono leading-snug">{explanation}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {/* Active zones */}
+      {vacuum?.activeZones?.length > 0 && (
+        <div className="flex flex-col gap-0.5">
+          {vacuum.activeZones.slice(0, 3).map((z: any, i: number) => (
+            <div key={i} className="flex items-start gap-1.5">
+              <span className="text-[8px] mt-[3px] text-blue-400">◆</span>
+              <span className="text-[10px] text-white/50 font-mono leading-snug">
+                {z.direction} {fmtK(z.start)}–{fmtK(z.end)} {z.thickness} ({Math.round(z.score)}%)
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {lines.length > 0 && (
+        <div className="flex flex-col gap-0.5">
+          {lines.map((line: string, i: number) => (
+            <div key={i} className="flex items-start gap-1.5">
+              <span className="text-[8px] mt-[3px] text-purple-400">•</span>
+              <span className="text-[10px] text-white/50 font-mono leading-snug">{line}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="text-[8px] text-white/20 font-mono">{source}</div>
+    </div>
+  );
+}
+
 function getStatusHelper(val: string): string {
   if (val === "EXECUTE") return "Conditions are aligned for a trade.";
   if (val === "PREPARE") return "Setup is forming, not ready yet.";
@@ -98,7 +243,140 @@ const SCENARIO_HELPERS: Record<string, string> = {
   "VOL": "High-volatility path if the market destabilizes.",
 };
 
-export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
+export // Structural Scenarios Panel Component
+function StructuralScenariosPanel({ onActiveScenarioChange }: { onActiveScenarioChange?: (scenario: "BASE" | "ALT" | "VOL") => void }) {
+  const { data: scenariosData, isLoading, error } = useQuery<MarketScenarios>({
+    queryKey: ["/api/scenarios"],
+    refetchInterval: 5000,
+  });
+
+  const getRegimeColor = (regime?: string) => {
+    if (!regime) return "text-gray-400";
+    if (regime.includes("LONG GAMMA")) return "text-blue-400";
+    if (regime.includes("SHORT GAMMA")) return "text-red-400";
+    if (regime.includes("COMPRESSION")) return "text-purple-400";
+    if (regime.includes("NEUTRAL")) return "text-gray-400";
+    return "text-white/60";
+  };
+
+  const getBiasColor = (bias?: string) => {
+    if (!bias) return "text-gray-400";
+    if (bias === "BULLISH") return "text-green-400";
+    if (bias === "BEARISH") return "text-red-400";
+    return "text-gray-400";
+  };
+
+  const renderScenarioCard = (scenario: StructuralScenario | undefined, type: "BASE" | "ALT" | "VOL") => {
+    if (!scenario) {
+      return (
+        <div className="rounded border border-gray-500/30">
+          <div className="px-3 py-2 border-b border-white/[0.06] bg-gray-900/20">
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                {type} CASE
+              </span>
+              <span className="text-[9px] font-mono text-white/40">--%</span>
+            </div>
+          </div>
+          <div className="px-3 py-2.5">
+            <p className="text-[10px] text-white/60 italic">Scenario data unavailable</p>
+          </div>
+        </div>
+      );
+    }
+
+    const cardColors = {
+      BASE: { bg: "bg-blue-900/20", border: "border-blue-500/30", text: "text-blue-400" },
+      ALT: { bg: "bg-green-900/20", border: "border-green-500/30", text: "text-green-400" },
+      VOL: { bg: "bg-orange-900/20", border: "border-orange-500/30", text: "text-orange-400" }
+    };
+
+    const colors = cardColors[type];
+
+    return (
+      <div 
+        className={`rounded border ${colors.border} transition-colors hover:border-white/20 cursor-pointer`}
+        onClick={() => onActiveScenarioChange?.(type)}
+      >
+        <div className={`px-3 py-2 border-b border-white/[0.06] ${colors.bg}`}>
+          <div className="flex justify-between items-center">
+            <span className={`text-[10px] font-semibold uppercase tracking-wider ${colors.text}`}>
+              {type} CASE
+            </span>
+            <span className="text-[9px] font-mono text-white/40">{scenario.probability || 0}%</span>
+          </div>
+        </div>
+        <div className="px-3 py-2.5 space-y-2">
+          <div>
+            <p className="text-[10px] text-white/80 font-medium leading-relaxed">{scenario.title || 'Untitled'}</p>
+            <p className="text-[9px] text-white/60 leading-relaxed mt-1">{scenario.summary || 'No summary available'}</p>
+          </div>
+          <div className="space-y-1">
+            <div className="flex justify-between items-center">
+              <span className="text-[8px] text-white/40 uppercase tracking-wide">Regime</span>
+              <span className="text-[8px] font-mono text-white/60">{scenario.regime || 'Unknown'}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[8px] font-mono text-white/40 uppercase tracking-wide">TRIGGER</span>
+              <span className="text-[8px] font-mono text-white/60">{scenario.trigger}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[8px] font-mono text-white/40 uppercase tracking-wide">TARGET</span>
+              <span className="text-[8px] font-mono text-white/60">{scenario.target}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[8px] font-mono text-white/40 uppercase tracking-wide">INVALIDATION</span>
+              <span className="text-[8px] font-mono text-white/60">{scenario.invalidation}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[8px] text-white/40 uppercase tracking-wide">Bias</span>
+              <span className={`text-[8px] font-mono ${getBiasColor(scenario.bias)}`}>{scenario.bias || 'NEUTRAL'}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="text-[10px] text-white/30 italic py-2">Loading scenarios...</div>
+      </div>
+    );
+  }
+
+  if (error || !scenariosData) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="text-[10px] text-white/30 italic py-2">Scenarios unavailable</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Market Regime */}
+      <div className="px-3 py-2 bg-terminal-accent/10 rounded border border-terminal-accent/30">
+        <div className="flex justify-between items-center">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60">MARKET REGIME</span>
+        </div>
+        <div className={`text-[11px] font-medium mt-1 ${getRegimeColor(scenariosData.marketRegime)}`}>
+          {scenariosData.marketRegime || 'Unknown'}
+        </div>
+      </div>
+
+      {/* Scenario Cards */}
+      <div className="flex flex-col gap-3">
+        {renderScenarioCard(scenariosData.baseCase, "BASE")}
+        {renderScenarioCard(scenariosData.altCase, "ALT")}
+        {renderScenarioCard(scenariosData.volCase, "VOL")}
+      </div>
+    </div>
+  );
+}
+
+function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebarProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const { data: state } = useTerminalState();
 
@@ -226,55 +504,7 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
       </SidebarPanel>
 
       <SidebarPanel title="Liquidity Map">
-        {(() => {
-          const heatmap = (positioning as any)?.liquidityHeatmap;
-          const lines: string[] = heatmap?.liquidityMapLines || [];
-          const pressure = heatmap?.liquidityPressure || "BALANCED";
-          const source = heatmap?.heatmapSummary?.source || "--";
-          const pressureColor = pressure === "BID_HEAVY" ? "green" : pressure === "ASK_HEAVY" ? "red" : "yellow";
-          const vacuum = heatmap?.liquidityVacuum;
-          const vacuumRisk = vacuum?.vacuumRisk || "LOW";
-          const vacuumZones = vacuum?.activeZones?.length || 0;
-          const vacuumRiskColor = vacuumRisk === "EXTREME" ? "red" : vacuumRisk === "HIGH" ? "orange" : vacuumRisk === "MEDIUM" ? "yellow" : "gray";
-          const predictiveRisk = vacuum?.predictiveRisk || "LOW";
-          const proximityColor = predictiveRisk === "IMMINENT" ? "red" : predictiveRisk === "HIGH" ? "orange" : predictiveRisk === "MEDIUM" ? "yellow" : "gray";
-          const thinZone = vacuum?.nearestThinLiquidityZone;
-          const thinDir = vacuum?.nearestThinLiquidityDirection;
-          const fmtK = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(Math.round(p));
-          const thinLabel = thinZone ? `${fmtK(thinZone)} ${thinDir === "UP" ? "ABOVE" : "BELOW"}` : "--";
-          return (
-            <div className="flex flex-col gap-2">
-              <StatusValue label="Pressure" value={pressure.replace(/_/g, " ")} color={pressureColor} />
-              <StatusValue label="Vacuum Risk" value={vacuumRisk} color={vacuumRiskColor} />
-              <StatusValue label="Vacuum Proximity" value={predictiveRisk} color={proximityColor} />
-              <StatusValue label="Thin Liquidity" value={thinLabel} color={thinZone ? "blue" : "gray"} />
-              <StatusValue label="Vacuum Zones" value={String(vacuumZones)} color={vacuumZones > 0 ? "blue" : "gray"} />
-              {vacuum?.activeZones?.length > 0 && (
-                <div className="flex flex-col gap-0.5">
-                  {vacuum.activeZones.slice(0, 3).map((z: any, i: number) => (
-                    <div key={i} className="flex items-start gap-1.5">
-                      <span className="text-[8px] mt-[3px] text-blue-400">◆</span>
-                      <span className="text-[10px] text-white/50 font-mono leading-snug">
-                        {z.direction} {fmtK(z.priceStart)}–{fmtK(z.priceEnd)} {z.strengthClass} ({Math.round(z.strength * 100)}%)
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {lines.length > 0 && (
-                <div className="flex flex-col gap-0.5">
-                  {lines.map((line: string, i: number) => (
-                    <div key={i} className="flex items-start gap-1.5">
-                      <span className="text-[8px] mt-[3px] text-purple-400">•</span>
-                      <span className="text-[10px] text-white/50 font-mono leading-snug">{line}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="text-[8px] text-white/20 font-mono">{source}</div>
-            </div>
-          );
-        })()}
+        <LiquidityMapPanel />
       </SidebarPanel>
 
       <SidebarPanel title="Dealer Hedging Flow">
@@ -353,48 +583,12 @@ export function RightSidebar({ onScenarioSelect }: RightSidebarProps) {
         })()}
       </SidebarPanel>
 
-      <SidebarPanel title="Daily Scenarios">
-        <div className="flex flex-col gap-3">
-          {(scenarios as TradingScenario[])?.map((scenario) => (
-            <div
-              key={scenario.id}
-              onClick={() => handleScenarioClick(scenario)}
-              className={cn(
-                "cursor-pointer rounded border border-white/[0.06] transition-colors hover:border-white/[0.12]",
-                selectedId === scenario.id && "border-terminal-accent/40 bg-terminal-accent/[0.04]"
-              )}
-              data-testid={`card-scenario-${scenario.id}`}
-            >
-              <div className={cn(
-                "px-3 py-2 border-b border-white/[0.06]",
-                scenario.type === "BASE" ? "bg-blue-900/20" :
-                scenario.type === "ALT" ? "bg-green-900/20" :
-                "bg-orange-900/20"
-              )}>
-                <div className="flex justify-between items-center">
-                  <span className={cn(
-                    "text-[10px] font-semibold uppercase tracking-wider",
-                    scenario.type === "BASE" ? "text-blue-400" :
-                    scenario.type === "ALT" ? "text-green-400" :
-                    "text-orange-400"
-                  )}>
-                    {scenario.type} Case
-                  </span>
-                  <span className="text-[9px] font-mono text-white/40">{scenario.probability}%</span>
-                </div>
-              </div>
-              <div className="px-3 py-2.5">
-                <p className="text-[10px] text-white/60 leading-relaxed">{scenario.thesis}</p>
-                <LearnHelper text={SCENARIO_HELPERS[scenario.type] || ""} />
-              </div>
-            </div>
-          ))}
-          {(!scenarios || (scenarios as any).length === 0) && (
-            <div className="text-[10px] text-white/30 italic py-2">No scenarios available</div>
-          )}
-        </div>
+      <SidebarPanel title="DAILY SCENARIOS">
+        <StructuralScenariosPanel onActiveScenarioChange={onActiveScenarioChange} />
       </SidebarPanel>
 
     </div>
   );
 }
+
+export default RightSidebar;

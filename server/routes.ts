@@ -9,9 +9,16 @@ import { buildTaskPlan } from "./ai/task-agent";
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
 import { getOrderBook, initializeFullDepth } from "./services/orderbookService";
+import { liquidityVacuumEngine, VacuumEngineInput } from "./lib/liquidityVacuumEngine";
+import { VacuumValidationTests } from "./lib/vacuumValidationTests";
+import { scenarioEngine, TerminalSignals } from "./lib/scenarioEngine";
+import { testScenarioEngine } from "./lib/scenarioEngineTest";
 
 // Initialize full depth on server start
 initializeFullDepth().catch(console.error);
+
+// NOTE: Tests removed from auto-execution to prevent startup blocking
+// Use /api/vacuum/test and /api/scenarios/test endpoints for manual testing
 
 // Import the service to start the WebSocket connection
 import "./services/orderbookService";
@@ -111,10 +118,7 @@ export async function registerRoutes(
     res.json(data);
   });
 
-  app.get("/api/scenarios", async (_req, res) => {
-    const data = await storage.getTradingScenarios();
-    res.json(data);
-  });
+  // Old scenarios endpoint removed - replaced by structural scenarios endpoint below
 
   app.get("/api/dealer-hedging-flow", async (_req, res) => {
     const data = await storage.getDealerHedgingFlow();
@@ -222,6 +226,174 @@ export async function registerRoutes(
         error: "FAILED_TO_FETCH_HISTORY",
         details: error.message
       });
+    }
+  });
+
+  // --- Liquidity Vacuum Analysis Endpoint ---
+  app.get("/api/vacuum", async (req: Request, res: Response) => {
+    try {
+      // Get current market data
+      const [orderBook, terminalState, positioning] = await Promise.all([
+        getOrderBook(),
+        getTerminalState(),
+        storage.getOptionsPositioning()
+      ]);
+
+      if (!orderBook || !orderBook.bids.length || !orderBook.asks.length) {
+        return res.status(503).json({
+          error: "Insufficient orderbook data for vacuum analysis",
+          vacuumRisk: "LOW",
+          vacuumDirection: "NEUTRAL",
+          confirmedVacuumActive: false
+        });
+      }
+
+      // Calculate spot price from orderbook
+      const bestBid = orderBook.bids[0]?.price || 0;
+      const bestAsk = orderBook.asks[0]?.price || 0;
+      const spotPrice = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk;
+
+      if (!spotPrice) {
+        return res.status(503).json({
+          error: "Unable to determine spot price",
+          vacuumRisk: "LOW",
+          vacuumDirection: "NEUTRAL",
+          confirmedVacuumActive: false
+        });
+      }
+
+      // Prepare input for vacuum engine
+      const input: VacuumEngineInput = {
+        spotPrice,
+        bids: orderBook.bids.map(bid => ({ price: bid.price, size: bid.size })),
+        asks: orderBook.asks.map(ask => ({ price: ask.price, size: ask.size })),
+        nearestBookClusters: positioning ? {
+          above: [positioning.callWall].filter(Boolean),
+          below: [positioning.putWall].filter(Boolean)
+        } : undefined,
+        spread: bestAsk - bestBid,
+        liquiditySweepRisk: terminalState?.market?.liquiditySweepDetector,
+        dealerHedgingFlow: terminalState?.market?.dealerHedgingFlow,
+        volatility: terminalState?.market?.distanceToFlip ? Math.abs(terminalState.market.distanceToFlip) : undefined
+      };
+
+      // Run vacuum analysis
+      const result = liquidityVacuumEngine.analyze(input);
+
+      res.json(result);
+    } catch (error) {
+      console.error("Vacuum analysis error:", error);
+      res.status(500).json({
+        error: "Failed to analyze vacuum conditions",
+        vacuumRisk: "LOW",
+        vacuumDirection: "NEUTRAL",
+        confirmedVacuumActive: false
+      });
+    }
+  });
+
+  // --- Validation Test Endpoint ---
+  app.get("/api/vacuum/test", async (req: Request, res: Response) => {
+    try {
+      console.log("🧪 Manual validation test triggered via API");
+      await VacuumValidationTests.runAllTests();
+      res.json({ message: "Validation tests completed - check server logs for results" });
+    } catch (error) {
+      console.error("Validation test error:", error);
+      res.status(500).json({ error: "Validation tests failed" });
+    }
+  });
+
+  // --- Scenario Test Endpoint ---
+  app.get("/api/scenarios/test", async (req: Request, res: Response) => {
+    try {
+      console.log("🧪 Manual scenario test triggered via API");
+      testScenarioEngine();
+      res.json({ message: "Scenario tests completed - check server logs for results" });
+    } catch (error) {
+      console.error("Scenario test error:", error);
+      res.status(500).json({ error: "Scenario tests failed" });
+    }
+  });
+
+  // --- Structural Scenarios Endpoint ---
+  app.get("/api/scenarios", async (req: Request, res: Response) => {
+    console.log("Structural Scenario Engine responding");
+    
+    try {
+      // Get all required terminal signals with timeout protection
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 2000)
+      );
+
+      const [terminalState, positioning, vacuumData] = await Promise.all([
+        getTerminalState().catch(() => null),
+        storage.getOptionsPositioning().catch(() => null),
+        Promise.race([
+          fetch('http://localhost:3000/api/vacuum').then(r => r.json()).catch(() => null),
+          timeoutPromise
+        ]).catch(() => null)
+      ]);
+
+      // DEBUG: Log raw data sources
+      console.log("=== SCENARIOS API DEBUG ===");
+      console.log("TERMINAL STATE:", {
+        hasMarket: !!terminalState?.market,
+        gammaRegime: terminalState?.market?.gammaRegime,
+        gammaFlip: terminalState?.market?.gammaFlip,
+        hasLevels: !!terminalState?.levels,
+        gammaMagnets: terminalState?.levels?.gammaMagnets,
+        pressure: (terminalState as any)?.positioning_engines?.liquidityHeatmap?.liquidityPressure
+      });
+      console.log("POSITIONING:", {
+        callWall: positioning?.callWall,
+        putWall: positioning?.putWall
+      });
+      console.log("VACUUM DATA:", {
+        vacuumRisk: vacuumData?.vacuumRisk,
+        vacuumType: vacuumData?.vacuumType,
+        vacuumDirection: vacuumData?.vacuumDirection,
+        vacuumProximity: vacuumData?.vacuumProximity,
+        nearestZone: vacuumData?.nearestThinLiquidityZone
+      });
+
+      // Extract signals for scenario engine with safe fallbacks
+      const signals: TerminalSignals = {
+        gammaRegime: terminalState?.market?.gammaRegime || "LONG", // Safe fallback
+        gammaFlip: terminalState?.market?.gammaFlip || undefined,
+        gammaMagnets: terminalState?.levels?.gammaMagnets || [],
+        callWall: positioning?.callWall || undefined,
+        putWall: positioning?.putWall || undefined,
+        pressure: (terminalState as any)?.positioning_engines?.liquidityHeatmap?.liquidityPressure || "BALANCED", // Safe fallback
+        vacuumRisk: vacuumData?.vacuumRisk || "LOW", // Safe fallback
+        vacuumType: vacuumData?.vacuumType || "NONE", // Safe fallback
+        vacuumDirection: vacuumData?.vacuumDirection || "NEUTRAL", // Safe fallback
+        vacuumProximity: vacuumData?.vacuumProximity || "FAR", // Safe fallback
+        thinLiquidity: vacuumData?.nearestThinLiquidityZone ? {
+          price: vacuumData.nearestThinLiquidityZone,
+          direction: vacuumData.nearestThinLiquidityDirection || "NONE"
+        } : undefined
+      };
+
+      console.log("FINAL SIGNALS FOR ENGINE:", signals);
+
+      // Generate scenarios with safe fallback
+      const scenarios = scenarioEngine.generateScenarios(signals);
+      
+      console.log("GENERATED SCENARIOS:", scenarios);
+      console.log("=== END SCENARIOS API DEBUG ===");
+
+      res.json(scenarios);
+    } catch (error) {
+      console.error("Scenario generation error:", error);
+      // Safe fallback with consistent shape
+      const fallbackScenarios = {
+        marketRegime: "UNKNOWN",
+        baseCase: { probability: 60, title: "Analysis Unavailable", summary: "Scenario engine temporarily unavailable", regime: "Unknown", trigger: "N/A", target: "N/A", bias: "NEUTRAL" as const },
+        altCase: { probability: 25, title: "Analysis Unavailable", summary: "Scenario engine temporarily unavailable", regime: "Unknown", trigger: "N/A", target: "N/A", bias: "NEUTRAL" as const },
+        volCase: { probability: 15, title: "Analysis Unavailable", summary: "Scenario engine temporarily unavailable", regime: "Unknown", trigger: "N/A", target: "N/A", bias: "NEUTRAL" as const }
+      };
+      res.status(500).json(fallbackScenarios);
     }
   });
 
