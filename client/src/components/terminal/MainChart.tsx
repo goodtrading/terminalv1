@@ -13,32 +13,91 @@ import { TrackerOutput, OrderBookLevel } from "./overlay/scanners/bookmapOrderBo
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
 
-// Helper function to normalize candle time to number
-function normalizeCandleTime(input: any): number {
-  if (typeof input === 'number') return input;
-  if (typeof input === 'string') return Number(input);
+// Strict time extraction - returns number | null, never objects
+function extractTime(value: unknown): number | null {
+  // Direct number - already in seconds
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
 
-  if (input && typeof input === 'object') {
-    if (typeof input.time === 'number') return input.time;
-    if (typeof input.timestamp === 'number') return input.timestamp;
-    if (typeof input.valueOf === 'function') {
-      const v = input.valueOf();
-      if (typeof v === 'number') return v;
+  // Numeric string - parse to number
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  // Date string - parse to timestamp
+  if (typeof value === 'string') {
+    const date = new Date(value);
+    return Number.isFinite(date.getTime()) ? Math.floor(date.getTime() / 1000) : null;
+  }
+
+  // Object with known time keys
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    
+    // Try known time keys
+    for (const key of ['time', 'timestamp', 'openTime', 't', 'ts']) {
+      if (key in obj) {
+        const timeValue = obj[key];
+        if (typeof timeValue === 'number') {
+          const num = Number(timeValue);
+          // Convert milliseconds to seconds if needed
+          if (num > 1e10) { // If timestamp looks like milliseconds
+            return Math.floor(num / 1000);
+          }
+          return Number.isFinite(num) ? num : null;
+        }
+        if (typeof timeValue === 'string') {
+          const parsed = Number(timeValue);
+          return Number.isFinite(parsed) ? parsed : null;
+        }
+      }
     }
   }
 
-  return Number(input);
+  return null;
 }
 
-// Helper function to normalize full candle for chart
-function normalizeChartCandle(candle: any) {
-  const time = normalizeCandleTime(candle.time);
+// Strict candle normalization - returns clean candle or null
+function normalizeCandle(input: unknown): { time: number; open: number; high: number; low: number; close: number; volume?: number } | null {
+  if (!input || typeof input !== 'object') {
+    return null;
+  }
+
+  const obj = input as Record<string, unknown>;
+  
+  // Extract and validate time first
+  const time = extractTime(obj.time || obj.timestamp || obj.openTime || obj.t || obj.ts);
+  if (time === null) {
+    return null;
+  }
+
+  // Extract and validate OHLC
+  const open = typeof obj.open === 'number' ? obj.open : 
+                 typeof obj.open === 'string' ? Number(obj.open) : null;
+  const high = typeof obj.high === 'number' ? obj.high : 
+                 typeof obj.high === 'string' ? Number(obj.high) : null;
+  const low = typeof obj.low === 'number' ? obj.low : 
+                typeof obj.low === 'string' ? Number(obj.low) : null;
+  const close = typeof obj.close === 'number' ? obj.close : 
+                 typeof obj.close === 'string' ? Number(obj.close) : null;
+  const volume = obj.volume !== undefined ? (typeof obj.volume === 'number' ? obj.volume : 
+                                                     typeof obj.volume === 'string' ? Number(obj.volume) : 0) : 0;
+
+  // Reject if any OHLC is invalid
+  if (open === null || high === null || low === null || close === null || !Number.isFinite(open) || 
+   !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
+    return null;
+  }
+
   return {
     time,
-    open: Number(candle.open),
-    high: Number(candle.high),
-    low: Number(candle.low),
-    close: Number(candle.close),
+    open,
+    high,
+    low,
+    close,
+    volume
   };
 }
 
@@ -49,6 +108,9 @@ export function MainChart() {
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLinesRef = useRef<any[]>([]);
   const livePriceLineRef = useRef<any>(null);
+
+  const SAFE_CHART_MODE = true;
+  console.log("[SAFE CHART MODE ACTIVATED] - Live candle updates disabled, chart stabilized for tomorrow stream");
 
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [lastCandle, setLastCandle] = useState<any>(null);
@@ -89,6 +151,8 @@ export function MainChart() {
 
   const [toggles, setToggles] = useState({
     price: true,
+    gamma: false,
+    bookmap: false,
   });
 
   const [manualPriceRange, setManualPriceRange] = useState<{from: number, to: number} | null>(null);
@@ -153,14 +217,24 @@ export function MainChart() {
     queryKey: ["btc-history"],
     queryFn: async () => {
       const res = await fetch("/api/market/candles?symbol=BTCUSDT&interval=15m&limit=500");
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.details || "History fetch failed");
+      if (!res.ok) throw new Error("Failed to fetch history");
+      const rawCandles = await res.json();
+      
+      // Normalize candles with strict validation
+      const normalizedCandles = rawCandles
+        .map((candle: unknown) => normalizeCandle(candle))
+        .filter((candle): candle is NonNullable<typeof candle> => candle !== null);
+      
+      if (normalizedCandles.length !== rawCandles.length) {
+        console.error("[CANDLE NORMALIZATION REJECTIONS]", {
+          totalRaw: rawCandles.length,
+          validNormalized: normalizedCandles.length,
+          rejected: rawCandles.length - normalizedCandles.length
+        });
       }
-      return res.json();
+      
+      return normalizedCandles;
     },
-    retry: 1,
-    refetchOnWindowFocus: false,
     refetchInterval: 60000
   });
 
@@ -181,16 +255,27 @@ export function MainChart() {
   useEffect(() => {
     if (ticker && history && history.length > 0) {
       const tickerTime = Math.floor(ticker.timestamp / (15 * 60 * 1000)) * (15 * 60);
-      setLastCandle((prev: any) => {
-        if (prev && Number(prev.time) === tickerTime) {
-          return {
-            ...prev,
+      setLastCandle((prev: unknown) => {
+        // Normalize previous candle
+        const prevNormalized = prev ? normalizeCandle(prev) : null;
+        
+        if (prevNormalized && prevNormalized.time === tickerTime) {
+          // Update existing candle with explicit field mapping
+          const updatedCandle = {
+            time: prevNormalized.time,
+            open: prevNormalized.open,
             close: ticker.price,
-            high: Math.max(prev.high, ticker.price),
-            low: Math.min(prev.low, ticker.price)
+            high: Math.max(prevNormalized.high, ticker.price),
+            low: Math.min(prevNormalized.low, ticker.price),
+            volume: prevNormalized.volume
           };
+          
+          const normalizedUpdated = normalizeCandle(updatedCandle);
+          return normalizedUpdated;
         }
-        return {
+        
+        // Create new candle
+        const newCandle = {
           time: tickerTime / 1000, // Convert to seconds for Lightweight Charts
           open: ticker.price,
           high: ticker.price,
@@ -198,6 +283,9 @@ export function MainChart() {
           close: ticker.price,
           volume: 0
         };
+        
+        const normalizedNew = normalizeCandle(newCandle);
+        return normalizedNew;
       });
     }
   }, [ticker, history]);
@@ -223,6 +311,34 @@ export function MainChart() {
     refetchInterval: 1000, // Update every second for real-time tracking
     enabled: activePanels.has("HEATMAP") // Only fetch when heatmap is active
   });
+
+  // Live price marker component for safe mode
+  const LivePriceMarker = () => {
+    const { data: ticker } = useQuery({
+      queryKey: ["btc-ticker"],
+      queryFn: async () => {
+        const res = await fetch("/api/market/ticker?symbol=BTCUSDT");
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.details || "Ticker fetch failed");
+        }
+        return res.json();
+      },
+      refetchInterval: 2000,
+    });
+
+    if (!ticker || SAFE_CHART_MODE) return null;
+
+    return (
+      <div className="absolute top-4 right-4 z-10 pointer-events-none">
+        <div className="bg-black/80 border border-white/10 rounded px-2 py-1 backdrop-blur-sm">
+          <div className="text-xs font-mono text-white/60">
+            LIVE: {ticker.price?.toFixed(2)}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const resetScale = () => {
     if (!chartRef.current) return;
@@ -351,61 +467,51 @@ export function MainChart() {
 
   useEffect(() => {
     if (history && history.length > 0) {
-      // Normalize entire history array before setData
-      const normalizedHistory = history.map(normalizeChartCandle).filter(c => Number.isFinite(c.time));
-      
-      // Pre-update guard for setData
-      const invalidHistoryCandle = normalizedHistory.find(c => typeof c.time === 'object');
-      if (invalidHistoryCandle) {
-        console.error('Object time detected before setData', invalidHistoryCandle);
-        return;
-      }
-      
-      candleSeriesRef.current.setData(normalizedHistory);
+      // History is already normalized, use directly
+      candleSeriesRef.current.setData(history);
       if (isInitialLoad) {
         chartRef.current?.timeScale().fitContent();
         setIsInitialLoad(false);
       }
-      // Set lastCandle from history, ensuring time is a number
+      
+      // Set lastCandle from history
       const lastHistoryCandle = history[history.length - 1];
       if (lastHistoryCandle && !lastCandle) {
-        setLastCandle({
-          ...lastHistoryCandle,
-          time: Number(lastHistoryCandle.time) // Ensure time is a number
-        });
+        setLastCandle(lastHistoryCandle);
       }
     }
   }, [history]);
 
   useEffect(() => {
+    if (SAFE_CHART_MODE) {
+      // DISABLED: Live candle updates disabled in safe mode
+      console.log("[LIVE CANDLE UPDATES DISABLED] - Safe chart mode active");
+      return;
+    }
+
     if (candleSeriesRef.current && lastCandle && lastCandle.time) {
-      // Normalize live candle with the same helper as history
-      const normalizedCandle = normalizeChartCandle(lastCandle);
-      if (!Number.isFinite(normalizedCandle.time)) {
-        console.error('Invalid live candle time', lastCandle.time);
+      // Ensure candle is valid before chart update
+      if (!Number.isFinite(lastCandle.time) || 
+          !Number.isFinite(lastCandle.open) || 
+          !Number.isFinite(lastCandle.high) || 
+          !Number.isFinite(lastCandle.low) || 
+          !Number.isFinite(lastCandle.close)) {
+        console.error("[INVALID CANDLE FOR UPDATE]", lastCandle);
         return;
       }
       
-      // Pre-update guard for update
-      if (typeof normalizedCandle.time === 'object') {
-        console.error('Object time detected before update', normalizedCandle);
-        return;
-      }
-      
-      candleSeriesRef.current.update(normalizedCandle);
-      const isUp = normalizedCandle.close >= normalizedCandle.open;
+      candleSeriesRef.current.update(lastCandle);
+      const isUp = lastCandle.close >= lastCandle.open;
       if (livePriceLineRef.current) candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
       if (toggles.price) {
         livePriceLineRef.current = candleSeriesRef.current.createPriceLine({
-          price: normalizedCandle.close,
+          price: lastCandle.close,
           color: isUp ? "#22c55e" : "#ef4444",
           lineWidth: 1,
           lineStyle: LineStyle.Solid,
-          axisLabelVisible: false, // Hide the label to remove "Last High" / "Last Low"
-          title: "" // Empty title
+          axisLabelVisible: false, // Hide label to remove "Last High" / "Last Low"
         });
-      } else if (livePriceLineRef.current) {
-        candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
+      } else {
         livePriceLineRef.current = null;
       }
     }
@@ -586,6 +692,11 @@ export function MainChart() {
         const mainGlobalWallThreshold = 100; // Minimum 100 BTC for MAIN GLOBAL WALLS
         const mainGlobalWallExitThreshold = 70; // Remove only below 70 BTC for sustained checks
         const maxMainGlobalLabelsPerSide = 2; // MAIN GLOBAL WALLS max per side
+        
+        // Wall visual hierarchy configuration
+        const majorWallThreshold = 150; // TIER 1: Major walls (>= 150 BTC)
+        const secondaryWallThreshold = 80; // TIER 2: Secondary walls (>= 80 BTC)
+        const minWallThreshold = 30; // TIER 3: Minor walls (>= 30 BTC)
         
         // Helper function to cluster liquidity levels
         const clusterLiquidityLevels = (levels: OrderBookLevel[], width: number) => {
@@ -896,27 +1007,66 @@ export function MainChart() {
           });
         };
         
-        // D. MAIN GLOBAL WALLS (persistent 100+ BTC walls)
+        // D. MAIN GLOBAL WALLS (persistent 100+ BTC walls) with visual hierarchy
         const renderMainGlobalWalls = (mainGlobalWalls: any[], side: 'BID' | 'ASK') => {
           mainGlobalWalls.forEach((wall) => {
-            // Visual properties - make MAIN walls stand out clearly
-            const wallOpacity = 1.0; // Full opacity for main walls
-            const wallWidth = 5; // Thickest lines for main walls
-            const wallColor = side === 'BID' ? '59, 130, 246' : '239, 68, 68'; // Distinct colors for main walls
+            // Determine visual tier based on wall size
+            let lineWidth: number;
+            let opacity: number;
+            let showLabel: boolean;
+            
+            if (wall.size >= majorWallThreshold) {
+              // TIER 1: MAJOR WALLS - keep current opacity (unchanged)
+              lineWidth = 3;
+              opacity = 1.0;
+              showLabel = true;
+            } else if (wall.size >= secondaryWallThreshold) {
+              // TIER 2: SECONDARY WALLS - reduced opacity
+              lineWidth = 2;
+              opacity = 0.7 * 0.65; // Current opacity * 0.65
+              showLabel = Math.abs(wall.price - price) <= price * 0.03; // Show label if near price (<3%)
+            } else if (wall.size >= minWallThreshold) {
+              // TIER 3: MINOR WALLS - heavily reduced opacity
+              lineWidth = 1;
+              opacity = 0.35 * 0.35; // Current opacity * 0.35
+              showLabel = false;
+            } else {
+              return; // Skip walls below minimum threshold
+            }
+            
+            // Apply distance fade for walls farther than 6% from current price
+            const distanceFromPrice = Math.abs(wall.price - price) / price;
+            if (distanceFromPrice > 0.06) {
+              opacity *= 0.6; // Fade distant walls
+            }
+            
+            // EXCEPTION RULE: Always show very large walls (>=250 BTC) with labels
+            if (wall.size >= 250) {
+              showLabel = true; // Force label visibility for very large walls
+              opacity = Math.max(opacity, 0.8); // Ensure minimum visibility
+            }
+            
+            // Additional fade when GAMMA + HEATMAP are both active
+            const gammaAndHeatmapActive = toggles.gamma && toggles.bookmap;
+            if (gammaAndHeatmapActive && wall.size < majorWallThreshold) {
+              if (wall.size >= secondaryWallThreshold) {
+                opacity *= 0.85; // Secondary walls extra fade
+              } else {
+                opacity *= 0.7; // Minor walls extra fade
+              }
+            }
+            
+            const wallColor = side === 'BID' ? '59, 130, 246' : '239, 68, 68';
             
             pushEntry(
-              wall.price,                      // Exact price of largest level in wall
-              0,                                 // Highest priority for main global walls
-              wall.label,                        // Use cached label
+              wall.price,
+              0, // Highest priority for main global walls
+              showLabel ? wall.label : '', // Only show label for allowed tiers
               side,
-              `rgba(${wallColor}, ${wallOpacity})`,  // Distinct colors from global walls
+              `rgba(${wallColor}, ${opacity})`,
               LineStyle.Solid,
-              wallWidth
+              lineWidth
             );
-            
-            if (DEBUG_ENABLED && false) { // Disabled by default
-              console.debug(`[Bookmap Main] ${wall.label} - Fixed: ${wall.side} - Size: ${wall.size.toFixed(1)} BTC`);
-            }
           });
         };
         
@@ -1218,6 +1368,7 @@ export function MainChart() {
           );
         })()}
         <div ref={chartContainerRef} className="absolute inset-0 pr-[100px]" style={{ pointerEvents: 'auto' }} />
+        {SAFE_CHART_MODE && <LivePriceMarker />}
       </TerminalPanel>
     </div>
   );
