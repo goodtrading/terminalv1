@@ -11,6 +11,7 @@ import { TooltipWrapper } from "./Tooltip";
 import { BookmapOrderBookTracker } from "./overlay/scanners/bookmapOrderBookTracker";
 import { TrackerOutput, OrderBookLevel } from "./overlay/scanners/bookmapOrderBookTypes";
 import { ScenarioOverlay } from "./overlay/ScenarioOverlay";
+import { HeatmapCanvas } from "./overlay/HeatmapCanvas";
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
 
@@ -1117,6 +1118,16 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
         }
       }
       
+      // Feed order book data to HeatmapCanvas
+      if (rawOrderBook && (window as any).heatmapCanvas && activePanels.has("HEATMAP")) {
+        const heatmapCanvas = (window as any).heatmapCanvas;
+        heatmapCanvas.addFrame(
+          rawOrderBook.timestamp,
+          rawOrderBook.bids,
+          rawOrderBook.asks
+        );
+      }
+      
       // Legacy background heatmap zones (preserved for non-Bookmap systems)
       const heatmap = positioning_engines?.liquidityHeatmap;
       if (heatmap && lastCandle) {
@@ -1374,6 +1385,40 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
         <div ref={chartContainerRef} className="absolute inset-0 pr-[100px]" style={{ pointerEvents: 'auto' }} />
         {SAFE_CHART_MODE && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
+        {activePanels.has("HEATMAP") && chartContainerRef.current && (
+          <HeatmapCanvas
+            isActive={activePanels.has("HEATMAP")}
+            chartWidth={chartContainerRef.current.clientWidth}
+            chartHeight={chartContainerRef.current.clientHeight}
+            priceToCoordinate={(price: number) => {
+              if (!chartRef.current || !chartContainerRef.current) return null;
+              try {
+                const chart = chartRef.current;
+                const container = chartContainerRef.current;
+                const priceScale = chart.priceScale("right");
+                if (!priceScale) return null;
+                
+                // Get the visible price range
+                const visibleRange = priceScale.getVisibleRange();
+                if (!visibleRange) return null;
+                
+                const { from, to } = visibleRange;
+                const priceRange = to - from;
+                const containerHeight = container.clientHeight;
+                
+                // Calculate y coordinate (inverted because canvas y=0 is top)
+                const priceRatio = (price - from) / priceRange;
+                const y = containerHeight - (priceRatio * containerHeight);
+                
+                return y;
+              } catch (error) {
+                console.warn('Price to coordinate conversion failed:', error);
+                return null;
+              }
+            }}
+            currentPrice={lastCandle?.close || 0}
+          />
+        )}
       </TerminalPanel>
     </div>
   );
