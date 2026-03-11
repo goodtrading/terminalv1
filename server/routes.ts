@@ -9,6 +9,7 @@ import { buildTaskPlan } from "./ai/task-agent";
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
 import { getOrderBook, initializeFullDepth } from "./services/orderbookService";
+import { getKrakenOrderBook } from "./kraken-gateway";
 import { liquidityVacuumEngine, VacuumEngineInput } from "./lib/liquidityVacuumEngine";
 import { VacuumValidationTests } from "./lib/vacuumValidationTests";
 import { scenarioEngine, TerminalSignals } from "./lib/scenarioEngine";
@@ -27,17 +28,30 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // --- Raw Order Book Endpoint ---
-  app.get("/api/orderbook/raw", (req: Request, res: Response) => {
+  // --- Raw Order Book Endpoint (unified shape: exchange, bids, asks, timestamp) ---
+  app.get("/api/orderbook/raw", async (req: Request, res: Response) => {
+    const source = (req.query.source as string)?.toLowerCase();
+    const symbol = (req.query.symbol as string) || "BTCUSDT";
     try {
+      if (source === "kraken") {
+        const ob = await getKrakenOrderBook(symbol, 500);
+        res.json({
+          exchange: "kraken",
+          bids: ob.bids.map((level) => [level.price.toString(), level.size.toString()]),
+          asks: ob.asks.map((level) => [level.price.toString(), level.size.toString()]),
+          timestamp: ob.timestamp,
+        });
+        return;
+      }
       const orderBook = getOrderBook();
       res.json({
-        bids: orderBook.bids.map(level => [level.price.toString(), level.size.toString()]),
-        asks: orderBook.asks.map(level => [level.price.toString(), level.size.toString()]),
-        timestamp: orderBook.timestamp || Date.now()
+        exchange: "binance",
+        bids: orderBook.bids.map((level) => [level.price.toString(), level.size.toString()]),
+        asks: orderBook.asks.map((level) => [level.price.toString(), level.size.toString()]),
+        timestamp: orderBook.timestamp || Date.now(),
       });
-    } catch (error) {
-      console.error("[API] Order book fetch error:", error);
+    } catch (error: any) {
+      console.error("[API] Order book fetch error:", error?.message ?? error);
       res.status(500).json({ error: "Failed to fetch order book" });
     }
   });
@@ -170,9 +184,10 @@ export async function registerRoutes(
     const symbol = (req.query.symbol as string) || "BTCUSDT";
     const interval = (req.query.interval as string) || "15m";
     const limit = parseInt(req.query.limit as string) || 500;
+    const source = req.query.source as string | undefined;
 
     try {
-      const candles = await MarketDataGateway.getCandles(symbol, interval, limit);
+      const candles = await MarketDataGateway.getCandles(symbol, interval, limit, source);
       res.json(candles);
     } catch (error: any) {
       console.error(`[Gateway] Candle Fetch Error: ${error.message}`);
@@ -185,8 +200,9 @@ export async function registerRoutes(
 
   app.get("/api/market/ticker", async (req, res) => {
     const symbol = (req.query.symbol as string) || "BTCUSDT";
+    const source = req.query.source as string | undefined;
     try {
-      const ticker = await MarketDataGateway.getTicker(symbol);
+      const ticker = await MarketDataGateway.getTicker(symbol, source);
       res.json(ticker);
     } catch (error: any) {
       console.error(`[Gateway] Ticker Fetch Error: ${error.message}`);
@@ -217,9 +233,10 @@ export async function registerRoutes(
     const symbol = (req.query.symbol as string) || "BTCUSDT";
     const interval = (req.query.interval as string) || "15m";
     const limit = parseInt(req.query.limit as string) || 500;
+    const source = req.query.source as string | undefined;
 
     try {
-      const candles = await MarketDataGateway.getCandles(symbol, interval, limit);
+      const candles = await MarketDataGateway.getCandles(symbol, interval, limit, source);
       res.json(candles);
     } catch (error: any) {
       res.status(503).json({

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { getKrakenTicker, getKrakenCandles } from "./kraken-gateway";
 
 // --- Internal Market Data Schemas ---
 
@@ -82,21 +83,31 @@ export class MarketDataGateway {
     return { data: await response.json(), provider: "Coinbase", latency };
   }
 
-  static async getCandles(symbol: string, interval: string = "15m", limit: number = 500): Promise<Candle[]> {
-    const providers = [
+  static async getCandles(symbol: string, interval: string = "15m", limit: number = 500, preferredSource?: string): Promise<Candle[]> {
+    const krakenProvider = {
+      name: 'Kraken',
+      fetch: async (): Promise<{ data: Candle[]; provider: string; latency: number }> => {
+        const candles = await getKrakenCandles(symbol, interval, limit);
+        return { data: candles, provider: 'Kraken', latency: 0 };
+      },
+      normalize: (d: Candle[]) => d
+    };
+    const baseProviders = [
       { name: 'Binance', fetch: () => this.fetchBinance(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`), normalize: (d: any) => this.normalizeBinance(d) },
       { name: 'Bybit', fetch: () => this.fetchBybit(`/v5/market/kline?category=spot&symbol=${symbol}&interval=${interval === '15m' ? '15' : interval}&limit=${limit}`), normalize: (d: any) => this.normalizeBybit(d) },
       { name: 'Coinbase', fetch: () => this.fetchCoinbase(`/products/${symbol.replace('USDT', '-USDT')}/candles?granularity=${interval === '15m' ? 900 : 3600}`), normalize: (d: any) => this.normalizeCoinbase(d) }
     ];
+    const providers = preferredSource === 'kraken'
+      ? [krakenProvider, ...baseProviders]
+      : [...baseProviders, krakenProvider];
 
     let lastError = null;
     for (const provider of providers) {
       try {
-        const { data, provider: source, latency } = await provider.fetch();
-        const candles = provider.normalize(data).slice(0, limit);
+        const out = await provider.fetch();
+        const candles = provider.normalize(out.data).slice(0, limit);
         const validated = this.validateAndSort(candles);
-        
-        console.log(`[Gateway] Provider: ${source} | Latency: ${latency}ms | Count: ${validated.length}`);
+        console.log(`[Gateway] Provider: ${out.provider} | Latency: ${out.latency}ms | Count: ${validated.length}`);
         return validated;
       } catch (e: any) {
         lastError = e.message;
@@ -105,20 +116,31 @@ export class MarketDataGateway {
     throw new Error(lastError || "All providers failed");
   }
 
-  static async getTicker(symbol: string): Promise<Ticker> {
-    const providers = [
+  static async getTicker(symbol: string, preferredSource?: string): Promise<Ticker> {
+    const krakenProvider = {
+      name: 'Kraken',
+      fetch: async (): Promise<{ data: Ticker; provider: string; latency: number }> => {
+        const t = await getKrakenTicker(symbol);
+        return { data: t, provider: t.source, latency: 0 };
+      },
+      normalize: (d: Ticker) => d
+    };
+    const baseProviders = [
       { name: 'Binance', fetch: () => this.fetchBinance(`/api/v3/ticker/price?symbol=${symbol}`), normalize: (d: any, s: string) => ({ symbol: d.symbol, price: parseFloat(d.price), timestamp: Date.now(), source: s }) },
       { name: 'Bybit', fetch: () => this.fetchBybit(`/v5/market/tickers?category=spot&symbol=${symbol}`), normalize: (d: any, s: string) => ({ symbol: d.result.list[0].symbol, price: parseFloat(d.result.list[0].lastPrice), timestamp: Date.now(), source: s }) },
       { name: 'Coinbase', fetch: () => this.fetchCoinbase(`/products/${symbol.replace('USDT', '-USDT')}/ticker`), normalize: (d: any, s: string) => ({ symbol: symbol, price: parseFloat(d.price), timestamp: Date.now(), source: s }) }
     ];
+    const providers = preferredSource === 'kraken'
+      ? [krakenProvider, ...baseProviders]
+      : [...baseProviders, krakenProvider];
 
     for (const provider of providers) {
       try {
-        const { data, provider: source, latency } = await provider.fetch();
-        const ticker = provider.normalize(data, source);
+        const out = await provider.fetch() as { data: any; provider: string };
+        const ticker = provider.name === 'Kraken' ? out.data : provider.normalize(out.data, out.provider);
         const validated = tickerSchema.parse(ticker);
-        // Cache the successful result
-        lastTickerCache = validated;
+        // Only update cache when using default chain (terminal state / options use cached ticker)
+        if (preferredSource !== 'kraken') lastTickerCache = validated;
         return validated;
       } catch (e: any) {
         console.warn(`[Gateway] Ticker ${provider.name} failed: ${e.message}`);

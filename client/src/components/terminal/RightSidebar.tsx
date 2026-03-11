@@ -1,7 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { TradingScenario } from "@shared/schema";
 import { useTerminalState } from "@/hooks/useTerminalState";
+import { useSweepHistory } from "@/hooks/useSweepHistory";
+import { pushSweepEvent } from "@/lib/sweepHistory";
 import { LearnHelper } from "./Tooltip";
 import { useQuery } from "@tanstack/react-query";
 
@@ -379,6 +381,7 @@ function StructuralScenariosPanel({ onActiveScenarioChange }: { onActiveScenario
 function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebarProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const { data: state } = useTerminalState();
+  const sweepHistory = useSweepHistory();
 
   const market = state?.market;
   const positioning = state?.positioning;
@@ -386,6 +389,21 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
   const scenarios = state?.market && (state as any).scenarios ? (state as any).scenarios : [];
 
   const edge = useMemo(() => deriveEdge(positioning, market), [positioning, market]);
+
+  useEffect(() => {
+    const sweep = (positioning as any)?.liquiditySweepDetector;
+    if (!sweep?.type || !sweep?.sweepDirection) return;
+    const eventTypes = ["CONTINUATION", "FAILED", "ABSORPTION", "EXHAUSTION"];
+    if (!eventTypes.includes(sweep.type)) return;
+    const zone = sweep.sweptZone ?? sweep.sweepTargetZone ?? sweep.target ?? "";
+    pushSweepEvent({
+      direction: sweep.sweepDirection ?? sweep.direction ?? "NONE",
+      type: sweep.type,
+      confidence: sweep.confidence ?? 0,
+      zone: zone || "--",
+      outcome: sweep.outcome,
+    });
+  }, [positioning]);
 
   const tradeSetup = useMemo(() => {
     const exposure = state?.exposure;
@@ -542,20 +560,32 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
       <SidebarPanel title="Liquidity Sweep">
         {(() => {
           const sweep = (positioning as any)?.liquiditySweepDetector;
-          const risk = sweep?.sweepRisk || "LOW";
-          const direction = sweep?.sweepDirection || "NONE";
-          const trigger = sweep?.sweepTrigger || "--";
-          const target = sweep?.sweepTargetZone || "--";
-          const summary: string[] = sweep?.sweepSummary || [];
+          const risk = sweep?.sweepRisk ?? sweep?.risk ?? "LOW";
+          const direction = sweep?.sweepDirection ?? "NONE";
+          const trigger = sweep?.sweepTrigger ?? sweep?.trigger ?? "--";
+          const target = sweep?.sweepTargetZone ?? sweep?.target ?? "--";
+          const summary: string[] = sweep?.sweepSummary ?? sweep?.summary ?? [];
+          const status = sweep?.status ?? "IDLE";
+          const type = sweep?.type ?? "";
+          const confidence = sweep?.confidence ?? 0;
+          const invalidation = sweep?.invalidation ?? "--";
+          const sweptZone = sweep?.sweptZone ?? "--";
+          const outcome = sweep?.outcome ?? "N/A";
+          const confluence = sweep?.confluence;
+          const execStats = sweep?.executionStats as { zoneSizeBTC?: number; aggressionScore?: number; displacementPct?: number } | undefined;
           const riskColor = risk === "EXTREME" ? "red" : risk === "HIGH" ? "orange" : risk === "MEDIUM" ? "yellow" : "gray";
           const dirColor = direction === "UP" ? "green" : direction === "DOWN" ? "red" : direction === "TWO_SIDED" ? "purple" : "gray";
           const bulletColor = risk === "EXTREME" || risk === "HIGH" ? "text-orange-400" : "text-white/30";
           return (
             <div className="flex flex-col gap-2">
-              <LearnHelper text="Potential liquidity grab or breakout zone" />
+              <LearnHelper text="Institutional sweep detection: setup, trigger, type, outcome" />
               <div className="flex flex-col divide-y divide-white/[0.04]">
+                <StatusValue label="Status" value={status.replace(/_/g, " ")} color="gray" />
                 <StatusValue label="Risk" value={risk} color={riskColor} />
                 <StatusValue label="Direction" value={direction.replace(/_/g, " ")} color={dirColor} />
+                {type && <StatusValue label="Type" value={type.replace(/_/g, " ")} color="gray" />}
+                {confidence > 0 && <StatusValue label="Confidence" value={`${confidence}%`} color={confidence >= 60 ? "green" : confidence >= 30 ? "yellow" : "gray"} />}
+                {outcome !== "N/A" && outcome !== "PENDING" && <StatusValue label="Outcome" value={outcome.replace(/_/g, " ")} color="gray" />}
               </div>
               <div className="mt-1">
                 <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Trigger</span>
@@ -565,6 +595,35 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
                 <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Target</span>
                 <p className="text-[10px] text-white/60 font-mono leading-snug mt-0.5" data-testid="text-sweep-target">{target}</p>
               </div>
+              {invalidation !== "--" && (
+                <div>
+                  <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Invalidation</span>
+                  <p className="text-[10px] text-white/50 font-mono leading-snug mt-0.5">{invalidation}</p>
+                </div>
+              )}
+              {sweptZone !== "--" && (
+                <div>
+                  <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Swept zone</span>
+                  <p className="text-[10px] text-amber-400/80 font-mono leading-snug mt-0.5">{sweptZone}</p>
+                </div>
+              )}
+              {confluence && (confluence.score > 0 || confluence.factors?.length) && (
+                <div>
+                  <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Confluence</span>
+                  <p className="text-[10px] text-white/50 font-mono mt-0.5">Score: {confluence.score}</p>
+                  {confluence.factors?.length > 0 && (
+                    <ul className="mt-0.5 list-disc list-inside text-[9px] text-white/40 space-y-0.5">
+                      {confluence.factors.slice(0, 3).map((f: string, i: number) => <li key={i}>{f}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {execStats?.zoneSizeBTC != null && (
+                <div>
+                  <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Zone size</span>
+                  <p className="text-[10px] text-white/50 font-mono mt-0.5">~{Number(execStats.zoneSizeBTC).toFixed(1)} BTC</p>
+                </div>
+              )}
               {summary.length > 0 && (
                 <div>
                   <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Summary</span>
@@ -576,6 +635,22 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+              {sweepHistory.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-white/[0.06]">
+                  <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Recent sweeps</span>
+                  <ul className="mt-1.5 space-y-1 max-h-[140px] overflow-y-auto">
+                    {sweepHistory.slice(0, 8).map((e, i) => (
+                      <li key={`${e.timestamp}-${e.type}-${e.zone}-${i}`} className="text-[9px] font-mono text-white/50 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                        <span className="text-white/35">{new Date(e.timestamp).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                        <span className={e.direction === "UP" ? "text-green-400/80" : e.direction === "DOWN" ? "text-red-400/80" : "text-purple-400/80"}>{e.direction}</span>
+                        <span className="text-amber-400/80">{e.type.replace(/_/g, " ")}</span>
+                        {e.confidence > 0 && <span className="text-white/40">{e.confidence}%</span>}
+                        <span className="text-white/30 truncate max-w-[120px]" title={e.zone}>{e.zone}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>

@@ -189,7 +189,19 @@ export const optionsSummarySchema = z.object({
     sweepDirection: z.enum(["UP", "DOWN", "TWO_SIDED", "NONE"]),
     sweepTrigger: z.string(),
     sweepTargetZone: z.string(),
-    sweepSummary: z.array(z.string())
+    sweepSummary: z.array(z.string()),
+    status: z.string().optional(),
+    type: z.string().optional(),
+    confidence: z.number().optional(),
+    risk: z.string().optional(),
+    trigger: z.string().optional(),
+    target: z.string().optional(),
+    invalidation: z.string().optional(),
+    sweptZone: z.string().optional(),
+    executionStats: z.record(z.unknown()).optional(),
+    confluence: z.object({ score: z.number(), factors: z.array(z.string()) }).optional(),
+    outcome: z.string().optional(),
+    summary: z.array(z.string()).optional()
   }).optional(),
   dominantExpiry: z.string().nullable().optional(),
   source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()

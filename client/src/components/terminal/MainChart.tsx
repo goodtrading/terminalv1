@@ -12,6 +12,11 @@ import { BookmapOrderBookTracker } from "./overlay/scanners/bookmapOrderBookTrac
 import { TrackerOutput, OrderBookLevel } from "./overlay/scanners/bookmapOrderBookTypes";
 import { ScenarioOverlay } from "./overlay/ScenarioOverlay";
 import { HeatmapCanvas } from "./overlay/HeatmapCanvas";
+import { LayerGroupControls } from "./overlay/LayerGroupControls";
+import type { LayerGroup } from "./overlay/layerGroups";
+
+/** Lightweight Charts candlestick time: integer seconds since Unix epoch */
+type UTCTimestamp = number;
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
 
@@ -118,6 +123,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   console.log("[SAFE CHART MODE ACTIVATED] - Live candle updates disabled, chart stabilized for tomorrow stream");
 
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [chartReady, setChartReady] = useState(false);
   const [lastCandle, setLastCandle] = useState<any>(null);
   const [activePanels, setActivePanels] = useState<Set<MapMode>>(() => {
   // Load from localStorage on initialization
@@ -221,15 +227,26 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   const { data: history, error: historyError, isLoading: historyLoading } = useQuery({
     queryKey: ["btc-history"],
     queryFn: async () => {
-      const res = await fetch("/api/market/candles?symbol=BTCUSDT&interval=15m&limit=500");
+      const url = "/api/market/candles?symbol=BTCUSDT&interval=15m&limit=500";
+      console.log("[CANDLES FETCH] URL:", url);
+      const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch history");
       const rawCandles = await res.json();
-      
+      const isArray = Array.isArray(rawCandles);
+      console.log("[CANDLES FETCH] Response: isArray=" + isArray + ", rawCount=" + (isArray ? rawCandles.length : "N/A"), isArray && rawCandles[0] ? "firstCandleSample=" + JSON.stringify(rawCandles[0]) : "");
+
+      if (!isArray) {
+        console.error("[CANDLES FETCH] Expected array, got:", typeof rawCandles, rawCandles);
+        return [];
+      }
+
       // Normalize candles with strict validation
       const normalizedCandles = rawCandles
         .map((candle: unknown) => normalizeCandle(candle))
         .filter((candle): candle is NonNullable<typeof candle> => candle !== null);
-      
+
+      console.log("[CANDLES FETCH] After normalize: normalizedCount=" + normalizedCandles.length + (normalizedCandles[0] ? ", firstNormalized=" + JSON.stringify(normalizedCandles[0]) : ""));
+
       if (normalizedCandles.length !== rawCandles.length) {
         console.error("[CANDLE NORMALIZATION REJECTIONS]", {
           totalRaw: rawCandles.length,
@@ -237,7 +254,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           rejected: rawCandles.length - normalizedCandles.length
         });
       }
-      
+
       return normalizedCandles;
     },
     refetchInterval: 60000
@@ -451,9 +468,10 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     const volumeSeries = chart.addSeries(HistogramSeries, { color: 'rgba(38, 166, 154, 0.2)', priceFormat: { type: 'volume' }, priceScaleId: '' });
     volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.88, bottom: 0 } });
     
-    chartRef.current = chart; 
-    candleSeriesRef.current = candleSeries; 
+    chartRef.current = chart;
+    candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+    setChartReady(true);
 
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
@@ -467,25 +485,35 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     return () => {
       window.removeEventListener("resize", handleResize);
       chart.remove();
+      setChartReady(false);
     };
   }, []);
 
   useEffect(() => {
-    if (history && history.length > 0) {
-      // History is already normalized, use directly
-      candleSeriesRef.current.setData(history);
-      if (isInitialLoad) {
-        chartRef.current?.timeScale().fitContent();
-        setIsInitialLoad(false);
-      }
-      
-      // Set lastCandle from history
-      const lastHistoryCandle = history[history.length - 1];
-      if (lastHistoryCandle && !lastCandle) {
-        setLastCandle(lastHistoryCandle);
-      }
+    const series = candleSeriesRef.current;
+    if (!history?.length || !series) return;
+
+    // Strict format for Lightweight Charts: { time: UTCTimestamp, open, high, low, close } — no volume
+    const toUTCTimestamp = (t: unknown): UTCTimestamp => {
+      const n = Number(t);
+      if (!Number.isFinite(n)) return 0 as UTCTimestamp;
+      return (n > 1e10 ? Math.floor(n / 1000) : Math.floor(n)) as UTCTimestamp;
+    };
+    const candlesForChart = history.map((c) => ({
+      time: toUTCTimestamp(c.time),
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+    }));
+    series.setData(candlesForChart);
+    if (isInitialLoad && chartRef.current) {
+      chartRef.current.timeScale().fitContent();
+      setIsInitialLoad(false);
     }
-  }, [history]);
+    const lastHistoryCandle = history[history.length - 1];
+    if (lastHistoryCandle && !lastCandle) setLastCandle(lastHistoryCandle);
+  }, [history, chartReady]);
 
   useEffect(() => {
     if (SAFE_CHART_MODE) {
@@ -610,8 +638,11 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       }
     }
 
-    const sweepZoneRange = sweepActive ? extractRangeFromText(sweepDetector.sweepTargetZone) : null;
+    const sweepZoneRange = sweepActive ? extractRangeFromText(sweepDetector.sweepTargetZone ?? sweepDetector.target) : null;
+    const sweptZoneRange = sweepActive && sweepDetector?.sweptZone && sweepDetector.sweptZone !== "--" ? extractRangeFromText(sweepDetector.sweptZone) : null;
     const sweepDirArrow = sweepDetector?.sweepDirection === "UP" ? "↑" : sweepDetector?.sweepDirection === "DOWN" ? "↓" : "↕";
+    const sweepType = sweepDetector?.type;
+    const typeShortLabel = sweepType === "CONTINUATION" ? "CONT" : sweepType === "FAILED" ? "FAIL" : sweepType === "ABSORPTION" ? "ABS" : sweepType === "EXHAUSTION" ? "EXH" : sweepType === "SETUP_TWO_SIDED" ? "2S" : "";
 
     if (sweepActive && activePanels.has("SQUEEZE") && sweepZoneRange && !activePanels.has("HEATMAP")) {
       const bandStep = (sweepZoneRange.end - sweepZoneRange.start) / 6;
@@ -621,7 +652,25 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
         const opacity = isBorder ? 0.3 : 0.08;
         pushEntry(p, 2, "", "", `rgba(${sweepDirColor}, ${opacity})`, LineStyle.Solid, 1, true);
       }
-      pushEntry(sweepZoneRange.end, 2, `SWEEP ${sweepDirArrow}`, "SW", `rgba(${sweepDirColor}, 0.4)`, LineStyle.Solid, 1);
+      const zoneLabel = typeShortLabel ? `SW ${sweepDirArrow} ${typeShortLabel}` : `SWEEP ${sweepDirArrow}`;
+      pushEntry(sweepZoneRange.end, 2, zoneLabel, typeShortLabel || "SW", `rgba(${sweepDirColor}, 0.4)`, LineStyle.Solid, 1);
+    }
+
+    if (sweepActive && activePanels.has("SQUEEZE") && sweptZoneRange && !activePanels.has("HEATMAP")) {
+      const bandStep = (sweptZoneRange.end - sweptZoneRange.start) / 4;
+      for (let i = 0; i <= 4; i++) {
+        const p = sweptZoneRange.start + bandStep * i;
+        const isBorder = i === 0 || i === 4;
+        pushEntry(p, 2, "", "", `rgba(251, 191, 36, ${isBorder ? 0.25 : 0.06})`, LineStyle.Dotted, 1, true);
+      }
+      pushEntry(sweptZoneRange.end, 2, "SWEPT", "SWEPT", "rgba(251, 191, 36, 0.5)", LineStyle.Solid, 1);
+    }
+
+    if (sweepActive && activePanels.has("SQUEEZE")) {
+      const invalidationPrice = sweepDetector?.invalidation && sweepDetector.invalidation !== "--" ? extractPriceFromText(sweepDetector.invalidation) : null;
+      if (invalidationPrice != null && Math.abs(invalidationPrice - price) <= threshold) {
+        pushEntry(invalidationPrice, 2, "INV", "INV", `rgba(${sweepDirColor}, 0.35)`, LineStyle.Dotted, 1);
+      }
     }
 
     if (sweepActive && activePanels.has("SQUEEZE")) {
@@ -632,7 +681,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       if (levels?.gammaMagnets) knownLevels.push(...levels.gammaMagnets);
       const heatmapZones = positioning_engines?.liquidityHeatmap?.liquidityHeatZones || [];
       heatmapZones.filter((z: any) => z.intensity >= 0.5).forEach((z: any) => knownLevels.push((z.priceStart + z.priceEnd) / 2));
-      const triggerText = sweepDetector.sweepTrigger || "";
+      const triggerText = (sweepDetector.sweepTrigger ?? sweepDetector?.trigger) || "";
       const triggerPrice = extractPriceFromText(triggerText);
       let bestTrigger: number | null = null;
       if (triggerPrice) {
@@ -680,23 +729,30 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           });
         }
         
-        // Step 2.3: Dual-layer liquidity system - Local + Global Walls
-        
+        // Step 2.3: Dual-layer liquidity system - Local + Structural + Global Walls
+        // Priority: 1) Really large walls (main global 100+), 2) Global 80+, 3) Local near spot (5%), 4) Structural intermediate (5–12%, 15+ BTC), 5) Small clusters filtered out.
+        // Structural tier ensures BID walls 5–12% below spot (e.g. 67k–66k when spot 70k) get labels instead of only “near spot” + “main far”.
+
         // Clustering configuration
         const clusterWidth = 10; // 10 USD price buckets
         const minClusterLiquidity = 5; // Minimum 5 BTC to show as cluster
-        const maxLocalLabelsPerSide = 4; // Local levels max per side
-        
+        const maxLocalLabelsPerSide = 6; // Local levels max per side (was 4; more bids/asks near spot)
+        const localLabelRangePct = 0.05; // 5% from spot for "local" (was 3%; include more structural near price)
+        const structuralRangeMinPct = 0.05; // Structural tier: 5%–12% from spot (intermediate walls)
+        const structuralRangeMaxPct = 0.12;
+        const structuralMinSizeBtc = 15; // Min 15 BTC for structural label (below global 80)
+        const maxStructuralLabelsPerSide = 3; // Structural intermediate walls per side
+
         // Global wall configuration
         const globalWallThreshold = 80; // Minimum 80 BTC for global wall entry
         const globalWallExitThreshold = 60; // Exit threshold for hysteresis (60 BTC)
-        const maxGlobalLabelsPerSide = 4; // Show more global walls
+        const maxGlobalLabelsPerSide = 5; // Show more global walls (was 4)
         const globalClusterWidth = 20; // Wider buckets for global detection
-        
+
         // MAIN GLOBAL WALL configuration
         const mainGlobalWallThreshold = 100; // Minimum 100 BTC for MAIN GLOBAL WALLS
         const mainGlobalWallExitThreshold = 70; // Remove only below 70 BTC for sustained checks
-        const maxMainGlobalLabelsPerSide = 2; // MAIN GLOBAL WALLS max per side
+        const maxMainGlobalLabelsPerSide = 3; // MAIN GLOBAL WALLS max per side (was 2; show 3rd big wall)
         
         // Wall visual hierarchy configuration
         const majorWallThreshold = 150; // TIER 1: Major walls (>= 150 BTC)
@@ -941,42 +997,56 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           );
         });
         
-        // B. LOCAL MAIN LEVELS (near current price)
+        // B. LOCAL MAIN LEVELS (near current price, within 5%)
         const renderClusteredLevels = (clusters: any[], side: 'BID' | 'ASK') => {
-          // Filter clusters within label range
-          const labelRange = price * 0.03; // 3% range for labels
-          const clustersInRange = clusters.filter(cluster => 
+          const labelRange = price * localLabelRangePct;
+          const clustersInRange = clusters.filter(cluster =>
             Math.abs(cluster.price - price) <= labelRange
           );
-          
-          // Filter out tiny clusters - minimum 3 BTC for local labels (prevent 0.0 BTC labels)
           const meaningfulClusters = clustersInRange.filter(cluster => cluster.size >= 3);
-          
-          // Take top clusters by size
           const topClusters = meaningfulClusters.slice(0, maxLocalLabelsPerSide);
-          
+
           topClusters.forEach((cluster) => {
-            // Label with exact price of largest level and total clustered liquidity
             const label = `${side} ${cluster.price.toFixed(1)} · ${cluster.size.toFixed(1)} BTC`;
-            
-            // Visual properties based on clustered size and persistence
-            const persistenceOpacity = 0.4 + (cluster.persistence * 0.6); // 40%-100% based on persistence
-            const lineWidth = cluster.size >= 20 ? 3 : cluster.size >= 10 ? 2.5 : 2; // Thicker lines for larger clusters
+            const persistenceOpacity = 0.4 + (cluster.persistence * 0.6);
+            const lineWidth = cluster.size >= 20 ? 3 : cluster.size >= 10 ? 2.5 : 2;
             const baseColor = side === 'BID' ? '34, 197, 94' : '239, 68, 68';
-            
             pushEntry(
-              cluster.price,                    // Exact price of largest level in cluster
-              2,                               // Medium priority for local levels
+              cluster.price,
+              2,
               label,
               side,
               `rgba(${baseColor}, ${persistenceOpacity.toFixed(2)})`,
               LineStyle.Solid,
               lineWidth
             );
-            
-            if (DEBUG_ENABLED && false) { // Disabled by default
-              console.debug(`[Bookmap Local] ${label} - Min: 3 BTC - No 0.0 BTC labels - Levels: ${cluster.originalLevels.length} - Largest: ${cluster.largestLevel.size.toFixed(1)}@${cluster.largestLevel.price.toFixed(1)} - Persistence: ${cluster.persistence.toFixed(2)}`);
-            }
+          });
+        };
+
+        // B2. STRUCTURAL LEVELS (5%–12% from spot, 15+ BTC; intermediate walls so bids below don’t disappear)
+        const renderStructuralLevels = (clusters: any[], side: 'BID' | 'ASK') => {
+          const minDist = price * structuralRangeMinPct;
+          const maxDist = price * structuralRangeMaxPct;
+          const inStructuralBand = clusters.filter(cluster => {
+            const dist = Math.abs(cluster.price - price);
+            return dist > minDist && dist <= maxDist && cluster.size >= structuralMinSizeBtc && cluster.size < globalWallThreshold;
+          });
+          const topStructural = inStructuralBand.slice(0, maxStructuralLabelsPerSide);
+
+          topStructural.forEach((cluster) => {
+            const label = `${side} ${cluster.price.toFixed(0)} · ${cluster.size.toFixed(1)} BTC`;
+            const opacity = 0.5 + (cluster.persistence * 0.35);
+            const lineWidth = cluster.size >= 30 ? 2.5 : 2;
+            const baseColor = side === 'BID' ? '34, 197, 94' : '239, 68, 68';
+            pushEntry(
+              cluster.price,
+              2,
+              label,
+              side,
+              `rgba(${baseColor}, ${opacity.toFixed(2)})`,
+              LineStyle.Solid,
+              lineWidth
+            );
           });
         };
         
@@ -1075,10 +1145,13 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           });
         };
         
-        // Render clustered bid and ask levels
+        // Render clustered bid and ask levels (local near spot)
         renderClusteredLevels(clusteredBids, 'BID');
         renderClusteredLevels(clusteredAsks, 'ASK');
-        
+        // Render structural intermediate levels (5%–12% from spot, 15+ BTC)
+        renderStructuralLevels(clusteredBids, 'BID');
+        renderStructuralLevels(clusteredAsks, 'ASK');
+
         // Render MAIN GLOBAL WALLS (persistent 100+ BTC walls)
         renderMainGlobalWalls(mainBidWalls, 'BID');
         renderMainGlobalWalls(mainAskWalls, 'ASK');
@@ -1264,33 +1337,24 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   }
 
   const isLive = !!ticker && !tickerError;
-  const modes: MapMode[] = ["LEVELS", "GAMMA", "CASCADE", "SQUEEZE", "HEATMAP"];
+  const layerToMode: Record<LayerGroup, MapMode> = { levels: "LEVELS", gamma: "GAMMA", cascade: "CASCADE", squeeze: "SQUEEZE", heatmap: "HEATMAP" };
+  const activeLayers = {
+    levels: activePanels.has("LEVELS"),
+    gamma: activePanels.has("GAMMA"),
+    cascade: activePanels.has("CASCADE"),
+    squeeze: activePanels.has("SQUEEZE"),
+    heatmap: activePanels.has("HEATMAP"),
+  };
 
   return (
     <div className="flex-1 w-full h-full flex flex-col relative">
-      <div className="flex items-center gap-1 px-2 py-1 bg-terminal-panel border border-terminal-border border-b-0 shrink-0" data-testid="toggle-map-mode">
-        {modes.map(mode => (
-          <TooltipWrapper key={mode} concept={mode}>
-            <button
-              onClick={() => togglePanel(mode)}
-              className={cn(
-                "px-3 py-1 text-[10px] font-bold font-mono uppercase tracking-wider rounded-sm transition-all",
-                activePanels.has(mode)
-                  ? "bg-terminal-accent/20 border border-terminal-accent text-white"
-                  : "border border-transparent text-white/40 hover:text-white/60 hover:bg-white/[0.03]"
-              )}
-              data-testid={`button-mode-${mode.toLowerCase()}`}
-            >
-              {mode}
-            </button>
-          </TooltipWrapper>
-        ))}
-        <div className="flex-1" />
-        <div className="flex items-center gap-1">
-          <button data-testid="button-fit-levels" onClick={() => { setSelectedScenario(null); fitLevels(); }} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/10 border-terminal-accent/30 text-terminal-accent hover:bg-terminal-accent/20">FIT LEVELS</button>
-          <button data-testid="button-reset-chart" onClick={() => { setSelectedScenario(null); resetScale(); }} className="px-1.5 py-0.5 text-[8px] font-bold font-mono border rounded-sm uppercase bg-terminal-accent/20 border-terminal-accent text-white hover:bg-terminal-accent/40">RESET</button>
-        </div>
-      </div>
+      <LayerGroupControls
+        activeLayers={activeLayers}
+        onLayerToggle={(layer) => togglePanel(layerToMode[layer])}
+        onFitLevels={() => { setSelectedScenario(null); fitLevels(); }}
+        onResetChart={() => { setSelectedScenario(null); resetScale(); }}
+        dataTestId="toggle-map-mode"
+      />
       <TerminalPanel className="flex-1 w-full border border-terminal-border relative" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
         <div className="absolute inset-0 pointer-events-none z-10">
           <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start">

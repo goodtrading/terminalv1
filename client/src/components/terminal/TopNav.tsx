@@ -18,7 +18,7 @@ export function TopNav() {
       <div className="flex items-center h-full">
         <div className="flex items-center mr-8">
           <span className="text-terminal-accent font-bold text-lg tracking-wider mr-2">█</span>
-          <span className="font-bold text-white tracking-widest text-sm">QUANTUM_SYS <span className="text-terminal-muted font-normal text-xs ml-1">v1.0</span></span>
+          <span className="font-bold text-white tracking-widest text-sm">GOODTRADING <span className="text-terminal-muted font-normal text-xs ml-1">v1.0</span></span>
         </div>
         
         <div className="flex space-x-1 h-full pt-1">
