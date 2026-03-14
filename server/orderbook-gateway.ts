@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
-import { getOrderBook } from "./services/orderbookService";
+import { getOrderBook, isBinanceHealthy } from "./services/orderbookService";
 import { getKrakenOrderBook } from "./kraken-gateway";
 
 const orderBookEntrySchema = z.object({
@@ -95,7 +95,9 @@ export type LiquidityHeatmap = z.infer<typeof liquidityHeatmapSchema>;
 
 let cachedHeatmap: LiquidityHeatmap | null = null;
 let lastFetchTime = 0;
+let lastActiveOrderbookSource: string | null = null;
 const CACHE_TTL_MS = 15000;
+const BINANCE_SOURCES = ["Binance-WS", "Binance"];
 
 interface HistoricalBin {
   totalQuantity: number;
@@ -192,6 +194,9 @@ async function fetchOrderBook(symbol: string = "BTCUSDT", limit: number = 500): 
     try {
       const book = await provider.fetch();
       console.log(`[OrderBook] ${provider.name}: ${book.bids.length} bids, ${book.asks.length} asks`);
+      if (provider.name === "Coinbase") {
+        console.log("[Orderbook] Coinbase connected (fallback)");
+      }
       return book;
     } catch (e: any) {
       lastError = `${provider.name}: ${e.message}`;
@@ -238,6 +243,28 @@ export class OrderBookGateway {
     gammaContext?: { gammaFlip: number | null; gammaMagnets: number[] }
   ): Promise<LiquidityHeatmap> {
     const now = Date.now();
+    const cachedSource = cachedHeatmap?.heatmapSummary?.source ?? null;
+    const cacheFromFallback = cachedSource && !BINANCE_SOURCES.includes(cachedSource);
+
+    // Reclaim: if cache is from fallback and Binance is now healthy, bypass cache and use Binance
+    if (cachedHeatmap && now - lastFetchTime < CACHE_TTL_MS && cacheFromFallback && isBinanceHealthy()) {
+      const ob = getOrderBook();
+      if (ob.bids.length >= 10 || ob.asks.length >= 10) {
+        console.log("[Orderbook] switching to Binance");
+        const book: OrderBook = {
+          bids: ob.bids.map((b) => ({ price: b.price, quantity: b.size })),
+          asks: ob.asks.map((a) => ({ price: a.price, quantity: a.size })),
+          timestamp: ob.timestamp ?? now,
+          source: "Binance-WS",
+        };
+        const result = this.computeHeatmap(book, spotPrice, gammaContext);
+        cachedHeatmap = result;
+        lastFetchTime = now;
+        lastActiveOrderbookSource = "Binance-WS";
+        return result;
+      }
+    }
+
     if (cachedHeatmap && now - lastFetchTime < CACHE_TTL_MS) {
       return cachedHeatmap;
     }
@@ -246,17 +273,27 @@ export class OrderBookGateway {
       const ob = getOrderBook();
       let book: OrderBook;
       if (ob.bids.length > 0 || ob.asks.length > 0) {
+        const wasFallback = lastActiveOrderbookSource && !BINANCE_SOURCES.includes(lastActiveOrderbookSource);
+        if (wasFallback) {
+          console.log("[Orderbook] switching to Binance");
+        }
         book = {
           bids: ob.bids.map((b) => ({ price: b.price, quantity: b.size })),
           asks: ob.asks.map((a) => ({ price: a.price, quantity: a.size })),
           timestamp: ob.timestamp ?? now,
           source: "Binance-WS",
         };
+        lastActiveOrderbookSource = "Binance-WS";
       } else {
         if (process.env.NODE_ENV === "production") {
           console.warn("[OrderBook] WS empty, falling back to REST (bids:", ob.bids.length, "asks:", ob.asks.length, ")");
         }
         book = await fetchOrderBook("BTCUSDT", 500);
+        const isFallback = !BINANCE_SOURCES.includes(book.source);
+        if (isFallback) {
+          console.log(`[Orderbook] activating ${book.source} fallback`);
+        }
+        lastActiveOrderbookSource = book.source;
       }
       const result = this.computeHeatmap(book, spotPrice, gammaContext);
       cachedHeatmap = result;
