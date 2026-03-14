@@ -94,10 +94,28 @@ export type LiquidityHeatmap = z.infer<typeof liquidityHeatmapSchema>;
 
 let cachedHeatmap: LiquidityHeatmap | null = null;
 let lastFetchTime = 0;
+let lastBinanceSuccessTs = 0;
 let lastActiveOrderbookSource: string | null = null;
-let lastLoggedOrderbookState: "binance" | "none" | null = null;
+let lastLoggedOrderbookState: "binance" | "frozen" | "none" | null = null;
 const CACHE_TTL_MS = 15000;
+const FROZEN_TTL_MS = 20000; // Keep last valid snapshot for 20s after disconnect
 const BINANCE_SOURCES = ["Binance-WS", "Binance"];
+
+export function getOrderbookState(): { orderbookLive: boolean; orderbookFrozen: boolean; lastOrderbookUpdateTs: number } {
+  const now = Date.now();
+  const cachedSource = cachedHeatmap?.heatmapSummary?.source ?? null;
+  const hasBinanceCache = cachedSource && BINANCE_SOURCES.includes(cachedSource);
+  const snapshotAge = now - lastBinanceSuccessTs;
+  const binanceHealthy = isBinanceHealthy();
+  const withinFrozenTtl = lastBinanceSuccessTs > 0 && snapshotAge < FROZEN_TTL_MS;
+  const orderbookLive = binanceHealthy;
+  const orderbookFrozen = hasBinanceCache && !binanceHealthy && withinFrozenTtl;
+  return {
+    orderbookLive,
+    orderbookFrozen,
+    lastOrderbookUpdateTs: lastBinanceSuccessTs,
+  };
+}
 
 interface HistoricalBin {
   totalQuantity: number;
@@ -183,6 +201,7 @@ export class OrderBookGateway {
     const cacheIsBinance = cachedSource && BINANCE_SOURCES.includes(cachedSource);
 
     if (cachedHeatmap && now - lastFetchTime < CACHE_TTL_MS && cacheIsBinance) {
+      lastBinanceSuccessTs = Math.max(lastBinanceSuccessTs, lastFetchTime);
       return cachedHeatmap;
     }
 
@@ -214,8 +233,22 @@ export class OrderBookGateway {
       const result = this.computeHeatmap(book, spotPrice, gammaContext);
       cachedHeatmap = result;
       lastFetchTime = now;
+      lastBinanceSuccessTs = now;
       return result;
     } catch (e: any) {
+      const cachedSourceNow = cachedHeatmap?.heatmapSummary?.source ?? null;
+      const hasBinanceCache = cachedSourceNow && BINANCE_SOURCES.includes(cachedSourceNow);
+      const snapshotAge = now - lastBinanceSuccessTs;
+      const withinFrozenTtl = lastBinanceSuccessTs > 0 && snapshotAge < FROZEN_TTL_MS;
+
+      if (hasBinanceCache && withinFrozenTtl) {
+        if (lastLoggedOrderbookState !== "frozen") {
+          lastLoggedOrderbookState = "frozen";
+          console.log("[Orderbook] keeping last snapshot (frozen mode)");
+        }
+        return cachedHeatmap!;
+      }
+
       if (lastLoggedOrderbookState !== "none") {
         lastLoggedOrderbookState = "none";
         console.log("[Orderbook] orderbook source = none (degraded)");
@@ -223,6 +256,7 @@ export class OrderBookGateway {
       lastActiveOrderbookSource = null;
       cachedHeatmap = null;
       lastFetchTime = 0;
+      lastBinanceSuccessTs = 0;
       return this.fallbackHeatmap(spotPrice);
     }
   }

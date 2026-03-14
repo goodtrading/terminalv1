@@ -140,7 +140,10 @@ function LiquidityMapPanel() {
   const lines: string[] = heatmap?.liquidityMapLines || [];
   const pressure = heatmap?.liquidityPressure || "BALANCED";
   const orderbookSource = (terminalState as any)?.orderbookSource ?? heatmap?.heatmapSummary?.source ?? "none";
-  const isOrderbookUnavailable = orderbookSource === "none" || !orderbookSource;
+  const orderbookFrozen = (terminalState as any)?.orderbookFrozen ?? false;
+  const lastOrderbookTs = (terminalState as any)?.lastOrderbookUpdateTs ?? 0;
+  const isOrderbookUnavailable = (orderbookSource === "none" || !orderbookSource) && !orderbookFrozen;
+  const snapshotAgeSec = lastOrderbookTs > 0 ? Math.floor((Date.now() - lastOrderbookTs) / 1000) : null;
   const pressureColor = pressure === "BID_HEAVY" ? "green" : pressure === "ASK_HEAVY" ? "red" : "yellow";
 
   // Use new vacuum engine data
@@ -184,10 +187,13 @@ function LiquidityMapPanel() {
 
   return (
     <div className="flex flex-col gap-2">
+      {orderbookFrozen && (
+        <StatusValue label="Status" value="FROZEN" color="orange" />
+      )}
       <StatusValue
         label="Orderbook"
-        value={isOrderbookUnavailable ? "Binance orderbook unavailable" : orderbookSource}
-        color={isOrderbookUnavailable ? "orange" : "gray"}
+        value={isOrderbookUnavailable ? "Binance orderbook unavailable" : orderbookFrozen ? `BINANCE (last snapshot${snapshotAgeSec != null ? `, ${snapshotAgeSec}s` : ""})` : orderbookSource}
+        color={isOrderbookUnavailable ? "orange" : orderbookFrozen ? "orange" : "gray"}
       />
       <StatusValue label="Pressure" value={pressure.replace(/_/g, " ")} color={pressureColor} />
       <StatusValue label="Vacuum Risk" value={vacuumRisk} color={vacuumRiskColor} />

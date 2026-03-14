@@ -28,7 +28,8 @@ let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
 let ws: WebSocket | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let binanceConnected = false;
-const RECONNECT_MS = 5000;
+let reconnectAttempt = 0;
+const RECONNECT_DELAYS_MS = [2000, 5000, 10000];
 const MIN_LEVELS_FOR_HEALTHY = 10;
 
 function parseLevels(arr: [string, string][]): OrderBookLevel[] {
@@ -107,7 +108,13 @@ function connect(): void {
   }
 
   ws.on("open", () => {
-    console.log("[Orderbook] Binance WebSocket connected");
+    const wasReconnecting = reconnectAttempt > 0;
+    reconnectAttempt = 0;
+    if (wasReconnecting) {
+      console.log("[Orderbook] Binance reconnected, restoring live orderbook");
+    } else {
+      console.log("[Orderbook] Binance connected");
+    }
   });
 
   ws.on("message", (data: Buffer | string) => {
@@ -170,10 +177,13 @@ function connect(): void {
 
 function scheduleReconnect(): void {
   if (reconnectTimeout) return;
+  const delay = RECONNECT_DELAYS_MS[Math.min(reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];
+  reconnectAttempt++;
+  console.log("[Orderbook] reconnecting Binance...");
   reconnectTimeout = setTimeout(() => {
     reconnectTimeout = null;
     connect();
-  }, RECONNECT_MS);
+  }, delay);
 }
 
 connect();

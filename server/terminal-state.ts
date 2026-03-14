@@ -2,7 +2,7 @@ import { z } from "zod";
 import { storage } from "./storage";
 import { MarketDataGateway, tickerSchema } from "./market-gateway";
 import { DeribitOptionsGateway } from "./deribit-gateway";
-import { OrderBookGateway } from "./orderbook-gateway";
+import { OrderBookGateway, getOrderbookState } from "./orderbook-gateway";
 import { runLiquiditySweepEngine } from "./lib/liquiditySweepEngine";
 import { computeGammaAccelerationZones } from "./lib/gammaAccelerationZones";
 import { runAbsorptionEngine, buildInactiveAbsorptionSignal, normalizeAbsorptionSignal, type AbsorptionSignal } from "./lib/absorptionEngine";
@@ -36,6 +36,9 @@ export const terminalStateSchema = z.object({
   isBinanceOrderbookHealthy: z.boolean().optional(),
   isDeribitOptionsHealthy: z.boolean().optional(),
   isPriceFallbackActive: z.boolean().optional(),
+  orderbookLive: z.boolean().optional(),
+  orderbookFrozen: z.boolean().optional(),
+  lastOrderbookUpdateTs: z.number().optional(),
 });
 
 export type TerminalState = z.infer<typeof terminalStateSchema>;
@@ -265,6 +268,7 @@ export async function getTerminalState(): Promise<TerminalState> {
   }
 
   const heatmapSource = (liveHeatmap as any)?.heatmapSummary?.source;
+  const obState = getOrderbookState();
   const feedState = computeFeedState({
     tickerSource: ticker?.source,
     heatmapSource: heatmapSource && heatmapSource !== "UNAVAILABLE" ? heatmapSource : undefined,
@@ -274,7 +278,7 @@ export async function getTerminalState(): Promise<TerminalState> {
     hasHeatmapData: !!liveHeatmap?.liquidityHeatZones?.length,
   });
   const priceSource = feedState.priceSource === "binance" ? "binance" : feedState.priceSource === "coinbase" ? "coinbase" : (ticker?.source ?? "none");
-  const orderbookSource = feedState.orderbookSource === "binance" ? "Binance" : feedState.orderbookSource === "coinbase" ? "Coinbase" : (heatmapSource ?? "none");
+  const orderbookSource = (feedState.orderbookSource === "binance" || obState.orderbookFrozen) ? "Binance" : (heatmapSource === "UNAVAILABLE" ? "none" : (heatmapSource ?? "none"));
   const optionsSourceOut = feedState.optionsSource === "deribit" ? "deribit" : "none";
   if (process.env.NODE_ENV === "development") {
     console.log("[TerminalState feed] price=" + priceSource + " orderbook=" + orderbookSource + " options=" + optionsSourceOut);
@@ -383,5 +387,8 @@ export async function getTerminalState(): Promise<TerminalState> {
     isBinanceOrderbookHealthy: feedState.isBinanceOrderbookHealthy,
     isDeribitOptionsHealthy: feedState.isDeribitOptionsHealthy,
     isPriceFallbackActive: feedState.isPriceFallbackActive,
+    orderbookLive: obState.orderbookLive,
+    orderbookFrozen: obState.orderbookFrozen,
+    lastOrderbookUpdateTs: obState.lastOrderbookUpdateTs,
   };
 }
