@@ -4,7 +4,7 @@
  */
 
 export type PriceSource = "binance" | "coinbase" | "none";
-export type OrderbookSource = "binance" | "coinbase" | "none";
+export type OrderbookSource = "binance" | "none";
 export type OptionsSource = "deribit" | "none";
 
 export interface FeedState {
@@ -14,15 +14,9 @@ export interface FeedState {
   isBinancePriceHealthy: boolean;
   isCoinbasePriceHealthy: boolean;
   isBinanceOrderbookHealthy: boolean;
-  isCoinbaseOrderbookHealthy: boolean;
   isDeribitOptionsHealthy: boolean;
-  isOrderbookFallbackActive: boolean;
   isPriceFallbackActive: boolean;
 }
-
-let lastLoggedOrderbook = "";
-let lastLoggedPrice = "";
-const FEED_LOG_THROTTLE_MS = 15000;
 
 function normalizeSource(s: string | undefined): string {
   if (!s) return "none";
@@ -62,32 +56,13 @@ export function computeFeedState(params: {
   else if (isCoinbasePriceHealthy) priceSource = "coinbase";
   const isPriceFallbackActive = priceSource === "coinbase" || (priceNorm !== "none" && priceNorm !== "binance");
 
-  // Orderbook: reflect actual heatmap source. Binance primary, Coinbase fallback. Never lock fallback.
+  // Orderbook: Binance only. No Coinbase fallback.
   const obNorm = normalizeSource(heatmapSource);
-  const isCoinbaseOrderbookHealthy = hasHeatmapData && obNorm === "coinbase";
-  const orderbookSource: OrderbookSource = hasHeatmapData ? (obNorm === "binance" ? "binance" : obNorm === "coinbase" ? "coinbase" : "none") : "none";
-  const isOrderbookFallbackActive = orderbookSource === "coinbase";
+  const orderbookSource: OrderbookSource = hasHeatmapData && obNorm === "binance" ? "binance" : "none";
 
   // Options: Deribit only
   const isDeribitOptionsHealthy = optionsStrikeCount > 0;
   const optionsSource: OptionsSource = isDeribitOptionsHealthy ? "deribit" : "none";
-
-  // Throttled logs for transitions
-  const now = Date.now();
-  const obKey = `${orderbookSource}-${isOrderbookFallbackActive}`;
-  if (obKey !== lastLoggedOrderbook) {
-    lastLoggedOrderbook = obKey;
-    if (orderbookSource === "binance") {
-      console.log("[FeedState] Binance orderbook recovered, restoring Binance as primary");
-    } else if (isOrderbookFallbackActive) {
-      console.log("[FeedState] Binance orderbook unhealthy, activating Coinbase fallback");
-    }
-  }
-
-  const priceKey = `${priceSource}-${isPriceFallbackActive}`;
-  if (priceKey !== lastLoggedPrice) {
-    lastLoggedPrice = priceKey;
-  }
 
   return {
     priceSource,
@@ -96,9 +71,7 @@ export function computeFeedState(params: {
     isBinancePriceHealthy,
     isCoinbasePriceHealthy,
     isBinanceOrderbookHealthy,
-    isCoinbaseOrderbookHealthy,
     isDeribitOptionsHealthy,
-    isOrderbookFallbackActive,
     isPriceFallbackActive,
   };
 }

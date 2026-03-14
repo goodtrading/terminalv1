@@ -139,8 +139,8 @@ function LiquidityMapPanel() {
   const heatmap = (positioning as any)?.liquidityHeatmap;
   const lines: string[] = heatmap?.liquidityMapLines || [];
   const pressure = heatmap?.liquidityPressure || "BALANCED";
-  const orderbookSource = (terminalState as any)?.orderbookSource || heatmap?.heatmapSummary?.source || "--";
-  const isOrderbookFallback = (terminalState as any)?.isOrderbookFallbackActive ?? false;
+  const orderbookSource = (terminalState as any)?.orderbookSource ?? heatmap?.heatmapSummary?.source ?? "none";
+  const isOrderbookUnavailable = orderbookSource === "none" || !orderbookSource;
   const pressureColor = pressure === "BID_HEAVY" ? "green" : pressure === "ASK_HEAVY" ? "red" : "yellow";
 
   // Use new vacuum engine data
@@ -186,8 +186,8 @@ function LiquidityMapPanel() {
     <div className="flex flex-col gap-2">
       <StatusValue
         label="Orderbook"
-        value={isOrderbookFallback ? `${orderbookSource} (fallback)` : orderbookSource}
-        color={isOrderbookFallback ? "yellow" : "gray"}
+        value={isOrderbookUnavailable ? "Binance orderbook unavailable" : orderbookSource}
+        color={isOrderbookUnavailable ? "orange" : "gray"}
       />
       <StatusValue label="Pressure" value={pressure.replace(/_/g, " ")} color={pressureColor} />
       <StatusValue label="Vacuum Risk" value={vacuumRisk} color={vacuumRiskColor} />

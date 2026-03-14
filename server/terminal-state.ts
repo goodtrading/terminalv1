@@ -34,9 +34,7 @@ export const terminalStateSchema = z.object({
   isBinancePriceHealthy: z.boolean().optional(),
   isCoinbasePriceHealthy: z.boolean().optional(),
   isBinanceOrderbookHealthy: z.boolean().optional(),
-  isCoinbaseOrderbookHealthy: z.boolean().optional(),
   isDeribitOptionsHealthy: z.boolean().optional(),
-  isOrderbookFallbackActive: z.boolean().optional(),
   isPriceFallbackActive: z.boolean().optional(),
 });
 
@@ -279,7 +277,7 @@ export async function getTerminalState(): Promise<TerminalState> {
   const orderbookSource = feedState.orderbookSource === "binance" ? "Binance" : feedState.orderbookSource === "coinbase" ? "Coinbase" : (heatmapSource ?? "none");
   const optionsSourceOut = feedState.optionsSource === "deribit" ? "deribit" : "none";
   if (process.env.NODE_ENV === "development") {
-    console.log("[TerminalState feed] price=" + priceSource + " orderbook=" + orderbookSource + " options=" + optionsSourceOut + " obFallback=" + feedState.isOrderbookFallbackActive);
+    console.log("[TerminalState feed] price=" + priceSource + " orderbook=" + orderbookSource + " options=" + optionsSourceOut);
   }
   if (enrichedPositioning?.liquidityHeatmap) {
     const hm = enrichedPositioning.liquidityHeatmap as { liquidityHeatZones?: unknown[]; gammaAccelerationZones?: unknown[] };
@@ -378,14 +376,12 @@ export async function getTerminalState(): Promise<TerminalState> {
     timelineSummary,
     coherence,
     priceSource: feedState.priceSource,
-    orderbookSource: feedState.orderbookSource === "binance" ? "Binance" : feedState.orderbookSource === "coinbase" ? "Coinbase" : "none",
+    orderbookSource: feedState.orderbookSource === "binance" ? "Binance" : "none",
     optionsSource: optionsSourceOut,
     isBinancePriceHealthy: feedState.isBinancePriceHealthy,
     isCoinbasePriceHealthy: feedState.isCoinbasePriceHealthy,
     isBinanceOrderbookHealthy: feedState.isBinanceOrderbookHealthy,
-    isCoinbaseOrderbookHealthy: feedState.isCoinbaseOrderbookHealthy,
     isDeribitOptionsHealthy: feedState.isDeribitOptionsHealthy,
-    isOrderbookFallbackActive: feedState.isOrderbookFallbackActive,
     isPriceFallbackActive: feedState.isPriceFallbackActive,
   };
 }

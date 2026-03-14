@@ -1588,10 +1588,9 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
                   <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", isLive ? "bg-terminal-positive" : "bg-terminal-negative")} />
                   <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? (() => {
                     const obSource = (terminalState as any)?.orderbookSource;
-                    const isObFallback = (terminalState as any)?.isOrderbookFallbackActive;
-                    const isBinance = obSource && obSource.includes("Binance");
+                    const isBinance = obSource && obSource === "Binance";
                     if (isBinance) return "LIVE (BINANCE)";
-                    if (isObFallback && obSource) return `FALLBACK (${String(obSource).toUpperCase()})`;
+                    if (obSource === "none" || !obSource) return "ORDERBOOK UNAVAILABLE";
                     return `Live (${ticker?.source ?? "—"})`;
                   })() : 'Live Feed Offline'}</span>
                 </div>
@@ -1600,13 +1599,13 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
                 {(() => {
                   const ts = terminalState as any;
                   const priceSrc = ts?.priceSource || ticker?.source || "—";
-                  const obSrc = ts?.orderbookSource || "—";
+                  const obSrc = ts?.orderbookSource ?? "—";
                   const optSrc = ts?.optionsSource || "deribit";
-                  const obFallback = ts?.isOrderbookFallbackActive;
+                  const obUnavailable = obSrc === "none" || !obSrc;
                   return (
                     <>
                       <span>Price: {String(priceSrc).toUpperCase()}</span>
-                      <span className={obFallback ? "text-amber-400/80" : ""}>Orderbook: {String(obSrc).toUpperCase()}{obFallback ? " (fallback)" : ""}</span>
+                      <span className={obUnavailable ? "text-amber-400/80" : ""}>Orderbook: {obUnavailable ? "UNAVAILABLE" : String(obSrc).toUpperCase()}</span>
                       <span>Options: {String(optSrc).toUpperCase()}</span>
                     </>
                   );

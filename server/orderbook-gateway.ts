@@ -95,6 +95,7 @@ export type LiquidityHeatmap = z.infer<typeof liquidityHeatmapSchema>;
 let cachedHeatmap: LiquidityHeatmap | null = null;
 let lastFetchTime = 0;
 let lastActiveOrderbookSource: string | null = null;
+let lastLoggedOrderbookState: "binance" | "none" | null = null;
 const CACHE_TTL_MS = 15000;
 const BINANCE_SOURCES = ["Binance-WS", "Binance"];
 
@@ -118,89 +119,28 @@ async function fetchWithTimeout(url: string, timeout = 5000): Promise<Response> 
   }
 }
 
-/** Orderbook fallback: Binance primary, Coinbase fallback only (per feed architecture). */
+/** Binance only. No fallback to Coinbase. */
 async function fetchOrderBook(symbol: string = "BTCUSDT", limit: number = 500): Promise<OrderBook> {
-  const providers = [
-    {
-      name: "Binance",
-      fetch: async () => {
-        const mirrors = ["https://api1.binance.com", "https://api2.binance.com", "https://api.binance.com"];
-        for (const mirror of mirrors) {
-          try {
-            const res = await fetchWithTimeout(`${mirror}/api/v3/depth?symbol=${symbol}&limit=${limit}`);
-            if (res.status === 451) throw new Error("GEO_BLOCKED");
-            if (res.ok) {
-              const data = await res.json();
-              return {
-                bids: data.bids.map((b: string[]) => ({ price: parseFloat(b[0]), quantity: parseFloat(b[1]) })),
-                asks: data.asks.map((a: string[]) => ({ price: parseFloat(a[0]), quantity: parseFloat(a[1]) })),
-                timestamp: Date.now(),
-                source: "Binance"
-              };
-            }
-          } catch (e: any) {
-            if (e.message === "GEO_BLOCKED") throw e;
-          }
-        }
-        throw new Error("Binance mirrors exhausted");
-      }
-    },
-    {
-      name: "Coinbase",
-      fetch: async () => {
-        const cbSymbol = symbol.replace("USDT", "-USDT");
-        const res = await fetchWithTimeout(`https://api.exchange.coinbase.com/products/${cbSymbol}/book?level=2`, 8000);
-        if (!res.ok) throw new Error(`Coinbase ${res.status}`);
+  const mirrors = ["https://api1.binance.com", "https://api2.binance.com", "https://api.binance.com"];
+  for (const mirror of mirrors) {
+    try {
+      const res = await fetchWithTimeout(`${mirror}/api/v3/depth?symbol=${symbol}&limit=${limit}`);
+      if (res.status === 451) throw new Error("GEO_BLOCKED");
+      if (res.ok) {
         const data = await res.json();
         return {
-          bids: (data.bids || []).slice(0, limit).map((b: string[]) => ({ price: parseFloat(b[0]), quantity: parseFloat(b[1]) })),
-          asks: (data.asks || []).slice(0, limit).map((a: string[]) => ({ price: parseFloat(a[0]), quantity: parseFloat(a[1]) })),
+          bids: data.bids.map((b: string[]) => ({ price: parseFloat(b[0]), quantity: parseFloat(b[1]) })),
+          asks: data.asks.map((a: string[]) => ({ price: parseFloat(a[0]), quantity: parseFloat(a[1]) })),
           timestamp: Date.now(),
-          source: "Coinbase"
+          source: "Binance"
         };
       }
-    }
-  ];
-
-  let lastError = "";
-  for (const provider of providers) {
-    try {
-      const book = await provider.fetch();
-      console.log(`[OrderBook] ${provider.name}: ${book.bids.length} bids, ${book.asks.length} asks`);
-      if (provider.name === "Coinbase") {
-        console.log("[Orderbook] Coinbase connected (fallback)");
-      }
-      return book;
     } catch (e: any) {
-      lastError = `${provider.name}: ${e.message}`;
-      console.warn(`[OrderBook] ${lastError}`);
+      if (e.message === "GEO_BLOCKED") throw e;
     }
   }
-  throw new Error(`Order book unavailable: ${lastError}`);
+  throw new Error("Binance orderbook unavailable");
 }
-
-/** Reconnect watchdog: periodically invalidate fallback cache when Binance recovers. */
-const WATCHDOG_MS = 10000;
-const FEED_LOG_THROTTLE_MS = 15000;
-let watchdogLastLog = 0;
-setInterval(() => {
-  const cached = cachedHeatmap;
-  const src = cached?.heatmapSummary?.source;
-  const fromFallback = src && !BINANCE_SOURCES.includes(src);
-  if (fromFallback && isBinanceHealthy()) {
-    const ob = getOrderBook();
-    if (ob.bids.length >= 10 || ob.asks.length >= 10) {
-      cachedHeatmap = null;
-      lastFetchTime = 0;
-      lastActiveOrderbookSource = "Binance-WS";
-      const now = Date.now();
-      if (now - watchdogLastLog > FEED_LOG_THROTTLE_MS) {
-        watchdogLastLog = now;
-        console.log("[FeedState] Binance orderbook recovered, invalidating fallback cache");
-      }
-    }
-  }
-}, WATCHDOG_MS);
 
 function aggregateIntoBins(entries: OrderBookEntry[], spotPrice: number, binSize: number, range: number): Map<number, number> {
   const bins = new Map<number, number>();
@@ -240,64 +180,49 @@ export class OrderBookGateway {
   ): Promise<LiquidityHeatmap> {
     const now = Date.now();
     const cachedSource = cachedHeatmap?.heatmapSummary?.source ?? null;
-    const cacheFromFallback = cachedSource && !BINANCE_SOURCES.includes(cachedSource);
+    const cacheIsBinance = cachedSource && BINANCE_SOURCES.includes(cachedSource);
 
-    // Reclaim: if cache is from fallback and Binance is now healthy, bypass cache and use Binance
-    if (cachedHeatmap && now - lastFetchTime < CACHE_TTL_MS && cacheFromFallback && isBinanceHealthy()) {
-      const ob = getOrderBook();
-      if (ob.bids.length >= 10 || ob.asks.length >= 10) {
-        console.log("[Orderbook] switching to Binance");
-        const book: OrderBook = {
-          bids: ob.bids.map((b) => ({ price: b.price, quantity: b.size })),
-          asks: ob.asks.map((a) => ({ price: a.price, quantity: a.size })),
-          timestamp: ob.timestamp ?? now,
-          source: "Binance-WS",
-        };
-        const result = this.computeHeatmap(book, spotPrice, gammaContext);
-        cachedHeatmap = result;
-        lastFetchTime = now;
-        lastActiveOrderbookSource = "Binance-WS";
-        return result;
-      }
-    }
-
-    if (cachedHeatmap && now - lastFetchTime < CACHE_TTL_MS) {
+    if (cachedHeatmap && now - lastFetchTime < CACHE_TTL_MS && cacheIsBinance) {
       return cachedHeatmap;
     }
 
     try {
       const ob = getOrderBook();
       let book: OrderBook;
-      if (ob.bids.length > 0 || ob.asks.length > 0) {
-        const wasFallback = lastActiveOrderbookSource && !BINANCE_SOURCES.includes(lastActiveOrderbookSource);
-        if (wasFallback) {
-          console.log("[Orderbook] switching to Binance");
-        }
+      if (ob.bids.length >= 10 || ob.asks.length >= 10) {
         book = {
           bids: ob.bids.map((b) => ({ price: b.price, quantity: b.size })),
           asks: ob.asks.map((a) => ({ price: a.price, quantity: a.size })),
           timestamp: ob.timestamp ?? now,
           source: "Binance-WS",
         };
-        lastActiveOrderbookSource = "Binance-WS";
+        if (lastLoggedOrderbookState !== "binance") {
+          lastLoggedOrderbookState = "binance";
+          console.log("[Orderbook] orderbook source = binance");
+        }
       } else {
         if (process.env.NODE_ENV === "production") {
-          console.warn("[OrderBook] WS empty, falling back to REST (bids:", ob.bids.length, "asks:", ob.asks.length, ")");
+          console.warn("[OrderBook] WS empty, trying Binance REST");
         }
         book = await fetchOrderBook("BTCUSDT", 500);
-        const isFallback = !BINANCE_SOURCES.includes(book.source);
-        if (isFallback) {
-          console.log(`[Orderbook] activating ${book.source} fallback`);
+        if (lastLoggedOrderbookState !== "binance") {
+          lastLoggedOrderbookState = "binance";
+          console.log("[Orderbook] orderbook source = binance");
         }
-        lastActiveOrderbookSource = book.source;
       }
+      lastActiveOrderbookSource = book.source;
       const result = this.computeHeatmap(book, spotPrice, gammaContext);
       cachedHeatmap = result;
       lastFetchTime = now;
       return result;
     } catch (e: any) {
-      console.error(`[OrderBook] Heatmap computation failed: ${e.message}`);
-      if (cachedHeatmap) return cachedHeatmap;
+      if (lastLoggedOrderbookState !== "none") {
+        lastLoggedOrderbookState = "none";
+        console.log("[Orderbook] orderbook source = none (degraded)");
+      }
+      lastActiveOrderbookSource = null;
+      cachedHeatmap = null;
+      lastFetchTime = 0;
       return this.fallbackHeatmap(spotPrice);
     }
   }
