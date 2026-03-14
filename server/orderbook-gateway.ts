@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
 import { getOrderBook } from "./services/orderbookService";
+import { getKrakenOrderBook } from "./kraken-gateway";
 
 const orderBookEntrySchema = z.object({
   price: z.number(),
@@ -22,7 +23,8 @@ export const liquidityHeatZoneSchema = z.object({
   priceEnd: z.number(),
   side: z.enum(["BID", "ASK"]),
   intensity: z.number(),
-  totalQuantity: z.number()
+  totalQuantity: z.number(),
+  gammaWeightedLiquidity: z.number().optional(),
 });
 
 export const liquidityConfluenceZoneSchema = z.object({
@@ -58,6 +60,13 @@ export const vacuumStateSchema = z.object({
 
 const orderBookLevelSchema = z.object({ price: z.number(), size: z.number() });
 
+export const gammaAccelerationZoneSchema = z.object({
+  start: z.number(),
+  end: z.number(),
+  direction: z.enum(["UP", "DOWN"]),
+  score: z.number(),
+});
+
 export const liquidityHeatmapSchema = z.object({
   liquidityHeatZones: z.array(liquidityHeatZoneSchema),
   liquidityConfluenceZones: z.array(liquidityConfluenceZoneSchema),
@@ -77,6 +86,7 @@ export const liquidityHeatmapSchema = z.object({
   }),
   liquidityMapLines: z.array(z.string()),
   liquidityVacuum: vacuumStateSchema.optional(),
+  gammaAccelerationZones: z.array(gammaAccelerationZoneSchema).optional(),
 });
 
 export type LiquidityHeatZone = z.infer<typeof liquidityHeatZoneSchema>;
@@ -162,6 +172,18 @@ async function fetchOrderBook(symbol: string = "BTCUSDT", limit: number = 500): 
           source: "Coinbase"
         };
       }
+    },
+    {
+      name: "Kraken",
+      fetch: async () => {
+        const ob = await getKrakenOrderBook(symbol, limit);
+        return {
+          bids: ob.bids.map((b) => ({ price: b.price, quantity: b.size })),
+          asks: ob.asks.map((a) => ({ price: a.price, quantity: a.size })),
+          timestamp: ob.timestamp,
+          source: "Kraken"
+        };
+      }
     }
   ];
 
@@ -211,7 +233,10 @@ export class OrderBookGateway {
     return cachedHeatmap;
   }
 
-  static async getLiquidityHeatmap(spotPrice: number): Promise<LiquidityHeatmap> {
+  static async getLiquidityHeatmap(
+    spotPrice: number,
+    gammaContext?: { gammaFlip: number | null; gammaMagnets: number[] }
+  ): Promise<LiquidityHeatmap> {
     const now = Date.now();
     if (cachedHeatmap && now - lastFetchTime < CACHE_TTL_MS) {
       return cachedHeatmap;
@@ -228,9 +253,12 @@ export class OrderBookGateway {
           source: "Binance-WS",
         };
       } else {
+        if (process.env.NODE_ENV === "production") {
+          console.warn("[OrderBook] WS empty, falling back to REST (bids:", ob.bids.length, "asks:", ob.asks.length, ")");
+        }
         book = await fetchOrderBook("BTCUSDT", 500);
       }
-      const result = this.computeHeatmap(book, spotPrice);
+      const result = this.computeHeatmap(book, spotPrice, gammaContext);
       cachedHeatmap = result;
       lastFetchTime = now;
       return result;
@@ -241,9 +269,15 @@ export class OrderBookGateway {
     }
   }
 
-  private static computeHeatmap(book: OrderBook, spotPrice: number): LiquidityHeatmap {
+  private static computeHeatmap(
+    book: OrderBook,
+    spotPrice: number,
+    gammaContext?: { gammaFlip: number | null; gammaMagnets: number[] }
+  ): LiquidityHeatmap {
     const range = spotPrice * 0.03;
     const binSize = spotPrice > 50000 ? 250 : spotPrice > 10000 ? 100 : 50;
+    const gammaDecay = spotPrice * 0.01;
+    const GAMMA_FLIP_WEIGHT = 0.65;
 
     const bidBins = aggregateIntoBins(book.bids, spotPrice, binSize, range);
     const askBins = aggregateIntoBins(book.asks, spotPrice, binSize, range);
@@ -253,16 +287,44 @@ export class OrderBookGateway {
 
     const heatZones: LiquidityHeatZone[] = [];
 
+    const nearestMagnet = (midPrice: number): number | null => {
+      if (!gammaContext?.gammaMagnets?.length) return null;
+      return gammaContext.gammaMagnets.reduce((best, p) =>
+        Math.abs(p - midPrice) < Math.abs(best - midPrice) ? p : best
+      );
+    };
+
+    const gammaWeight = (midPrice: number, levelSize: number): number => {
+      if (!gammaContext) return levelSize;
+      let magnetInfluence = 0;
+      let flipInfluence = 0;
+      const magnet = nearestMagnet(midPrice);
+      if (magnet != null) {
+        const distMagnet = Math.abs(midPrice - magnet);
+        magnetInfluence = Math.exp(-distMagnet / gammaDecay);
+      }
+      if (gammaContext.gammaFlip != null) {
+        const distFlip = Math.abs(midPrice - gammaContext.gammaFlip);
+        flipInfluence = Math.exp(-distFlip / gammaDecay) * GAMMA_FLIP_WEIGHT;
+      }
+      const gammaInfluence = Math.max(magnetInfluence, flipInfluence);
+      if (gammaInfluence <= 0) return levelSize;
+      return levelSize * gammaInfluence;
+    };
+
     for (const [binKey, qty] of bidBins) {
       const intensity = qty / maxQty;
       if (intensity < 0.02) continue;
       computePersistence("BID", binKey, qty);
+      const mid = binKey + binSize / 2;
+      const gw = gammaWeight(mid, qty);
       heatZones.push({
         priceStart: binKey,
         priceEnd: binKey + binSize,
         side: "BID",
         intensity: Math.round(intensity * 100) / 100,
-        totalQuantity: Math.round(qty * 1000) / 1000
+        totalQuantity: Math.round(qty * 1000) / 1000,
+        ...(gammaContext ? { gammaWeightedLiquidity: Math.round(gw * 1000) / 1000 } : undefined),
       });
     }
 
@@ -270,12 +332,15 @@ export class OrderBookGateway {
       const intensity = qty / maxQty;
       if (intensity < 0.02) continue;
       computePersistence("ASK", binKey, qty);
+      const mid = binKey + binSize / 2;
+      const gw = gammaWeight(mid, qty);
       heatZones.push({
         priceStart: binKey,
         priceEnd: binKey + binSize,
         side: "ASK",
         intensity: Math.round(intensity * 100) / 100,
-        totalQuantity: Math.round(qty * 1000) / 1000
+        totalQuantity: Math.round(qty * 1000) / 1000,
+        ...(gammaContext ? { gammaWeightedLiquidity: Math.round(gw * 1000) / 1000 } : undefined),
       });
     }
 

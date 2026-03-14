@@ -172,6 +172,12 @@ const CONCEPTS: Record<string, ConceptEntry> = {
     interpretation: "BID bands (green) show resting demand, ASK bands (red) show resting supply. Brighter = larger liquidity.",
     tradingUse: "Use to identify where real liquidity sits. Stronger bands indicate deeper order book at that level.",
   },
+  "ABSORB": {
+    title: "ABSORPTION ZONES",
+    definition: "Areas where aggressive flow hit resting liquidity but price failed to continue (absorption).",
+    interpretation: "Sell absorption = buys absorbed at asks, no breakout. Buy absorption = sells absorbed at bids, no breakdown.",
+    tradingUse: "Use invalidation level to confirm failure of absorption; a clean break beyond the zone negates the signal.",
+  },
   "Vanna Exposure": {
     title: "VANNA EXPOSURE",
     definition: "Vanna measures how the delta of options changes when implied volatility changes.",
@@ -368,5 +374,17 @@ export function LearnHelper({ text }: { text: string }) {
   if (!learnMode) return null;
   return (
     <div className="text-[9px] text-white/30 italic leading-relaxed mt-1 pl-0.5">{text}</div>
+  );
+}
+
+/** Educational snippet shown below sidebar blocks when LEARN mode is on. */
+export function LearnExplanation({ text, icon = true }: { text: string; icon?: boolean }) {
+  const { learnMode } = useLearnMode();
+  if (!learnMode) return null;
+  return (
+    <div className="text-[9px] leading-snug mt-2 pt-2 border-t border-white/[0.06]" style={{ color: "#9ca3af" }}>
+      {icon && <span className="mr-1" aria-hidden>ℹ️</span>}
+      <span>{text}</span>
+    </div>
   );
 }

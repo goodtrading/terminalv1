@@ -47,6 +47,9 @@ export function useLayerGroupState(initialState: Partial<LayerGroupState> = {}) 
     cascade: false,
     squeeze: false,
     heatmap: false,
+    accel: true,
+    absorb: true,
+    gravity: false,
     ...initialState
   };
 

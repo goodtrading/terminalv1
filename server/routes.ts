@@ -23,6 +23,9 @@ initializeFullDepth().catch(console.error);
 
 // Import the service to start the WebSocket connection
 import "./services/orderbookService";
+import { startOptionsRefreshInterval } from "./options-engine";
+
+startOptionsRefreshInterval();
 
 export async function registerRoutes(
   httpServer: Server,
@@ -43,9 +46,22 @@ export async function registerRoutes(
         });
         return;
       }
-      const orderBook = getOrderBook();
+      let orderBook = getOrderBook();
+      let exchange = "binance";
+      if (orderBook.bids.length === 0 && orderBook.asks.length === 0) {
+        const ob = await getKrakenOrderBook(symbol, 500);
+        orderBook = {
+          bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
+          asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
+          timestamp: ob.timestamp,
+        };
+        exchange = "kraken";
+        if (process.env.NODE_ENV === "production") {
+          console.warn("[API] /api/orderbook/raw: WS empty, fallback to Kraken");
+        }
+      }
       res.json({
-        exchange: "binance",
+        exchange,
         bids: orderBook.bids.map((level) => [level.price.toString(), level.size.toString()]),
         asks: orderBook.asks.map((level) => [level.price.toString(), level.size.toString()]),
         timestamp: orderBook.timestamp || Date.now(),
@@ -105,6 +121,20 @@ export async function registerRoutes(
   app.get("/api/terminal/state", async (_req, res) => {
     try {
       const state = await getTerminalState();
+      const hasPositioning = state != null && "positioning" in state;
+      const hasAbsorption = hasPositioning && state.positioning != null && typeof (state.positioning as any).absorption === "object";
+      const opts = (state as any)?.options;
+      const gm = (state as any)?.gravityMap;
+      console.log("[API options keys final]", Object.keys(opts || {}));
+      console.log("[API options final sample]", {
+        hasSpot: opts?.spot != null,
+        hasStrikes: Array.isArray(opts?.strikes),
+        strikesLength: Array.isArray(opts?.strikes) ? opts.strikes.length : null,
+        primaryOiCluster: opts?.primaryOiCluster,
+        callWallUsd: opts?.callWallUsd,
+        putWallUsd: opts?.putWallUsd,
+      });
+      console.log("[API gravityMap.status] " + (gm?.status ?? "null"));
       res.json(state);
     } catch (error: any) {
       res.status(500).json({ error: "TERMINAL_STATE_UNAVAILABLE", details: error.message });
@@ -114,7 +144,8 @@ export async function registerRoutes(
   // Existing analytics endpoints
   app.get("/api/market-state", async (_req, res) => {
     const data = await storage.getMarketState();
-    res.json(data);
+    const optionsLastUpdated = storage.getOptionsLastUpdated();
+    res.json({ ...data, optionsLastUpdated });
   });
 
   app.get("/api/dealer-exposure", async (_req, res) => {

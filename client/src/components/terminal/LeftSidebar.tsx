@@ -12,6 +12,29 @@ interface Alert {
   type: "info" | "warning" | "error";
 }
 
+const STALE_THRESHOLD_MIN = 10;
+
+function OptionsDataFreshness({ market }: { market: (MarketState & { optionsLastUpdated?: number }) | undefined }) {
+  const ts = market?.optionsLastUpdated;
+  if (ts == null) return null;
+  const minAgo = Math.floor((Date.now() - ts) / 60000);
+  const label = minAgo === 0 ? "Just now" : minAgo === 1 ? "1 min ago" : `${minAgo} min ago`;
+  const isStale = minAgo > STALE_THRESHOLD_MIN;
+
+  return (
+    <div className={cn(
+      "mt-2 pt-2 border-t border-white/[0.06]",
+      "flex flex-col gap-0.5"
+    )}>
+      <span className="text-[9px] uppercase tracking-wider text-white/40 font-medium">Options Data</span>
+      <span className={cn(
+        "text-[10px] font-mono",
+        isStale ? "text-amber-500/90" : "text-white/60"
+      )}>Last update: {label}</span>
+    </div>
+  );
+}
+
 export function LeftSidebar() {
   const { data: market } = useQuery<MarketState>({ 
     queryKey: ["/api/market-state"],
@@ -139,6 +162,7 @@ export function LeftSidebar() {
         <TerminalValue label="Dist. to Flip" value={market?.distanceToFlip != null ? `${market.distanceToFlip.toFixed(2)}%` : "--"} trend={market && market.distanceToFlip < 5 ? "positive" : "neutral"} />
         <TerminalValue label="Transition Zone" value={market?.transitionZoneStart != null && market?.transitionZoneEnd != null ? `${Math.round(market.transitionZoneStart)} - ${Math.round(market.transitionZoneEnd)}` : "--"} tooltip="Transition Zone" />
         <TerminalValue label="Gamma Accel" value={market?.gammaAcceleration ?? "--"} trend="positive" />
+        <OptionsDataFreshness market={market as (MarketState & { optionsLastUpdated?: number }) | undefined} />
       </TerminalPanel>
 
       <TerminalPanel title="DEALER EXPOSURE">
@@ -159,10 +183,24 @@ export function LeftSidebar() {
       </TerminalPanel>
 
       <TerminalPanel title="OPTIONS POSITIONING">
-        <TerminalValue label="Call Wall" value={positioning?.callWall ? positioning.callWall.toLocaleString() : "--"} trend="negative" tooltip="Call Wall" />
-        <TerminalValue label="Put Wall" value={positioning?.putWall ? positioning.putWall.toLocaleString() : "--"} trend="positive" tooltip="Put Wall" />
+        <TerminalValue label="Call Wall (Active)" value={(positioning as any)?.activeCallWall ? (positioning as any).activeCallWall.toLocaleString() : "--"} trend="negative" tooltip="Max call OI within ±15% of spot (intraday)" />
+        <TerminalValue label="Put Wall (Active)" value={(positioning as any)?.activePutWall ? (positioning as any).activePutWall.toLocaleString() : "--"} trend="positive" tooltip="Max put OI within ±15% of spot (intraday)" />
+        <div className="mt-1.5 pt-1.5 border-t border-white/[0.06]">
+          <span className="text-[8px] uppercase tracking-wider text-white/35 font-medium">Global (structural)</span>
+        </div>
+        <TerminalValue label="Call Wall (Global)" value={positioning?.callWall ? positioning.callWall.toLocaleString() : "--"} trend="negative" tooltip="Max call OI (all strikes)" />
+        <TerminalValue label="Put Wall (Global)" value={positioning?.putWall ? positioning.putWall.toLocaleString() : "--"} trend="positive" tooltip="Max put OI (all strikes)" />
         <TerminalValue label="OI Concentration" value={positioning?.oiConcentration ? positioning.oiConcentration.toLocaleString() : "--"} tooltip="OI Concentration" />
         <TerminalValue label="Dealer Pivot" value={positioning?.dealerPivot ?? "--"} tooltip="Dealer Pivot" />
+        {((positioning as any)?.activeGammaZoneHigh > 0 || (positioning as any)?.activeGammaZoneLow > 0) && (
+          <>
+            <div className="mt-1.5 pt-1.5 border-t border-white/[0.06]">
+              <span className="text-[8px] uppercase tracking-wider text-white/35 font-medium">Active gamma zone</span>
+            </div>
+            <TerminalValue label="Zone High" value={(positioning as any).activeGammaZoneHigh?.toLocaleString() ?? "--"} trend="negative" tooltip="Resistance from gamma magnet near spot" />
+            <TerminalValue label="Zone Low" value={(positioning as any).activeGammaZoneLow?.toLocaleString() ?? "--"} trend="positive" tooltip="Support from gamma magnet near spot" />
+          </>
+        )}
       </TerminalPanel>
 
       <TerminalPanel title="KEY LEVELS">

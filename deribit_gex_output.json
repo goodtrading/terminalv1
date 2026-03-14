@@ -1,0 +1,981 @@
+{
+  "asOf": "2026-03-14T01:24:10.202Z",
+  "spot": 73038.53,
+  "totalGex": 3961084121.8546343,
+  "gammaRegime": "LONG_GAMMA",
+  "gammaFlip": 83020.8865920434,
+  "topMagnets": [
+    {
+      "strike": 75000,
+      "totalGex": 2391924598.406666
+    },
+    {
+      "strike": 60000,
+      "totalGex": -1625884461.2184167
+    },
+    {
+      "strike": 71000,
+      "totalGex": -1134103856.1183772
+    },
+    {
+      "strike": 71500,
+      "totalGex": -1100322394.557177
+    },
+    {
+      "strike": 80000,
+      "totalGex": 942797167.2855935
+    }
+  ],
+  "strikes": [
+    {
+      "strike": 20000,
+      "totalGamma": 6.922076131625583e-7,
+      "totalGex": -5000486.994484417,
+      "callGex": 131135.994351788,
+      "putGex": -5131622.988836206,
+      "callOiContracts": 232.5,
+      "putOiContracts": 11405.4,
+      "totalOiContracts": 11637.9
+    },
+    {
+      "strike": 30000,
+      "totalGamma": 0.00000979238415758969,
+      "totalGex": -25807712.406632252,
+      "callGex": 3995775.2747080796,
+      "putGex": -29803487.68134033,
+      "callOiContracts": 513.4,
+      "putOiContracts": 5301.700000000001,
+      "totalOiContracts": 5815.1
+    },
+    {
+      "strike": 35000,
+      "totalGamma": 0.000010952228874867104,
+      "totalGex": -34481086.352978885,
+      "callGex": 497713.61019538395,
+      "putGex": -34978799.96317427,
+      "callOiContracts": 33.5,
+      "putOiContracts": 2346.8,
+      "totalOiContracts": 2380.3
+    },
+    {
+      "strike": 40000,
+      "totalGamma": 0.000029274441330693952,
+      "totalGex": -99966732.40855248,
+      "callGex": 1649026.5882840983,
+      "putGex": -101615758.99683656,
+      "callOiContracts": 128.7,
+      "putOiContracts": 7034.900000000001,
+      "totalOiContracts": 7163.5999999999985
+    },
+    {
+      "strike": 45000,
+      "totalGamma": 0.000049401353611040165,
+      "totalGex": -143248692.1508806,
+      "callGex": 4367202.901624968,
+      "putGex": -147615895.05250555,
+      "callOiContracts": 216.00000000000003,
+      "putOiContracts": 6577.5,
+      "totalOiContracts": 6793.5
+    },
+    {
+      "strike": 48000,
+      "totalGamma": 0.000006246399087214246,
+      "totalGex": -6255396.351704449,
+      "callGex": 0,
+      "putGex": -6255396.351704449,
+      "callOiContracts": 0,
+      "putOiContracts": 196.1,
+      "totalOiContracts": 196.1
+    },
+    {
+      "strike": 50000,
+      "totalGamma": 0.00006275205336240642,
+      "totalGex": -335003572.3110521,
+      "callGex": 12244845.82237662,
+      "putGex": -347248418.13342875,
+      "callOiContracts": 347.40000000000003,
+      "putOiContracts": 12713.3,
+      "totalOiContracts": 13060.699999999999
+    },
+    {
+      "strike": 51000,
+      "totalGamma": 0.000006292891094715218,
+      "totalGex": -3279072.49952189,
+      "callGex": 31820.208631944588,
+      "putGex": -3310892.7081538346,
+      "callOiContracts": 2,
+      "putOiContracts": 208.1,
+      "totalOiContracts": 210.1
+    },
+    {
+      "strike": 52000,
+      "totalGamma": 0.000024214557816771976,
+      "totalGex": -31550620.411597177,
+      "callGex": 121217.57532836999,
+      "putGex": -31671837.986925542,
+      "callOiContracts": 6.5,
+      "putOiContracts": 1315.6,
+      "totalOiContracts": 1322.1
+    },
+    {
+      "strike": 53000,
+      "totalGamma": 0.000004615566522332492,
+      "totalGex": -6853071.540050105,
+      "callGex": 0,
+      "putGex": -6853071.540050105,
+      "callOiContracts": 0,
+      "putOiContracts": 293.7,
+      "totalOiContracts": 293.7
+    },
+    {
+      "strike": 54000,
+      "totalGamma": 0.00005666676266943506,
+      "totalGex": -77537468.43838291,
+      "callGex": 66867.31101262197,
+      "putGex": -77604335.74939553,
+      "callOiContracts": 1.6,
+      "putOiContracts": 1955.6000000000004,
+      "totalOiContracts": 1957.2000000000003
+    },
+    {
+      "strike": 55000,
+      "totalGamma": 0.00009755248212249674,
+      "totalGex": -409536842.6943203,
+      "callGex": 20796495.97069683,
+      "putGex": -430333338.6650171,
+      "callOiContracts": 496.99999999999994,
+      "putOiContracts": 10556.6,
+      "totalOiContracts": 11053.6
+    },
+    {
+      "strike": 56000,
+      "totalGamma": 0.0000761346330866372,
+      "totalGex": -90707468.85951842,
+      "callGex": 1337098.7046036948,
+      "putGex": -92044567.56412213,
+      "callOiContracts": 30.7,
+      "putOiContracts": 1733.2,
+      "totalOiContracts": 1763.9
+    },
+    {
+      "strike": 57000,
+      "totalGamma": 0.00005958625077390813,
+      "totalGex": -37974391.85832916,
+      "callGex": 961062.6003201834,
+      "putGex": -38935454.45864934,
+      "callOiContracts": 15.5,
+      "putOiContracts": 639,
+      "totalOiContracts": 654.5
+    },
+    {
+      "strike": 58000,
+      "totalGamma": 0.00015833606853004793,
+      "totalGex": -362976157.1484301,
+      "callGex": 13488284.825653521,
+      "putGex": -376464441.97408366,
+      "callOiContracts": 211.29999999999998,
+      "putOiContracts": 6643.600000000001,
+      "totalOiContracts": 6854.9
+    },
+    {
+      "strike": 59000,
+      "totalGamma": 0.00007538800771815029,
+      "totalGex": -81523964.94111882,
+      "callGex": 2658752.4113996197,
+      "putGex": -84182717.35251844,
+      "callOiContracts": 35.1,
+      "putOiContracts": 1076.1,
+      "totalOiContracts": 1111.1999999999998
+    },
+    {
+      "strike": 60000,
+      "totalGamma": 0.0001919186073696044,
+      "totalGex": -1625884461.2184167,
+      "callGex": 90390872.02807392,
+      "putGex": -1716275333.2464905,
+      "callOiContracts": 1276,
+      "putOiContracts": 23724.1,
+      "totalOiContracts": 25000.1
+    },
+    {
+      "strike": 61000,
+      "totalGamma": 0.00007213528632314564,
+      "totalGex": -114660116.77258483,
+      "callGex": 1582377.2410006751,
+      "putGex": -116242494.01358551,
+      "callOiContracts": 16.200000000000003,
+      "putOiContracts": 1337.1999999999998,
+      "totalOiContracts": 1353.4
+    },
+    {
+      "strike": 62000,
+      "totalGamma": 0.00023911949585421924,
+      "totalGex": -589465734.4766626,
+      "callGex": 23443438.984183945,
+      "putGex": -612909173.4608467,
+      "callOiContracts": 250.5,
+      "putOiContracts": 6110.400000000001,
+      "totalOiContracts": 6360.900000000001
+    },
+    {
+      "strike": 63000,
+      "totalGamma": 0.0001519458256873099,
+      "totalGex": -135682243.801906,
+      "callGex": 10214274.549515069,
+      "putGex": -145896518.35142106,
+      "callOiContracts": 88.69999999999999,
+      "putOiContracts": 1367.6000000000001,
+      "totalOiContracts": 1456.3000000000002
+    },
+    {
+      "strike": 64000,
+      "totalGamma": 0.0002998608058722255,
+      "totalGex": -145025659.00555465,
+      "callGex": 87887077.74296778,
+      "putGex": -232912736.74852243,
+      "callOiContracts": 652.1999999999999,
+      "putOiContracts": 2045.8000000000002,
+      "totalOiContracts": 2697.9999999999995
+    },
+    {
+      "strike": 65000,
+      "totalGamma": 0.00036581667688367637,
+      "totalGex": -616208111.0297378,
+      "callGex": 379669582.31449896,
+      "putGex": -995877693.3442367,
+      "callOiContracts": 3021.6,
+      "putOiContracts": 7285.5,
+      "totalOiContracts": 10307.099999999999
+    },
+    {
+      "strike": 66000,
+      "totalGamma": 0.0004387355373294341,
+      "totalGex": -150673741.69835272,
+      "callGex": 326455513.26746845,
+      "putGex": -477129254.96582115,
+      "callOiContracts": 1919.8,
+      "putOiContracts": 3064.0000000000005,
+      "totalOiContracts": 4983.799999999999
+    },
+    {
+      "strike": 67000,
+      "totalGamma": 0.0004202162402750094,
+      "totalGex": -257966652.11069974,
+      "callGex": 256715071.23079753,
+      "putGex": -514681723.34149724,
+      "callOiContracts": 1318.1,
+      "putOiContracts": 2963.5,
+      "totalOiContracts": 4281.6
+    },
+    {
+      "strike": 67500,
+      "totalGamma": 0.00013477074935229456,
+      "totalGex": -15702519.28301744,
+      "callGex": 18189.33756141965,
+      "putGex": -15720708.620578859,
+      "callOiContracts": 0.1,
+      "putOiContracts": 347.7,
+      "totalOiContracts": 347.8
+    },
+    {
+      "strike": 68000,
+      "totalGamma": 0.0006224730409262866,
+      "totalGex": 225434967.6007645,
+      "callGex": 1129828937.5318823,
+      "putGex": -904393969.9311178,
+      "callOiContracts": 5824.4,
+      "putOiContracts": 4776.000000000001,
+      "totalOiContracts": 10600.400000000001
+    },
+    {
+      "strike": 68500,
+      "totalGamma": 0.00019759157478774252,
+      "totalGex": -23091487.560477383,
+      "callGex": 181274.37735837483,
+      "putGex": -23272761.937835757,
+      "callOiContracts": 2.2,
+      "putOiContracts": 124.5,
+      "totalOiContracts": 126.70000000000002
+    },
+    {
+      "strike": 69000,
+      "totalGamma": 0.0009591407406144118,
+      "totalGex": -48572426.700951755,
+      "callGex": 477894638.92778224,
+      "putGex": -526467065.62873405,
+      "callOiContracts": 1939.6,
+      "putOiContracts": 1888.9,
+      "totalOiContracts": 3828.4999999999995
+    },
+    {
+      "strike": 69500,
+      "totalGamma": 0.0008490746022843556,
+      "totalGex": -237692586.10353023,
+      "callGex": 14351096.127919773,
+      "putGex": -252043682.23144996,
+      "callOiContracts": 23.599999999999998,
+      "putOiContracts": 491.40000000000003,
+      "totalOiContracts": 515.0000000000001
+    },
+    {
+      "strike": 70000,
+      "totalGamma": 0.0016843052563549558,
+      "totalGex": -366222149.14717865,
+      "callGex": 1762686447.577259,
+      "putGex": -2128908596.7244377,
+      "callOiContracts": 9900.8,
+      "putOiContracts": 10754,
+      "totalOiContracts": 20654.800000000003
+    },
+    {
+      "strike": 70500,
+      "totalGamma": 0.0018414952148620401,
+      "totalGex": -24310580.4663598,
+      "callGex": 165481932.70619974,
+      "putGex": -189792513.17255956,
+      "callOiContracts": 101.3,
+      "putOiContracts": 110.8,
+      "totalOiContracts": 212.1
+    },
+    {
+      "strike": 71000,
+      "totalGamma": 0.0025791903910118035,
+      "totalGex": -1134103856.1183772,
+      "callGex": 1120956269.5161788,
+      "putGex": -2255060125.6345563,
+      "callOiContracts": 3069.6000000000004,
+      "putOiContracts": 2198.7000000000003,
+      "totalOiContracts": 5268.3
+    },
+    {
+      "strike": 71500,
+      "totalGamma": 0.0020517944712846775,
+      "totalGex": -1100322394.557177,
+      "callGex": 221508720.16250736,
+      "putGex": -1321831114.7196846,
+      "callOiContracts": 130.1,
+      "putOiContracts": 622.6999999999999,
+      "totalOiContracts": 752.8
+    },
+    {
+      "strike": 72000,
+      "totalGamma": 0.0019983960233564317,
+      "totalGex": 552108897.0056753,
+      "callGex": 2355172029.952644,
+      "putGex": -1803063132.9469688,
+      "callOiContracts": 8376.1,
+      "putOiContracts": 3973.7000000000003,
+      "totalOiContracts": 12349.8
+    },
+    {
+      "strike": 72500,
+      "totalGamma": 0.0010447442628852156,
+      "totalGex": 56948645.701644816,
+      "callGex": 177087672.87579948,
+      "putGex": -120139027.1741547,
+      "callOiContracts": 270.3,
+      "putOiContracts": 182.8,
+      "totalOiContracts": 453.1
+    },
+    {
+      "strike": 73000,
+      "totalGamma": 0.0011235290330634242,
+      "totalGex": 660737338.543798,
+      "callGex": 795172118.6399161,
+      "putGex": -134434780.09611818,
+      "callOiContracts": 2616.2,
+      "putOiContracts": 521.4,
+      "totalOiContracts": 3137.5999999999995
+    },
+    {
+      "strike": 73500,
+      "totalGamma": 0.0005565616364198784,
+      "totalGex": 27900341.678463425,
+      "callGex": 66862964.48183179,
+      "putGex": -38962622.80336836,
+      "callOiContracts": 294.90000000000003,
+      "putOiContracts": 112.39999999999999,
+      "totalOiContracts": 407.3
+    },
+    {
+      "strike": 74000,
+      "totalGamma": 0.0007568141966418712,
+      "totalGex": 914806631.8195729,
+      "callGex": 1104917970.204774,
+      "putGex": -190111338.3852009,
+      "callOiContracts": 4346.3,
+      "putOiContracts": 893.4,
+      "totalOiContracts": 5239.699999999999
+    },
+    {
+      "strike": 74500,
+      "totalGamma": 0.00022258738417498734,
+      "totalGex": -3363439.7648116215,
+      "callGex": 494587.79243111773,
+      "putGex": -3858027.5572427395,
+      "callOiContracts": 1.5,
+      "putOiContracts": 12.5,
+      "totalOiContracts": 14
+    },
+    {
+      "strike": 75000,
+      "totalGamma": 0.0006055419077022413,
+      "totalGex": 2391924598.406666,
+      "callGex": 3650909614.0345106,
+      "putGex": -1258985015.6278446,
+      "callOiContracts": 17601.7,
+      "putOiContracts": 8869,
+      "totalOiContracts": 26470.699999999997
+    },
+    {
+      "strike": 76000,
+      "totalGamma": 0.0004807169661530401,
+      "totalGex": 895579173.0050925,
+      "callGex": 937814094.8625636,
+      "putGex": -42234921.857471116,
+      "callOiContracts": 5018.599999999999,
+      "putOiContracts": 264.20000000000005,
+      "totalOiContracts": 5282.799999999999
+    },
+    {
+      "strike": 77000,
+      "totalGamma": 0.00024175728968484235,
+      "totalGex": 157542334.17066547,
+      "callGex": 159865740.57625452,
+      "putGex": -2323406.405589043,
+      "callOiContracts": 1095.1000000000001,
+      "putOiContracts": 15.3,
+      "totalOiContracts": 1110.4
+    },
+    {
+      "strike": 78000,
+      "totalGamma": 0.0003815420811171164,
+      "totalGex": 938281340.0088387,
+      "callGex": 1000872152.609786,
+      "putGex": -62590812.60094751,
+      "callOiContracts": 6993.000000000001,
+      "putOiContracts": 379.90000000000003,
+      "totalOiContracts": 7372.9000000000015
+    },
+    {
+      "strike": 79000,
+      "totalGamma": 0.00012489185011940672,
+      "totalGex": 41504442.21772771,
+      "callGex": 41979588.24840607,
+      "putGex": -475146.0306783521,
+      "callOiContracts": 437.00000000000006,
+      "putOiContracts": 3.9,
+      "totalOiContracts": 440.90000000000003
+    },
+    {
+      "strike": 80000,
+      "totalGamma": 0.00030319212478718106,
+      "totalGex": 942797167.2855935,
+      "callGex": 1627005389.3965974,
+      "putGex": -684208222.1110039,
+      "callOiContracts": 13606.200000000003,
+      "putOiContracts": 5871.2,
+      "totalOiContracts": 19477.4
+    },
+    {
+      "strike": 81000,
+      "totalGamma": 0.00007170841345472454,
+      "totalGex": 39149244.4271003,
+      "callGex": 39160750.35830636,
+      "putGex": -11505.931206062965,
+      "callOiContracts": 313,
+      "putOiContracts": 0.1,
+      "totalOiContracts": 313.1
+    },
+    {
+      "strike": 82000,
+      "totalGamma": 0.00025274072842056854,
+      "totalGex": 448035666.07269543,
+      "callGex": 526473040.93591326,
+      "putGex": -78437374.86321792,
+      "callOiContracts": 5534.200000000001,
+      "putOiContracts": 719.3,
+      "totalOiContracts": 6253.5
+    },
+    {
+      "strike": 83000,
+      "totalGamma": 0.00006892106180135692,
+      "totalGex": 40555493.46632444,
+      "callGex": 40567542.57501783,
+      "putGex": -12049.10869338965,
+      "callOiContracts": 355.29999999999995,
+      "putOiContracts": 0.1,
+      "totalOiContracts": 355.4
+    },
+    {
+      "strike": 84000,
+      "totalGamma": 0.00020681973701989418,
+      "totalGex": 351642611.5599082,
+      "callGex": 452807928.83264375,
+      "putGex": -101165317.27273552,
+      "callOiContracts": 5083.8,
+      "putOiContracts": 1097.5,
+      "totalOiContracts": 6181.3
+    },
+    {
+      "strike": 85000,
+      "totalGamma": 0.00020212236608583385,
+      "totalGex": 274178163.72520614,
+      "callGex": 877951855.2104042,
+      "putGex": -603773691.485198,
+      "callOiContracts": 11353.2,
+      "putOiContracts": 8162.7,
+      "totalOiContracts": 19515.899999999998
+    },
+    {
+      "strike": 86000,
+      "totalGamma": 0.00016850837942293797,
+      "totalGex": 332949069.1559583,
+      "callGex": 422589009.74662834,
+      "putGex": -89639940.59067003,
+      "callOiContracts": 6116.1,
+      "putOiContracts": 1342.7,
+      "totalOiContracts": 7458.8
+    },
+    {
+      "strike": 88000,
+      "totalGamma": 0.0001381901443003048,
+      "totalGex": 73307388.59886828,
+      "callGex": 121434822.86238211,
+      "putGex": -48127434.263513826,
+      "callOiContracts": 1985.6000000000001,
+      "putOiContracts": 1036,
+      "totalOiContracts": 3021.6000000000004
+    },
+    {
+      "strike": 90000,
+      "totalGamma": 0.00015529926421726684,
+      "totalGex": 446387305.1656007,
+      "callGex": 790442309.3258985,
+      "putGex": -344055004.16029775,
+      "callOiContracts": 14073.7,
+      "putOiContracts": 6495.099999999999,
+      "totalOiContracts": 20568.800000000003
+    },
+    {
+      "strike": 92000,
+      "totalGamma": 0.00008724013973086555,
+      "totalGex": 55887409.305261634,
+      "callGex": 73426275.37300275,
+      "putGex": -17538866.06774112,
+      "callOiContracts": 2063.3,
+      "putOiContracts": 796.2,
+      "totalOiContracts": 2859.4999999999995
+    },
+    {
+      "strike": 94000,
+      "totalGamma": 0.00008961347652552196,
+      "totalGex": 77820126.86008069,
+      "callGex": 82920213.6651547,
+      "putGex": -5100086.8050740035,
+      "callOiContracts": 2376.3,
+      "putOiContracts": 279.2,
+      "totalOiContracts": 2655.5
+    },
+    {
+      "strike": 95000,
+      "totalGamma": 0.00012482587839537874,
+      "totalGex": 250762099.2174524,
+      "callGex": 357088181.21152186,
+      "putGex": -106326081.9940695,
+      "callOiContracts": 9697.900000000001,
+      "putOiContracts": 2714.3999999999996,
+      "totalOiContracts": 12412.300000000001
+    },
+    {
+      "strike": 96000,
+      "totalGamma": 0.00004523263821452229,
+      "totalGex": 40129039.92630452,
+      "callGex": 42746979.51877423,
+      "putGex": -2617939.5924697057,
+      "callOiContracts": 2767.1,
+      "putOiContracts": 187.6,
+      "totalOiContracts": 2954.7
+    },
+    {
+      "strike": 98000,
+      "totalGamma": 0.000044168481466256716,
+      "totalGex": 45026050.58027112,
+      "callGex": 49539042.42151426,
+      "putGex": -4512991.841243144,
+      "callOiContracts": 1813.6999999999998,
+      "putOiContracts": 428.5,
+      "totalOiContracts": 2242.2
+    },
+    {
+      "strike": 100000,
+      "totalGamma": 0.00010233233742050933,
+      "totalGex": 469788261.08260745,
+      "callGex": 567516927.0938197,
+      "putGex": -97728666.01121247,
+      "callOiContracts": 13810.5,
+      "putOiContracts": 2884.3,
+      "totalOiContracts": 16694.8
+    },
+    {
+      "strike": 102000,
+      "totalGamma": 0.0000028602205830234937,
+      "totalGex": 4944455.128988866,
+      "callGex": 5087605.021595942,
+      "putGex": -143149.89260707636,
+      "callOiContracts": 703.7,
+      "putOiContracts": 19.8,
+      "totalOiContracts": 723.5
+    },
+    {
+      "strike": 104000,
+      "totalGamma": 0.0000026116209721502395,
+      "totalGex": 1237366.0595619795,
+      "callGex": 1288807.163523858,
+      "putGex": -51441.10396187853,
+      "callOiContracts": 195,
+      "putOiContracts": 7.8,
+      "totalOiContracts": 202.8
+    },
+    {
+      "strike": 105000,
+      "totalGamma": 0.00007755880217706718,
+      "totalGex": 169674181.73404658,
+      "callGex": 197924019.07352978,
+      "putGex": -28249837.339483183,
+      "callOiContracts": 8331.3,
+      "putOiContracts": 971.3,
+      "totalOiContracts": 9302.6
+    },
+    {
+      "strike": 106000,
+      "totalGamma": 0.0000022702578974377243,
+      "totalGex": 11954250.453147098,
+      "callGex": 11982915.882592196,
+      "putGex": -28665.42944509687,
+      "callOiContracts": 2085.7,
+      "putOiContracts": 5,
+      "totalOiContracts": 2090.7
+    },
+    {
+      "strike": 108000,
+      "totalGamma": 0.000002012572031928845,
+      "totalGex": 1578554.270127572,
+      "callGex": 1695050.8630567417,
+      "putGex": -116496.5929291698,
+      "callOiContracts": 333.2,
+      "putOiContracts": 22.9,
+      "totalOiContracts": 356.09999999999997
+    },
+    {
+      "strike": 110000,
+      "totalGamma": 0.00006006988278761286,
+      "totalGex": 200490212.16483146,
+      "callGex": 247516100.34780484,
+      "putGex": -47025888.18297337,
+      "callOiContracts": 9099.9,
+      "putOiContracts": 2058.7,
+      "totalOiContracts": 11158.6
+    },
+    {
+      "strike": 112000,
+      "totalGamma": 0.0000017658738542654185,
+      "totalGex": 2532767.187737246,
+      "callGex": 2670276.846440414,
+      "putGex": -137509.65870316795,
+      "callOiContracts": 598.1,
+      "putOiContracts": 30.8,
+      "totalOiContracts": 628.9
+    },
+    {
+      "strike": 114000,
+      "totalGamma": 0.0000014238986458037704,
+      "totalGex": 1567089.5347378135,
+      "callGex": 1569249.0517815496,
+      "putGex": -2159.517043736077,
+      "callOiContracts": 436,
+      "putOiContracts": 0.6,
+      "totalOiContracts": 436.6
+    },
+    {
+      "strike": 115000,
+      "totalGamma": 0.00004711966067002367,
+      "totalGex": 220347791.35566074,
+      "callGex": 235242491.96977705,
+      "putGex": -14894700.614116337,
+      "callOiContracts": 7617.5,
+      "putOiContracts": 899.7,
+      "totalOiContracts": 8517.2
+    },
+    {
+      "strike": 120000,
+      "totalGamma": 0.00004325327907679189,
+      "totalGex": 347671419.62632275,
+      "callGex": 369143452.22819686,
+      "putGex": -21472032.601874128,
+      "callOiContracts": 14225.1,
+      "putOiContracts": 966,
+      "totalOiContracts": 15191.1
+    },
+    {
+      "strike": 125000,
+      "totalGamma": 0.00003613041971686469,
+      "totalGex": 148393523.91209215,
+      "callGex": 151099754.01259112,
+      "putGex": -2706230.1004990004,
+      "callOiContracts": 15857.2,
+      "putOiContracts": 191.4,
+      "totalOiContracts": 16048.599999999999
+    },
+    {
+      "strike": 130000,
+      "totalGamma": 0.00003178512044095568,
+      "totalGex": 99284894.93358119,
+      "callGex": 103286265.15421419,
+      "putGex": -4001370.220633015,
+      "callOiContracts": 6363.3,
+      "putOiContracts": 650.1,
+      "totalOiContracts": 7013.4
+    },
+    {
+      "strike": 135000,
+      "totalGamma": 0.000028061060201585387,
+      "totalGex": 36208676.60050303,
+      "callGex": 36771616.796604745,
+      "putGex": -562940.1961017118,
+      "callOiContracts": 4091.5,
+      "putOiContracts": 70.2,
+      "totalOiContracts": 4161.700000000001
+    },
+    {
+      "strike": 140000,
+      "totalGamma": 0.000024872763828570067,
+      "totalGex": 64265233.57493846,
+      "callGex": 64571755.19217592,
+      "putGex": -306521.617237461,
+      "callOiContracts": 3755.2999999999997,
+      "putOiContracts": 30.799999999999997,
+      "totalOiContracts": 3786.1000000000004
+    },
+    {
+      "strike": 145000,
+      "totalGamma": 0.000011604285454289132,
+      "totalGex": 12583913.797707032,
+      "callGex": 12636405.932571653,
+      "putGex": -52492.134864619264,
+      "callOiContracts": 1371,
+      "putOiContracts": 6.1,
+      "totalOiContracts": 1377.1
+    },
+    {
+      "strike": 150000,
+      "totalGamma": 0.0000198793947259127,
+      "totalGex": 66633876.21807075,
+      "callGex": 66720746.514686614,
+      "putGex": -86870.29661586473,
+      "callOiContracts": 6320.799999999999,
+      "putOiContracts": 28.5,
+      "totalOiContracts": 6349.299999999999
+    },
+    {
+      "strike": 155000,
+      "totalGamma": 0.0000089296992915452,
+      "totalGex": 5921283.216882433,
+      "callGex": 5937203.052342817,
+      "putGex": -15919.83546038416,
+      "callOiContracts": 1477.9,
+      "putOiContracts": 6.699999999999999,
+      "totalOiContracts": 1484.6
+    },
+    {
+      "strike": 160000,
+      "totalGamma": 0.000011996623607390343,
+      "totalGex": 31504038.6369334,
+      "callGex": 31547007.47866421,
+      "putGex": -42968.841730805085,
+      "callOiContracts": 3662.2,
+      "putOiContracts": 65.80000000000001,
+      "totalOiContracts": 3728
+    },
+    {
+      "strike": 165000,
+      "totalGamma": 0.00000451745026529174,
+      "totalGex": 2184750.655814047,
+      "callGex": 2187403.6608022265,
+      "putGex": -2653.0049881793107,
+      "callOiContracts": 269.70000000000005,
+      "putOiContracts": 0.5,
+      "totalOiContracts": 270.20000000000005
+    },
+    {
+      "strike": 170000,
+      "totalGamma": 0.00000748720693127121,
+      "totalGex": 19782588.963915598,
+      "callGex": 19797707.72774603,
+      "putGex": -15118.763830429663,
+      "callOiContracts": 2477.2,
+      "putOiContracts": 57.1,
+      "totalOiContracts": 2534.3
+    },
+    {
+      "strike": 175000,
+      "totalGamma": 0.0000039614042171021,
+      "totalGex": 14462155.539384091,
+      "callGex": 14464226.591301518,
+      "putGex": -2071.0519174257615,
+      "callOiContracts": 1396.8,
+      "putOiContracts": 0.2,
+      "totalOiContracts": 1397
+    },
+    {
+      "strike": 180000,
+      "totalGamma": 0.000007994864785137314,
+      "totalGex": 23882069.539005518,
+      "callGex": 24092787.214773916,
+      "putGex": -210717.67576839443,
+      "callOiContracts": 4969.200000000001,
+      "putOiContracts": 45.199999999999996,
+      "totalOiContracts": 5014.400000000001
+    },
+    {
+      "strike": 190000,
+      "totalGamma": 0.000005232935796060359,
+      "totalGex": 19007329.434601083,
+      "callGex": 19025472.506465703,
+      "putGex": -18143.07186462293,
+      "callOiContracts": 3120,
+      "putOiContracts": 5.8999999999999995,
+      "totalOiContracts": 3125.9
+    },
+    {
+      "strike": 200000,
+      "totalGamma": 0.000005798848405351071,
+      "totalGex": 18635591.108431585,
+      "callGex": 18655296.211058185,
+      "putGex": -19705.10262660073,
+      "callOiContracts": 3644.5,
+      "putOiContracts": 14.4,
+      "totalOiContracts": 3658.9
+    },
+    {
+      "strike": 210000,
+      "totalGamma": 0.0000022840130070630344,
+      "totalGex": 1197618.4425038653,
+      "callGex": 1197618.4425038653,
+      "putGex": 0,
+      "callOiContracts": 599.5,
+      "putOiContracts": 0,
+      "totalOiContracts": 599.5
+    },
+    {
+      "strike": 220000,
+      "totalGamma": 0.000004299724629052717,
+      "totalGex": 4101631.5526950876,
+      "callGex": 4111225.358786036,
+      "putGex": -9593.806090948448,
+      "callOiContracts": 1338.1999999999998,
+      "putOiContracts": 2,
+      "totalOiContracts": 1340.2
+    },
+    {
+      "strike": 230000,
+      "totalGamma": 0.000002112530792953682,
+      "totalGex": 2716628.278524267,
+      "callGex": 2727123.0635755523,
+      "putGex": -10494.78505128528,
+      "callOiContracts": 1129.8,
+      "putOiContracts": 6.4,
+      "totalOiContracts": 1136.2
+    },
+    {
+      "strike": 240000,
+      "totalGamma": 0.000002572755614187942,
+      "totalGex": 7648810.289526877,
+      "callGex": 7648931.657589929,
+      "putGex": -121.36806305280622,
+      "callOiContracts": 1794.5,
+      "putOiContracts": 0.2,
+      "totalOiContracts": 1794.7
+    },
+    {
+      "strike": 250000,
+      "totalGamma": 0.0000025672413647805445,
+      "totalGex": 7108095.51957784,
+      "callGex": 7170873.41330833,
+      "putGex": -62777.893730489275,
+      "callOiContracts": 1305.2,
+      "putOiContracts": 10,
+      "totalOiContracts": 1315.2
+    },
+    {
+      "strike": 260000,
+      "totalGamma": 8.029927959703624e-7,
+      "totalGex": 907134.2594019956,
+      "callGex": 907134.280872875,
+      "putGex": -0.021470879414514775,
+      "callOiContracts": 673.2,
+      "putOiContracts": 0.1,
+      "totalOiContracts": 673.3000000000001
+    },
+    {
+      "strike": 280000,
+      "totalGamma": 6.653103172230031e-7,
+      "totalGex": 491982.54894216504,
+      "callGex": 491982.562085832,
+      "putGex": -0.013143666978977092,
+      "callOiContracts": 566.3,
+      "putOiContracts": 0.3,
+      "totalOiContracts": 566.6
+    },
+    {
+      "strike": 300000,
+      "totalGamma": 5.667500375662089e-7,
+      "totalGex": 696301.9806000255,
+      "callGex": 696304.2971122058,
+      "putGex": -2.3165121802085635,
+      "callOiContracts": 1168.8,
+      "putOiContracts": 251.2,
+      "totalOiContracts": 1420
+    },
+    {
+      "strike": 320000,
+      "totalGamma": 8.449556935765712e-7,
+      "totalGex": 629666.8641469415,
+      "callGex": 629850.7238872821,
+      "putGex": -183.85974034066072,
+      "callOiContracts": 1376.4,
+      "putOiContracts": 344.40000000000003,
+      "totalOiContracts": 1720.8
+    },
+    {
+      "strike": 340000,
+      "totalGamma": 1.3574865490762582e-7,
+      "totalGex": 94914.67884422082,
+      "callGex": 94914.83318033353,
+      "putGex": -0.15433611271415223,
+      "callOiContracts": 1061.3,
+      "putOiContracts": 346.8,
+      "totalOiContracts": 1408.1
+    },
+    {
+      "strike": 360000,
+      "totalGamma": 2.5713073233073554e-7,
+      "totalGex": 81685.1294720676,
+      "callGex": 81882.9346514847,
+      "putGex": -197.8051794171046,
+      "callOiContracts": 124.1,
+      "putOiContracts": 0.3,
+      "totalOiContracts": 124.39999999999999
+    },
+    {
+      "strike": 380000,
+      "totalGamma": 1.221730598580495e-7,
+      "totalGex": 128729.25858396002,
+      "callGex": 128729.25858396002,
+      "putGex": 0,
+      "callOiContracts": 205.4,
+      "putOiContracts": 0,
+      "totalOiContracts": 205.4
+    }
+  ]
+}

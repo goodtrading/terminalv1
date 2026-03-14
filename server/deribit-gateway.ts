@@ -572,7 +572,7 @@ export class DeribitOptionsGateway {
         existing.oi += (opt.openInterest || 0);
         strikeMap.set(opt.strike, existing);
 
-        // Wall detection
+        // Wall detection (global — no spot filter)
         if (opt.optionType === "call" && opt.openInterest > maxCallOi) {
           maxCallOi = opt.openInterest;
           callWall = opt.strike;
@@ -581,6 +581,30 @@ export class DeribitOptionsGateway {
           putWall = opt.strike;
         }
       });
+
+      // --- Active levels (intraday): strikes within ±15% of spot ---
+      const ACTIVE_RANGE_PCT = 0.15;
+      const spotLo = spotPrice ? spotPrice * (1 - ACTIVE_RANGE_PCT) : 0;
+      const spotHi = spotPrice ? spotPrice * (1 + ACTIVE_RANGE_PCT) : Infinity;
+      let activeCallWall = 0;
+      let activePutWall = 0;
+      let maxActiveCallOi = 0;
+      let maxActivePutOi = 0;
+
+      options.forEach(opt => {
+        if (!spotPrice || opt.strike < spotLo || opt.strike > spotHi) return;
+        if (opt.optionType === "call" && opt.strike >= spotPrice && opt.openInterest > maxActiveCallOi) {
+          maxActiveCallOi = opt.openInterest;
+          activeCallWall = opt.strike;
+        } else if (opt.optionType === "put" && opt.strike <= spotPrice && opt.openInterest > maxActivePutOi) {
+          maxActivePutOi = opt.openInterest;
+          activePutWall = opt.strike;
+        }
+      });
+
+      // Fallback: if no strikes in active range, use global walls
+      if (activeCallWall === 0 && callWall > 0) activeCallWall = callWall;
+      if (activePutWall === 0 && putWall > 0) activePutWall = putWall;
 
       const gammaByStrike = Array.from(strikeMap.entries())
         .map(([strike, data]) => ({ strike, gex: data.gex }))
@@ -637,6 +661,22 @@ export class DeribitOptionsGateway {
         }
       });
       if (currentZone) shortGammaZones.push(currentZone);
+
+      // Active gamma zones (within ±15%): resistance/support from magnets
+      let activeGammaZoneHigh = 0;
+      let activeGammaZoneLow = 0;
+      if (spotPrice && gammaByStrike.length > 0) {
+        const aboveSpot = gammaByStrike.filter(s => s.strike >= spotPrice && s.strike <= spotHi && s.gex > 0);
+        const belowSpot = gammaByStrike.filter(s => s.strike <= spotPrice && s.strike >= spotLo && s.gex > 0);
+        if (aboveSpot.length > 0) {
+          const top = aboveSpot.reduce((a, b) => (a.gex > b.gex ? a : b));
+          activeGammaZoneHigh = top.strike;
+        } else if (activeCallWall > 0) activeGammaZoneHigh = activeCallWall;
+        if (belowSpot.length > 0) {
+          const bot = belowSpot.reduce((a, b) => (a.gex > b.gex ? a : b));
+          activeGammaZoneLow = bot.strike;
+        } else if (activePutWall > 0) activeGammaZoneLow = activePutWall;
+      }
 
       // --- Gamma Gradient Engine ---
       const gammaSlopeByStrike: { strike: number, slope: number }[] = [];
@@ -1889,6 +1929,10 @@ export class DeribitOptionsGateway {
         gammaFlip: gammaFlip || 0, 
         callWall: callWall || 0, 
         putWall: putWall || 0,
+        activeCallWall: activeCallWall > 0 ? activeCallWall : null,
+        activePutWall: activePutWall > 0 ? activePutWall : null,
+        activeGammaZoneHigh: activeGammaZoneHigh > 0 ? activeGammaZoneHigh : null,
+        activeGammaZoneLow: activeGammaZoneLow > 0 ? activeGammaZoneLow : null,
         gammaByStrike,
         oiByStrike,
         gammaCurve,

@@ -1,12 +1,18 @@
 import { useEffect, useRef, useCallback } from "react";
 import { HeatmapFrame, HeatmapConfig, calculateLiquidityOpacity, createHeatmapFrame } from "./renderers/heatmap";
 
+export interface GammaContext {
+  gammaFlip: number | null;
+  gammaMagnets: number[];
+}
+
 interface HeatmapCanvasProps {
   isActive: boolean;
   chartWidth: number;
   chartHeight: number;
   priceToCoordinate: (price: number) => number | null;
   currentPrice: number;
+  gammaContext?: GammaContext | null;
 }
 
 const DEFAULT_CONFIG: HeatmapConfig = {
@@ -24,12 +30,15 @@ export function HeatmapCanvas({
   chartWidth, 
   chartHeight, 
   priceToCoordinate,
-  currentPrice 
+  currentPrice,
+  gammaContext = null,
 }: HeatmapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameHistoryRef = useRef<HeatmapFrame[]>([]);
   const animationFrameRef = useRef<number | null>(null);
   const configRef = useRef<HeatmapConfig>(DEFAULT_CONFIG);
+  const gammaContextRef = useRef<GammaContext | null>(gammaContext);
+  gammaContextRef.current = gammaContext ?? null;
 
   // Add frame to history
   const addFrame = useCallback((frame: HeatmapFrame) => {
@@ -71,6 +80,29 @@ export function HeatmapCanvas({
 
     if (maxSize <= 0) return;
 
+    const gamma = gammaContextRef.current;
+    const gammaDecay = currentPrice > 0 ? currentPrice * 0.01 : 1000;
+    const GAMMA_FLIP_WEIGHT = 0.65;
+    const gammaInfluence = (price: number): number => {
+      if (!gamma || (!gamma.gammaFlip && (!gamma.gammaMagnets || gamma.gammaMagnets.length === 0))) return 1;
+      let magnetInfluence = 0;
+      let flipInfluence = 0;
+      if (gamma.gammaMagnets?.length) {
+        const distMagnet = Math.min(...gamma.gammaMagnets.map((p) => Math.abs(price - p)));
+        magnetInfluence = Math.exp(-distMagnet / gammaDecay);
+      }
+      if (gamma.gammaFlip != null) {
+        const distFlip = Math.abs(price - gamma.gammaFlip);
+        flipInfluence = Math.exp(-distFlip / gammaDecay) * GAMMA_FLIP_WEIGHT;
+      }
+      return Math.max(magnetInfluence, flipInfluence) || 1;
+    };
+    // DEBUG: strong boost to visibly separate gamma-influenced levels from normal
+    const gammaBoost = (influence: number): number => {
+      if (influence <= 0.05) return 1;
+      return Math.min(1.6, 0.4 + 1.2 * Math.pow(Math.min(1, influence), 0.5));
+    };
+
     console.debug('[Heatmap Canvas] Real rendering stats:', {
       framesCount: frames.length,
       bidLevels: frames[frames.length - 1]?.bids.length || 0,
@@ -89,13 +121,15 @@ export function HeatmapCanvas({
       const frameWidth = canvas.width / frames.length;
       const xOffset = frameIndex * frameWidth;
 
-      // Render bids (green)
+      // Render bids (green); brighter near gamma magnets/flip (non-linear boost)
       frame.bids.forEach((level: { price: number; size: number }) => {
         const y = priceToCoordinate(level.price);
         if (y === null) return;
 
         const intensity = maxSize > 0 ? level.size / maxSize : 0;
-        const opacity = 0.18 + intensity * 0.55; // Strong visibility
+        let opacity = 0.18 + intensity * 0.55;
+        const influence = gammaInfluence(level.price);
+        opacity = Math.min(0.98, opacity * gammaBoost(influence));
         const finalOpacity = opacity * ageOpacity;
 
         ctx.fillStyle = `rgba(34, 197, 94, ${finalOpacity})`;
@@ -104,13 +138,15 @@ export function HeatmapCanvas({
         visibleBidLevels++;
       });
 
-      // Render asks (red/orange)
+      // Render asks (red); brighter near gamma magnets/flip (non-linear boost)
       frame.asks.forEach((level: { price: number; size: number }) => {
         const y = priceToCoordinate(level.price);
         if (y === null) return;
 
         const intensity = maxSize > 0 ? level.size / maxSize : 0;
-        const opacity = 0.18 + intensity * 0.55; // Strong visibility
+        let opacity = 0.18 + intensity * 0.55;
+        const influence = gammaInfluence(level.price);
+        opacity = Math.min(0.98, opacity * gammaBoost(influence));
         const finalOpacity = opacity * ageOpacity;
 
         ctx.fillStyle = `rgba(239, 68, 68, ${finalOpacity})`;
@@ -126,7 +162,7 @@ export function HeatmapCanvas({
       visibleAskLevels,
       maxFrames: config.maxFrames
     });
-  }, [isActive, priceToCoordinate]);
+  }, [isActive, priceToCoordinate, currentPrice]);
 
   // Animation loop
   const animate = useCallback(() => {

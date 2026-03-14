@@ -112,14 +112,31 @@ function connect(): void {
       const parsed = JSON.parse(raw);
       const normalized = normalizePayload(parsed);
       
-      const bids = parseLevels(normalized.bids);
-      const asks = parseLevels(normalized.asks);
+      const deltaBids = parseLevels(normalized.bids);
+      const deltaAsks = parseLevels(normalized.asks);
       
-      if (bids.length > 0 || asks.length > 0) {
+      if (deltaBids.length === 0 && deltaAsks.length === 0) return;
+
+      // Binance @depth sends PARTIAL updates (5–20 levels). Merge into snapshot instead of replacing
+      // so we preserve full depth from initializeFullDepth.
+      const ts = parsed.E || Date.now();
+      const hasFullSnapshot = snapshot.bids.length >= 50 || snapshot.asks.length >= 50;
+      
+      if (hasFullSnapshot && (deltaBids.length < 50 || deltaAsks.length < 50)) {
+        const bidMap = new Map(snapshot.bids.map((b) => [b.price, b]));
+        const askMap = new Map(snapshot.asks.map((a) => [a.price, a]));
+        deltaBids.forEach((b) => bidMap.set(b.price, b));
+        deltaAsks.forEach((a) => askMap.set(a.price, a));
         snapshot = {
-          bids: bids.sort((a, b) => b.price - a.price),
-          asks: asks.sort((a, b) => a.price - b.price),
-          timestamp: parsed.E || Date.now(),
+          bids: Array.from(bidMap.values()).sort((a, b) => b.price - a.price),
+          asks: Array.from(askMap.values()).sort((a, b) => a.price - b.price),
+          timestamp: ts,
+        };
+      } else {
+        snapshot = {
+          bids: deltaBids.sort((a, b) => b.price - a.price),
+          asks: deltaAsks.sort((a, b) => a.price - b.price),
+          timestamp: ts,
         };
       }
     } catch (e) {

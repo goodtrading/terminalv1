@@ -6,6 +6,19 @@ import { parseOptionsCSV, calculateGEX, findGammaFlip, calculateVanna, calculate
 import { generateDynamicScenarios } from "./scenarios";
 import path from "path";
 
+export interface OptionsSummaryUpdate {
+  totalGex?: number | null;
+  gammaFlip?: number | null;
+  callWall?: number | null;
+  putWall?: number | null;
+  activeCallWall?: number | null;
+  activePutWall?: number | null;
+  activeGammaZoneHigh?: number | null;
+  activeGammaZoneLow?: number | null;
+  gammaMagnets?: number[];
+  shortGammaZones?: Array<{ startStrike: number; endStrike: number }>;
+}
+
 export interface IStorage {
   getMarketState(): Promise<MarketState | undefined>;
   getDealerExposure(): Promise<DealerExposure | undefined>;
@@ -15,6 +28,8 @@ export interface IStorage {
   getOptionsData(): Promise<OptionData[]>;
   getDealerHedgingFlow(): Promise<DealerHedgingFlow | undefined>;
   recomputeAll(csvPath: string): Promise<void>;
+  updateFromDeribitSummary(summary: OptionsSummaryUpdate, spotPrice: number): void;
+  getOptionsLastUpdated(): number | undefined;
 }
 
 export class MemStorage implements IStorage {
@@ -25,6 +40,7 @@ export class MemStorage implements IStorage {
   private tradingScenarios: TradingScenario[] = [];
   private optionsData: OptionData[] = [];
   private dealerHedgingFlow: DealerHedgingFlow | undefined;
+  private optionsLastUpdated: number | undefined;
 
   constructor() {
     const csvPath = path.resolve(process.cwd(), "data", "deribit_options.csv");
@@ -189,6 +205,7 @@ export class MemStorage implements IStorage {
     };
 
     this.tradingScenarios = generateDynamicScenarios(ms, op, kl, de);
+    this.optionsLastUpdated = Date.now();
 
     const formatVal = (v: number) => (v >= 0 ? "+" : "") + v.toFixed(2);
 
@@ -210,6 +227,74 @@ export class MemStorage implements IStorage {
   async getTradingScenarios() { return this.tradingScenarios; }
   async getOptionsData() { return this.optionsData; }
   async getDealerHedgingFlow() { return this.dealerHedgingFlow; }
+  getOptionsLastUpdated() { return this.optionsLastUpdated; }
+
+  updateFromDeribitSummary(summary: OptionsSummaryUpdate, spotPrice: number): void {
+    if (!this.marketState || !this.optionsPositioning || !this.keyLevels) return;
+    let updated = false;
+
+    const gex = summary.totalGex;
+    const flip = summary.gammaFlip;
+    const callWall = summary.callWall;
+    const putWall = summary.putWall;
+
+    if (gex != null && !Number.isNaN(gex)) {
+      this.marketState = {
+        ...this.marketState,
+        totalGex: gex,
+        gammaRegime: gex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
+        timestamp: new Date()
+      };
+      updated = true;
+    }
+    if (flip != null && flip > 0) {
+      this.marketState = {
+        ...this.marketState,
+        gammaFlip: flip,
+        distanceToFlip: Math.abs(((flip - spotPrice) / spotPrice) * 100),
+        transitionZoneStart: flip * 0.995,
+        transitionZoneEnd: flip * 1.005,
+        timestamp: new Date()
+      };
+      updated = true;
+    }
+    if (callWall != null && callWall > 0 && putWall != null && putWall > 0) {
+      this.optionsPositioning = {
+        ...this.optionsPositioning,
+        callWall,
+        putWall,
+        dealerPivot: Math.round((callWall + putWall) / 2),
+        timestamp: new Date()
+      } as OptionsPositioning & {
+        activeCallWall?: number;
+        activePutWall?: number;
+        activeGammaZoneHigh?: number;
+        activeGammaZoneLow?: number;
+      };
+      const ext = this.optionsPositioning as any;
+      if (summary.activeCallWall != null && summary.activeCallWall > 0) ext.activeCallWall = summary.activeCallWall;
+      if (summary.activePutWall != null && summary.activePutWall > 0) ext.activePutWall = summary.activePutWall;
+      if (summary.activeGammaZoneHigh != null && summary.activeGammaZoneHigh > 0) ext.activeGammaZoneHigh = summary.activeGammaZoneHigh;
+      if (summary.activeGammaZoneLow != null && summary.activeGammaZoneLow > 0) ext.activeGammaZoneLow = summary.activeGammaZoneLow;
+      updated = true;
+    }
+    if (summary.gammaMagnets && summary.gammaMagnets.length > 0) {
+      const zones = summary.shortGammaZones;
+      const firstZone = zones?.[0];
+      this.keyLevels = {
+        ...this.keyLevels,
+        gammaMagnets: summary.gammaMagnets,
+        shortGammaPocketStart: firstZone?.startStrike ?? this.keyLevels.shortGammaPocketStart,
+        shortGammaPocketEnd: firstZone?.endStrike ?? this.keyLevels.shortGammaPocketEnd,
+        timestamp: new Date()
+      };
+      updated = true;
+    }
+
+    if (updated) {
+      this.optionsLastUpdated = Date.now();
+    }
+  }
 }
 
 export const storage = new MemStorage();

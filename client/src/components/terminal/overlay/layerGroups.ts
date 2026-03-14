@@ -4,6 +4,9 @@ export interface LayerGroupState {
   cascade: boolean;
   squeeze: boolean;
   heatmap: boolean;
+  accel: boolean;
+  absorb: boolean;
+  gravity: boolean;
 }
 
 export const LAYER_GROUP_NAMES = {
@@ -11,7 +14,10 @@ export const LAYER_GROUP_NAMES = {
   gamma: 'GAMMA',
   cascade: 'CASCADE',
   squeeze: 'SQUEEZE',
-  heatmap: 'HEATMAP'
+  heatmap: 'HEATMAP',
+  accel: 'ACCEL',
+  absorb: 'ABSORB',
+  gravity: 'GRAVITY',
 } as const;
 
 export type LayerGroup = keyof LayerGroupState;
@@ -22,5 +28,8 @@ export const LAYER_GROUP_OVERLAYS = {
   gamma: ['gammaLevels', 'cliffLevels'],
   cascade: ['cascadeLevels'],
   squeeze: ['squeezeLevels'],
-  heatmap: ['heatmap']
+  heatmap: ['heatmap'],
+  accel: ['accelZones'],
+  absorb: ['absorptionZones'],
+  gravity: ['gravityZones', 'oiLabels'],
 } as const;

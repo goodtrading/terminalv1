@@ -160,6 +160,10 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     localStorage.setItem('terminal-activePanels', JSON.stringify(Array.from(activePanels)));
   }, [activePanels]);
 
+  const [showAccelZones, setShowAccelZones] = useState(true);
+  const [showAbsorbZones, setShowAbsorbZones] = useState(true);
+  const [showGravityZones, setShowGravityZones] = useState(false);
+
   const [toggles, setToggles] = useState({
     price: true,
     gamma: false,
@@ -406,14 +410,20 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     if (market?.gammaFlip) points.push(market.gammaFlip);
     if (market?.transitionZoneStart) points.push(market.transitionZoneStart);
     if (market?.transitionZoneEnd) points.push(market.transitionZoneEnd);
-    if (positioning?.callWall) points.push(positioning.callWall);
-    if (positioning?.putWall) points.push(positioning.putWall);
+    const pos = positioning as { callWall?: number; putWall?: number; activeCallWall?: number; activePutWall?: number } | undefined;
+    const cw = (pos?.activeCallWall && pos.activeCallWall > 0) ? pos.activeCallWall : pos?.callWall;
+    const pw = (pos?.activePutWall && pos.activePutWall > 0) ? pos.activePutWall : pos?.putWall;
+    if (cw) points.push(cw);
+    if (pw) points.push(pw);
     if (positioning?.dealerPivot) points.push(positioning.dealerPivot);
     if (levels?.gammaMagnets) points.push(...levels.gammaMagnets);
     if (levels?.shortGammaPocketStart) points.push(levels.shortGammaPocketStart);
     if (levels?.shortGammaPocketEnd) points.push(levels.shortGammaPocketEnd);
     if (levels?.deepRiskPocketStart) points.push(levels.deepRiskPocketStart);
     if (levels?.deepRiskPocketEnd) points.push(levels.deepRiskPocketEnd);
+    const gm = terminalState?.gravityMap;
+    if (gm?.primaryMagnet?.price) points.push(gm.primaryMagnet.price);
+    if (gm?.secondaryMagnet?.price) points.push(gm.secondaryMagnet.price);
 
     const filteredPoints = points.filter(p => Math.abs(p - price) <= threshold);
     if (filteredPoints.length > 0) {
@@ -565,6 +575,17 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     const price = lastCandle.close;
     const threshold = price * 0.15;
     const fmtK = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(p);
+    const formatNotional = (v: number | null | undefined) => {
+      if (v == null || !Number.isFinite(v)) return null;
+      const abs = Math.abs(v);
+      if (abs >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
+      if (abs >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+      if (abs >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
+      return `$${Math.round(v)}`;
+    };
+    const optionsData = terminalState?.options as { callWallUsd?: number | null; putWallUsd?: number | null } | undefined;
+    const callWallUsd = optionsData?.callWallUsd;
+    const putWallUsd = optionsData?.putWallUsd;
 
     const sweepDetector = positioning_engines?.liquiditySweepDetector;
     const sweepActive = sweepDetector && (sweepDetector.sweepRisk === "HIGH" || sweepDetector.sweepRisk === "EXTREME") && sweepDetector.sweepDirection !== "NONE";
@@ -574,14 +595,23 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     type LevelEntry = { price: number; priority: number; label: string; shortLabel: string; color: string; style: number; width: number; axisLabel: boolean; isBandFill?: boolean };
     const entries: LevelEntry[] = [];
 
-    const pushEntry = (p: number, priority: number, label: string, shortLabel: string, color: string, style = LineStyle.Solid, width = 1, isBandFill = false) => {
-      if (Math.abs(p - price) > threshold) return;
+    const pushEntry = (p: number, priority: number, label: string, shortLabel: string, color: string, style = LineStyle.Solid, width = 1, isBandFill = false, allowOutsideThreshold = false) => {
+      if (!allowOutsideThreshold && Math.abs(p - price) > threshold) return;
       entries.push({ price: p, priority, label, shortLabel, color, style, width, axisLabel: !isBandFill, isBandFill });
     };
 
     if (activePanels.has("LEVELS")) {
-      if (positioning?.callWall) pushEntry(positioning.callWall, 1, "CALL WALL", "CW", `rgba(239, 68, 68, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
-      if (positioning?.putWall) pushEntry(positioning.putWall, 1, "PUT WALL", "PW", `rgba(34, 197, 94, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
+      const pos = positioning as { callWall?: number; putWall?: number; activeCallWall?: number; activePutWall?: number } | undefined;
+      const cw = (pos?.activeCallWall && pos.activeCallWall > 0) ? pos.activeCallWall : pos?.callWall;
+      const pw = (pos?.activePutWall && pos.activePutWall > 0) ? pos.activePutWall : pos?.putWall;
+      const callWallLabel = callWallUsd != null && Number.isFinite(callWallUsd)
+        ? `CALL WALL (${formatNotional(callWallUsd)}) ${fmtK(cw!)}`
+        : "CALL WALL";
+      const putWallLabel = putWallUsd != null && Number.isFinite(putWallUsd)
+        ? `PUT WALL (${formatNotional(putWallUsd)}) ${fmtK(pw!)}`
+        : "PUT WALL";
+      if (cw) pushEntry(cw, 1, callWallLabel, pos?.activeCallWall ? "CW (active)" : "CW", `rgba(239, 68, 68, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
+      if (pw) pushEntry(pw, 1, putWallLabel, pos?.activePutWall ? "PW (active)" : "PW", `rgba(34, 197, 94, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
       if (levels?.gammaMagnets) {
         levels.gammaMagnets.forEach((m, i) => pushEntry(m, 3, `MAG ${fmtK(m)}`, "M", `rgba(59, 130, 246, ${dim(0.4, 0.5)})`, LineStyle.Dashed));
       }
@@ -676,8 +706,11 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     if (sweepActive && activePanels.has("SQUEEZE")) {
       const knownLevels: number[] = [];
       if (positioning?.dealerPivot) knownLevels.push(positioning.dealerPivot);
-      if (positioning?.putWall) knownLevels.push(positioning.putWall);
-      if (positioning?.callWall) knownLevels.push(positioning.callWall);
+      const pos = positioning as { callWall?: number; putWall?: number; activeCallWall?: number; activePutWall?: number } | undefined;
+      const pw = (pos?.activePutWall && pos.activePutWall > 0) ? pos.activePutWall : pos?.putWall;
+      const cw = (pos?.activeCallWall && pos.activeCallWall > 0) ? pos.activeCallWall : pos?.callWall;
+      if (pw) knownLevels.push(pw);
+      if (cw) knownLevels.push(cw);
       if (levels?.gammaMagnets) knownLevels.push(...levels.gammaMagnets);
       const heatmapZones = positioning_engines?.liquidityHeatmap?.liquidityHeatZones || [];
       heatmapZones.filter((z: any) => z.intensity >= 0.5).forEach((z: any) => knownLevels.push((z.priceStart + z.priceEnd) / 2));
@@ -1204,7 +1237,17 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       // Legacy background heatmap zones (preserved for non-Bookmap systems)
       const heatmap = positioning_engines?.liquidityHeatmap;
       if (heatmap && lastCandle) {
-        
+        console.log("[GammaAccel] liquidityHeatmap payload", {
+          hasLiquidityHeatZones: !!heatmap.liquidityHeatZones,
+          heatZonesCount: heatmap.liquidityHeatZones?.length ?? 0,
+          hasGammaAccelerationZones: !!heatmap.gammaAccelerationZones,
+          gammaAccelZonesCount: heatmap.gammaAccelerationZones?.length ?? 0,
+        });
+        const sampleWithGamma = (heatmap.liquidityHeatZones || []).filter((z: any) => z.gammaWeightedLiquidity != null).slice(0, 3);
+        if (sampleWithGamma.length) {
+          console.log("[GammaHeat] sample liquidityHeatZones with gammaWeightedLiquidity", sampleWithGamma.map((z: any) => ({ priceStart: z.priceStart, priceEnd: z.priceEnd, side: z.side, totalQuantity: z.totalQuantity, gammaWeightedLiquidity: z.gammaWeightedLiquidity })));
+        }
+
         // Background heatmap zones (preserving existing logic)
         const confluenceSet = new Set<number>();
         const binSize = price > 50000 ? 250 : price > 10000 ? 100 : 50;
@@ -1216,11 +1259,20 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
         const bidZones = allHeatZones.filter((z: any) => z.side === "BID" && z.intensity >= 0.1).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 4);
         const askZones = allHeatZones.filter((z: any) => z.side === "ASK" && z.intensity >= 0.1).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 4);
 
+        const maxGammaWeighted = allHeatZones.reduce((m: number, z: any) => {
+          const g = z.gammaWeightedLiquidity;
+          return g != null && g > m ? g : m;
+        }, 0);
+
         const nearThreshold = price * 0.005;
         const intensityToWidth = (int: number, near: boolean) => Math.min(near ? 2 : (int >= 0.7 ? 2 : 1), heatmapLineWidthCap);
-        const intensityToOpacity = (int: number, near: boolean) => {
+        const intensityToOpacity = (int: number, near: boolean, zone?: any) => {
           const base = Math.min(0.5, 0.08 + int * 0.4);
-          const raw = near ? Math.min(0.6, base + 0.1) : base;
+          let raw = near ? Math.min(0.6, base + 0.1) : base;
+          if (maxGammaWeighted > 0 && zone?.gammaWeightedLiquidity != null) {
+            const gammaBoost = 0.5 + 0.5 * (zone.gammaWeightedLiquidity / maxGammaWeighted);
+            raw = Math.min(0.85, raw * gammaBoost);
+          }
           return (sweepActive && activePanels.has("SQUEEZE")) ? raw * 0.6 : raw;
         };
         const intensityToStyle = (int: number, near: boolean) => (int >= 0.5 || near) ? LineStyle.Solid : LineStyle.Dotted;
@@ -1236,7 +1288,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           const mid = (zone.priceStart + zone.priceEnd) / 2;
           if (isInConfluence(zone)) return;
           const near = Math.abs(mid - price) <= nearThreshold;
-          const opacity = intensityToOpacity(zone.intensity, near);
+          const opacity = intensityToOpacity(zone.intensity, near, zone);
           const width = intensityToWidth(zone.intensity, near);
           pushEntry(mid, 8, `BID ${fmtK(mid)}`, "B", `rgba(34, 197, 94, ${opacity.toFixed(2)})`, intensityToStyle(zone.intensity, near), width);
         });
@@ -1245,7 +1297,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           const mid = (zone.priceStart + zone.priceEnd) / 2;
           if (isInConfluence(zone)) return;
           const near = Math.abs(mid - price) <= nearThreshold;
-          const opacity = intensityToOpacity(zone.intensity, near);
+          const opacity = intensityToOpacity(zone.intensity, near, zone);
           const width = intensityToWidth(zone.intensity, near);
           pushEntry(mid, 8, `ASK ${fmtK(mid)}`, "A", `rgba(239, 68, 68, ${opacity.toFixed(2)})`, intensityToStyle(zone.intensity, near), width);
         });
@@ -1287,6 +1339,156 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       });
     }
 
+    const gammaAccelZones = positioning_engines?.liquidityHeatmap?.gammaAccelerationZones as Array<{ start: number; end: number; direction: "UP" | "DOWN"; score: number }> | undefined;
+    console.log("[GammaAccel] zones payload", { count: gammaAccelZones?.length ?? 0, zones: gammaAccelZones ?? [] });
+    if (showAccelZones && gammaAccelZones?.length > 0) {
+      const maxAccel = 20;
+      gammaAccelZones.slice(0, maxAccel).forEach((zone: { start: number; end: number; direction: "UP" | "DOWN"; score: number }) => {
+        const bandLines = 5;
+        const bandStep = (zone.end - zone.start) / bandLines;
+        const isUp = zone.direction === "UP";
+        const r = isUp ? 34 : 239;
+        const g = isUp ? 197 : 68;
+        const b = isUp ? 94 : 68;
+        const bandOpacity = 0.28;
+        const borderOpacity = 0.8;
+        for (let i = 0; i <= bandLines; i++) {
+          const p = zone.start + bandStep * i;
+          const opacity = i === 0 || i === bandLines ? borderOpacity : bandOpacity;
+          pushEntry(p, 3, "", "", `rgba(${r}, ${g}, ${b}, ${opacity})`, LineStyle.Solid, 1, true, true);
+        }
+        const labelOpacity = 0.9;
+        pushEntry(zone.end, 3, isUp ? "ACCEL UP" : "ACCEL DOWN", isUp ? "ACC↑" : "ACC↓", `rgba(${r}, ${g}, ${b}, ${labelOpacity})`, LineStyle.Solid, 1, false, true);
+      });
+    }
+
+    const absorption = (terminalState?.positioning?.absorption ?? null) as {
+      status: string;
+      side: string;
+      zoneLow: number | null;
+      zoneHigh: number | null;
+      confidence?: number;
+      candidateSide?: string;
+      candidateZoneLow?: number | null;
+      candidateZoneHigh?: number | null;
+      distanceToCandidatePct?: number | null;
+      testReadiness?: number;
+      preAbsorptionState?: "NONE" | "CANDIDATE" | "APPROACHING" | "UNDER_TEST";
+    } | null;
+    if (absorption != null) {
+      console.log("[ABSORPTION MainChart] terminalState.positioning.absorption", absorption.status, absorption.side);
+    } else {
+      console.log("[ABSORPTION MainChart] terminalState.positioning?.absorption", absorption, "terminalState=" + !!terminalState, "positioning=" + !!terminalState?.positioning);
+    }
+    // Active / confirmed absorption overlay
+    if (
+      showAbsorbZones &&
+      absorption &&
+      (absorption.status === "ACTIVE" || absorption.status === "CONFIRMED") &&
+      absorption.zoneLow != null &&
+      absorption.zoneHigh != null
+    ) {
+      const isSellAbsorb = absorption.side === "SELL_ABSORPTION";
+      const r = isSellAbsorb ? 249 : 34;
+      const g = isSellAbsorb ? 115 : 211;
+      const b = isSellAbsorb ? 22 : 238;
+      const bandOpacity = 0.22;
+      const borderOpacity = 0.55;
+      const steps = 4;
+      const step = (absorption.zoneHigh - absorption.zoneLow) / steps;
+      for (let i = 0; i <= steps; i++) {
+        const p = absorption.zoneLow + step * i;
+        const opacity = i === 0 || i === steps ? borderOpacity : bandOpacity;
+        pushEntry(p, 3, "", "", `rgba(${r}, ${g}, ${b}, ${opacity})`, LineStyle.Dashed, 1, true, true);
+      }
+      const confStr = absorption.confidence != null ? ` ${absorption.confidence}%` : "";
+      pushEntry(absorption.zoneHigh, 3, isSellAbsorb ? `SELL ABSORB${confStr}` : `BUY ABSORB${confStr}`, isSellAbsorb ? "S-ABS" : "B-ABS", `rgba(${r}, ${g}, ${b}, 0.85)`, LineStyle.Dashed, 1, false, true);
+    }
+
+    // Candidate / pre-absorption overlay (subtle)
+    if (showAbsorbZones && absorption) {
+      const cSide = absorption.candidateSide;
+      const cLow = absorption.candidateZoneLow;
+      const cHigh = absorption.candidateZoneHigh;
+      const readiness = typeof absorption.testReadiness === "number" ? absorption.testReadiness : 0;
+      const preState = absorption.preAbsorptionState;
+      const shouldDrawCandidate =
+        cSide &&
+        cSide !== "NONE" &&
+        cLow != null &&
+        cHigh != null &&
+        readiness >= 40 &&
+        (preState === "APPROACHING" || preState === "UNDER_TEST");
+
+      if (shouldDrawCandidate) {
+        const isSellCand = cSide === "SELL_ABSORPTION";
+        const r = isSellCand ? 249 : 34;
+        const g = isSellCand ? 115 : 211;
+        const b = isSellCand ? 22 : 238;
+        const bandOpacity = 0.08;
+        const borderOpacity = 0.35;
+        const steps = 3;
+        const step = (cHigh - cLow) / steps;
+        for (let i = 0; i <= steps; i++) {
+          const p = cLow + step * i;
+          const opacity = i === 0 || i === steps ? borderOpacity : bandOpacity;
+          pushEntry(p, 2, "", "", `rgba(${r}, ${g}, ${b}, ${opacity})`, LineStyle.Dashed, 1, true, true);
+        }
+        const label = `ABSORB CAND ${Math.round(readiness)}%`;
+        pushEntry(
+          cHigh,
+          2,
+          label,
+          "A-C",
+          `rgba(${r}, ${g}, ${b}, 0.55)`,
+          LineStyle.Dashed,
+          1,
+          false,
+          true
+        );
+      }
+    }
+
+    // Gravity Map overlay
+    const gravityMap = terminalState?.gravityMap;
+    if (showGravityZones && gravityMap?.status === "ACTIVE") {
+      if (gravityMap.primaryMagnet) {
+        pushEntry(gravityMap.primaryMagnet.price, 2, `MAG1 ${fmtK(gravityMap.primaryMagnet.price)}`, "M1", "rgba(139, 92, 246, 0.75)", LineStyle.Solid, 2, false, true);
+      }
+      if (gravityMap.secondaryMagnet) {
+        pushEntry(gravityMap.secondaryMagnet.price, 3, `MAG2 ${fmtK(gravityMap.secondaryMagnet.price)}`, "M2", "rgba(139, 92, 246, 0.5)", LineStyle.Dashed, 1, false, true);
+      }
+      for (const z of gravityMap.repulsionZones?.slice(0, 3) ?? []) {
+        pushEntry(z.price, 3, `REP ${fmtK(z.price)}`, "R", "rgba(239, 68, 68, 0.5)", LineStyle.Dotted, 1, false, true);
+      }
+      for (const z of gravityMap.accelerationZones?.slice(0, 2) ?? []) {
+        const mid = (z.zoneLow + z.zoneHigh) / 2;
+        pushEntry(mid, 4, `ACC ${z.directionBias}`, "A", z.directionBias === "UP" ? "rgba(34, 197, 94, 0.4)" : "rgba(239, 68, 68, 0.4)", LineStyle.Dotted, 1, false, true);
+      }
+    }
+
+    // OI labels (top-N strikes with USD notional)
+    const optionsCtx = terminalState?.options;
+    const topOiCount = 5;
+    if (showGravityZones && optionsCtx?.strikes?.length && price > 0) {
+      const fmtNotional = (v: number) => {
+        if (!Number.isFinite(v)) return "";
+        const abs = Math.abs(v);
+        if (abs >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
+        if (abs >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+        if (abs >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
+        return `$${Math.round(v)}`;
+      };
+      const withUsd = optionsCtx.strikes
+        .filter((s: any) => Math.abs((s.strike ?? 0) - price) <= threshold && (s.oiUsd ?? (s.totalOiContracts ?? 0) * price) > 0)
+        .map((s: any) => ({ strike: s.strike, oiUsd: s.oiUsd ?? (s.totalOiContracts ?? 0) * price }))
+        .sort((a: any, b: any) => (b.oiUsd ?? 0) - (a.oiUsd ?? 0))
+        .slice(0, topOiCount);
+      for (const s of withUsd) {
+        pushEntry(s.strike, 4, `${fmtK(s.strike)} · ${fmtNotional(s.oiUsd)}`, fmtNotional(s.oiUsd), "rgba(148, 163, 184, 0.5)", LineStyle.Dotted, 1, false, true);
+      }
+    }
+
     const labeledEntries = entries.filter(e => !e.isBandFill && e.label);
     labeledEntries.sort((a, b) => a.price - b.price);
     const minGap = price * 0.004;
@@ -1320,7 +1522,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       });
       if (line) priceLinesRef.current.push(line);
     }
-  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines, rawOrderBook]);
+  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines, rawOrderBook, showAccelZones, showAbsorbZones, showGravityZones, terminalState?.gravityMap, terminalState?.options]);
 
   if (historyError) {
     return (
@@ -1337,20 +1539,40 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   }
 
   const isLive = !!ticker && !tickerError;
-  const layerToMode: Record<LayerGroup, MapMode> = { levels: "LEVELS", gamma: "GAMMA", cascade: "CASCADE", squeeze: "SQUEEZE", heatmap: "HEATMAP" };
+  const layerToMode: Record<Exclude<LayerGroup, "accel" | "absorb" | "gravity">, MapMode> = { levels: "LEVELS", gamma: "GAMMA", cascade: "CASCADE", squeeze: "SQUEEZE", heatmap: "HEATMAP" };
   const activeLayers = {
     levels: activePanels.has("LEVELS"),
     gamma: activePanels.has("GAMMA"),
     cascade: activePanels.has("CASCADE"),
     squeeze: activePanels.has("SQUEEZE"),
     heatmap: activePanels.has("HEATMAP"),
+    accel: showAccelZones,
+    absorb: showAbsorbZones,
+    gravity: showGravityZones,
+  };
+
+  const handleLayerToggle = (layer: LayerGroup) => {
+    if (layer === "accel") {
+      setShowAccelZones((prev) => !prev);
+      return;
+    }
+    if (layer === "absorb") {
+      setShowAbsorbZones((prev) => !prev);
+      return;
+    }
+    if (layer === "gravity") {
+      setShowGravityZones((prev) => !prev);
+      return;
+    }
+    const mode = layerToMode[layer];
+    if (mode) togglePanel(mode);
   };
 
   return (
     <div className="flex-1 w-full h-full flex flex-col relative">
       <LayerGroupControls
         activeLayers={activeLayers}
-        onLayerToggle={(layer) => togglePanel(layerToMode[layer])}
+        onLayerToggle={handleLayerToggle}
         onFitLevels={() => { setSelectedScenario(null); fitLevels(); }}
         onResetChart={() => { setSelectedScenario(null); resetScale(); }}
         dataTestId="toggle-map-mode"
@@ -1376,6 +1598,24 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
               )}
               {activePanels.has("HEATMAP") && (
                 <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Order book liquidity zones with gamma confluence</div>
+              )}
+              {showAccelZones && learnMode && (
+                <div className="mt-2 p-2 rounded border border-white/[0.06] bg-black/40 max-w-[280px]">
+                  <div className="text-[9px] font-bold font-mono uppercase tracking-wider text-white/50 mb-1">ACCEL ZONES</div>
+                  <p className="text-[9px] text-white/40 font-mono leading-snug">Areas where thin liquidity and gamma structure can amplify price movement. Breaks through these zones may lead to fast expansion.</p>
+                </div>
+              )}
+              {showAbsorbZones && learnMode && (
+                <div className="mt-2 p-2 rounded border border-white/[0.06] bg-black/40 max-w-[280px]">
+                  <div className="text-[9px] font-bold font-mono uppercase tracking-wider text-white/50 mb-1">ABSORPTION</div>
+                  <p className="text-[9px] text-white/40 font-mono leading-snug">Aggressive flow into resting liquidity that fails to break through. Sell absorption = buys absorbed at asks; buy absorption = sells absorbed at bids. Invalidation = clean break beyond the zone.</p>
+                </div>
+              )}
+              {showGravityZones && learnMode && (
+                <div className="mt-2 p-2 rounded border border-white/[0.06] bg-black/40 max-w-[280px]">
+                  <div className="text-[9px] font-bold font-mono uppercase tracking-wider text-white/50 mb-1">GRAVITY MAP</div>
+                  <p className="text-[9px] text-white/40 font-mono leading-snug">Combines open interest, gamma positioning, and nearby liquidity to estimate where price is more likely to be pulled, stalled, or rejected. OI labels show USD notional per strike.</p>
+                </div>
               )}
             </div>
           </div>
@@ -1454,6 +1694,8 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
             isActive={activePanels.has("HEATMAP")}
             chartWidth={chartContainerRef.current.clientWidth}
             chartHeight={chartContainerRef.current.clientHeight}
+            currentPrice={lastCandle?.close || 0}
+            gammaContext={market != null || levels?.gammaMagnets?.length ? { gammaFlip: market?.gammaFlip ?? null, gammaMagnets: levels?.gammaMagnets ?? [] } : null}
             priceToCoordinate={(price: number) => {
               if (!chartRef.current || !chartContainerRef.current) return null;
               try {
@@ -1480,7 +1722,6 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
                 return null;
               }
             }}
-            currentPrice={lastCandle?.close || 0}
           />
         )}
       </TerminalPanel>
