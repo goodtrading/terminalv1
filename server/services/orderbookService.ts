@@ -27,10 +27,7 @@ if (DEBUG_ENABLED) console.debug("[OrderBookService] Using WebSocket URL:", WS_U
 let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
 let ws: WebSocket | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-let binanceConnected = false;
-let reconnectAttempt = 0;
-const RECONNECT_DELAYS_MS = [2000, 5000, 10000];
-const MIN_LEVELS_FOR_HEALTHY = 10;
+const RECONNECT_MS = 5000;
 
 function parseLevels(arr: [string, string][]): OrderBookLevel[] {
   if (!Array.isArray(arr)) {
@@ -74,10 +71,7 @@ export async function initializeFullDepth(): Promise<void> {
       asks: asks.sort((a, b) => a.price - b.price),
       timestamp: data.lastUpdateId || Date.now()
     };
-    if (!binanceConnected && (snapshot.bids.length >= MIN_LEVELS_FOR_HEALTHY || snapshot.asks.length >= MIN_LEVELS_FOR_HEALTHY)) {
-      binanceConnected = true;
-      console.log("[Orderbook] Binance connected (REST init)");
-    }
+    
     if (DEBUG_ENABLED) {
       console.debug("[OrderBookService] Full depth initialized:", {
         bidCount: snapshot.bids.length,
@@ -108,13 +102,7 @@ function connect(): void {
   }
 
   ws.on("open", () => {
-    const wasReconnecting = reconnectAttempt > 0;
-    reconnectAttempt = 0;
-    if (wasReconnecting) {
-      console.log("[Orderbook] Binance reconnected, restoring live orderbook");
-    } else {
-      console.log("[Orderbook] Binance connected");
-    }
+    console.log("[OrderBookService] Binance depth WebSocket connected");
   });
 
   ws.on("message", (data: Buffer | string) => {
@@ -151,21 +139,12 @@ function connect(): void {
           timestamp: ts,
         };
       }
-      const nowHealthy = (snapshot.bids.length >= MIN_LEVELS_FOR_HEALTHY || snapshot.asks.length >= MIN_LEVELS_FOR_HEALTHY);
-      if (nowHealthy && !binanceConnected) {
-        binanceConnected = true;
-        console.log("[Orderbook] Binance connected");
-      }
     } catch (e) {
       console.warn("[OrderBookService] Parse error:", e, "Raw data length:", raw.length);
     }
   });
 
   ws.on("close", () => {
-    if (binanceConnected) {
-      binanceConnected = false;
-      console.log("[Orderbook] Binance disconnected");
-    }
     ws = null;
     scheduleReconnect();
   });
@@ -177,13 +156,10 @@ function connect(): void {
 
 function scheduleReconnect(): void {
   if (reconnectTimeout) return;
-  const delay = RECONNECT_DELAYS_MS[Math.min(reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];
-  reconnectAttempt++;
-  console.log("[Orderbook] reconnecting Binance...");
   reconnectTimeout = setTimeout(() => {
     reconnectTimeout = null;
     connect();
-  }, delay);
+  }, RECONNECT_MS);
 }
 
 connect();
@@ -194,9 +170,4 @@ connect();
  */
 export function getOrderBook(): OrderBookSnapshot {
   return { ...snapshot };
-}
-
-/** True when Binance WS has sufficient data for bookmap/heatmap. */
-export function isBinanceHealthy(): boolean {
-  return binanceConnected || (snapshot.bids.length >= MIN_LEVELS_FOR_HEALTHY && snapshot.asks.length >= MIN_LEVELS_FOR_HEALTHY);
 }

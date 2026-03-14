@@ -2,7 +2,7 @@ import { z } from "zod";
 import { storage } from "./storage";
 import { MarketDataGateway, tickerSchema } from "./market-gateway";
 import { DeribitOptionsGateway } from "./deribit-gateway";
-import { OrderBookGateway, getOrderbookState } from "./orderbook-gateway";
+import { OrderBookGateway } from "./orderbook-gateway";
 import { runLiquiditySweepEngine } from "./lib/liquiditySweepEngine";
 import { computeGammaAccelerationZones } from "./lib/gammaAccelerationZones";
 import { runAbsorptionEngine, buildInactiveAbsorptionSignal, normalizeAbsorptionSignal, type AbsorptionSignal } from "./lib/absorptionEngine";
@@ -10,8 +10,7 @@ import { getDeribitOptionsSnapshot, enrichOptionsWithOINotional } from "./lib/de
 import { computeGravityMap } from "./lib/gravityMapEngine";
 import { updateTimeline, getTimeline, getTimelineSummary } from "./lib/stateTimeline";
 import { computeStateCoherence } from "./lib/stateCoherence";
-import { getOrderBook, isBinanceHealthy } from "./services/orderbookService";
-import { computeFeedState } from "./lib/feedState";
+import { getOrderBook } from "./services/orderbookService";
 
 export const terminalStateSchema = z.object({
   market: z.any(),
@@ -27,18 +26,7 @@ export const terminalStateSchema = z.object({
   gravityMap: z.any().optional(),
   timeline: z.array(z.any()).optional(),
   timelineSummary: z.any().optional(),
-  coherence: z.any().optional(),
-  priceSource: z.string().optional(),
-  orderbookSource: z.string().optional(),
-  optionsSource: z.string().optional(),
-  isBinancePriceHealthy: z.boolean().optional(),
-  isCoinbasePriceHealthy: z.boolean().optional(),
-  isBinanceOrderbookHealthy: z.boolean().optional(),
-  isDeribitOptionsHealthy: z.boolean().optional(),
-  isPriceFallbackActive: z.boolean().optional(),
-  orderbookLive: z.boolean().optional(),
-  orderbookFrozen: z.boolean().optional(),
-  lastOrderbookUpdateTs: z.number().optional(),
+  coherence: z.any().optional()
 });
 
 export type TerminalState = z.infer<typeof terminalStateSchema>;
@@ -267,22 +255,6 @@ export async function getTerminalState(): Promise<TerminalState> {
     };
   }
 
-  const heatmapSource = (liveHeatmap as any)?.heatmapSummary?.source;
-  const obState = getOrderbookState();
-  const feedState = computeFeedState({
-    tickerSource: ticker?.source,
-    heatmapSource: heatmapSource && heatmapSource !== "UNAVAILABLE" ? heatmapSource : undefined,
-    optionsSourceRaw: optionsSource ?? undefined,
-    isBinanceOrderbookHealthy: isBinanceHealthy(),
-    optionsStrikeCount: (optionsSnapshot as any)?.strikes?.length ?? 0,
-    hasHeatmapData: !!liveHeatmap?.liquidityHeatZones?.length,
-  });
-  const priceSource = feedState.priceSource === "binance" ? "binance" : feedState.priceSource === "coinbase" ? "coinbase" : (ticker?.source ?? "none");
-  const orderbookSource = (feedState.orderbookSource === "binance" || obState.orderbookFrozen) ? "Binance" : (heatmapSource === "UNAVAILABLE" ? "none" : (heatmapSource ?? "none"));
-  const optionsSourceOut = feedState.optionsSource === "deribit" ? "deribit" : "none";
-  if (process.env.NODE_ENV === "development") {
-    console.log("[TerminalState feed] price=" + priceSource + " orderbook=" + orderbookSource + " options=" + optionsSourceOut);
-  }
   if (enrichedPositioning?.liquidityHeatmap) {
     const hm = enrichedPositioning.liquidityHeatmap as { liquidityHeatZones?: unknown[]; gammaAccelerationZones?: unknown[] };
     console.log("[TerminalState] /api/terminal/state heatmap: liquidityHeatZones count=" + (hm.liquidityHeatZones?.length ?? 0) + ", gammaAccelerationZones count=" + (hm.gammaAccelerationZones?.length ?? 0));
@@ -379,16 +351,5 @@ export async function getTerminalState(): Promise<TerminalState> {
     timeline,
     timelineSummary,
     coherence,
-    priceSource: feedState.priceSource,
-    orderbookSource: feedState.orderbookSource === "binance" ? "Binance" : "none",
-    optionsSource: optionsSourceOut,
-    isBinancePriceHealthy: feedState.isBinancePriceHealthy,
-    isCoinbasePriceHealthy: feedState.isCoinbasePriceHealthy,
-    isBinanceOrderbookHealthy: feedState.isBinanceOrderbookHealthy,
-    isDeribitOptionsHealthy: feedState.isDeribitOptionsHealthy,
-    isPriceFallbackActive: feedState.isPriceFallbackActive,
-    orderbookLive: obState.orderbookLive,
-    orderbookFrozen: obState.orderbookFrozen,
-    lastOrderbookUpdateTs: obState.lastOrderbookUpdateTs,
   };
 }

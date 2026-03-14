@@ -128,22 +128,17 @@ function deriveEdge(positioning: any, market: any): string {
 
 // Liquidity Map Panel Component
 function LiquidityMapPanel() {
-  const { data: terminalState } = useTerminalState();
-  const positioning = (terminalState as any)?.positioning;
+  const positioning_engines = useTerminalState((s: any) => s.positioning_engines);
   const { data: vacuumData } = useQuery<VacuumAnalysisResult>({
     queryKey: ["/api/vacuum"],
     refetchInterval: 2000,
-    enabled: !!positioning
+    enabled: !!positioning_engines
   });
 
-  const heatmap = (positioning as any)?.liquidityHeatmap;
+  const heatmap = (positioning_engines as any)?.liquidityHeatmap;
   const lines: string[] = heatmap?.liquidityMapLines || [];
   const pressure = heatmap?.liquidityPressure || "BALANCED";
-  const orderbookSource = (terminalState as any)?.orderbookSource ?? heatmap?.heatmapSummary?.source ?? "none";
-  const orderbookFrozen = (terminalState as any)?.orderbookFrozen ?? false;
-  const lastOrderbookTs = (terminalState as any)?.lastOrderbookUpdateTs ?? 0;
-  const isOrderbookUnavailable = (orderbookSource === "none" || !orderbookSource) && !orderbookFrozen;
-  const snapshotAgeSec = lastOrderbookTs > 0 ? Math.floor((Date.now() - lastOrderbookTs) / 1000) : null;
+  const source = heatmap?.heatmapSummary?.source || "--";
   const pressureColor = pressure === "BID_HEAVY" ? "green" : pressure === "ASK_HEAVY" ? "red" : "yellow";
 
   // Use new vacuum engine data
@@ -177,24 +172,8 @@ function LiquidityMapPanel() {
   const fmtK = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(Math.round(p));
   const thinLabel = thinZone ? `${fmtK(thinZone)} ${thinDir === "ABOVE" ? "ABOVE" : "BELOW"}` : "--";
   
-  if (!positioning && !vacuumData) {
-    return (
-      <div className="flex flex-col gap-2">
-        <div className="text-[10px] text-white/40 font-mono py-2">Loading liquidity data…</div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-2">
-      {orderbookFrozen && (
-        <StatusValue label="Status" value="FROZEN" color="orange" />
-      )}
-      <StatusValue
-        label="Orderbook"
-        value={isOrderbookUnavailable ? "Binance orderbook unavailable" : orderbookFrozen ? `BINANCE (last snapshot${snapshotAgeSec != null ? `, ${snapshotAgeSec}s` : ""})` : orderbookSource}
-        color={isOrderbookUnavailable ? "orange" : orderbookFrozen ? "orange" : "gray"}
-      />
       <StatusValue label="Pressure" value={pressure.replace(/_/g, " ")} color={pressureColor} />
       <StatusValue label="Vacuum Risk" value={vacuumRisk} color={vacuumRiskColor} />
       <StatusValue label="Vacuum Type" value={vacuumType} color={vacuumTypeColor} />

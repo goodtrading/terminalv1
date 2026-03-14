@@ -126,8 +126,9 @@ export class MarketDataGateway {
       normalize: (d: Ticker) => d
     };
     const baseProviders = [
-      { name: 'Binance', fetch: () => this.fetchBinance(`/api/v3/ticker/price?symbol=${symbol}`), normalize: (d: any, s: string) => ({ symbol: d.symbol, price: parseFloat(d.price), timestamp: Date.now(), source: 'Binance' }) },
-      { name: 'Coinbase', fetch: () => this.fetchCoinbase(`/products/${symbol.replace('USDT', '-USDT')}/ticker`), normalize: (d: any, s: string) => ({ symbol: symbol, price: parseFloat(d.price), timestamp: Date.now(), source: 'Coinbase' }) }
+      { name: 'Binance', fetch: () => this.fetchBinance(`/api/v3/ticker/price?symbol=${symbol}`), normalize: (d: any, s: string) => ({ symbol: d.symbol, price: parseFloat(d.price), timestamp: Date.now(), source: s }) },
+      { name: 'Bybit', fetch: () => this.fetchBybit(`/v5/market/tickers?category=spot&symbol=${symbol}`), normalize: (d: any, s: string) => ({ symbol: d.result.list[0].symbol, price: parseFloat(d.result.list[0].lastPrice), timestamp: Date.now(), source: s }) },
+      { name: 'Coinbase', fetch: () => this.fetchCoinbase(`/products/${symbol.replace('USDT', '-USDT')}/ticker`), normalize: (d: any, s: string) => ({ symbol: symbol, price: parseFloat(d.price), timestamp: Date.now(), source: s }) }
     ];
     const providers = preferredSource === 'kraken'
       ? [krakenProvider, ...baseProviders]
@@ -138,9 +139,6 @@ export class MarketDataGateway {
         const out = await provider.fetch() as { data: any; provider: string };
         const ticker = provider.name === 'Kraken' ? out.data : provider.normalize(out.data, out.provider);
         const validated = tickerSchema.parse(ticker);
-        if (validated.source !== 'Binance' && process.env.NODE_ENV === 'development') {
-          console.log("[Gateway] Ticker fallback active: priceSource=" + validated.source + " (Binance preferred for bookmap)");
-        }
         // Only update cache when using default chain (terminal state / options use cached ticker)
         if (preferredSource !== 'kraken') lastTickerCache = validated;
         return validated;

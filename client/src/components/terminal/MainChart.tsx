@@ -1586,35 +1586,8 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
                 <span className={`text-2xl font-mono font-bold ${isLive ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{(lastCandle?.close || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                 <div className="flex items-center ml-2">
                   <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", isLive ? "bg-terminal-positive" : "bg-terminal-negative")} />
-                  <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? (() => {
-                    const ts = terminalState as any;
-                    const obSource = ts?.orderbookSource;
-                    const obFrozen = ts?.orderbookFrozen;
-                    const isBinance = obSource && obSource === "Binance";
-                    if (isBinance && !obFrozen) return "LIVE (BINANCE)";
-                    if (isBinance && obFrozen) return "BINANCE DISCONNECTED · FROZEN";
-                    if (obSource === "none" || !obSource) return "ORDERBOOK UNAVAILABLE";
-                    return `Live (${ticker?.source ?? "—"})`;
-                  })() : 'Live Feed Offline'}</span>
+                  <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? `Live (${ticker?.source})` : 'Live Feed Offline'}</span>
                 </div>
-              </div>
-              <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[8px] font-mono text-white/40 uppercase tracking-wider">
-                {(() => {
-                  const ts = terminalState as any;
-                  const priceSrc = ts?.priceSource || ticker?.source || "—";
-                  const obSrc = ts?.orderbookSource ?? "—";
-                  const obFrozen = ts?.orderbookFrozen;
-                  const optSrc = ts?.optionsSource || "deribit";
-                  const obUnavailable = obSrc === "none" || !obSrc;
-                  const obLabel = obUnavailable ? "UNAVAILABLE" : obFrozen ? "BINANCE (FROZEN)" : String(obSrc).toUpperCase();
-                  return (
-                    <>
-                      <span>Price: {String(priceSrc).toUpperCase()}</span>
-                      <span className={obUnavailable ? "text-amber-400/80" : obFrozen ? "text-amber-400/80" : ""}>Orderbook: {obLabel}</span>
-                      <span>Options: {String(optSrc).toUpperCase()}</span>
-                    </>
-                  );
-                })()}
               </div>
               <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
                 <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
-import { getOrderBook, isBinanceHealthy } from "./services/orderbookService";
+import { getOrderBook } from "./services/orderbookService";
+import { getKrakenOrderBook } from "./kraken-gateway";
 
 const orderBookEntrySchema = z.object({
   price: z.number(),
@@ -94,28 +95,7 @@ export type LiquidityHeatmap = z.infer<typeof liquidityHeatmapSchema>;
 
 let cachedHeatmap: LiquidityHeatmap | null = null;
 let lastFetchTime = 0;
-let lastBinanceSuccessTs = 0;
-let lastActiveOrderbookSource: string | null = null;
-let lastLoggedOrderbookState: "binance" | "frozen" | "none" | null = null;
 const CACHE_TTL_MS = 15000;
-const FROZEN_TTL_MS = 20000; // Keep last valid snapshot for 20s after disconnect
-const BINANCE_SOURCES = ["Binance-WS", "Binance"];
-
-export function getOrderbookState(): { orderbookLive: boolean; orderbookFrozen: boolean; lastOrderbookUpdateTs: number } {
-  const now = Date.now();
-  const cachedSource = cachedHeatmap?.heatmapSummary?.source ?? null;
-  const hasBinanceCache = cachedSource && BINANCE_SOURCES.includes(cachedSource);
-  const snapshotAge = now - lastBinanceSuccessTs;
-  const binanceHealthy = isBinanceHealthy();
-  const withinFrozenTtl = lastBinanceSuccessTs > 0 && snapshotAge < FROZEN_TTL_MS;
-  const orderbookLive = binanceHealthy;
-  const orderbookFrozen = hasBinanceCache && !binanceHealthy && withinFrozenTtl;
-  return {
-    orderbookLive,
-    orderbookFrozen,
-    lastOrderbookUpdateTs: lastBinanceSuccessTs,
-  };
-}
 
 interface HistoricalBin {
   totalQuantity: number;
@@ -137,27 +117,88 @@ async function fetchWithTimeout(url: string, timeout = 5000): Promise<Response> 
   }
 }
 
-/** Binance only. No fallback to Coinbase. */
 async function fetchOrderBook(symbol: string = "BTCUSDT", limit: number = 500): Promise<OrderBook> {
-  const mirrors = ["https://api1.binance.com", "https://api2.binance.com", "https://api.binance.com"];
-  for (const mirror of mirrors) {
-    try {
-      const res = await fetchWithTimeout(`${mirror}/api/v3/depth?symbol=${symbol}&limit=${limit}`);
-      if (res.status === 451) throw new Error("GEO_BLOCKED");
-      if (res.ok) {
+  const providers = [
+    {
+      name: "Binance",
+      fetch: async () => {
+        const mirrors = ["https://api1.binance.com", "https://api2.binance.com", "https://api.binance.com"];
+        for (const mirror of mirrors) {
+          try {
+            const res = await fetchWithTimeout(`${mirror}/api/v3/depth?symbol=${symbol}&limit=${limit}`);
+            if (res.status === 451) throw new Error("GEO_BLOCKED");
+            if (res.ok) {
+              const data = await res.json();
+              return {
+                bids: data.bids.map((b: string[]) => ({ price: parseFloat(b[0]), quantity: parseFloat(b[1]) })),
+                asks: data.asks.map((a: string[]) => ({ price: parseFloat(a[0]), quantity: parseFloat(a[1]) })),
+                timestamp: Date.now(),
+                source: "Binance"
+              };
+            }
+          } catch (e: any) {
+            if (e.message === "GEO_BLOCKED") throw e;
+          }
+        }
+        throw new Error("Binance mirrors exhausted");
+      }
+    },
+    {
+      name: "Bybit",
+      fetch: async () => {
+        const res = await fetchWithTimeout(`https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${symbol}&limit=${Math.min(limit, 200)}`);
+        if (!res.ok) throw new Error(`Bybit ${res.status}`);
         const data = await res.json();
+        const book = data.result;
         return {
-          bids: data.bids.map((b: string[]) => ({ price: parseFloat(b[0]), quantity: parseFloat(b[1]) })),
-          asks: data.asks.map((a: string[]) => ({ price: parseFloat(a[0]), quantity: parseFloat(a[1]) })),
+          bids: book.b.map((b: string[]) => ({ price: parseFloat(b[0]), quantity: parseFloat(b[1]) })),
+          asks: book.a.map((a: string[]) => ({ price: parseFloat(a[0]), quantity: parseFloat(a[1]) })),
           timestamp: Date.now(),
-          source: "Binance"
+          source: "Bybit"
         };
       }
+    },
+    {
+      name: "Coinbase",
+      fetch: async () => {
+        const cbSymbol = symbol.replace("USDT", "-USDT");
+        const res = await fetchWithTimeout(`https://api.exchange.coinbase.com/products/${cbSymbol}/book?level=2`, 8000);
+        if (!res.ok) throw new Error(`Coinbase ${res.status}`);
+        const data = await res.json();
+        return {
+          bids: (data.bids || []).slice(0, limit).map((b: string[]) => ({ price: parseFloat(b[0]), quantity: parseFloat(b[1]) })),
+          asks: (data.asks || []).slice(0, limit).map((a: string[]) => ({ price: parseFloat(a[0]), quantity: parseFloat(a[1]) })),
+          timestamp: Date.now(),
+          source: "Coinbase"
+        };
+      }
+    },
+    {
+      name: "Kraken",
+      fetch: async () => {
+        const ob = await getKrakenOrderBook(symbol, limit);
+        return {
+          bids: ob.bids.map((b) => ({ price: b.price, quantity: b.size })),
+          asks: ob.asks.map((a) => ({ price: a.price, quantity: a.size })),
+          timestamp: ob.timestamp,
+          source: "Kraken"
+        };
+      }
+    }
+  ];
+
+  let lastError = "";
+  for (const provider of providers) {
+    try {
+      const book = await provider.fetch();
+      console.log(`[OrderBook] ${provider.name}: ${book.bids.length} bids, ${book.asks.length} asks`);
+      return book;
     } catch (e: any) {
-      if (e.message === "GEO_BLOCKED") throw e;
+      lastError = `${provider.name}: ${e.message}`;
+      console.warn(`[OrderBook] ${lastError}`);
     }
   }
-  throw new Error("Binance orderbook unavailable");
+  throw new Error(`Order book unavailable: ${lastError}`);
 }
 
 function aggregateIntoBins(entries: OrderBookEntry[], spotPrice: number, binSize: number, range: number): Map<number, number> {
@@ -197,66 +238,33 @@ export class OrderBookGateway {
     gammaContext?: { gammaFlip: number | null; gammaMagnets: number[] }
   ): Promise<LiquidityHeatmap> {
     const now = Date.now();
-    const cachedSource = cachedHeatmap?.heatmapSummary?.source ?? null;
-    const cacheIsBinance = cachedSource && BINANCE_SOURCES.includes(cachedSource);
-
-    if (cachedHeatmap && now - lastFetchTime < CACHE_TTL_MS && cacheIsBinance) {
-      lastBinanceSuccessTs = Math.max(lastBinanceSuccessTs, lastFetchTime);
+    if (cachedHeatmap && now - lastFetchTime < CACHE_TTL_MS) {
       return cachedHeatmap;
     }
 
     try {
       const ob = getOrderBook();
       let book: OrderBook;
-      if (ob.bids.length >= 10 || ob.asks.length >= 10) {
+      if (ob.bids.length > 0 || ob.asks.length > 0) {
         book = {
           bids: ob.bids.map((b) => ({ price: b.price, quantity: b.size })),
           asks: ob.asks.map((a) => ({ price: a.price, quantity: a.size })),
           timestamp: ob.timestamp ?? now,
           source: "Binance-WS",
         };
-        if (lastLoggedOrderbookState !== "binance") {
-          lastLoggedOrderbookState = "binance";
-          console.log("[Orderbook] orderbook source = binance");
-        }
       } else {
         if (process.env.NODE_ENV === "production") {
-          console.warn("[OrderBook] WS empty, trying Binance REST");
+          console.warn("[OrderBook] WS empty, falling back to REST (bids:", ob.bids.length, "asks:", ob.asks.length, ")");
         }
         book = await fetchOrderBook("BTCUSDT", 500);
-        if (lastLoggedOrderbookState !== "binance") {
-          lastLoggedOrderbookState = "binance";
-          console.log("[Orderbook] orderbook source = binance");
-        }
       }
-      lastActiveOrderbookSource = book.source;
       const result = this.computeHeatmap(book, spotPrice, gammaContext);
       cachedHeatmap = result;
       lastFetchTime = now;
-      lastBinanceSuccessTs = now;
       return result;
     } catch (e: any) {
-      const cachedSourceNow = cachedHeatmap?.heatmapSummary?.source ?? null;
-      const hasBinanceCache = cachedSourceNow && BINANCE_SOURCES.includes(cachedSourceNow);
-      const snapshotAge = now - lastBinanceSuccessTs;
-      const withinFrozenTtl = lastBinanceSuccessTs > 0 && snapshotAge < FROZEN_TTL_MS;
-
-      if (hasBinanceCache && withinFrozenTtl) {
-        if (lastLoggedOrderbookState !== "frozen") {
-          lastLoggedOrderbookState = "frozen";
-          console.log("[Orderbook] keeping last snapshot (frozen mode)");
-        }
-        return cachedHeatmap!;
-      }
-
-      if (lastLoggedOrderbookState !== "none") {
-        lastLoggedOrderbookState = "none";
-        console.log("[Orderbook] orderbook source = none (degraded)");
-      }
-      lastActiveOrderbookSource = null;
-      cachedHeatmap = null;
-      lastFetchTime = 0;
-      lastBinanceSuccessTs = 0;
+      console.error(`[OrderBook] Heatmap computation failed: ${e.message}`);
+      if (cachedHeatmap) return cachedHeatmap;
       return this.fallbackHeatmap(spotPrice);
     }
   }
