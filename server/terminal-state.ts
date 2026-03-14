@@ -10,7 +10,8 @@ import { getDeribitOptionsSnapshot, enrichOptionsWithOINotional } from "./lib/de
 import { computeGravityMap } from "./lib/gravityMapEngine";
 import { updateTimeline, getTimeline, getTimelineSummary } from "./lib/stateTimeline";
 import { computeStateCoherence } from "./lib/stateCoherence";
-import { getOrderBook } from "./services/orderbookService";
+import { getOrderBook, isBinanceHealthy } from "./services/orderbookService";
+import { computeFeedState } from "./lib/feedState";
 
 export const terminalStateSchema = z.object({
   market: z.any(),
@@ -28,7 +29,15 @@ export const terminalStateSchema = z.object({
   timelineSummary: z.any().optional(),
   coherence: z.any().optional(),
   priceSource: z.string().optional(),
-  orderbookSource: z.string().optional()
+  orderbookSource: z.string().optional(),
+  optionsSource: z.string().optional(),
+  isBinancePriceHealthy: z.boolean().optional(),
+  isCoinbasePriceHealthy: z.boolean().optional(),
+  isBinanceOrderbookHealthy: z.boolean().optional(),
+  isCoinbaseOrderbookHealthy: z.boolean().optional(),
+  isDeribitOptionsHealthy: z.boolean().optional(),
+  isOrderbookFallbackActive: z.boolean().optional(),
+  isPriceFallbackActive: z.boolean().optional(),
 });
 
 export type TerminalState = z.infer<typeof terminalStateSchema>;
@@ -258,12 +267,19 @@ export async function getTerminalState(): Promise<TerminalState> {
   }
 
   const heatmapSource = (liveHeatmap as any)?.heatmapSummary?.source;
-  const priceSource = ticker?.source ?? "UNAVAILABLE";
-  const orderbookSource = heatmapSource && heatmapSource !== "UNAVAILABLE" ? heatmapSource : "Binance";
-  const isBinancePrimary = orderbookSource.includes("Binance");
-  const isFallback = !isBinancePrimary;
+  const feedState = computeFeedState({
+    tickerSource: ticker?.source,
+    heatmapSource: heatmapSource && heatmapSource !== "UNAVAILABLE" ? heatmapSource : undefined,
+    optionsSourceRaw: optionsSource ?? undefined,
+    isBinanceOrderbookHealthy: isBinanceHealthy(),
+    optionsStrikeCount: (optionsSnapshot as any)?.strikes?.length ?? 0,
+    hasHeatmapData: !!liveHeatmap?.liquidityHeatZones?.length,
+  });
+  const priceSource = feedState.priceSource === "binance" ? "binance" : feedState.priceSource === "coinbase" ? "coinbase" : (ticker?.source ?? "none");
+  const orderbookSource = feedState.orderbookSource === "binance" ? "Binance" : feedState.orderbookSource === "coinbase" ? "Coinbase" : (heatmapSource ?? "none");
+  const optionsSourceOut = feedState.optionsSource === "deribit" ? "deribit" : "none";
   if (process.env.NODE_ENV === "development") {
-    console.log("[TerminalState sources] priceSource=" + priceSource + " orderbookSource=" + orderbookSource + " isBinancePrimary=" + isBinancePrimary + " isFallback=" + isFallback);
+    console.log("[TerminalState feed] price=" + priceSource + " orderbook=" + orderbookSource + " options=" + optionsSourceOut + " obFallback=" + feedState.isOrderbookFallbackActive);
   }
   if (enrichedPositioning?.liquidityHeatmap) {
     const hm = enrichedPositioning.liquidityHeatmap as { liquidityHeatZones?: unknown[]; gammaAccelerationZones?: unknown[] };
@@ -361,7 +377,15 @@ export async function getTerminalState(): Promise<TerminalState> {
     timeline,
     timelineSummary,
     coherence,
-    priceSource,
-    orderbookSource,
+    priceSource: feedState.priceSource,
+    orderbookSource: feedState.orderbookSource === "binance" ? "Binance" : feedState.orderbookSource === "coinbase" ? "Coinbase" : "none",
+    optionsSource: optionsSourceOut,
+    isBinancePriceHealthy: feedState.isBinancePriceHealthy,
+    isCoinbasePriceHealthy: feedState.isCoinbasePriceHealthy,
+    isBinanceOrderbookHealthy: feedState.isBinanceOrderbookHealthy,
+    isCoinbaseOrderbookHealthy: feedState.isCoinbaseOrderbookHealthy,
+    isDeribitOptionsHealthy: feedState.isDeribitOptionsHealthy,
+    isOrderbookFallbackActive: feedState.isOrderbookFallbackActive,
+    isPriceFallbackActive: feedState.isPriceFallbackActive,
   };
 }

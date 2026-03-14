@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
 import { getOrderBook, isBinanceHealthy } from "./services/orderbookService";
-import { getKrakenOrderBook } from "./kraken-gateway";
 
 const orderBookEntrySchema = z.object({
   price: z.number(),
@@ -119,6 +118,7 @@ async function fetchWithTimeout(url: string, timeout = 5000): Promise<Response> 
   }
 }
 
+/** Orderbook fallback: Binance primary, Coinbase fallback only (per feed architecture). */
 async function fetchOrderBook(symbol: string = "BTCUSDT", limit: number = 500): Promise<OrderBook> {
   const providers = [
     {
@@ -146,21 +146,6 @@ async function fetchOrderBook(symbol: string = "BTCUSDT", limit: number = 500): 
       }
     },
     {
-      name: "Bybit",
-      fetch: async () => {
-        const res = await fetchWithTimeout(`https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${symbol}&limit=${Math.min(limit, 200)}`);
-        if (!res.ok) throw new Error(`Bybit ${res.status}`);
-        const data = await res.json();
-        const book = data.result;
-        return {
-          bids: book.b.map((b: string[]) => ({ price: parseFloat(b[0]), quantity: parseFloat(b[1]) })),
-          asks: book.a.map((a: string[]) => ({ price: parseFloat(a[0]), quantity: parseFloat(a[1]) })),
-          timestamp: Date.now(),
-          source: "Bybit"
-        };
-      }
-    },
-    {
       name: "Coinbase",
       fetch: async () => {
         const cbSymbol = symbol.replace("USDT", "-USDT");
@@ -172,18 +157,6 @@ async function fetchOrderBook(symbol: string = "BTCUSDT", limit: number = 500): 
           asks: (data.asks || []).slice(0, limit).map((a: string[]) => ({ price: parseFloat(a[0]), quantity: parseFloat(a[1]) })),
           timestamp: Date.now(),
           source: "Coinbase"
-        };
-      }
-    },
-    {
-      name: "Kraken",
-      fetch: async () => {
-        const ob = await getKrakenOrderBook(symbol, limit);
-        return {
-          bids: ob.bids.map((b) => ({ price: b.price, quantity: b.size })),
-          asks: ob.asks.map((a) => ({ price: a.price, quantity: a.size })),
-          timestamp: ob.timestamp,
-          source: "Kraken"
         };
       }
     }
@@ -205,6 +178,29 @@ async function fetchOrderBook(symbol: string = "BTCUSDT", limit: number = 500): 
   }
   throw new Error(`Order book unavailable: ${lastError}`);
 }
+
+/** Reconnect watchdog: periodically invalidate fallback cache when Binance recovers. */
+const WATCHDOG_MS = 10000;
+const FEED_LOG_THROTTLE_MS = 15000;
+let watchdogLastLog = 0;
+setInterval(() => {
+  const cached = cachedHeatmap;
+  const src = cached?.heatmapSummary?.source;
+  const fromFallback = src && !BINANCE_SOURCES.includes(src);
+  if (fromFallback && isBinanceHealthy()) {
+    const ob = getOrderBook();
+    if (ob.bids.length >= 10 || ob.asks.length >= 10) {
+      cachedHeatmap = null;
+      lastFetchTime = 0;
+      lastActiveOrderbookSource = "Binance-WS";
+      const now = Date.now();
+      if (now - watchdogLastLog > FEED_LOG_THROTTLE_MS) {
+        watchdogLastLog = now;
+        console.log("[FeedState] Binance orderbook recovered, invalidating fallback cache");
+      }
+    }
+  }
+}, WATCHDOG_MS);
 
 function aggregateIntoBins(entries: OrderBookEntry[], spotPrice: number, binSize: number, range: number): Map<number, number> {
   const bins = new Map<number, number>();

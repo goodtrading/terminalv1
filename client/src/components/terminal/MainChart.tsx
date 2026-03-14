@@ -1588,12 +1588,29 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
                   <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", isLive ? "bg-terminal-positive" : "bg-terminal-negative")} />
                   <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? (() => {
                     const obSource = (terminalState as any)?.orderbookSource;
-                    const isBinance = obSource && (obSource.includes("Binance") || obSource === "Binance-WS");
+                    const isObFallback = (terminalState as any)?.isOrderbookFallbackActive;
+                    const isBinance = obSource && obSource.includes("Binance");
                     if (isBinance) return "LIVE (BINANCE)";
-                    if (obSource && obSource !== "UNAVAILABLE") return `FALLBACK (${obSource.toUpperCase()})`;
+                    if (isObFallback && obSource) return `FALLBACK (${String(obSource).toUpperCase()})`;
                     return `Live (${ticker?.source ?? "—"})`;
                   })() : 'Live Feed Offline'}</span>
                 </div>
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[8px] font-mono text-white/40 uppercase tracking-wider">
+                {(() => {
+                  const ts = terminalState as any;
+                  const priceSrc = ts?.priceSource || ticker?.source || "—";
+                  const obSrc = ts?.orderbookSource || "—";
+                  const optSrc = ts?.optionsSource || "deribit";
+                  const obFallback = ts?.isOrderbookFallbackActive;
+                  return (
+                    <>
+                      <span>Price: {String(priceSrc).toUpperCase()}</span>
+                      <span className={obFallback ? "text-amber-400/80" : ""}>Orderbook: {String(obSrc).toUpperCase()}{obFallback ? " (fallback)" : ""}</span>
+                      <span>Options: {String(optSrc).toUpperCase()}</span>
+                    </>
+                  );
+                })()}
               </div>
               <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
                 <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>

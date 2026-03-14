@@ -128,7 +128,8 @@ function deriveEdge(positioning: any, market: any): string {
 
 // Liquidity Map Panel Component
 function LiquidityMapPanel() {
-  const positioning = useTerminalState((s: any) => s.positioning);
+  const { data: terminalState } = useTerminalState();
+  const positioning = (terminalState as any)?.positioning;
   const { data: vacuumData } = useQuery<VacuumAnalysisResult>({
     queryKey: ["/api/vacuum"],
     refetchInterval: 2000,
@@ -138,7 +139,8 @@ function LiquidityMapPanel() {
   const heatmap = (positioning as any)?.liquidityHeatmap;
   const lines: string[] = heatmap?.liquidityMapLines || [];
   const pressure = heatmap?.liquidityPressure || "BALANCED";
-  const source = heatmap?.heatmapSummary?.source || "--";
+  const orderbookSource = (terminalState as any)?.orderbookSource || heatmap?.heatmapSummary?.source || "--";
+  const isOrderbookFallback = (terminalState as any)?.isOrderbookFallbackActive ?? false;
   const pressureColor = pressure === "BID_HEAVY" ? "green" : pressure === "ASK_HEAVY" ? "red" : "yellow";
 
   // Use new vacuum engine data
@@ -182,6 +184,11 @@ function LiquidityMapPanel() {
 
   return (
     <div className="flex flex-col gap-2">
+      <StatusValue
+        label="Orderbook"
+        value={isOrderbookFallback ? `${orderbookSource} (fallback)` : orderbookSource}
+        color={isOrderbookFallback ? "yellow" : "gray"}
+      />
       <StatusValue label="Pressure" value={pressure.replace(/_/g, " ")} color={pressureColor} />
       <StatusValue label="Vacuum Risk" value={vacuumRisk} color={vacuumRiskColor} />
       <StatusValue label="Vacuum Type" value={vacuumType} color={vacuumTypeColor} />
