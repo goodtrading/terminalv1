@@ -1586,7 +1586,13 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
                 <span className={`text-2xl font-mono font-bold ${isLive ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{(lastCandle?.close || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                 <div className="flex items-center ml-2">
                   <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", isLive ? "bg-terminal-positive" : "bg-terminal-negative")} />
-                  <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? `Live (${ticker?.source})` : 'Live Feed Offline'}</span>
+                  <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? (() => {
+                    const obSource = (terminalState as any)?.orderbookSource;
+                    const isBinance = obSource && (obSource.includes("Binance") || obSource === "Binance-WS");
+                    if (isBinance) return "LIVE (BINANCE)";
+                    if (obSource && obSource !== "UNAVAILABLE") return `FALLBACK (${obSource.toUpperCase()})`;
+                    return `Live (${ticker?.source ?? "—"})`;
+                  })() : 'Live Feed Offline'}</span>
                 </div>
               </div>
               <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">

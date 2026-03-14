@@ -26,7 +26,9 @@ export const terminalStateSchema = z.object({
   gravityMap: z.any().optional(),
   timeline: z.array(z.any()).optional(),
   timelineSummary: z.any().optional(),
-  coherence: z.any().optional()
+  coherence: z.any().optional(),
+  priceSource: z.string().optional(),
+  orderbookSource: z.string().optional()
 });
 
 export type TerminalState = z.infer<typeof terminalStateSchema>;
@@ -255,6 +257,14 @@ export async function getTerminalState(): Promise<TerminalState> {
     };
   }
 
+  const heatmapSource = (liveHeatmap as any)?.heatmapSummary?.source;
+  const priceSource = ticker?.source ?? "UNAVAILABLE";
+  const orderbookSource = heatmapSource && heatmapSource !== "UNAVAILABLE" ? heatmapSource : "Binance";
+  const isBinancePrimary = orderbookSource.includes("Binance");
+  const isFallback = !isBinancePrimary;
+  if (process.env.NODE_ENV === "development") {
+    console.log("[TerminalState sources] priceSource=" + priceSource + " orderbookSource=" + orderbookSource + " isBinancePrimary=" + isBinancePrimary + " isFallback=" + isFallback);
+  }
   if (enrichedPositioning?.liquidityHeatmap) {
     const hm = enrichedPositioning.liquidityHeatmap as { liquidityHeatZones?: unknown[]; gammaAccelerationZones?: unknown[] };
     console.log("[TerminalState] /api/terminal/state heatmap: liquidityHeatZones count=" + (hm.liquidityHeatZones?.length ?? 0) + ", gammaAccelerationZones count=" + (hm.gammaAccelerationZones?.length ?? 0));
@@ -351,5 +361,7 @@ export async function getTerminalState(): Promise<TerminalState> {
     timeline,
     timelineSummary,
     coherence,
+    priceSource,
+    orderbookSource,
   };
 }

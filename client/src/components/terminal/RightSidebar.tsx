@@ -128,14 +128,14 @@ function deriveEdge(positioning: any, market: any): string {
 
 // Liquidity Map Panel Component
 function LiquidityMapPanel() {
-  const positioning_engines = useTerminalState((s: any) => s.positioning_engines);
+  const positioning = useTerminalState((s: any) => s.positioning);
   const { data: vacuumData } = useQuery<VacuumAnalysisResult>({
     queryKey: ["/api/vacuum"],
     refetchInterval: 2000,
-    enabled: !!positioning_engines
+    enabled: !!positioning
   });
 
-  const heatmap = (positioning_engines as any)?.liquidityHeatmap;
+  const heatmap = (positioning as any)?.liquidityHeatmap;
   const lines: string[] = heatmap?.liquidityMapLines || [];
   const pressure = heatmap?.liquidityPressure || "BALANCED";
   const source = heatmap?.heatmapSummary?.source || "--";
@@ -172,6 +172,14 @@ function LiquidityMapPanel() {
   const fmtK = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(Math.round(p));
   const thinLabel = thinZone ? `${fmtK(thinZone)} ${thinDir === "ABOVE" ? "ABOVE" : "BELOW"}` : "--";
   
+  if (!positioning && !vacuumData) {
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="text-[10px] text-white/40 font-mono py-2">Loading liquidity data…</div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <StatusValue label="Pressure" value={pressure.replace(/_/g, " ")} color={pressureColor} />
