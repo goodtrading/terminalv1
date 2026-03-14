@@ -1,6 +1,5 @@
 import fs from "fs";
-import path, { dirname } from "path";
-import { fileURLToPath } from "url";
+import path from "path";
 import { oiToUsd } from "./formatNotional.js";
 
 export type GammaRegime = "LONG_GAMMA" | "SHORT_GAMMA" | "NEUTRAL";
@@ -33,12 +32,8 @@ export interface DeribitOptionsSnapshot {
   putWallUsd?: number | null;
 }
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const ROOT_DIR = path.resolve(__dirname, "..", "..");
-const OUTPUT_FILE = path.join(ROOT_DIR, "deribit_gex_output.json");
-const OUTPUT_FILE_CWD = path.join(process.cwd(), "deribit_gex_output.json");
+const PROJECT_ROOT = process.cwd();
+const OUTPUT_FILE = path.join(PROJECT_ROOT, "deribit_gex_output.json");
 
 const FALLBACK_SNAPSHOT: DeribitOptionsSnapshot = {
   asOf: null,
@@ -53,15 +48,11 @@ const FALLBACK_SNAPSHOT: DeribitOptionsSnapshot = {
 
 export function getDeribitOptionsSnapshot(): DeribitOptionsSnapshot {
   try {
-    const filePath = fs.existsSync(OUTPUT_FILE) ? OUTPUT_FILE : (fs.existsSync(OUTPUT_FILE_CWD) ? OUTPUT_FILE_CWD : null);
-    if (!filePath) {
-      console.log("[DeribitOptions] fallback: file not found (tried " + OUTPUT_FILE + ", " + OUTPUT_FILE_CWD + ")");
+    if (!fs.existsSync(OUTPUT_FILE)) {
+      console.warn("[OptionsSnapshot] gex file missing, system running in degraded mode");
       return FALLBACK_SNAPSHOT;
     }
-    if (filePath !== OUTPUT_FILE) {
-      console.log("[DeribitOptions] using CWD path:", filePath);
-    }
-    const raw = fs.readFileSync(filePath, "utf8");
+    const raw = fs.readFileSync(OUTPUT_FILE, "utf8");
     if (!raw.trim()) {
       console.log("[DeribitOptions] fallback used: empty deribit_gex_output.json");
       return FALLBACK_SNAPSHOT;
@@ -85,7 +76,6 @@ export function getDeribitOptionsSnapshot(): DeribitOptionsSnapshot {
         ? parsed.gammaFlip
         : null;
     const rawStrikes = Array.isArray(parsed.strikes) ? parsed.strikes : [];
-    console.log("[OptionsSnapshot] parsed.strikes?.length=" + rawStrikes.length);
     const strikes: StrikeRow[] = rawStrikes
       .map((s: unknown) => {
         if (!s || typeof s !== "object") return null;
@@ -110,6 +100,7 @@ export function getDeribitOptionsSnapshot(): DeribitOptionsSnapshot {
       })
       .filter((r): r is StrikeRow => r != null);
     const strikeCount = strikes.length;
+    console.log("[OptionsSnapshot] parsed.strikes?.length=" + rawStrikes.length + " mapped=" + strikeCount);
     const topMagnetsRaw = Array.isArray(parsed.topMagnets) ? parsed.topMagnets : [];
     const topMagnets: Array<{ strike: number; totalGex: number }> = topMagnetsRaw
       .map((m: any) => {
