@@ -160,7 +160,7 @@ export function LeftSidebar() {
   }, [dealer?.vannaExposure, dealer?.charmExposure]);
 
   return (
-    <div className="w-64 h-full flex flex-col gap-1 overflow-y-auto p-1 border-r border-terminal-border bg-terminal-bg shrink-0">
+    <div className="h-full flex flex-col gap-1 overflow-y-auto p-1 border-r border-terminal-border bg-terminal-bg shrink-0 min-w-0 w-[280px] max-[1400px]:w-[240px] max-[1000px]:hidden">
       
       <TerminalPanel title="ALERT CENTER">
         <div className="p-2 space-y-2">

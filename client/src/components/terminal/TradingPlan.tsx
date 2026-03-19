@@ -98,7 +98,7 @@ export function TradingPlan() {
 
   if (!panelModel || !playbook)
     return (
-      <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-[0.65] min-w-[300px]">
+      <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-[0.65] min-w-[260px] min-h-0 max-[1200px]:min-w-[220px] max-[1000px]:min-w-0 max-[1000px]:flex-1">
         <div className="text-[10px] text-white/55 font-mono">Loading...</div>
       </TerminalPanel>
     );
@@ -150,7 +150,7 @@ export function TradingPlan() {
   })();
 
   return (
-    <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-[0.65] min-w-[300px]">
+    <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-[0.65] min-w-[260px] min-h-0 max-[1200px]:min-w-[220px] max-[1000px]:min-w-0 max-[1000px]:flex-1">
       <div className="flex flex-col gap-3">
         {/* A) SESSION CONTEXT */}
         <div className="border border-white/[0.06] rounded-sm p-3">

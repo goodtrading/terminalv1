@@ -1605,7 +1605,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   };
 
   return (
-    <div className="flex-1 w-full h-full flex flex-col relative">
+    <div className="flex-1 w-full h-full min-w-0 min-h-0 flex flex-col relative overflow-hidden">
       <LayerGroupControls
         activeLayers={activeLayers}
         onLayerToggle={handleLayerToggle}
@@ -1613,7 +1613,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
         onResetChart={() => { setSelectedScenario(null); resetScale(); }}
         dataTestId="toggle-map-mode"
       />
-      <TerminalPanel className="flex-1 w-full border border-terminal-border relative" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
+      <TerminalPanel className="flex-1 w-full min-w-0 min-h-0 border border-terminal-border relative overflow-hidden" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
         <div className="absolute inset-0 pointer-events-none z-10">
           <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start">
             <div className="flex flex-col">

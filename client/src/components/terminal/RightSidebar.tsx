@@ -545,7 +545,7 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
   const modeSubtitle = modeSubtitleMap[marketMode] || "";
 
   return (
-    <div className="w-80 h-full flex flex-col gap-2 overflow-y-auto p-2 border-l border-terminal-border bg-terminal-bg shrink-0">
+    <div className="h-full flex flex-col gap-2 overflow-y-auto p-2 border-l border-terminal-border bg-terminal-bg shrink-0 min-w-0 w-[340px] max-[1400px]:w-[300px] max-[1200px]:hidden">
 
       <SidebarPanel title="Market Mode">
         <div className="flex flex-col gap-2.5">

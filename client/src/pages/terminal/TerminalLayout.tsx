@@ -12,7 +12,7 @@ export default function TerminalLayout() {
   const [activeScenario, setActiveScenario] = useState<"BASE" | "ALT" | "VOL">("BASE");
 
   return (
-    <div className="h-[100vh] w-screen flex flex-col bg-terminal-bg text-terminal-text overflow-hidden font-sans">
+    <div className="h-screen w-full flex flex-col bg-terminal-bg text-terminal-text overflow-hidden font-sans">
       <TopNav />
       
       <div className="flex-1 flex overflow-hidden min-h-0">
@@ -23,7 +23,7 @@ export default function TerminalLayout() {
           <div className="flex-1 min-h-0 relative overflow-hidden">
             <MainChart activeScenario={activeScenario} onActiveScenarioChange={setActiveScenario} />
           </div>
-          <div className="flex gap-1 h-72">
+          <div className="flex gap-1 h-[clamp(200px,30vh,288px)] max-[1200px]:h-[clamp(220px,34vh,340px)] max-[1000px]:flex-col max-[1000px]:h-[clamp(280px,44vh,460px)] min-h-0">
             <GammaProfile />
             <TradingPlan />
           </div>
