@@ -32,16 +32,37 @@ export const terminalStateSchema = z.object({
 export type TerminalState = z.infer<typeof terminalStateSchema>;
 
 const STALE_THRESHOLD_MS = 10000; // 10 seconds
+// Terminal state is polled frequently by the UI.
+// Suppress verbose console.log noise (do not affect functionality).
+const DEBUG_TERMINAL_STATE_ENGINE = false;
+let terminalStateLogSuppressionDepth = 0;
+const originalTerminalStateConsoleLog = console.log;
+function suppressTerminalStateConsoleLog() {
+  terminalStateLogSuppressionDepth++;
+  if (terminalStateLogSuppressionDepth === 1) {
+    console.log = () => {};
+  }
+}
+function restoreTerminalStateConsoleLog() {
+  terminalStateLogSuppressionDepth = Math.max(0, terminalStateLogSuppressionDepth - 1);
+  if (terminalStateLogSuppressionDepth === 0) {
+    console.log = originalTerminalStateConsoleLog;
+  }
+}
 
 export async function getTerminalState(): Promise<TerminalState> {
-  // Aggregated quantitative state from DB (fast read)
-  const [market, exposure, positioning, levels, scenarios] = await Promise.all([
-    storage.getMarketState(),
-    storage.getDealerExposure(),
-    storage.getOptionsPositioning(),
-    storage.getKeyLevels(),
-    storage.getTradingScenarios()
-  ]);
+  const __suppressLogs = !DEBUG_TERMINAL_STATE_ENGINE;
+  if (__suppressLogs) suppressTerminalStateConsoleLog();
+
+  try {
+    // Aggregated quantitative state from DB (fast read)
+    const [market, exposure, positioning, levels, scenarios] = await Promise.all([
+      storage.getMarketState(),
+      storage.getDealerExposure(),
+      storage.getOptionsPositioning(),
+      storage.getKeyLevels(),
+      storage.getTradingScenarios()
+    ]);
 
   let livePlaybook = null;
   let liveVolExpansion = null;
@@ -85,8 +106,8 @@ export async function getTerminalState(): Promise<TerminalState> {
           liquidityHeatZones: liveHeatmap?.liquidityHeatZones ?? [],
           liquidityVacuum: liveHeatmap?.liquidityVacuum ?? null,
         });
-        console.log("[GammaAccel] computed zones count=", accZones.length);
-        console.log("[GammaAccel] first zones=", accZones.slice(0, 3));
+        DEBUG_TERMINAL_STATE_ENGINE && console.log("[GammaAccel] computed zones count=", accZones.length);
+        DEBUG_TERMINAL_STATE_ENGINE && console.log("[GammaAccel] first zones=", accZones.slice(0, 3));
         if (liveHeatmap) {
           liveHeatmap.gammaAccelerationZones = accZones;
         }
@@ -155,22 +176,22 @@ export async function getTerminalState(): Promise<TerminalState> {
       });
       if (result && typeof result === "object" && result.signal != null) {
         absorption = normalizeAbsorptionSignal(result.signal);
-        console.log("[Absorption] engine_run=true fallback=false status=" + absorption.status + " side=" + absorption.side + " confidence=" + absorption.confidence);
+        DEBUG_TERMINAL_STATE_ENGINE && console.log("[Absorption] engine_run=true fallback=false status=" + absorption.status + " side=" + absorption.side + " confidence=" + absorption.confidence);
       } else {
         absorption = buildInactiveAbsorptionSignal("Absorption engine returned no result");
-        console.log("[Absorption] engine_run=true fallback=true reason=\"Absorption engine returned no result\"");
+        DEBUG_TERMINAL_STATE_ENGINE && console.log("[Absorption] engine_run=true fallback=true reason=\"Absorption engine returned no result\"");
       }
     } catch (absErr) {
       absorption = buildInactiveAbsorptionSignal("Absorption engine error");
       console.warn("[TerminalState] Absorption engine failed:", absErr);
-      console.log("[Absorption] engine_run=true fallback=true reason=\"Absorption engine error\"");
+      DEBUG_TERMINAL_STATE_ENGINE && console.log("[Absorption] engine_run=true fallback=true reason=\"Absorption engine error\"");
     }
   } else {
     const reason = !spotPrice ? "Missing spot price" : "Missing heatmap context";
     absorption = buildInactiveAbsorptionSignal(reason);
-    console.log("[Absorption] engine_run=false fallback=true reason=\"" + reason + "\"");
+    DEBUG_TERMINAL_STATE_ENGINE && console.log("[Absorption] engine_run=false fallback=true reason=\"" + reason + "\"");
   }
-  console.log("[Absorption] final status=" + absorption.status + " side=" + absorption.side + " confidence=" + absorption.confidence);
+  DEBUG_TERMINAL_STATE_ENGINE && console.log("[Absorption] final status=" + absorption.status + " side=" + absorption.side + " confidence=" + absorption.confidence);
 
   const enrichedPositioning = positioning
     ? { ...positioning, tradingPlaybook: livePlaybook, volatilityExpansionDetector: liveVolExpansion, gammaCurveEngine: liveGammaCurve, institutionalBiasEngine: liveInstitutionalBias, tradeDecisionEngine: liveTradeDecision, liquidityCascadeEngine: liveLiquidityCascade, squeezeProbabilityEngine: liveSqueezeProbability, marketModeEngine: liveMarketMode, dealerHedgingFlowMap: liveDealerHedgingFlowMap, liquiditySweepDetector: liveSweepDetector, liquidityHeatmap: liveHeatmap, dominantExpiry: liveDominantExpiry, optionsSource, absorption }
@@ -188,7 +209,7 @@ export async function getTerminalState(): Promise<TerminalState> {
 
   const optionsLastUpdated = storage.getOptionsLastUpdated();
   let optionsSnapshot = getDeribitOptionsSnapshot();
-  console.log("[TerminalState] optionsSnapshot exists=" + !!optionsSnapshot + " strikes=" + (optionsSnapshot?.strikes?.length ?? 0));
+  DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState] optionsSnapshot exists=" + !!optionsSnapshot + " strikes=" + (optionsSnapshot?.strikes?.length ?? 0));
   const spot = ticker?.price ?? (optionsSnapshot as any)?.spot ?? 0;
   if (spot > 0 && optionsSnapshot?.strikes?.length) {
     optionsSnapshot = enrichOptionsWithOINotional(
@@ -198,10 +219,10 @@ export async function getTerminalState(): Promise<TerminalState> {
       positioning?.putWall ?? null,
       1
     );
-    console.log("[TerminalState] after enrich options.strikes=" + (optionsSnapshot?.strikes?.length ?? 0));
+    DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState] after enrich options.strikes=" + (optionsSnapshot?.strikes?.length ?? 0));
   }
 
-  console.log("[TerminalState OI+Gravity] spot=" + spot + " strikes=" + (optionsSnapshot?.strikes?.length ?? 0) +
+  DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState OI+Gravity] spot=" + spot + " strikes=" + (optionsSnapshot?.strikes?.length ?? 0) +
     " primaryOiCluster=" + (optionsSnapshot as any)?.primaryOiCluster +
     " primaryOiClusterUsd=" + (optionsSnapshot as any)?.primaryOiClusterUsd +
     " callWallUsd=" + (optionsSnapshot as any)?.callWallUsd +
@@ -239,9 +260,9 @@ export async function getTerminalState(): Promise<TerminalState> {
         bias: "NEUTRAL",
         summary: reason,
       };
-      console.log("[TerminalState OI+Gravity] gravityMap INACTIVE: " + reason);
+      DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState OI+Gravity] gravityMap INACTIVE: " + reason);
     }
-    console.log("[TerminalState OI+Gravity] gravityMap.status=" + gravityMap?.status + " primaryMagnet=" + (gravityMap?.primaryMagnet?.price ?? "null") + " summary=" + (gravityMap?.summary ?? ""));
+    DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState OI+Gravity] gravityMap.status=" + gravityMap?.status + " primaryMagnet=" + (gravityMap?.primaryMagnet?.price ?? "null") + " summary=" + (gravityMap?.summary ?? ""));
   } catch (gmErr) {
     console.warn("[TerminalState] Gravity map failed:", gmErr);
     gravityMap = {
@@ -257,11 +278,11 @@ export async function getTerminalState(): Promise<TerminalState> {
 
   if (enrichedPositioning?.liquidityHeatmap) {
     const hm = enrichedPositioning.liquidityHeatmap as { liquidityHeatZones?: unknown[]; gammaAccelerationZones?: unknown[] };
-    console.log("[TerminalState] /api/terminal/state heatmap: liquidityHeatZones count=" + (hm.liquidityHeatZones?.length ?? 0) + ", gammaAccelerationZones count=" + (hm.gammaAccelerationZones?.length ?? 0));
+    DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState] /api/terminal/state heatmap: liquidityHeatZones count=" + (hm.liquidityHeatZones?.length ?? 0) + ", gammaAccelerationZones count=" + (hm.gammaAccelerationZones?.length ?? 0));
   }
 
   const hasAbsorption = enrichedPositioning && typeof (enrichedPositioning as any).absorption === "object";
-  console.log("[TerminalState] response positioning.absorption exists=" + hasAbsorption + (hasAbsorption ? " status=" + (enrichedPositioning as any).absorption?.status : ""));
+  DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState] response positioning.absorption exists=" + hasAbsorption + (hasAbsorption ? " status=" + (enrichedPositioning as any).absorption?.status : ""));
 
   // ── State timeline & coherence (meta-layer) ─────────────────────────────
   const playbook = livePlaybook as any;
@@ -306,7 +327,7 @@ export async function getTerminalState(): Promise<TerminalState> {
   const timeline = getTimeline();
   const timelineSummary = getTimelineSummary();
   const coherence = computeStateCoherence(timeline);
-  console.log("[Timeline Debug] entries=" + timeline.length);
+  DEBUG_TERMINAL_STATE_ENGINE && console.log("[Timeline Debug] entries=" + timeline.length);
 
   const enrichedOptionsSnapshot = optionsSnapshot;
   const strikesArray = Array.isArray(enrichedOptionsSnapshot?.strikes) ? enrichedOptionsSnapshot.strikes : [];
@@ -326,8 +347,8 @@ export async function getTerminalState(): Promise<TerminalState> {
     callWall: positioning?.callWall ?? null,
     putWall: positioning?.putWall ?? null,
   };
-  console.log("[TerminalState final options keys]", Object.keys(finalOptions));
-  console.log("[TerminalState final options sample]", {
+  DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState final options keys]", Object.keys(finalOptions));
+  DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState final options sample]", {
     hasSpot: finalOptions.spot != null,
     hasStrikes: Array.isArray(finalOptions.strikes),
     strikesLength: finalOptions.strikes.length,
@@ -336,20 +357,23 @@ export async function getTerminalState(): Promise<TerminalState> {
     putWallUsd: finalOptions.putWallUsd,
   });
 
-  return {
-    market,
-    exposure,
-    positioning: enrichedPositioning,
-    levels,
-    scenarios,
-    ticker,
-    tickerStatus,
-    timestamp: now,
-    optionsLastUpdated,
-    options: finalOptions,
-    gravityMap,
-    timeline,
-    timelineSummary,
-    coherence,
-  };
+    return {
+      market,
+      exposure,
+      positioning: enrichedPositioning,
+      levels,
+      scenarios,
+      ticker,
+      tickerStatus,
+      timestamp: now,
+      optionsLastUpdated,
+      options: finalOptions,
+      gravityMap,
+      timeline,
+      timelineSummary,
+      coherence,
+    };
+  } finally {
+    if (__suppressLogs) restoreTerminalStateConsoleLog();
+  }
 }

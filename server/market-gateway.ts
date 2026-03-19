@@ -27,6 +27,9 @@ let lastTickerCache: Ticker | null = null;
 let isRefreshing = false;
 
 export class MarketDataGateway {
+  // Prevent heavy per-request logging during frequent polling.
+  private static DEBUG_GATEWAY = false;
+
   private static binanceMirrors = [
     "https://api1.binance.com",
     "https://api2.binance.com",
@@ -107,7 +110,9 @@ export class MarketDataGateway {
         const out = await provider.fetch();
         const candles = provider.normalize(out.data).slice(0, limit);
         const validated = this.validateAndSort(candles);
-        console.log(`[Gateway] Provider: ${out.provider} | Latency: ${out.latency}ms | Count: ${validated.length}`);
+        if (MarketDataGateway.DEBUG_GATEWAY) {
+          console.log(`[Gateway] Provider: ${out.provider} | Latency: ${out.latency}ms | Count: ${validated.length}`);
+        }
         return validated;
       } catch (e: any) {
         lastError = e.message;

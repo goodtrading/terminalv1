@@ -1,7 +1,19 @@
 import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-import { serveStatic } from "./static";
 import { createServer } from "http";
+import dotenv from "dotenv";
+import path from "path";
+
+dotenv.config({
+  path: path.resolve(process.cwd(), ".env"),
+});
+
+console.log("[ENV] cwd:", process.cwd());
+console.log("[ENV] OPENAI key exists:", !!process.env.OPENAI_API_KEY);
+
+const rawKey = process.env.OPENAI_API_KEY || "";
+const visiblePrefix = rawKey ? rawKey.slice(0, 8) : "";
+console.log("[ENV] OPENAI key prefix:", visiblePrefix);
+console.log("[ENV] OPENAI key length:", rawKey.length);
 
 const app = express();
 const httpServer = createServer(app);
@@ -48,8 +60,13 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      // Avoid stringifying large JSON payloads for successful requests (prevents memory spikes/OOM).
+      if (capturedJsonResponse && res.statusCode >= 400) {
+        try {
+          logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        } catch {
+          // ignore
+        }
       }
 
       log(logLine);
@@ -60,7 +77,17 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  const { registerRoutes } = await import("./routes");
+  const { serveStatic } = await import("./static");
+
   await registerRoutes(httpServer, app);
+
+  const hasOpenaiKey = !!process.env.OPENAI_API_KEY;
+  console.log("OPENAI key loaded:", hasOpenaiKey);
+
+  if (!hasOpenaiKey) {
+    console.error("[OPENAI] OPENAI_API_KEY is missing. The /api/ai/chat endpoint will return { error: \"OPENAI_API_KEY_MISSING\" }.");
+  }
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

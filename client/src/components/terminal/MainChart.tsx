@@ -13,6 +13,7 @@ import { TrackerOutput, OrderBookLevel } from "./overlay/scanners/bookmapOrderBo
 import { ScenarioOverlay } from "./overlay/ScenarioOverlay";
 import { HeatmapCanvas } from "./overlay/HeatmapCanvas";
 import { LayerGroupControls } from "./overlay/LayerGroupControls";
+import { DrawingsLayer } from "./drawings/DrawingsLayer";
 import type { LayerGroup } from "./overlay/layerGroups";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
@@ -124,6 +125,8 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
 
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [chartReady, setChartReady] = useState(false);
+  const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
+  const [drawingsViewportVersion, setDrawingsViewportVersion] = useState(0);
   const [lastCandle, setLastCandle] = useState<any>(null);
   const [activePanels, setActivePanels] = useState<Set<MapMode>>(() => {
   // Load from localStorage on initialization
@@ -483,19 +486,52 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     volumeSeriesRef.current = volumeSeries;
     setChartReady(true);
 
-    const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ 
-          width: chartContainerRef.current.clientWidth, 
-          height: chartContainerRef.current.clientHeight 
+    const onViewportChange = () => setDrawingsViewportVersion((v) => v + 1);
+    const ts = chart.timeScale();
+    ts.subscribeVisibleTimeRangeChange(onViewportChange);
+    ts.subscribeVisibleLogicalRangeChange(onViewportChange);
+
+    const lastAppliedSize = { w: 0, h: 0 };
+    const updateSize = () => {
+      const el = chartContainerRef.current;
+      if (el && chartRef.current) {
+        const w = el.clientWidth;
+        const h = el.clientHeight;
+        // Ignore transient zero/near-zero sizes during layout transitions.
+        if (w < 50 || h < 50) return;
+        if (lastAppliedSize.w === w && lastAppliedSize.h === h) return;
+        lastAppliedSize.w = w;
+        lastAppliedSize.h = h;
+
+        chartRef.current.applyOptions({ width: w, height: h });
+        setChartSize((prev) => {
+          if (prev && prev.w === w && prev.h === h) return prev;
+          return { w, h };
         });
+
+        // Ensure Lightweight Charts recalculates internal layout after size changes.
+        chartRef.current.timeScale().fitContent();
       }
     };
-    window.addEventListener("resize", handleResize);
+    updateSize();
+
+    // TradingView needs a proper reflow when container height changes (e.g., bottom dock resize).
+    // ResizeObserver provides that deterministically without relying on window resize.
+    const ro = new ResizeObserver(() => {
+      // Coalesce rapid events into the next frame.
+      requestAnimationFrame(() => updateSize());
+    });
+    if (chartContainerRef.current) ro.observe(chartContainerRef.current);
+
+    window.addEventListener("resize", updateSize);
     return () => {
-      window.removeEventListener("resize", handleResize);
+      ts.unsubscribeVisibleTimeRangeChange(onViewportChange);
+      ts.unsubscribeVisibleLogicalRangeChange(onViewportChange);
+      window.removeEventListener("resize", updateSize);
+      ro.disconnect();
       chart.remove();
       setChartReady(false);
+      setChartSize(null);
     };
   }, []);
 
@@ -1689,6 +1725,119 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
         <div ref={chartContainerRef} className="absolute inset-0 pr-[100px]" style={{ pointerEvents: 'auto' }} />
         {SAFE_CHART_MODE && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
+        {chartReady && chartContainerRef.current && chartSize && (() => {
+          const tsWidth = chartRef.current?.timeScale().width();
+          const timeScaleWidth = (tsWidth != null && tsWidth > 0) ? tsWidth : chartSize.w;
+          return (
+          <DrawingsLayer
+            chartWidth={timeScaleWidth}
+            chartHeight={chartSize.h}
+            symbol="BTCUSDT"
+            timeframe="15m"
+            viewportVersion={drawingsViewportVersion}
+            coordinates={{
+              priceToCoordinate: (price: number) => {
+                const chart = chartRef.current;
+                const container = chartContainerRef.current;
+                if (!chart || !container) return null;
+                try {
+                  const priceScale = chart.priceScale("right");
+                  if (!priceScale) return null;
+                  const visibleRange = priceScale.getVisibleRange();
+                  if (!visibleRange) return null;
+                  const { from, to } = visibleRange;
+                  const h = container.clientHeight;
+                  const ratio = (price - from) / (to - from);
+                  return h - ratio * h;
+                } catch {
+                  return null;
+                }
+              },
+              timeToCoordinate: (time: number) => {
+                const chart = chartRef.current;
+                const container = chartContainerRef.current;
+                if (!chart || !container) return null;
+                try {
+                  const scale = chart.timeScale();
+                  const x = scale.timeToCoordinate(time as UTCTimestamp);
+                  if (x != null) return x;
+                  // Future time: library may return null. Use same logical-range mapping as coordinateToTime.
+                  const logicalRange = scale.getVisibleLogicalRange();
+                  if (!logicalRange) return null;
+                  const width = timeScaleWidth;
+                  if (width <= 0) return null;
+                  const from = logicalRange.from;
+                  const to = logicalRange.to;
+                  const span = to - from;
+                  if (span <= 0) return null;
+                  const tLeft = scale.coordinateToTime(0);
+                  const tMid = scale.coordinateToTime(width * 0.5);
+                  const tRef = typeof tLeft === "number" ? tLeft : typeof tMid === "number" ? tMid : null;
+                  if (typeof tRef !== "number") return null;
+                  const logicalRef = typeof tLeft === "number" ? from : from + 0.5 * span;
+                  const xRef2 = width * (logicalRef + 1 - from) / span;
+                  const tRef2 = scale.coordinateToTime(xRef2);
+                  const barDuration = typeof tRef2 === "number" ? tRef2 - tRef : 900;
+                  const logical = logicalRef + (time - tRef) / barDuration;
+                  return width * (logical - from) / span;
+                } catch {
+                  return null;
+                }
+              },
+              coordinateToPrice: (y: number) => {
+                const chart = chartRef.current;
+                const container = chartContainerRef.current;
+                if (!chart || !container) return null;
+                try {
+                  const priceScale = chart.priceScale("right");
+                  if (!priceScale) return null;
+                  const visibleRange = priceScale.getVisibleRange();
+                  if (!visibleRange) return null;
+                  const { from, to } = visibleRange;
+                  const h = container.clientHeight;
+                  const ratio = 1 - y / h;
+                  return from + ratio * (to - from);
+                } catch {
+                  return null;
+                }
+              },
+              coordinateToTime: (x: number) => {
+                const chart = chartRef.current;
+                const container = chartContainerRef.current;
+                if (!chart || !container) return null;
+                try {
+                  const scale = chart.timeScale();
+                  const t = scale.coordinateToTime(x);
+                  if (typeof t === "number") return t;
+                  // Future/right-side: library returns null outside data range. Use visible logical range + extrapolation.
+                  const logicalRange = scale.getVisibleLogicalRange();
+                  if (!logicalRange) return null;
+                  const width = timeScaleWidth;
+                  if (width <= 0) return null;
+                  const from = logicalRange.from;
+                  const to = logicalRange.to;
+                  const span = to - from;
+                  if (span <= 0) return null;
+                  const logical = from + (x / width) * span;
+                  const tLeft = scale.coordinateToTime(0);
+                  const tMid = scale.coordinateToTime(width * 0.5);
+                  const tRef = typeof tLeft === "number" ? tLeft : typeof tMid === "number" ? tMid : null;
+                  if (typeof tRef !== "number") return null;
+                  const logicalRef = typeof tLeft === "number" ? from : from + 0.5 * span;
+                  const logicalRef2 = logicalRef + 1;
+                  const xRef2 = width * (logicalRef2 - from) / span;
+                  const tRef2 = scale.coordinateToTime(xRef2);
+                  const barDuration = typeof tRef2 === "number" ? tRef2 - tRef : 900;
+                  const time = tRef + (logical - logicalRef) * barDuration;
+                  return Math.round(time);
+                } catch {
+                  return null;
+                }
+              },
+            }}
+          />
+          );
+        })()}
         {activePanels.has("HEATMAP") && chartContainerRef.current && (
           <HeatmapCanvas
             isActive={activePanels.has("HEATMAP")}

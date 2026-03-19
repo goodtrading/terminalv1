@@ -220,7 +220,7 @@ export class DeribitOptionsGateway {
   private static observations: any[] = [];
   private static DERIBIT_API = "https://www.deribit.com/api/v2/public";
   private static liveCache: { data: NormalizedOption[]; timestamp: number } | null = null;
-  private static CACHE_TTL_MS = 30000;
+  private static CACHE_TTL_MS = 5000;
 
   private static recordObservation(spotPrice: number | undefined, zones: any[], cascadeRisk: string) {
     if (!spotPrice) return;
@@ -581,6 +581,17 @@ export class DeribitOptionsGateway {
           putWall = opt.strike;
         }
       });
+
+      const now = new Date().toISOString();
+      const totalOi = options.reduce((sum, o) => sum + (o.openInterest || 0), 0);
+      const avgIv = options.length
+        ? options.reduce((sum, o) => sum + (o as any).markIv ?? 0, 0) / options.length
+        : 0;
+      console.log(
+        `[DeribitGateway][VannaCharm] ts=${now} spot=${spotPrice ?? 0} strikes=${options.length} totalOI=${totalOi.toFixed(
+          0
+        )} totalVanna=${totalVanna.toFixed(6)} totalCharm=${totalCharm.toFixed(6)} avgIV=${avgIv.toFixed(4)}`
+      );
 
       // --- Active levels (intraday): strikes within ±15% of spot ---
       const ACTIVE_RANGE_PCT = 0.15;
@@ -1940,6 +1951,8 @@ export class DeribitOptionsGateway {
         shortGammaPockets: shortGammaZones.map(z => ({ start: z.startStrike, end: z.endStrike })),
         vannaBias: totalVanna >= 0 ? "BULLISH" : "BEARISH",
         charmBias: totalCharm >= 0 ? "BULLISH" : "BEARISH",
+        totalVanna,
+        totalCharm,
         dealerGammaState,
         dealerHedgeDirection,
         volatilityRegime,

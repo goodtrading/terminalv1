@@ -6,6 +6,8 @@ import { getTerminalState } from "./terminal-state";
 import { DeribitOptionsGateway } from "./deribit-gateway";
 import { OrderBookGateway } from "./orderbook-gateway";
 import { buildTaskPlan } from "./ai/task-agent";
+import { buildLiveMarketContext } from "./ai/buildLiveMarketContext";
+import { generateAIResponse } from "./lib/openaiClient";
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
 import { getOrderBook, initializeFullDepth } from "./services/orderbookService";
@@ -14,6 +16,22 @@ import { liquidityVacuumEngine, VacuumEngineInput } from "./lib/liquidityVacuumE
 import { VacuumValidationTests } from "./lib/vacuumValidationTests";
 import { scenarioEngine, TerminalSignals } from "./lib/scenarioEngine";
 import { testScenarioEngine } from "./lib/scenarioEngineTest";
+
+// Debug flags to prevent event-loop blocking from log spam.
+// Keep these false by default; enable locally when diagnosing.
+const DEBUG_TERMINAL_STATE = false;
+const DEBUG_ORDERBOOK = false;
+const DEBUG_VACUUM = false;
+const DEBUG_SCENARIOS = false;
+
+// Very small TTL caches for expensive endpoints that are polled frequently.
+// These are intentionally short and conservative to avoid stale decisions.
+let vacuumCache: { ts: number; value: any } = { ts: 0, value: null };
+let scenariosCache: { ts: number; value: any } = { ts: 0, value: null };
+let terminalStateCache: { ts: number; value: any } = { ts: 0, value: null };
+const VACUUM_CACHE_TTL_MS = 1500;
+const SCENARIOS_CACHE_TTL_MS = 1500;
+const TERMINAL_STATE_CACHE_TTL_MS = 1500;
 
 // Initialize full depth on server start
 initializeFullDepth().catch(console.error);
@@ -117,24 +135,85 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/ai/chat", async (req: Request, res: Response) => {
+    const aiChatSchema = z.object({
+      message: z.string().trim().min(1).max(4000),
+      includeLiveContext: z.boolean().optional().default(true),
+      marketContext: z.any().optional(),
+    });
+
+    try {
+      const parsed = aiChatSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "INVALID_AI_REQUEST" });
+      }
+
+      const { message, includeLiveContext, marketContext } = parsed.data;
+
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        return res.status(503).json({ error: "OPENAI_API_KEY_MISSING" });
+      }
+
+      let finalMarketContext: any = undefined;
+      if (marketContext != null) {
+        if (typeof marketContext === "object" && !Array.isArray(marketContext)) {
+          // Guard against accidental huge payloads.
+          const sizeBytes = Buffer.byteLength(JSON.stringify(marketContext), "utf8");
+          if (sizeBytes <= 25_000) finalMarketContext = marketContext;
+        } else {
+          return res.status(400).json({ error: "INVALID_AI_REQUEST" });
+        }
+      }
+
+      if (!finalMarketContext && includeLiveContext) {
+        try {
+          finalMarketContext = await buildLiveMarketContext();
+        } catch (ctxErr: any) {
+          finalMarketContext = undefined;
+        }
+      }
+
+      const responseText = await generateAIResponse({
+        message,
+        marketContext: finalMarketContext,
+      });
+
+      return res.json({ response: responseText });
+    } catch (err: any) {
+      // Produce structured error payload with exact failure cause.
+      if (err) console.error("AI_CHAT_ERROR:", err.message ?? String(err));
+      const details = err?.message || String(err) || "Unknown backend error";
+
+      return res.status(500).json({
+        error: "AI_CHAT_ERROR",
+        details: details || "Unknown backend error",
+      });
+    }
+  });
+
   // --- New Terminal Aggregation Endpoint ---
   app.get("/api/terminal/state", async (_req, res) => {
     try {
+      const now = Date.now();
+      if (terminalStateCache.value && now - terminalStateCache.ts < TERMINAL_STATE_CACHE_TTL_MS) {
+        return res.json(terminalStateCache.value);
+      }
+
       const state = await getTerminalState();
       const hasPositioning = state != null && "positioning" in state;
       const hasAbsorption = hasPositioning && state.positioning != null && typeof (state.positioning as any).absorption === "object";
       const opts = (state as any)?.options;
       const gm = (state as any)?.gravityMap;
-      console.log("[API options keys final]", Object.keys(opts || {}));
-      console.log("[API options final sample]", {
-        hasSpot: opts?.spot != null,
-        hasStrikes: Array.isArray(opts?.strikes),
-        strikesLength: Array.isArray(opts?.strikes) ? opts.strikes.length : null,
-        primaryOiCluster: opts?.primaryOiCluster,
-        callWallUsd: opts?.callWallUsd,
-        putWallUsd: opts?.putWallUsd,
-      });
-      console.log("[API gravityMap.status] " + (gm?.status ?? "null"));
+      if (DEBUG_TERMINAL_STATE) {
+        console.log("[API terminal/state]", {
+          hasMarket: !!state?.market,
+          gammaRegime: state?.market?.gammaRegime,
+          hasOptions: !!opts,
+          gravityMapStatus: gm?.status ?? null,
+        });
+      }
+      terminalStateCache = { ts: now, value: state };
       res.json(state);
     } catch (error: any) {
       res.status(500).json({ error: "TERMINAL_STATE_UNAVAILABLE", details: error.message });
@@ -174,15 +253,15 @@ export async function registerRoutes(
     try {
       const orderbook = getOrderBook();
       
-      console.debug("[API] Orderbook request:", {
-        bidCount: orderbook.bids.length,
-        askCount: orderbook.asks.length,
-        hasTimestamp: !!orderbook.timestamp,
-        topBid: orderbook.bids[0],
-        topAsk: orderbook.asks[0],
-        totalBids: orderbook.bids.reduce((sum, b) => sum + b.size, 0),
-        totalAsks: orderbook.asks.reduce((sum, a) => sum + a.size, 0)
-      });
+      if (DEBUG_ORDERBOOK) {
+        console.debug("[API] Orderbook request:", {
+          bidCount: orderbook.bids.length,
+          askCount: orderbook.asks.length,
+          hasTimestamp: !!orderbook.timestamp,
+          topBid: orderbook.bids[0],
+          topAsk: orderbook.asks[0],
+        });
+      }
       
       res.json(orderbook);
     } catch (error) {
@@ -280,6 +359,11 @@ export async function registerRoutes(
   // --- Liquidity Vacuum Analysis Endpoint ---
   app.get("/api/vacuum", async (req: Request, res: Response) => {
     try {
+      const now = Date.now();
+      if (vacuumCache.value && now - vacuumCache.ts < VACUUM_CACHE_TTL_MS) {
+        return res.json(vacuumCache.value);
+      }
+
       // Get current market data
       const [orderBook, terminalState, positioning] = await Promise.all([
         getOrderBook(),
@@ -327,7 +411,7 @@ export async function registerRoutes(
 
       // Run vacuum analysis
       const result = liquidityVacuumEngine.analyze(input);
-
+      vacuumCache = { ts: now, value: result };
       res.json(result);
     } catch (error) {
       console.error("Vacuum analysis error:", error);
@@ -366,44 +450,49 @@ export async function registerRoutes(
 
   // --- Structural Scenarios Endpoint ---
   app.get("/api/scenarios", async (req: Request, res: Response) => {
-    console.log("Structural Scenario Engine responding");
-    
     try {
+      const now = Date.now();
+      if (scenariosCache.value && now - scenariosCache.ts < SCENARIOS_CACHE_TTL_MS) {
+        return res.json(scenariosCache.value);
+      }
+
+      if (DEBUG_SCENARIOS) {
+        console.log("Structural Scenario Engine responding");
+      }
+
       // Get all required terminal signals with timeout protection
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Timeout')), 2000)
       );
 
+      const port = process.env.PORT || "5000";
+      const vacuumUrl = `http://localhost:${port}/api/vacuum`;
+
       const [terminalState, positioning, vacuumData] = await Promise.all([
         getTerminalState().catch(() => null),
         storage.getOptionsPositioning().catch(() => null),
         Promise.race([
-          fetch('http://localhost:3000/api/vacuum').then(r => r.json()).catch(() => null),
+          fetch(vacuumUrl).then(r => r.json()).catch(() => null),
           timeoutPromise
         ]).catch(() => null)
       ]);
 
-      // DEBUG: Log raw data sources
-      console.log("=== SCENARIOS API DEBUG ===");
-      console.log("TERMINAL STATE:", {
-        hasMarket: !!terminalState?.market,
-        gammaRegime: terminalState?.market?.gammaRegime,
-        gammaFlip: terminalState?.market?.gammaFlip,
-        hasLevels: !!terminalState?.levels,
-        gammaMagnets: terminalState?.levels?.gammaMagnets,
-        pressure: (terminalState as any)?.positioning_engines?.liquidityHeatmap?.liquidityPressure
-      });
-      console.log("POSITIONING:", {
-        callWall: positioning?.callWall,
-        putWall: positioning?.putWall
-      });
-      console.log("VACUUM DATA:", {
-        vacuumRisk: vacuumData?.vacuumRisk,
-        vacuumType: vacuumData?.vacuumType,
-        vacuumDirection: vacuumData?.vacuumDirection,
-        vacuumProximity: vacuumData?.vacuumProximity,
-        nearestZone: vacuumData?.nearestThinLiquidityZone
-      });
+      if (DEBUG_SCENARIOS) {
+        console.log("=== SCENARIOS API DEBUG ===");
+        console.log("TERMINAL STATE:", {
+          hasMarket: !!terminalState?.market,
+          gammaRegime: terminalState?.market?.gammaRegime,
+          gammaFlip: terminalState?.market?.gammaFlip,
+          hasLevels: !!terminalState?.levels,
+        });
+        console.log("POSITIONING:", { callWall: positioning?.callWall, putWall: positioning?.putWall });
+        console.log("VACUUM DATA:", {
+          vacuumRisk: vacuumData?.vacuumRisk,
+          vacuumType: vacuumData?.vacuumType,
+          vacuumDirection: vacuumData?.vacuumDirection,
+          vacuumProximity: vacuumData?.vacuumProximity,
+        });
+      }
 
       // Extract signals for scenario engine with safe fallbacks
       const signals: TerminalSignals = {
@@ -423,13 +512,23 @@ export async function registerRoutes(
         } : undefined
       };
 
-      console.log("FINAL SIGNALS FOR ENGINE:", signals);
+      if (DEBUG_SCENARIOS) {
+        console.log("FINAL SIGNALS FOR ENGINE:", {
+          gammaRegime: signals.gammaRegime,
+          gammaFlip: signals.gammaFlip,
+          magnetsCount: signals.gammaMagnets?.length ?? 0,
+        });
+      }
 
       // Generate scenarios with safe fallback
       const scenarios = scenarioEngine.generateScenarios(signals);
       
-      console.log("GENERATED SCENARIOS:", scenarios);
-      console.log("=== END SCENARIOS API DEBUG ===");
+      if (DEBUG_SCENARIOS) {
+        console.log("GENERATED SCENARIOS:", scenarios);
+        console.log("=== END SCENARIOS API DEBUG ===");
+      }
+
+      scenariosCache = { ts: now, value: scenarios };
 
       res.json(scenarios);
     } catch (error) {

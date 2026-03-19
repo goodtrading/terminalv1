@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel, TerminalValue } from "./TerminalPanel";
 import { MarketState, DealerExposure, OptionsPositioning, KeyLevels, DealerHedgingFlow } from "@shared/schema";
@@ -118,6 +118,47 @@ export function LeftSidebar() {
     return list;
   }, [market, flow, dealer]);
 
+  const formatExposure = (v: number | undefined | null): { display: string; raw: string; intensity: "LOW" | "MEDIUM" | "HIGH" | "EXTREME" } => {
+    if (v == null || !Number.isFinite(v)) {
+      return { display: "--", raw: "n/a", intensity: "LOW" };
+    }
+    const abs = Math.abs(v);
+    let scaled = abs;
+    let suffix = "";
+    if (abs >= 1_000_000_000) {
+      scaled = abs / 1_000_000_000;
+      suffix = "B";
+    } else if (abs >= 1_000_000) {
+      scaled = abs / 1_000_000;
+      suffix = "M";
+    } else if (abs >= 1_000) {
+      scaled = abs / 1_000;
+      suffix = "K";
+    }
+    const sign = v >= 0 ? "+" : "-";
+    const display = `${sign}${scaled.toFixed(2)}${suffix}`;
+    const raw = v.toFixed(6);
+    let intensity: "LOW" | "MEDIUM" | "HIGH" | "EXTREME" = "LOW";
+    if (abs >= 50_000_000) intensity = "EXTREME";
+    else if (abs >= 10_000_000) intensity = "HIGH";
+    else if (abs >= 1_000_000) intensity = "MEDIUM";
+    return { display, raw, intensity };
+  };
+
+  const dealerPrevRef = useRef<DealerExposure | undefined>();
+  useEffect(() => {
+    if (!dealer) return;
+    const prev = dealerPrevRef.current;
+    console.log("[DealerExposure][UI]", {
+      ts: new Date().toISOString(),
+      prevVanna: prev?.vannaExposure,
+      nextVanna: dealer.vannaExposure,
+      prevCharm: prev?.charmExposure,
+      nextCharm: dealer.charmExposure,
+    });
+    dealerPrevRef.current = dealer;
+  }, [dealer?.vannaExposure, dealer?.charmExposure]);
+
   return (
     <div className="w-64 h-full flex flex-col gap-1 overflow-y-auto p-1 border-r border-terminal-border bg-terminal-bg shrink-0">
       
@@ -166,12 +207,47 @@ export function LeftSidebar() {
       </TerminalPanel>
 
       <TerminalPanel title="DEALER EXPOSURE">
-        <TerminalValue label="Vanna Exposure" value={dealer ? `${dealer.vannaExposure >= 0 ? "+" : ""}${dealer.vannaExposure.toFixed(2)}` : "--"} trend={dealer && dealer.vannaExposure > 0 ? "positive" : "negative"} tooltip="Vanna Exposure" />
+        {(() => {
+          const fe = formatExposure(dealer?.vannaExposure);
+          return (
+            <>
+              <TerminalValue
+                label="Vanna Exposure"
+                value={fe.display}
+                trend={dealer && dealer.vannaExposure > 0 ? "positive" : "negative"}
+                tooltip={`Vanna Exposure (raw: ${fe.raw})`}
+              />
+              <TerminalValue
+                label="Vanna Intensity"
+                value={fe.intensity}
+                trend={fe.intensity === "EXTREME" || fe.intensity === "HIGH" ? "negative" : fe.intensity === "MEDIUM" ? "neutral" : "positive"}
+              />
+            </>
+          );
+        })()}
         <TerminalValue label="Vanna Bias" value={dealer?.vannaBias ?? "--"} trend={dealer?.vannaBias === "BULLISH" ? "positive" : "negative"} isBadge tooltip="Vanna Bias" />
-        <TerminalValue label="Charm Exposure" value={dealer ? `${dealer.charmExposure >= 0 ? "+" : ""}${dealer.charmExposure.toFixed(2)}` : "--"} trend={dealer && dealer.charmExposure > 0 ? "positive" : "negative"} tooltip="Charm Exposure" />
+        {(() => {
+          const fe = formatExposure(dealer?.charmExposure);
+          return (
+            <>
+              <TerminalValue
+                label="Charm Exposure"
+                value={fe.display}
+                trend={dealer && dealer.charmExposure > 0 ? "positive" : "negative"}
+                tooltip={`Charm Exposure (raw: ${fe.raw})`}
+              />
+              <TerminalValue
+                label="Charm Intensity"
+                value={fe.intensity}
+                trend={fe.intensity === "EXTREME" || fe.intensity === "HIGH" ? "negative" : fe.intensity === "MEDIUM" ? "neutral" : "positive"}
+              />
+            </>
+          );
+        })()}
         <TerminalValue label="Charm Bias" value={dealer?.charmBias ?? "--"} trend={dealer?.charmBias === "BULLISH" ? "positive" : "negative"} isBadge tooltip="Charm Bias" />
         <TerminalValue label="Gamma Pressure" value={dealer?.gammaPressure ?? "--"} />
         <TerminalValue label="Gamma Concen." value={dealer ? dealer.gammaConcentration.toFixed(2) : "--"} />
+        <TerminalValue label="Last Dealer Update" value={dealer?.timestamp ? new Date(dealer.timestamp).toLocaleTimeString() : "--"} />
       </TerminalPanel>
 
       <TerminalPanel title="DEALER HEDGING FLOW">

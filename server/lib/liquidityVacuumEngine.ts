@@ -34,6 +34,10 @@ const VACUUM_WEIGHTS = {
   acceleration: 0.15
 };
 
+// Keep vacuum engine logs disabled by default.
+// This engine is called by `/api/vacuum`, which is polled frequently.
+const DEBUG_VACUUM_ENGINE = false;
+
 // Risk classification thresholds
 const RISK_THRESHOLDS = {
   LOW: 24,
@@ -134,8 +138,8 @@ export class LiquidityVacuumEngine {
    * Main analysis entry point
    */
   analyze(input: VacuumEngineInput): VacuumAnalysisResult {
-    console.log("=== VACUUM ENGINE DEBUG: ANALYSIS START ===");
-    console.log("RAW INPUTS:", {
+    DEBUG_VACUUM_ENGINE && console.log("=== VACUUM ENGINE DEBUG: ANALYSIS START ===");
+    DEBUG_VACUUM_ENGINE && console.log("RAW INPUTS:", {
       spotPrice: input.spotPrice,
       bidsCount: input.bids?.length || 0,
       asksCount: input.asks?.length || 0,
@@ -148,15 +152,15 @@ export class LiquidityVacuumEngine {
 
     // Validate input data quality
     if (!this.validateInput(input)) {
-      console.log("INPUT VALIDATION: FAILED - returning low quality result");
+      DEBUG_VACUUM_ENGINE && console.log("INPUT VALIDATION: FAILED - returning low quality result");
       return this.createLowQualityResult();
     }
 
-    console.log("INPUT VALIDATION: PASSED");
+    DEBUG_VACUUM_ENGINE && console.log("INPUT VALIDATION: PASSED");
 
     // Create liquidity bands
     const bands = this.createLiquidityBands(input);
-    console.log("LIQUIDITY BANDS:", {
+    DEBUG_VACUUM_ENGINE && console.log("LIQUIDITY BANDS:", {
       totalBands: bands.length,
       thinBands: bands.filter(b => b.isThin).length,
       emptyBands: bands.filter(b => b.isEmpty).length,
@@ -165,7 +169,7 @@ export class LiquidityVacuumEngine {
     
     // Identify thin liquidity regions
     const thinRegions = this.identifyThinLiquidityRegions(bands);
-    console.log("THIN REGIONS:", {
+    DEBUG_VACUUM_ENGINE && console.log("THIN REGIONS:", {
       count: thinRegions.length,
       regions: thinRegions.map(r => ({
         direction: r.direction,
@@ -178,42 +182,42 @@ export class LiquidityVacuumEngine {
     
     // Calculate component scores
     const componentScores = this.calculateComponentScores(input, bands, thinRegions);
-    console.log("COMPONENT SCORES:", componentScores);
+    DEBUG_VACUUM_ENGINE && console.log("COMPONENT SCORES:", componentScores);
     
     // Compute overall vacuum score
     const vacuumScore = this.computeVacuumScore(componentScores);
-    console.log("OVERALL VACUUM SCORE:", vacuumScore);
+    DEBUG_VACUUM_ENGINE && console.log("OVERALL VACUUM SCORE:", vacuumScore);
     
     // Determine risk classification
     const vacuumRisk = this.classifyRisk(vacuumScore);
-    console.log("RISK CLASSIFICATION:", vacuumRisk);
+    DEBUG_VACUUM_ENGINE && console.log("RISK CLASSIFICATION:", vacuumRisk);
     
     // Analyze directional bias
     const vacuumDirection = this.analyzeDirection(input, bands, thinRegions, componentScores, vacuumScore);
-    console.log("DIRECTIONAL ANALYSIS:", vacuumDirection);
+    DEBUG_VACUUM_ENGINE && console.log("DIRECTIONAL ANALYSIS:", vacuumDirection);
     
     // Classify vacuum type
     const vacuumType = this.classifyVacuumType(thinRegions, vacuumScore, vacuumDirection, componentScores);
-    console.log("VACUUM TYPE CLASSIFICATION:", vacuumType);
+    DEBUG_VACUUM_ENGINE && console.log("VACUUM TYPE CLASSIFICATION:", vacuumType);
     
     // SAFETY RULE: Force NEUTRAL direction for COMPRESSION vacuums
     let finalDirection = vacuumDirection;
     if (vacuumType === "COMPRESSION") {
       finalDirection = "NEUTRAL";
-      console.log("SAFETY RULE APPLIED: COMPRESSION vacuum forced to NEUTRAL direction");
+      DEBUG_VACUUM_ENGINE && console.log("SAFETY RULE APPLIED: COMPRESSION vacuum forced to NEUTRAL direction");
     }
     
     // Determine proximity
     const vacuumProximity = this.determineProximity(input.spotPrice, thinRegions);
-    console.log("PROXIMITY ANALYSIS:", vacuumProximity);
+    DEBUG_VACUUM_ENGINE && console.log("PROXIMITY ANALYSIS:", vacuumProximity);
     
     // Identify nearest thin zone
     const nearestZone = this.findNearestThinZone(input.spotPrice, thinRegions);
-    console.log("NEAREST THIN ZONE:", nearestZone);
+    DEBUG_VACUUM_ENGINE && console.log("NEAREST THIN ZONE:", nearestZone);
     
     // Create active vacuum zones
     const activeZones = this.createActiveZones(thinRegions, input.spotPrice);
-    console.log("ACTIVE ZONES:", {
+    DEBUG_VACUUM_ENGINE && console.log("ACTIVE ZONES:", {
       count: activeZones.length,
       zones: activeZones.map(z => ({
         direction: z.direction,
@@ -228,13 +232,13 @@ export class LiquidityVacuumEngine {
     const confirmedVacuumActive = this.isVacuumConfirmed(
       vacuumScore, vacuumProximity, vacuumDirection, thinRegions
     );
-    console.log("CONFIRMED VACUUM ACTIVE:", confirmedVacuumActive);
+    DEBUG_VACUUM_ENGINE && console.log("CONFIRMED VACUUM ACTIVE:", confirmedVacuumActive);
     
     // Generate explanations
     const explanation = this.generateExplanations(
       input, componentScores, thinRegions, finalDirection, confirmedVacuumActive, vacuumScore
     );
-    console.log("EXPLANATIONS:", explanation);
+    DEBUG_VACUUM_ENGINE && console.log("EXPLANATIONS:", explanation);
 
     // CONTRADICTION DETECTION
     this.detectContradictions({
@@ -273,7 +277,7 @@ export class LiquidityVacuumEngine {
       };
     }
 
-    console.log("=== VACUUM ENGINE DEBUG: ANALYSIS COMPLETE ===");
+    DEBUG_VACUUM_ENGINE && console.log("=== VACUUM ENGINE DEBUG: ANALYSIS COMPLETE ===");
     return result;
   }
 
@@ -340,9 +344,9 @@ export class LiquidityVacuumEngine {
     }
 
     if (contradictions.length > 0) {
-      console.error("VACUUM ENGINE CONTRADICTIONS DETECTED:", contradictions);
+      DEBUG_VACUUM_ENGINE && console.error("VACUUM ENGINE CONTRADICTIONS DETECTED:", contradictions);
     } else {
-      console.log("VACUUM ENGINE: No contradictions detected");
+      DEBUG_VACUUM_ENGINE && console.log("VACUUM ENGINE: No contradictions detected");
     }
   }
 

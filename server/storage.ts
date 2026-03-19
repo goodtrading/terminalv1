@@ -17,6 +17,8 @@ export interface OptionsSummaryUpdate {
   activeGammaZoneLow?: number | null;
   gammaMagnets?: number[];
   shortGammaZones?: Array<{ startStrike: number; endStrike: number }>;
+  totalVanna?: number | null;
+  totalCharm?: number | null;
 }
 
 export interface IStorage {
@@ -230,6 +232,10 @@ export class MemStorage implements IStorage {
   getOptionsLastUpdated() { return this.optionsLastUpdated; }
 
   updateFromDeribitSummary(summary: OptionsSummaryUpdate, spotPrice: number): void {
+    console.log("[Storage][IncomingSummary]", {
+      totalVanna: summary.totalVanna,
+      totalCharm: summary.totalCharm,
+    });
     if (!this.marketState || !this.optionsPositioning || !this.keyLevels) return;
     let updated = false;
 
@@ -288,6 +294,36 @@ export class MemStorage implements IStorage {
         shortGammaPocketEnd: firstZone?.endStrike ?? this.keyLevels.shortGammaPocketEnd,
         timestamp: new Date()
       };
+      updated = true;
+    }
+
+    if (summary.totalVanna != null || summary.totalCharm != null) {
+      const prev = this.dealerExposure;
+      const vanna = summary.totalVanna ?? prev?.vannaExposure ?? 0;
+      const charm = summary.totalCharm ?? prev?.charmExposure ?? 0;
+
+      const biasThreshold = 0.05;
+      const vannaBias = vanna > biasThreshold ? "BULLISH" : vanna < -biasThreshold ? "BEARISH" : "NEUTRAL";
+      const charmBias = charm > biasThreshold ? "BULLISH" : charm < -biasThreshold ? "BEARISH" : "NEUTRAL";
+
+      const gammaPressure = prev?.gammaPressure ?? "+0.00";
+      const gammaConcentration = prev?.gammaConcentration ?? 0;
+
+      this.dealerExposure = {
+        id: prev?.id ?? 1,
+        vannaExposure: vanna,
+        vannaBias,
+        charmExposure: charm,
+        charmBias,
+        gammaPressure,
+        gammaConcentration,
+        timestamp: new Date()
+      };
+
+      const now = new Date().toISOString();
+      console.log(
+        `[DealerExposure][Update] ts=${now} totalVanna=${vanna.toFixed(6)} totalCharm=${charm.toFixed(6)}`
+      );
       updated = true;
     }
 

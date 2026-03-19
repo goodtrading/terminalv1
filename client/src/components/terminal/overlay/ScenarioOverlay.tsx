@@ -37,7 +37,7 @@ export function ScenarioOverlay({ chart, candleSeries, activeScenario }: Scenari
   // Fetch scenario data
   const { data: scenarios } = useQuery<MarketScenarios>({
     queryKey: ["/api/scenarios"],
-    refetchInterval: 5000,
+    refetchInterval: 8000,
   });
 
   // Determine visualization mode based on scenario content

@@ -1,6 +1,12 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { TradingScenario } from "@shared/schema";
+import {
+  buildDailyScenariosModel,
+  type MarketScenarios,
+  type PanelScenarioKey,
+  type PanelScenarioStatus,
+} from "@/lib/buildDailyScenariosModel";
 import { useTerminalState } from "@/hooks/useTerminalState";
 import { useSweepHistory } from "@/hooks/useSweepHistory";
 import { pushSweepEvent } from "@/lib/sweepHistory";
@@ -30,25 +36,6 @@ interface VacuumAnalysisResult {
     drivers: string[];
     invalidation: string[];
   };
-}
-
-// Structural scenarios types
-interface StructuralScenario {
-  probability: number;
-  title: string;
-  summary: string;
-  regime: string;
-  trigger: string;
-  target: string;
-  invalidation: string;
-  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
-}
-
-interface MarketScenarios {
-  marketRegime: string;
-  baseCase: StructuralScenario;
-  altCase: StructuralScenario;
-  volCase: StructuralScenario;
 }
 
 interface RightSidebarProps {
@@ -131,7 +118,7 @@ function LiquidityMapPanel() {
   const positioning_engines = useTerminalState((s: any) => s.positioning_engines);
   const { data: vacuumData } = useQuery<VacuumAnalysisResult>({
     queryKey: ["/api/vacuum"],
-    refetchInterval: 2000,
+    refetchInterval: 5000,
     enabled: !!positioning_engines
   });
 
@@ -333,101 +320,83 @@ function getVolRiskHelper(val: string): string {
   return "Moderate volatility expected.";
 }
 
-const SCENARIO_HELPERS: Record<string, string> = {
-  "BASE": "Most likely path if conditions remain stable.",
-  "ALT": "Alternative path if momentum shifts.",
-  "VOL": "High-volatility path if the market destabilizes.",
-};
-
 export // Structural Scenarios Panel Component
-function StructuralScenariosPanel({ onActiveScenarioChange }: { onActiveScenarioChange?: (scenario: "BASE" | "ALT" | "VOL") => void }) {
+function StructuralScenariosPanel({
+  onActiveScenarioChange,
+  spotPrice,
+}: {
+  onActiveScenarioChange?: (scenario: "BASE" | "ALT" | "VOL") => void;
+  spotPrice: number | null | undefined;
+}) {
   const { data: scenariosData, isLoading, error } = useQuery<MarketScenarios>({
     queryKey: ["/api/scenarios"],
-    refetchInterval: 5000,
+    refetchInterval: 8000,
   });
 
-  const getRegimeColor = (regime?: string) => {
-    if (!regime) return "text-gray-400";
-    if (regime.includes("LONG GAMMA")) return "text-blue-400";
-    if (regime.includes("SHORT GAMMA")) return "text-red-400";
-    if (regime.includes("COMPRESSION")) return "text-purple-400";
-    if (regime.includes("NEUTRAL")) return "text-gray-400";
-    return "text-white/60";
+  const model = useMemo(() => {
+    return buildDailyScenariosModel({
+      scenariosData: scenariosData ?? null,
+      spotPrice,
+    });
+  }, [scenariosData, spotPrice]);
+
+  const getStatusColor = (st: PanelScenarioStatus): string => {
+    if (st === "ACTIVE") return "text-green-400";
+    if (st === "ARMED") return "text-orange-400";
+    if (st === "WATCHING") return "text-yellow-400";
+    if (st === "INVALIDATED") return "text-red-400";
+    return "text-white/40";
   };
 
-  const getBiasColor = (bias?: string) => {
-    if (!bias) return "text-gray-400";
-    if (bias === "BULLISH") return "text-green-400";
-    if (bias === "BEARISH") return "text-red-400";
-    return "text-gray-400";
-  };
-
-  const renderScenarioCard = (scenario: StructuralScenario | undefined, type: "BASE" | "ALT" | "VOL") => {
-    if (!scenario) {
-      return (
-        <div className="rounded border border-gray-500/30">
-          <div className="px-3 py-2 border-b border-white/[0.06] bg-gray-900/20">
-            <div className="flex justify-between items-center">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                {type} CASE
-              </span>
-              <span className="text-[9px] font-mono text-white/40">--%</span>
-            </div>
-          </div>
-          <div className="px-3 py-2.5">
-            <p className="text-[10px] text-white/60 italic">Scenario data unavailable</p>
-          </div>
-        </div>
-      );
-    }
-
-    const cardColors = {
-      BASE: { bg: "bg-blue-900/20", border: "border-blue-500/30", text: "text-blue-400" },
-      ALT: { bg: "bg-green-900/20", border: "border-green-500/30", text: "text-green-400" },
-      VOL: { bg: "bg-orange-900/20", border: "border-orange-500/30", text: "text-orange-400" }
-    };
-
-    const colors = cardColors[type];
-
+  const renderScenarioCard = (s: typeof model.scenarios[number]) => {
     return (
-      <div 
-        className={`rounded border ${colors.border} transition-colors hover:border-white/20 cursor-pointer`}
-        onClick={() => onActiveScenarioChange?.(type)}
+      <div
+        key={s.key}
+        className="rounded border border-white/[0.08] bg-terminal-panel/40 px-3 py-2.5 hover:border-white/20 cursor-pointer"
+        onClick={() => onActiveScenarioChange?.(s.key)}
       >
-        <div className={`px-3 py-2 border-b border-white/[0.06] ${colors.bg}`}>
-          <div className="flex justify-between items-center">
-            <span className={`text-[10px] font-semibold uppercase tracking-wider ${colors.text}`}>
-              {type} CASE
-            </span>
-            <span className="text-[9px] font-mono text-white/40">{scenario.probability || 0}%</span>
-          </div>
-        </div>
-        <div className="px-3 py-2.5 space-y-2">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-[10px] text-white/80 font-medium leading-relaxed">{scenario.title || 'Untitled'}</p>
-            <p className="text-[9px] text-white/60 leading-relaxed mt-1">{scenario.summary || 'No summary available'}</p>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">{s.key} CASE</div>
+            <div className="text-[11px] font-mono text-white/90 mt-1 leading-snug">{s.name}</div>
           </div>
-          <div className="space-y-1">
-            <div className="flex justify-between items-center">
-              <span className="text-[8px] text-white/40 uppercase tracking-wide">Regime</span>
-              <span className="text-[8px] font-mono text-white/60">{scenario.regime || 'Unknown'}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-[8px] font-mono text-white/40 uppercase tracking-wide">TRIGGER</span>
-              <span className="text-[8px] font-mono text-white/60">{scenario.trigger}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-[8px] font-mono text-white/40 uppercase tracking-wide">TARGET</span>
-              <span className="text-[8px] font-mono text-white/60">{scenario.target}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-[8px] font-mono text-white/40 uppercase tracking-wide">INVALIDATION</span>
-              <span className="text-[8px] font-mono text-white/60">{scenario.invalidation}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-[8px] text-white/40 uppercase tracking-wide">Bias</span>
-              <span className={`text-[8px] font-mono ${getBiasColor(scenario.bias)}`}>{scenario.bias || 'NEUTRAL'}</span>
-            </div>
+          <div className="text-[10px] font-mono text-white/40">{s.probability}% prob</div>
+        </div>
+
+        <div className="mt-2 flex items-center justify-between">
+          <span className="text-[9px] uppercase tracking-wider text-white/40">Status</span>
+          <span className={cn("text-[12px] font-mono font-bold", getStatusColor(s.status))}>{s.status}</span>
+        </div>
+
+        <div className="mt-2">
+          <div className="text-[9px] uppercase tracking-wider text-white/40">Thesis</div>
+          <div className="text-[10px] text-white/65 font-mono leading-snug mt-1">{s.thesis}</div>
+        </div>
+
+        <div className="mt-2 space-y-1.5">
+          <div className="flex justify-between items-baseline gap-2">
+            <span className="text-[8px] uppercase tracking-wider text-white/35">TRIGGER</span>
+            <span className="text-[9px] font-mono text-white/60">{s.trigger}</span>
+          </div>
+          <div className="flex justify-between items-baseline gap-2">
+            <span className="text-[8px] uppercase tracking-wider text-white/35">CONFIRMATION</span>
+            <span className="text-[9px] font-mono text-white/60">{s.confirmation}</span>
+          </div>
+          <div className="flex justify-between items-baseline gap-2">
+            <span className="text-[8px] uppercase tracking-wider text-white/35">TARGET</span>
+            <span className="text-[9px] font-mono text-white/60">{s.target}</span>
+          </div>
+          <div className="flex justify-between items-baseline gap-2">
+            <span className="text-[8px] uppercase tracking-wider text-white/35">INVALIDATION</span>
+            <span className="text-[9px] font-mono text-white/60">{s.invalidation}</span>
+          </div>
+          <div className="flex justify-between items-baseline gap-2">
+            <span className="text-[8px] uppercase tracking-wider text-white/35">Execution Bias</span>
+            <span className="text-[9px] font-mono text-white/60">{s.executionBias}</span>
+          </div>
+          <div className="flex justify-between items-baseline gap-2">
+            <span className="text-[8px] uppercase tracking-wider text-white/35">Playbook Mapping</span>
+            <span className="text-[9px] font-mono text-white/60">{s.playbookMapping}</span>
           </div>
         </div>
       </div>
@@ -435,38 +404,59 @@ function StructuralScenariosPanel({ onActiveScenarioChange }: { onActiveScenario
   };
 
   if (isLoading) {
-    return (
-      <div className="flex flex-col gap-3">
-        <div className="text-[10px] text-white/30 italic py-2">Loading scenarios...</div>
-      </div>
-    );
+    return <div className="text-[10px] text-white/30 italic py-2">Loading scenarios...</div>;
   }
 
-  if (error || !scenariosData) {
-    return (
-      <div className="flex flex-col gap-3">
-        <div className="text-[10px] text-white/30 italic py-2">Scenarios unavailable</div>
-      </div>
-    );
+  if (error) {
+    return <div className="text-[10px] text-white/30 italic py-2">Scenarios unavailable</div>;
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* Market Regime */}
+    <div className="flex flex-col gap-3">
+      {/* A) SCENARIO STACK */}
+      <div className="flex flex-col gap-2.5">
+        {model.scenarios.length === 0 ? (
+          <div className="text-[10px] text-white/30 italic">No scenario data</div>
+        ) : (
+          model.scenarios.map((s) => renderScenarioCard(s))
+        )}
+      </div>
+
+      {/* B) SCENARIO STATUS */}
       <div className="px-3 py-2 bg-terminal-accent/10 rounded border border-terminal-accent/30">
         <div className="flex justify-between items-center">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60">MARKET REGIME</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60">SCENARIO STATUS</span>
         </div>
-        <div className={`text-[11px] font-medium mt-1 ${getRegimeColor(scenariosData.marketRegime)}`}>
-          {scenariosData.marketRegime || 'Unknown'}
+        <div className="mt-2 space-y-1">
+          {(["BASE", "ALT", "VOL"] as PanelScenarioKey[]).map((k) => (
+            <div key={k} className="flex justify-between items-center">
+              <span className="text-[10px] text-white/45 font-mono">
+                {k === "BASE" ? "Base Case" : k === "ALT" ? "Alt Case" : "Vol Case"}
+              </span>
+              <span className={cn("text-[12px] font-mono font-bold", getStatusColor(model.scenarioStatus[k]))}>
+                {model.scenarioStatus[k]}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Scenario Cards */}
-      <div className="flex flex-col gap-3">
-        {renderScenarioCard(scenariosData.baseCase, "BASE")}
-        {renderScenarioCard(scenariosData.altCase, "ALT")}
-        {renderScenarioCard(scenariosData.volCase, "VOL")}
+      {/* C) DOMINANT FLOW */}
+      <div className="px-3 py-2 rounded border border-white/[0.08]">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">DOMINANT FLOW</div>
+        <div className="text-[11px] font-mono text-white/80 mt-1 leading-snug">{model.dominantFlow}</div>
+      </div>
+
+      {/* D) DAY STRUCTURE CHANGE */}
+      <div className="px-3 py-2 rounded border border-white/[0.08]">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-white/60">DAY STRUCTURE CHANGE</div>
+        <div className="mt-1 space-y-1">
+          {model.structureChange.map((line, i) => (
+            <div key={i} className="text-[11px] font-mono text-white/70 leading-snug">
+              {line}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -720,6 +710,90 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
                 </span>
                 <span className="text-[10px] font-mono text-white/60">{asOf}</span>
               </div>
+            </div>
+          );
+        })()}
+      </SidebarPanel>
+
+      <SidebarPanel title="WALL STRENGTH">
+        {(() => {
+          const opts = (state as any)?.options as any;
+          const activeCallWall = opts?.activeCallWall as number | undefined;
+          const activePutWall = opts?.activePutWall as number | undefined;
+          const walls = Array.isArray(opts?.gammaWallStrength)
+            ? (opts.gammaWallStrength as Array<{ strike: number; strengthScore: number }>)
+            : [];
+
+          const findStrength = (strike: number | undefined) => {
+            if (typeof strike !== "number" || !Number.isFinite(strike)) return 0;
+            const match = walls.find((w) => w.strike === strike);
+            return match?.strengthScore ?? 0;
+          };
+
+          const classifyWall = (
+            strength: number,
+            hasWall: boolean
+          ): { state: string; scoreStr: string; color: string; guidance: string } => {
+            if (!hasWall) {
+              return {
+                state: "N/A",
+                scoreStr: "--",
+                color: "gray",
+                guidance: "No active wall detected in the intraday range.",
+              };
+            }
+            if (strength <= 0) {
+              return {
+                state: "BROKEN",
+                scoreStr: "0%",
+                color: "red",
+                guidance: "Wall concentration has shifted away; treat this wall as structurally broken.",
+              };
+            }
+            const pct = (strength * 100).toFixed(1) + "%";
+            if (strength >= 0.08) {
+              return {
+                state: "DEFENDED",
+                scoreStr: pct,
+                color: "green",
+                guidance: "Strong gamma concentration at this wall; expect firm initial defense on tests.",
+              };
+            }
+            if (strength >= 0.03) {
+              return {
+                state: "ABSORBING",
+                scoreStr: pct,
+                color: "orange",
+                guidance: "Wall is absorbing flow with moderate concentration; breakout risk is rising.",
+              };
+            }
+            return {
+              state: "PASSIVE",
+              scoreStr: pct,
+              color: "gray",
+              guidance: "Wall exists but gamma concentration is modest; treat as a soft reference level.",
+            };
+          };
+
+          const callStrength = findStrength(activeCallWall);
+          const putStrength = findStrength(activePutWall);
+          const callInfo = classifyWall(callStrength, !!activeCallWall);
+          const putInfo = classifyWall(putStrength, !!activePutWall);
+
+          const guidance =
+            activeCallWall || activePutWall
+              ? (callInfo.state !== "N/A" ? callInfo.guidance : putInfo.guidance)
+              : "No active gamma walls detected; rely more on magnets and gravity map.";
+
+          return (
+            <div className="flex flex-col gap-1.5">
+              <StatusValue label="Call Wall Status" value={callInfo.state} color={callInfo.color} />
+              <StatusValue label="Call Wall Strength" value={callInfo.scoreStr} color={callInfo.color} />
+              <StatusValue label="Put Wall Status" value={putInfo.state} color={putInfo.color} />
+              <StatusValue label="Put Wall Strength" value={putInfo.scoreStr} color={putInfo.color} />
+              <p className="text-[10px] text-white/60 font-mono leading-snug mt-1">
+                {guidance}
+              </p>
             </div>
           );
         })()}
@@ -1186,7 +1260,10 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
       </SidebarPanel>
 
       <SidebarPanel title="DAILY SCENARIOS">
-        <StructuralScenariosPanel onActiveScenarioChange={onActiveScenarioChange} />
+        <StructuralScenariosPanel
+          onActiveScenarioChange={onActiveScenarioChange}
+          spotPrice={(state as any)?.options?.spot ?? (state as any)?.ticker?.price ?? null}
+        />
       </SidebarPanel>
 
     </div>

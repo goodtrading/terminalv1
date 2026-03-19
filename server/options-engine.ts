@@ -7,7 +7,7 @@ import { storage } from "./storage";
 import { DeribitOptionsGateway } from "./deribit-gateway";
 import { MarketDataGateway } from "./market-gateway";
 
-const REFRESH_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+const REFRESH_INTERVAL_MS = 5 * 1000; // 5 seconds - make options/Vanna/Charm reactive
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -44,6 +44,11 @@ export async function refreshOptionsEngine(): Promise<void> {
         startStrike: z.start,
         endStrike: z.end,
       }));
+      console.log("[OptionsEngine][PassToStorage]", {
+        totalVanna: s.totalVanna,
+        totalCharm: s.totalCharm,
+      });
+
       storage.updateFromDeribitSummary(
         {
           totalGex,
@@ -56,6 +61,8 @@ export async function refreshOptionsEngine(): Promise<void> {
           activeGammaZoneLow,
           gammaMagnets: summary.gammaMagnets ?? [],
           shortGammaZones,
+          totalVanna: s.totalVanna,
+          totalCharm: s.totalCharm,
         },
         spotPrice
       );

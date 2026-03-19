@@ -20,7 +20,9 @@ export interface TerminalState {
 export function useTerminalState() {
   return useQuery<TerminalState>({
     queryKey: ["/api/terminal/state"],
-    refetchInterval: 2000,
-    staleTime: 1000,
+    // Polling del panel principal. Este endpoint es caro en el server
+    // (recalcula engines/heatmap/coherence), así que evitamos 2s por defecto.
+    refetchInterval: 5000,
+    staleTime: 2000,
   });
 }
