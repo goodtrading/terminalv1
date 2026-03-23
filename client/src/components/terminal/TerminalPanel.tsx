@@ -8,9 +8,18 @@ interface TerminalPanelProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
   noPadding?: boolean;
   headerExtra?: React.ReactNode;
+  collapsed?: boolean;
 }
 
-export function TerminalPanel({ title, children, className, noPadding = false, headerExtra, ...props }: TerminalPanelProps) {
+export function TerminalPanel({
+  title,
+  children,
+  className,
+  noPadding = false,
+  headerExtra,
+  collapsed = false,
+  ...props
+}: TerminalPanelProps) {
   return (
     <div 
       className={cn(
@@ -33,7 +42,13 @@ export function TerminalPanel({ title, children, className, noPadding = false, h
           </div>
         </div>
       )}
-      <div className={cn("flex-1 overflow-hidden flex flex-col", !noPadding && "p-4 overflow-auto")}>
+      <div
+        className={cn(
+          "flex-1 overflow-hidden flex flex-col transition-all duration-200",
+          !noPadding && "p-4 overflow-auto",
+          collapsed && "max-h-0 opacity-0 p-0",
+        )}
+      >
         {children}
       </div>
     </div>

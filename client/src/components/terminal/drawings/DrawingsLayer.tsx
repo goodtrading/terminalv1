@@ -8,6 +8,11 @@ export interface DrawingsCoordinateHelpers {
   timeToCoordinate: (time: number) => number | null;
   coordinateToPrice: (y: number) => number | null;
   coordinateToTime: (x: number) => number | null;
+  coordinateToLogical?: (x: number) => number | null;
+  getVisibleLogicalRange?: () => { from: number; to: number } | null;
+  getLastDataLogical?: () => number | null;
+  getLastTimeSec?: () => number | null;
+  getBarSec?: () => number | null;
 }
 
 interface DrawingsLayerProps {

@@ -1,5 +1,7 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useLayoutEffect, useRef, useCallback } from "react";
 import type { Drawing, DrawingPoint } from "./types";
+import { drawDebug, getChartViewportVersion } from "./debug";
+import { createDrawingProjection } from "./projection";
 
 interface DrawingsCanvasProps {
   drawings: Drawing[];
@@ -29,6 +31,7 @@ export function DrawingsCanvas({
   timeToCoordinate,
 }: DrawingsCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { timeToX, priceToY } = createDrawingProjection(timeToCoordinate, priceToCoordinate);
 
   const drawLine = useCallback(
     (
@@ -86,8 +89,20 @@ export function DrawingsCanvas({
       const isSelected = d.selected ?? false;
       if (!pts || pts.length === 0) continue;
 
+      const nullProjection = { xNull: 0, yNull: 0 };
+      const tx = (t: number) => {
+        const x = timeToX(t);
+        if (x == null) nullProjection.xNull += 1;
+        return x;
+      };
+      const py = (p: number) => {
+        const y = priceToY(p);
+        if (y == null) nullProjection.yNull += 1;
+        return y;
+      };
+
       if (d.tool === "horizontalLine" && pts[0]) {
-        const y = priceToCoordinate(pts[0].price);
+        const y = py(pts[0].price);
         if (y == null) continue;
         drawLine(ctx, 0, y, chartWidth, y, color, opacity, isSelected ? lw + 1 : lw);
         if (isSelected) {
@@ -97,10 +112,10 @@ export function DrawingsCanvas({
           ctx.fill();
         }
       } else if ((d.tool === "trendLine" || d.tool === "arrow") && pts.length >= 2) {
-        const x1 = timeToCoordinate(pts[0].time);
-        const y1 = priceToCoordinate(pts[0].price);
-        const x2 = timeToCoordinate(pts[1].time);
-        const y2 = priceToCoordinate(pts[1].price);
+        const x1 = tx(pts[0].time);
+        const y1 = py(pts[0].price);
+        const x2 = tx(pts[1].time);
+        const y2 = py(pts[1].price);
         if (x1 == null || y1 == null || x2 == null || y2 == null) continue;
         drawLine(ctx, x1, y1, x2, y2, color, opacity, isSelected ? lw + 1 : lw);
         if (d.tool === "arrow") {
@@ -117,10 +132,10 @@ export function DrawingsCanvas({
           });
         }
       } else if (d.tool === "rectangle" && pts.length >= 2) {
-        const x1 = timeToCoordinate(pts[0].time);
-        const y1 = priceToCoordinate(pts[0].price);
-        const x2 = timeToCoordinate(pts[1].time);
-        const y2 = priceToCoordinate(pts[1].price);
+        const x1 = tx(pts[0].time);
+        const y1 = py(pts[0].price);
+        const x2 = tx(pts[1].time);
+        const y2 = py(pts[1].price);
         if (x1 == null || y1 == null || x2 == null || y2 == null) continue;
         const left = Math.min(x1, x2);
         const right = Math.max(x1, x2);
@@ -142,8 +157,8 @@ export function DrawingsCanvas({
           });
         }
       } else if (d.tool === "text" && pts[0] && d.text) {
-        const x = timeToCoordinate(pts[0].time);
-        const y = priceToCoordinate(pts[0].price);
+        const x = tx(pts[0].time);
+        const y = py(pts[0].price);
         if (x == null || y == null) continue;
         ctx.font = "11px 'JetBrains Mono', monospace";
         ctx.fillStyle = hexToRgba(color, opacity);
@@ -158,8 +173,8 @@ export function DrawingsCanvas({
       } else if (d.tool === "polyline" && pts.length >= 2) {
         const coords: { x: number; y: number }[] = [];
         for (const p of pts) {
-          const x = timeToCoordinate(p.time);
-          const y = priceToCoordinate(p.price);
+          const x = tx(p.time);
+          const y = py(p.price);
           if (x != null && y != null) coords.push({ x, y });
         }
         if (coords.length < 2) continue;
@@ -180,6 +195,17 @@ export function DrawingsCanvas({
           });
         }
       }
+
+      drawDebug("RENDER", {
+        source: "DrawingsCanvas",
+        drawingId: d.id,
+        tool: d.tool,
+        viewportVersion,
+        chartViewportVersion: getChartViewportVersion(),
+        nullProjection,
+        selected: Boolean(d.selected),
+        pending: pendingDrawing?.id === d.id,
+      });
     }
   }, [
     drawings,
@@ -189,11 +215,13 @@ export function DrawingsCanvas({
     viewportVersion,
     priceToCoordinate,
     timeToCoordinate,
+    timeToX,
+    priceToY,
     drawLine,
     drawArrowhead,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.width = chartWidth;

@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { getAuthToken, setAuthToken } from "@/lib/authToken";
+import { getAuthToken, setAuthToken, clearAuthStorage } from "@/lib/authToken";
 
 export interface AuthUser {
   id: number;
@@ -53,10 +53,24 @@ async function fetchMe(): Promise<MeResponse> {
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch("/api/auth/me", { credentials: "include", headers });
+  if (res.status === 401) {
+    throw new Error("me:401");
+  }
   if (!res.ok) {
     throw new Error(`me:${res.status}`);
   }
   return res.json() as Promise<MeResponse>;
+}
+
+/**
+ * If the server does not confirm a user but we still hold a token, the token is stale — clear it.
+ * When SaaS is disabled, we also clear any orphan token so enabling SaaS later starts clean.
+ */
+function reconcileTokenWithServerResponse(me: MeResponse): void {
+  const hadToken = Boolean(getAuthToken());
+  if (!me.user && hadToken) {
+    clearAuthStorage();
+  }
 }
 
 export function TerminalAuthProvider({ children }: { children: ReactNode }) {
@@ -68,12 +82,21 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
 
   const applyToken = useCallback((t: string | null) => {
     setAuthToken(t);
-    setTokenState(t);
+    setTokenState(getAuthToken());
+  }, []);
+
+  const invalidateSession = useCallback(() => {
+    clearAuthStorage();
+    setTokenState(null);
+    setUser(null);
+    setAccess(null);
   }, []);
 
   const refreshSession = useCallback(async () => {
     try {
       const me = await fetchMe();
+      reconcileTokenWithServerResponse(me);
+      setTokenState(getAuthToken());
       if (me.saasDisabled) {
         setSaasDisabled(true);
         setUser(null);
@@ -83,12 +106,17 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
       setSaasDisabled(false);
       setUser(me.user);
       setAccess(me.access);
-    } catch {
-      setSaasDisabled(false);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg === "me:401") {
+        invalidateSession();
+        return;
+      }
       setUser(null);
       setAccess(null);
+      setTokenState(getAuthToken());
     }
-  }, []);
+  }, [invalidateSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,6 +124,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
       try {
         const me = await fetchMe();
         if (cancelled) return;
+        reconcileTokenWithServerResponse(me);
         if (me.saasDisabled) {
           setSaasDisabled(true);
           setUser(null);
@@ -105,10 +134,17 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
           setUser(me.user);
           setAccess(me.access);
         }
-      } catch {
+        setTokenState(getAuthToken());
+      } catch (e) {
         if (!cancelled) {
-          setUser(null);
-          setAccess(null);
+          const msg = e instanceof Error ? e.message : "";
+          if (msg === "me:401") {
+            invalidateSession();
+          } else {
+            setUser(null);
+            setAccess(null);
+            setTokenState(getAuthToken());
+          }
         }
       } finally {
         if (!cancelled) setAuthReady(true);
@@ -117,7 +153,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [invalidateSession]);
 
   useEffect(() => {
     const onToken = () => {
@@ -141,11 +177,16 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
         throw new Error((data as { error?: string }).error || "LOGIN_FAILED");
       }
       const t = (data as { token?: string }).token;
-      if (t) applyToken(t);
-      setUser((data as { user: AuthUser }).user);
+      const u = (data as { user?: AuthUser }).user;
+      if (!t || !u) {
+        invalidateSession();
+        throw new Error("LOGIN_INCOMPLETE");
+      }
+      applyToken(t);
+      setUser(u);
       setAccess((data as { access: AccessSnapshot }).access);
     },
-    [applyToken],
+    [applyToken, invalidateSession],
   );
 
   const register = useCallback(
@@ -161,18 +202,21 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
         throw new Error((data as { error?: string }).error || "REGISTER_FAILED");
       }
       const t = (data as { token?: string }).token;
-      if (t) applyToken(t);
-      setUser((data as { user: AuthUser }).user);
+      const u = (data as { user?: AuthUser }).user;
+      if (!t || !u) {
+        invalidateSession();
+        throw new Error("REGISTER_INCOMPLETE");
+      }
+      applyToken(t);
+      setUser(u);
       setAccess((data as { access: AccessSnapshot }).access);
     },
-    [applyToken],
+    [applyToken, invalidateSession],
   );
 
   const logout = useCallback(() => {
-    applyToken(null);
-    setUser(null);
-    setAccess(null);
-  }, [applyToken]);
+    invalidateSession();
+  }, [invalidateSession]);
 
   const value = useMemo(
     () => ({

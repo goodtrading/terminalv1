@@ -20,7 +20,11 @@ export function TopNav() {
     <div className="flex h-12 items-center justify-between bg-terminal-bg border-b border-terminal-border px-4 shrink-0 w-full z-10 relative">
       <div className="flex items-center h-full">
         <div className="flex items-center mr-8">
-          <span className="text-terminal-accent font-bold text-lg tracking-wider mr-2">█</span>
+          <img
+            src="/logo.png"
+            alt="GoodTrading logo"
+            className="h-6 w-auto object-contain mr-2 opacity-95 hover:opacity-100 transition-opacity"
+          />
           <span className="font-bold text-white tracking-widest text-sm">GOODTRADING <span className="text-terminal-muted font-normal text-xs ml-1">v1.0</span></span>
         </div>
         

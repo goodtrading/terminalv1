@@ -554,14 +554,36 @@ export async function registerRoutes(
       console.error("[SaaS] Failed to register SaaS routes:", e);
     }
   } else {
-    console.warn("[SaaS] DATABASE_URL not set — auth/subscription API disabled");
-    // Prevent dev catch-all from returning HTML for these paths
+    console.error(
+      "[SaaS] DATABASE_URL is not set. SaaS/auth is OFF: no DB connection. " +
+        "Add DATABASE_URL to .env, run npm run db:push, then restart.",
+    );
+    const saasNotConfigured = (_req: Request, res: Response) => {
+      res.status(503).json({
+        error: "SAAS_NOT_CONFIGURED",
+        message:
+          "Set DATABASE_URL in .env, run npm run db:push, and restart the server.",
+        saasDisabled: true,
+      });
+    };
+    // GET: frontend needs JSON + saasDisabled (not HTML from Vite catch-all)
     app.get("/api/auth/me", (_req, res) => {
       res.json({ user: null, access: null, saasDisabled: true });
     });
     app.get("/api/plans", (_req, res) => {
       res.json({ plans: [], saasDisabled: true });
     });
+    // Mutations / protected reads: explicit 503 JSON (otherwise Vite returns index.html)
+    app.post("/api/auth/login", saasNotConfigured);
+    app.post("/api/auth/register", saasNotConfigured);
+    app.get("/api/auth/access", saasNotConfigured);
+    app.post("/api/payments/report", saasNotConfigured);
+    app.get("/api/admin/users", saasNotConfigured);
+    app.patch("/api/admin/users/:id", saasNotConfigured);
+    app.post("/api/admin/users/:id/approve-to-pay", saasNotConfigured);
+    app.post("/api/admin/users/:id/activate-access", saasNotConfigured);
+    app.post("/api/admin/users/:id/subscription", saasNotConfigured);
+    app.post("/api/admin/users/:id/subscription/deactivate", saasNotConfigured);
   }
 
   return httpServer;

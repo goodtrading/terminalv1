@@ -79,6 +79,31 @@ export async function getLatestActiveSubscriptionForUser(userId: number) {
   return rows[0];
 }
 
+export async function getLatestSubscriptionForUser(userId: number) {
+  requireDb();
+  const rows = await db!
+    .select({
+      subscription: subscriptions,
+      plan: subscriptionPlans,
+    })
+    .from(subscriptions)
+    .innerJoin(subscriptionPlans, eq(subscriptions.planId, subscriptionPlans.id))
+    .where(eq(subscriptions.userId, userId))
+    .orderBy(desc(subscriptions.endsAt))
+    .limit(1);
+  return rows[0];
+}
+
+export async function markSubscriptionExpiredById(subscriptionId: number): Promise<boolean> {
+  requireDb();
+  const rows = await db!
+    .update(subscriptions)
+    .set({ status: "expired" })
+    .where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.status, "active")))
+    .returning({ id: subscriptions.id });
+  return rows.length > 0;
+}
+
 export async function createSubscriptionForUser(
   userId: number,
   planId: number,
@@ -138,4 +163,14 @@ export async function grantSubscriptionForUser(
     startsAt,
     endsAt,
   });
+}
+
+export async function deactivateSubscriptionForUser(userId: number): Promise<number> {
+  requireDb();
+  const rows = await db!
+    .update(subscriptions)
+    .set({ status: "cancelled" })
+    .where(and(eq(subscriptions.userId, userId), eq(subscriptions.status, "active")))
+    .returning({ id: subscriptions.id });
+  return rows.length;
 }

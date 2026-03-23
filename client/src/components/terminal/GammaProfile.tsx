@@ -2,7 +2,7 @@ import { TerminalPanel } from "./TerminalPanel";
 import { cn } from "@/lib/utils";
 import { useTerminalState } from "@/hooks/useTerminalState";
 
-export function GammaProfile() {
+export function GammaProfile({ collapsed = false }: { collapsed?: boolean }) {
   const { data: state } = useTerminalState();
   const positioning = state?.positioning;
   const market = state?.market;
@@ -37,7 +37,11 @@ export function GammaProfile() {
   const maxPosGamma = Math.max(...data.map(d => d.gamma));
 
   return (
-    <TerminalPanel title="GAMMA PROFILE ANALYSIS" className="flex-[0.35] h-full min-w-0 max-[1000px]:flex-1">
+    <TerminalPanel
+      title="GAMMA PROFILE ANALYSIS"
+      collapsed={collapsed}
+      className="flex-[0.35] h-full min-w-0 max-[1000px]:flex-1"
+    >
       <div className="flex h-full w-full items-end space-x-[1px] pb-8 relative pt-8 px-1">
         
         {/* Zero Line */}

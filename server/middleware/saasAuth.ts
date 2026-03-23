@@ -34,7 +34,7 @@ export async function optionalSaasAuth(
     return;
   }
   const user = await findUserById(payload.sub);
-  if (!user || !user.isActive) {
+  if (!user) {
     next();
     return;
   }

@@ -1,7 +1,9 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import { DrawingsCanvas } from "./DrawingsCanvas";
 import { DrawingHitRegions } from "./DrawingHitRegions";
 import { DrawingAnchorHandles } from "./DrawingAnchorHandles";
+import { drawDebug, getChartViewportVersion } from "./debug";
+import { createDrawingProjection } from "./projection";
 import type { Drawing, DrawingTool } from "./types";
 
 export interface DrawingsState {
@@ -32,6 +34,11 @@ interface DrawingsCoordinateHelpers {
   timeToCoordinate: (time: number) => number | null;
   coordinateToPrice: (y: number) => number | null;
   coordinateToTime: (x: number) => number | null;
+  coordinateToLogical?: (x: number) => number | null;
+  getVisibleLogicalRange?: () => { from: number; to: number } | null;
+  getLastDataLogical?: () => number | null;
+  getLastTimeSec?: () => number | null;
+  getBarSec?: () => number | null;
 }
 
 interface DrawingsOverlayProps {
@@ -49,7 +56,17 @@ export function DrawingsOverlay({
   coordinates,
   drawingsState,
 }: DrawingsOverlayProps) {
-  const { priceToCoordinate, timeToCoordinate, coordinateToPrice, coordinateToTime } = coordinates;
+  const {
+    priceToCoordinate,
+    timeToCoordinate,
+    coordinateToPrice,
+    coordinateToTime,
+    coordinateToLogical,
+    getVisibleLogicalRange,
+    getLastDataLogical,
+    getLastTimeSec,
+    getBarSec,
+  } = coordinates;
   const {
     drawings,
     activeTool,
@@ -75,23 +92,200 @@ export function DrawingsOverlay({
   const textInputRef = useRef<HTMLInputElement | null>(null);
   const [textInput, setTextInput] = useState<{ x: number; y: number; time: number; price: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [interactionTick, setInteractionTick] = useState(0);
+  const rafRef = useRef<number | null>(null);
+  const interactionRef = useRef(false);
+  const wheelEndRef = useRef<number | null>(null);
 
   const isDrawMode = activeTool !== "select" || pendingDrawing != null;
   const isDraggingAnchor = draggingAnchor != null;
   const selectedDrawing = drawings.find((d) => d.selected);
+  const projection = useMemo(
+    () => createDrawingProjection(timeToCoordinate, priceToCoordinate),
+    [timeToCoordinate, priceToCoordinate]
+  );
+  const { timeToX, priceToY } = projection;
+
+  useEffect(() => {
+    const chartViewportVersion = getChartViewportVersion();
+    drawDebug("RENDER", {
+      source: "DrawingsOverlay",
+      viewportVersion,
+      chartViewportVersion,
+      mismatch: chartViewportVersion != null && chartViewportVersion !== viewportVersion,
+      drawings: drawings.length,
+      pendingTool: pendingDrawing?.tool ?? null,
+    });
+  }, [viewportVersion, drawings.length, pendingDrawing?.tool]);
+
+  const stopInteractionLoop = useCallback(() => {
+    interactionRef.current = false;
+    if (rafRef.current != null) {
+      window.cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    if (wheelEndRef.current != null) {
+      window.clearTimeout(wheelEndRef.current);
+      wheelEndRef.current = null;
+    }
+  }, []);
+
+  const startInteractionLoop = useCallback(() => {
+    if (interactionRef.current) return;
+    interactionRef.current = true;
+    const tick = () => {
+      if (!interactionRef.current) return;
+      setInteractionTick((v) => v + 1);
+      rafRef.current = window.requestAnimationFrame(tick);
+    };
+    rafRef.current = window.requestAnimationFrame(tick);
+  }, []);
+
+  useEffect(() => {
+    const onPointerUp = () => stopInteractionLoop();
+    const onWindowWheel = () => {
+      startInteractionLoop();
+      if (wheelEndRef.current != null) window.clearTimeout(wheelEndRef.current);
+      wheelEndRef.current = window.setTimeout(() => stopInteractionLoop(), 120);
+    };
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("wheel", onWindowWheel, { passive: true });
+    return () => {
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("wheel", onWindowWheel as EventListener);
+      stopInteractionLoop();
+    };
+  }, [startInteractionLoop, stopInteractionLoop]);
 
   const getCoords = useCallback(
     (e: React.MouseEvent) => {
       const rect = containerRef.current?.getBoundingClientRect();
-      if (!rect) return null;
+      if (!rect) {
+        drawDebug("INPUT_DEBUG", {
+          source: "DrawingsOverlay.getCoords",
+          stage: "enter",
+          called: true,
+          accepted: false,
+          rejectReason: "no_rect",
+        });
+        return null;
+      }
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      const time = coordinateToTime(x);
+      const plotWidth = rect.width;
+      const isInsideX = x >= 0 && x <= plotWidth;
+      const rawTime = coordinateToTime(x);
+      let time = rawTime;
       const price = coordinateToPrice(y);
-      if (time == null || price == null) return null;
+      let fallbackUsed = "none";
+      const directLogical = coordinateToLogical?.(x) ?? null;
+      const lastLogical = getLastDataLogical?.() ?? null;
+      const lastTimeSec = getLastTimeSec?.() ?? null;
+      const barSec = getBarSec?.() ?? null;
+      const isFutureLogical =
+        typeof directLogical === "number" &&
+        typeof lastLogical === "number" &&
+        directLogical > lastLogical + 1e-6;
+
+      // Critical fix: if library clamps coordinateToTime to last candle while pointer is in future logical space,
+      // force future projection for the START point and subsequent input.
+      if (
+        isInsideX &&
+        isFutureLogical &&
+        typeof lastTimeSec === "number" &&
+        typeof barSec === "number" &&
+        Number.isFinite(barSec) &&
+        barSec > 0 &&
+        (time == null || time <= lastTimeSec)
+      ) {
+        time = Math.round(lastTimeSec + (directLogical - lastLogical) * barSec);
+        fallbackUsed = "futureLogicalOverride";
+      }
+
+      if (time == null && isInsideX) {
+        if (
+          typeof directLogical === "number" &&
+          typeof lastLogical === "number" &&
+          typeof lastTimeSec === "number" &&
+          typeof barSec === "number" &&
+          Number.isFinite(barSec) &&
+          barSec > 0
+        ) {
+          time = Math.round(lastTimeSec + (directLogical - lastLogical) * barSec);
+          fallbackUsed = "coordinateToLogical";
+        } else {
+          const visible = getVisibleLogicalRange?.() ?? null;
+          if (
+            visible &&
+            plotWidth > 0 &&
+            typeof lastLogical === "number" &&
+            typeof lastTimeSec === "number" &&
+            typeof barSec === "number" &&
+            Number.isFinite(barSec) &&
+            barSec > 0
+          ) {
+            const logical = visible.from + (x / plotWidth) * (visible.to - visible.from);
+            time = Math.round(lastTimeSec + (logical - lastLogical) * barSec);
+            fallbackUsed = "visibleLogicalInterpolation";
+          }
+        }
+      }
+      drawDebug("INPUT_DEBUG", {
+        source: "DrawingsOverlay.getCoords",
+        stage: "exit",
+        called: true,
+        x,
+        y,
+        coordinateToTime: rawTime,
+        coordinateToLogical: directLogical,
+        lastLogical,
+        lastTimeSec,
+        isFutureLogical,
+        plotWidth,
+        isInsideX,
+        fallbackUsed,
+        finalTime: time,
+        accepted: time != null && price != null,
+        viewportVersion,
+      });
+      if (price == null || time == null) {
+        drawDebug("INPUT_DEBUG", {
+          source: "DrawingsOverlay.getCoords",
+          stage: "reject",
+          called: true,
+          x,
+          y,
+          accepted: false,
+          time,
+          price,
+          rejectReason: price == null ? "price_null" : "time_null",
+          isInsideX,
+          plotWidth,
+          fallbackUsed,
+        });
+        return null;
+      }
+      drawDebug("POINTER_PROJECT", {
+        source: "DrawingsOverlay.getCoords",
+        accepted: true,
+        viewportVersion,
+        x,
+        y,
+        time,
+        price,
+      });
       return { x, y, time, price };
     },
-    [coordinateToTime, coordinateToPrice]
+    [
+      coordinateToTime,
+      coordinateToPrice,
+      coordinateToLogical,
+      getVisibleLogicalRange,
+      getLastDataLogical,
+      getLastTimeSec,
+      getBarSec,
+      viewportVersion,
+    ]
   );
 
   const handleKeyDown = useCallback(
@@ -152,6 +346,15 @@ export function DrawingsOverlay({
       if (!c) return;
 
       if (activeTool === "text") {
+        drawDebug("START_POINT", {
+          source: "DrawingsOverlay.handleDrawClick:text",
+          x: c.x,
+          y: c.y,
+          coordinateToTime: rawTimeFromPoint(c.x),
+          coordinateToLogical: coordinateToLogical?.(c.x) ?? null,
+          finalTimePersisted: c.time,
+          clampedToLast: typeof getLastTimeSec?.() === "number" ? c.time <= (getLastTimeSec?.() as number) : null,
+        });
         startDrawing(c.time, c.price);
         setTextInput({ x: c.x, y: c.y, time: c.time, price: c.price });
         return;
@@ -165,11 +368,23 @@ export function DrawingsOverlay({
       if (pendingDrawing && (pendingDrawing.tool === "trendLine" || pendingDrawing.tool === "arrow" || pendingDrawing.tool === "rectangle")) {
         finishDrawing(c.time, c.price);
       } else {
+        drawDebug("START_POINT", {
+          source: "DrawingsOverlay.handleDrawClick:start",
+          tool: activeTool,
+          x: c.x,
+          y: c.y,
+          coordinateToTime: rawTimeFromPoint(c.x),
+          coordinateToLogical: coordinateToLogical?.(c.x) ?? null,
+          finalTimePersisted: c.time,
+          clampedToLast: typeof getLastTimeSec?.() === "number" ? c.time <= (getLastTimeSec?.() as number) : null,
+        });
         startDrawing(c.time, c.price);
       }
     },
-    [activeTool, pendingDrawing, getCoords, startDrawing, addPolylinePoint, finishDrawing]
+    [activeTool, pendingDrawing, getCoords, startDrawing, addPolylinePoint, finishDrawing, coordinateToLogical, getLastTimeSec]
   );
+
+  const rawTimeFromPoint = useCallback((x: number) => coordinateToTime(x), [coordinateToTime]);
 
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -183,10 +398,39 @@ export function DrawingsOverlay({
   const handleDrawMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (isDraggingAnchor) return;
+      const rect = containerRef.current?.getBoundingClientRect();
+      const x = rect ? e.clientX - rect.left : null;
+      const y = rect ? e.clientY - rect.top : null;
+      const plotWidth = rect?.width ?? null;
+      drawDebug("POINTER_DOWN", {
+        source: "DrawingsOverlay.handleDrawMouseDown",
+        stage: "enter",
+        called: true,
+        x,
+        y,
+        chartWidth,
+        plotLeft: 0,
+        plotRight: plotWidth,
+      });
       const c = getCoords(e);
+      drawDebug("POINTER_DOWN", {
+        source: "DrawingsOverlay.handleDrawMouseDown",
+        x,
+        y,
+        chartWidth,
+        plotLeft: 0,
+        plotRight: plotWidth,
+        isInsideX: typeof x === "number" && typeof plotWidth === "number" ? x >= 0 && x <= plotWidth : null,
+        coordinateToTime: typeof x === "number" ? coordinateToTime(x) : null,
+        coordinateToLogical: typeof x === "number" ? coordinateToLogical?.(x) ?? null : null,
+        accepted: c != null,
+        rejectReason: c == null ? "getCoords_returned_null" : null,
+        stage: "post_getCoords",
+        called: true,
+      });
       if (!c) return;
 
-      const anchorHit = hitTestAnchor(c.x, c.y, timeToCoordinate, priceToCoordinate);
+      const anchorHit = hitTestAnchor(c.x, c.y, timeToX, priceToY);
       if (anchorHit && anchorHit.drawing.selected) {
         setDraggingAnchor({ id: anchorHit.drawing.id, pointIndex: anchorHit.pointIndex });
         e.preventDefault();
@@ -194,11 +438,21 @@ export function DrawingsOverlay({
       }
 
       if (activeTool === "rectangle" && !pendingDrawing) {
+        drawDebug("START_POINT", {
+          source: "DrawingsOverlay.handleDrawMouseDown:rectangle",
+          tool: activeTool,
+          x: c.x,
+          y: c.y,
+          coordinateToTime: rawTimeFromPoint(c.x),
+          coordinateToLogical: coordinateToLogical?.(c.x) ?? null,
+          finalTimePersisted: c.time,
+          clampedToLast: typeof getLastTimeSec?.() === "number" ? c.time <= (getLastTimeSec?.() as number) : null,
+        });
         startDrawing(c.time, c.price);
         setIsDragging(true);
       }
     },
-    [activeTool, pendingDrawing, isDraggingAnchor, getCoords, hitTestAnchor, timeToCoordinate, priceToCoordinate, setDraggingAnchor, startDrawing]
+    [activeTool, pendingDrawing, isDraggingAnchor, getCoords, hitTestAnchor, timeToX, priceToY, setDraggingAnchor, startDrawing, rawTimeFromPoint, coordinateToLogical, getLastTimeSec, chartWidth, coordinateToTime]
   );
 
   const handleDrawMouseMove = useCallback(
@@ -255,9 +509,9 @@ export function DrawingsOverlay({
         pendingDrawing={pendingDrawing}
         chartWidth={chartWidth}
         chartHeight={chartHeight}
-        viewportVersion={viewportVersion}
-        priceToCoordinate={priceToCoordinate}
-        timeToCoordinate={timeToCoordinate}
+        viewportVersion={viewportVersion + interactionTick}
+        priceToCoordinate={priceToY}
+        timeToCoordinate={timeToX}
       />
 
       {isDrawMode && (
@@ -282,8 +536,9 @@ export function DrawingsOverlay({
             drawings={drawings}
             chartWidth={chartWidth}
             chartHeight={chartHeight}
-            priceToCoordinate={priceToCoordinate}
-            timeToCoordinate={timeToCoordinate}
+            viewportVersion={viewportVersion + interactionTick}
+            priceToCoordinate={priceToY}
+            timeToCoordinate={timeToX}
             onSelect={(d) => selectDrawing(d.id)}
           />
         </div>
@@ -295,8 +550,9 @@ export function DrawingsOverlay({
             drawing={selectedDrawing}
             chartWidth={chartWidth}
             chartHeight={chartHeight}
-            priceToCoordinate={priceToCoordinate}
-            timeToCoordinate={timeToCoordinate}
+            viewportVersion={viewportVersion + interactionTick}
+            priceToCoordinate={priceToY}
+            timeToCoordinate={timeToX}
             onAnchorMouseDown={(pointIndex) => setDraggingAnchor({ id: selectedDrawing.id, pointIndex })}
           />
         </div>

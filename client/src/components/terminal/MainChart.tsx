@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createChart, ColorType, LineStyle, CandlestickSeries, HistogramSeries, IChartApi, ISeriesApi } from "lightweight-charts";
+import { createChart, ColorType, LineStyle, CandlestickSeries, HistogramSeries, LineSeries, IChartApi, ISeriesApi } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels, DealerExposure, TradingScenario } from "@shared/schema";
 import { useTerminalState } from "@/hooks/useTerminalState";
@@ -14,6 +14,7 @@ import { ScenarioOverlay } from "./overlay/ScenarioOverlay";
 import { HeatmapCanvas } from "./overlay/HeatmapCanvas";
 import { LayerGroupControls } from "./overlay/LayerGroupControls";
 import { DrawingsLayer } from "./drawings/DrawingsLayer";
+import { drawDebug, setChartViewportVersion } from "./drawings/debug";
 import type { LayerGroup } from "./overlay/layerGroups";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
@@ -117,6 +118,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const ghostSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const priceLinesRef = useRef<any[]>([]);
   const livePriceLineRef = useRef<any>(null);
 
@@ -127,6 +129,13 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   const [chartReady, setChartReady] = useState(false);
   const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
   const [drawingsViewportVersion, setDrawingsViewportVersion] = useState(0);
+  const drawingsInteractionActiveRef = useRef(false);
+  const drawingsInteractionRafRef = useRef<number | null>(null);
+  const drawingsWheelStopTimeoutRef = useRef<number | null>(null);
+  const drawingsTimeProjectionRef = useRef<{
+    lastTimeSec: number | null;
+    barSec: number;
+  }>({ lastTimeSec: null, barSec: 900 });
   const [lastCandle, setLastCandle] = useState<any>(null);
   const [activePanels, setActivePanels] = useState<Set<MapMode>>(() => {
   // Load from localStorage on initialization
@@ -374,6 +383,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     setManualPriceRange(null);
     chartRef.current.priceScale("right").applyOptions({ autoScale: true });
     chartRef.current.timeScale().fitContent();
+    chartRef.current.timeScale().applyOptions({ rightOffset: 36, rightBarStaysOnScroll: true });
   };
 
   // Helper function to get order book data from positioning engines
@@ -468,28 +478,92 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
+    const FUTURE_RIGHT_OFFSET = 36;
     const chart = createChart(chartContainerRef.current, {
       layout: { background: { type: ColorType.Solid, color: "#000000" }, textColor: "#ffffff", fontSize: 12, fontFamily: "JetBrains Mono, monospace" },
       grid: { vertLines: { color: "#0a0a0a" }, horzLines: { color: "#0a0a0a" } },
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight,
-      timeScale: { borderColor: "#1a1a1a", timeVisible: true, barSpacing: 12, rightOffset: 15 },
+      timeScale: {
+        borderColor: "#1a1a1a",
+        timeVisible: true,
+        barSpacing: 12,
+        rightOffset: FUTURE_RIGHT_OFFSET,
+        rightBarStaysOnScroll: true,
+      },
       rightPriceScale: { borderColor: "#1a1a1a", scaleMargins: { top: 0.2, bottom: 0.25 }, minimumWidth: 100 },
       crosshair: { mode: 0 },
     });
     const candleSeries = chart.addSeries(CandlestickSeries, { upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444", priceLineVisible: false });
     const volumeSeries = chart.addSeries(HistogramSeries, { color: 'rgba(38, 166, 154, 0.2)', priceFormat: { type: 'volume' }, priceScaleId: '' });
+    const ghostSeries = chart.addSeries(LineSeries, {
+      color: "rgba(0,0,0,0)",
+      lineWidth: 1,
+      crosshairMarkerVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
     volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.88, bottom: 0 } });
     
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+    ghostSeriesRef.current = ghostSeries;
     setChartReady(true);
 
-    const onViewportChange = () => setDrawingsViewportVersion((v) => v + 1);
+    const bumpDrawingsViewport = () =>
+      setDrawingsViewportVersion((v) => {
+        const next = v + 1;
+        setChartViewportVersion(next);
+        drawDebug("CHART_VIEWPORT", { viewportVersion: next, source: "MainChart.onViewportChange" });
+        return next;
+      });
+    const onViewportChange = () => bumpDrawingsViewport();
     const ts = chart.timeScale();
+    const ensureFutureSpace = () => {
+      ts.applyOptions({
+        rightOffset: FUTURE_RIGHT_OFFSET,
+        rightBarStaysOnScroll: true,
+      });
+    };
+    ensureFutureSpace();
     ts.subscribeVisibleTimeRangeChange(onViewportChange);
     ts.subscribeVisibleLogicalRangeChange(onViewportChange);
+    const interactionTarget = chartContainerRef.current;
+
+    const stopInteractionRaf = () => {
+      drawingsInteractionActiveRef.current = false;
+      if (drawingsInteractionRafRef.current != null) {
+        window.cancelAnimationFrame(drawingsInteractionRafRef.current);
+        drawingsInteractionRafRef.current = null;
+      }
+      if (drawingsWheelStopTimeoutRef.current != null) {
+        window.clearTimeout(drawingsWheelStopTimeoutRef.current);
+        drawingsWheelStopTimeoutRef.current = null;
+      }
+    };
+
+    const startInteractionRaf = () => {
+      if (drawingsInteractionActiveRef.current) return;
+      drawingsInteractionActiveRef.current = true;
+      const tick = () => {
+        if (!drawingsInteractionActiveRef.current) return;
+        bumpDrawingsViewport();
+        drawingsInteractionRafRef.current = window.requestAnimationFrame(tick);
+      };
+      drawingsInteractionRafRef.current = window.requestAnimationFrame(tick);
+    };
+
+    const onWheel = () => {
+      startInteractionRaf();
+      if (drawingsWheelStopTimeoutRef.current != null) window.clearTimeout(drawingsWheelStopTimeoutRef.current);
+      drawingsWheelStopTimeoutRef.current = window.setTimeout(() => stopInteractionRaf(), 120);
+    };
+    const onPointerDown = () => startInteractionRaf();
+    const onPointerUp = () => stopInteractionRaf();
+    interactionTarget?.addEventListener("wheel", onWheel, { passive: true });
+    interactionTarget?.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
 
     const lastAppliedSize = { w: 0, h: 0 };
     const updateSize = () => {
@@ -511,6 +585,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
 
         // Ensure Lightweight Charts recalculates internal layout after size changes.
         chartRef.current.timeScale().fitContent();
+        ensureFutureSpace();
       }
     };
     updateSize();
@@ -527,9 +602,14 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     return () => {
       ts.unsubscribeVisibleTimeRangeChange(onViewportChange);
       ts.unsubscribeVisibleLogicalRangeChange(onViewportChange);
+      interactionTarget?.removeEventListener("wheel", onWheel as EventListener);
+      interactionTarget?.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+      stopInteractionRaf();
       window.removeEventListener("resize", updateSize);
       ro.disconnect();
       chart.remove();
+      ghostSeriesRef.current = null;
       setChartReady(false);
       setChartSize(null);
     };
@@ -537,6 +617,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
 
   useEffect(() => {
     const series = candleSeriesRef.current;
+    const ghostSeries = ghostSeriesRef.current;
     if (!history?.length || !series) return;
 
     // Strict format for Lightweight Charts: { time: UTCTimestamp, open, high, low, close } — no volume
@@ -552,9 +633,31 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       low: Number(c.low),
       close: Number(c.close),
     }));
+    const FUTURE_GHOST_BARS = 40;
+    if (candlesForChart.length >= 2) {
+      const t1 = Number(candlesForChart[candlesForChart.length - 1].time);
+      const t0 = Number(candlesForChart[candlesForChart.length - 2].time);
+      const barSec = Math.max(1, Math.round(t1 - t0));
+      drawingsTimeProjectionRef.current = { lastTimeSec: t1, barSec };
+    } else if (candlesForChart.length === 1) {
+      drawingsTimeProjectionRef.current = {
+        lastTimeSec: Number(candlesForChart[0].time),
+        barSec: drawingsTimeProjectionRef.current.barSec,
+      };
+    }
     series.setData(candlesForChart);
+    if (ghostSeries && candlesForChart.length >= 1) {
+      const lastTime = Number(candlesForChart[candlesForChart.length - 1].time);
+      const barSec = drawingsTimeProjectionRef.current.barSec;
+      const ghostData = Array.from({ length: FUTURE_GHOST_BARS }, (_, i) => ({
+        time: (lastTime + (i + 1) * barSec) as UTCTimestamp,
+      }));
+      // Ghost bars are whitespace points on a transparent series: they extend time scale only.
+      ghostSeries.setData(ghostData as any);
+    }
     if (isInitialLoad && chartRef.current) {
       chartRef.current.timeScale().fitContent();
+      chartRef.current.timeScale().applyOptions({ rightOffset: 36, rightBarStaysOnScroll: true });
       setIsInitialLoad(false);
     }
     const lastHistoryCandle = history[history.length - 1];
@@ -580,6 +683,11 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       }
       
       candleSeriesRef.current.update(lastCandle);
+      const t = Number(lastCandle.time);
+      if (Number.isFinite(t)) {
+        const sec = t > 1e10 ? Math.floor(t / 1000) : Math.floor(t);
+        drawingsTimeProjectionRef.current.lastTimeSec = sec;
+      }
       const isUp = lastCandle.close >= lastCandle.open;
       if (livePriceLineRef.current) candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
       if (toggles.price) {
@@ -1737,103 +1845,174 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
             viewportVersion={drawingsViewportVersion}
             coordinates={{
               priceToCoordinate: (price: number) => {
-                const chart = chartRef.current;
-                const container = chartContainerRef.current;
-                if (!chart || !container) return null;
+                const series = candleSeriesRef.current;
+                if (!series) return null;
                 try {
-                  const priceScale = chart.priceScale("right");
-                  if (!priceScale) return null;
-                  const visibleRange = priceScale.getVisibleRange();
-                  if (!visibleRange) return null;
-                  const { from, to } = visibleRange;
-                  const h = container.clientHeight;
-                  const ratio = (price - from) / (to - from);
-                  return h - ratio * h;
+                  const y = series.priceToCoordinate(price);
+                  return typeof y === "number" ? y : null;
                 } catch {
                   return null;
                 }
               },
               timeToCoordinate: (time: number) => {
                 const chart = chartRef.current;
-                const container = chartContainerRef.current;
-                if (!chart || !container) return null;
+                if (!chart) return null;
                 try {
                   const scale = chart.timeScale();
                   const x = scale.timeToCoordinate(time as UTCTimestamp);
-                  if (x != null) return x;
-                  // Future time: library may return null. Use same logical-range mapping as coordinateToTime.
-                  const logicalRange = scale.getVisibleLogicalRange();
-                  if (!logicalRange) return null;
-                  const width = timeScaleWidth;
-                  if (width <= 0) return null;
-                  const from = logicalRange.from;
-                  const to = logicalRange.to;
-                  const span = to - from;
-                  if (span <= 0) return null;
-                  const tLeft = scale.coordinateToTime(0);
-                  const tMid = scale.coordinateToTime(width * 0.5);
-                  const tRef = typeof tLeft === "number" ? tLeft : typeof tMid === "number" ? tMid : null;
-                  if (typeof tRef !== "number") return null;
-                  const logicalRef = typeof tLeft === "number" ? from : from + 0.5 * span;
-                  const xRef2 = width * (logicalRef + 1 - from) / span;
-                  const tRef2 = scale.coordinateToTime(xRef2);
-                  const barDuration = typeof tRef2 === "number" ? tRef2 - tRef : 900;
-                  const logical = logicalRef + (time - tRef) / barDuration;
-                  return width * (logical - from) / span;
+                  if (typeof x === "number") return x;
+
+                  // Future-space support: map future time to logical index then to x.
+                  const toLogical = (scale as any).timeToLogical as ((t: UTCTimestamp) => number | null) | undefined;
+                  const logicalToCoord = (scale as any).logicalToCoordinate as ((l: number) => number | null) | undefined;
+                  const anchor = drawingsTimeProjectionRef.current;
+                  if (!toLogical || !logicalToCoord || anchor.lastTimeSec == null || !Number.isFinite(time)) {
+                    drawDebug("PROJECT_TIME_TO_X", {
+                      source: "MainChart.timeToCoordinate:null",
+                      viewportVersion: drawingsViewportVersion,
+                      time,
+                    });
+                    return null;
+                  }
+                  const lastLogical = toLogical(anchor.lastTimeSec as UTCTimestamp);
+                  if (typeof lastLogical !== "number") return null;
+                  const dtSec = time - anchor.lastTimeSec;
+                  const logical = lastLogical + dtSec / anchor.barSec;
+                  const projected = logicalToCoord(logical);
+                  if (typeof projected !== "number") return null;
+                  drawDebug("PROJECT_TIME_TO_X", {
+                    source: "MainChart.timeToCoordinate:futureLogical",
+                    viewportVersion: drawingsViewportVersion,
+                    time,
+                    projected,
+                    barSec: anchor.barSec,
+                  });
+                  return projected;
                 } catch {
+                  drawDebug("PROJECT_TIME_TO_X", {
+                    source: "MainChart.timeToCoordinate:error",
+                    viewportVersion: drawingsViewportVersion,
+                    time,
+                  });
                   return null;
                 }
               },
               coordinateToPrice: (y: number) => {
-                const chart = chartRef.current;
-                const container = chartContainerRef.current;
-                if (!chart || !container) return null;
+                const series = candleSeriesRef.current;
+                if (!series) return null;
                 try {
-                  const priceScale = chart.priceScale("right");
-                  if (!priceScale) return null;
-                  const visibleRange = priceScale.getVisibleRange();
-                  if (!visibleRange) return null;
-                  const { from, to } = visibleRange;
-                  const h = container.clientHeight;
-                  const ratio = 1 - y / h;
-                  return from + ratio * (to - from);
+                  const price = series.coordinateToPrice(y);
+                  return typeof price === "number" ? price : null;
                 } catch {
                   return null;
                 }
               },
               coordinateToTime: (x: number) => {
                 const chart = chartRef.current;
-                const container = chartContainerRef.current;
-                if (!chart || !container) return null;
+                if (!chart) return null;
                 try {
                   const scale = chart.timeScale();
                   const t = scale.coordinateToTime(x);
                   if (typeof t === "number") return t;
-                  // Future/right-side: library returns null outside data range. Use visible logical range + extrapolation.
-                  const logicalRange = scale.getVisibleLogicalRange();
-                  if (!logicalRange) return null;
-                  const width = timeScaleWidth;
-                  if (width <= 0) return null;
-                  const from = logicalRange.from;
-                  const to = logicalRange.to;
-                  const span = to - from;
-                  if (span <= 0) return null;
-                  const logical = from + (x / width) * span;
-                  const tLeft = scale.coordinateToTime(0);
-                  const tMid = scale.coordinateToTime(width * 0.5);
-                  const tRef = typeof tLeft === "number" ? tLeft : typeof tMid === "number" ? tMid : null;
-                  if (typeof tRef !== "number") return null;
-                  const logicalRef = typeof tLeft === "number" ? from : from + 0.5 * span;
-                  const logicalRef2 = logicalRef + 1;
-                  const xRef2 = width * (logicalRef2 - from) / span;
-                  const tRef2 = scale.coordinateToTime(xRef2);
-                  const barDuration = typeof tRef2 === "number" ? tRef2 - tRef : 900;
-                  const time = tRef + (logical - logicalRef) * barDuration;
-                  return Math.round(time);
+
+                  // Future-space support: if no candle at x, recover logical coordinate and project to time.
+                  const toLogical = (scale as any).coordinateToLogical as ((c: number) => number | null) | undefined;
+                  const timeToLogical = (scale as any).timeToLogical as ((tt: UTCTimestamp) => number | null) | undefined;
+                  const anchor = drawingsTimeProjectionRef.current;
+                  const visible = scale.getVisibleLogicalRange();
+                  const lastLogicalFromData = anchor.lastTimeSec != null && timeToLogical
+                    ? timeToLogical(anchor.lastTimeSec as UTCTimestamp)
+                    : null;
+                  if (!toLogical || !timeToLogical || anchor.lastTimeSec == null) {
+                    drawDebug("PROJECT_X_TO_TIME", {
+                      source: "MainChart.coordinateToTime:reject_missing_helpers",
+                      viewportVersion: drawingsViewportVersion,
+                      x,
+                      coordinateToTime: t,
+                      coordinateToLogical: toLogical ? toLogical(x) : null,
+                      visibleLogicalTo: visible?.to ?? null,
+                      lastLogicalFromData,
+                      reason: !toLogical ? "coordinateToLogical missing" : !timeToLogical ? "timeToLogical missing" : "lastTimeSec missing",
+                    });
+                    return null;
+                  }
+                  let logical = toLogical(x);
+                  const lastLogical = timeToLogical(anchor.lastTimeSec as UTCTimestamp);
+                  if (typeof logical !== "number" && visible && chartSize?.w) {
+                    // Fallback only for future input when helper returns null at right edge.
+                    logical = visible.from + (x / chartSize.w) * (visible.to - visible.from);
+                  }
+                  if (typeof logical !== "number" || typeof lastLogical !== "number") {
+                    drawDebug("PROJECT_X_TO_TIME", {
+                      source: "MainChart.coordinateToTime:reject_invalid_logical",
+                      viewportVersion: drawingsViewportVersion,
+                      x,
+                      coordinateToTime: t,
+                      coordinateToLogical: toLogical(x),
+                      visibleLogicalTo: visible?.to ?? null,
+                      lastLogicalFromData,
+                      reason: "logical or lastLogical is null",
+                    });
+                    return null;
+                  }
+                  const dtSec = (logical - lastLogical) * anchor.barSec;
+                  const projected = Math.round(anchor.lastTimeSec + dtSec);
+                  drawDebug("PROJECT_X_TO_TIME", {
+                    source: "MainChart.coordinateToTime:futureLogical",
+                    viewportVersion: drawingsViewportVersion,
+                    x,
+                    coordinateToTime: t,
+                    coordinateToLogical: logical,
+                    visibleLogicalTo: visible?.to ?? null,
+                    lastLogicalFromData,
+                    projected,
+                    barSec: anchor.barSec,
+                    accepted: true,
+                  });
+                  return projected;
+                } catch {
+                  drawDebug("PROJECT_X_TO_TIME", {
+                    source: "MainChart.coordinateToTime:error",
+                    viewportVersion: drawingsViewportVersion,
+                    x,
+                  });
+                  return null;
+                }
+              },
+              coordinateToLogical: (x: number) => {
+                const chart = chartRef.current;
+                if (!chart) return null;
+                try {
+                  const logical = (chart.timeScale() as any).coordinateToLogical?.(x);
+                  return typeof logical === "number" ? logical : null;
                 } catch {
                   return null;
                 }
               },
+              getVisibleLogicalRange: () => {
+                const chart = chartRef.current;
+                if (!chart) return null;
+                try {
+                  const r = chart.timeScale().getVisibleLogicalRange();
+                  if (!r) return null;
+                  return { from: r.from, to: r.to };
+                } catch {
+                  return null;
+                }
+              },
+              getLastDataLogical: () => {
+                const chart = chartRef.current;
+                const anchor = drawingsTimeProjectionRef.current;
+                if (!chart || anchor.lastTimeSec == null) return null;
+                try {
+                  const logical = (chart.timeScale() as any).timeToLogical?.(anchor.lastTimeSec as UTCTimestamp);
+                  return typeof logical === "number" ? logical : null;
+                } catch {
+                  return null;
+                }
+              },
+              getLastTimeSec: () => drawingsTimeProjectionRef.current.lastTimeSec,
+              getBarSec: () => drawingsTimeProjectionRef.current.barSec,
             }}
           />
           );

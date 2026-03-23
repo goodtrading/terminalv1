@@ -1,16 +1,19 @@
 import type { Drawing } from "./types";
+import { drawDebug, getChartViewportVersion } from "./debug";
+import { createDrawingProjection } from "./projection";
 
 interface DrawingHitRegionsProps {
   drawings: Drawing[];
   chartWidth: number;
   chartHeight: number;
+  viewportVersion?: number;
   priceToCoordinate: (price: number) => number | null;
   timeToCoordinate: (time: number) => number | null;
   onSelect: (d: Drawing) => void;
 }
 
-const HIT_THRESHOLD = 14;
-const BODY_HIT_WIDTH = 20;
+const HIT_THRESHOLD = 10;
+const BODY_HIT_WIDTH = 16;
 
 function segmentHitStyle(
   x1: number,
@@ -37,10 +40,12 @@ export function DrawingHitRegions({
   drawings,
   chartWidth,
   chartHeight,
+  viewportVersion = 0,
   priceToCoordinate,
   timeToCoordinate,
   onSelect,
 }: DrawingHitRegionsProps) {
+  const { timeToX, priceToY } = createDrawingProjection(timeToCoordinate, priceToCoordinate);
   const regions: React.ReactNode[] = [];
 
   for (const d of drawings) {
@@ -49,8 +54,15 @@ export function DrawingHitRegions({
     if (!pts || pts.length === 0) continue;
 
     if (d.tool === "horizontalLine" && pts[0]) {
-      const y = priceToCoordinate(pts[0].price);
+      const y = priceToY(pts[0].price);
       if (y == null) continue;
+      drawDebug("HIT_REGION", {
+        source: "DrawingHitRegions.horizontalLine",
+        drawingId: d.id,
+        viewportVersion,
+        chartViewportVersion: getChartViewportVersion(),
+        y,
+      });
       const top = Math.max(0, y - HIT_THRESHOLD);
       const h = Math.min(chartHeight - top, HIT_THRESHOLD * 2);
       regions.push(
@@ -65,11 +77,22 @@ export function DrawingHitRegions({
         />
       );
     } else if ((d.tool === "trendLine" || d.tool === "arrow") && pts.length >= 2) {
-      const x1 = timeToCoordinate(pts[0].time);
-      const y1 = priceToCoordinate(pts[0].price);
-      const x2 = timeToCoordinate(pts[1].time);
-      const y2 = priceToCoordinate(pts[1].price);
+      const x1 = timeToX(pts[0].time);
+      const y1 = priceToY(pts[0].price);
+      const x2 = timeToX(pts[1].time);
+      const y2 = priceToY(pts[1].price);
       if (x1 == null || y1 == null || x2 == null || y2 == null) continue;
+      drawDebug("HIT_REGION", {
+        source: "DrawingHitRegions.segment",
+        drawingId: d.id,
+        tool: d.tool,
+        viewportVersion,
+        chartViewportVersion: getChartViewportVersion(),
+        x1,
+        y1,
+        x2,
+        y2,
+      });
       regions.push(
         <div
           key={`${d.id}-body`}
@@ -101,15 +124,29 @@ export function DrawingHitRegions({
         );
       });
     } else if (d.tool === "rectangle" && pts.length >= 2) {
-      const x1 = timeToCoordinate(pts[0].time);
-      const y1 = priceToCoordinate(pts[0].price);
-      const x2 = timeToCoordinate(pts[1].time);
-      const y2 = priceToCoordinate(pts[1].price);
+      const x1 = timeToX(pts[0].time);
+      const y1 = priceToY(pts[0].price);
+      const x2 = timeToX(pts[1].time);
+      const y2 = priceToY(pts[1].price);
       if (x1 == null || y1 == null || x2 == null || y2 == null) continue;
       const left = Math.max(0, Math.min(x1, x2) - HIT_THRESHOLD);
       const top = Math.max(0, Math.min(y1, y2) - HIT_THRESHOLD);
       const w = Math.min(chartWidth - left, Math.abs(x2 - x1) + HIT_THRESHOLD * 2);
       const h = Math.min(chartHeight - top, Math.abs(y2 - y1) + HIT_THRESHOLD * 2);
+      drawDebug("HIT_REGION", {
+        source: "DrawingHitRegions.rectangle",
+        drawingId: d.id,
+        viewportVersion,
+        chartViewportVersion: getChartViewportVersion(),
+        x1,
+        y1,
+        x2,
+        y2,
+        left,
+        top,
+        w,
+        h,
+      });
       regions.push(
         <div
           key={d.id}
@@ -122,12 +159,20 @@ export function DrawingHitRegions({
         />
       );
     } else if (d.tool === "text" && pts[0]) {
-      const x = timeToCoordinate(pts[0].time);
-      const y = priceToCoordinate(pts[0].price);
+      const x = timeToX(pts[0].time);
+      const y = priceToY(pts[0].price);
       const left = x != null ? Math.max(0, x - HIT_THRESHOLD) : 0;
       const top = y != null ? Math.max(0, y - 16) : 0;
       const TEXT_HIT_WIDTH = 180;
       const TEXT_HIT_HEIGHT = 24;
+      drawDebug("HIT_REGION", {
+        source: "DrawingHitRegions.text",
+        drawingId: d.id,
+        viewportVersion,
+        chartViewportVersion: getChartViewportVersion(),
+        x,
+        y,
+      });
       regions.push(
         <div
           key={d.id}
@@ -146,11 +191,22 @@ export function DrawingHitRegions({
       );
     } else if (d.tool === "polyline" && pts.length >= 2) {
       for (let j = 0; j < pts.length - 1; j++) {
-        const x1 = timeToCoordinate(pts[j].time);
-        const y1 = priceToCoordinate(pts[j].price);
-        const x2 = timeToCoordinate(pts[j + 1].time);
-        const y2 = priceToCoordinate(pts[j + 1].price);
+        const x1 = timeToX(pts[j].time);
+        const y1 = priceToY(pts[j].price);
+        const x2 = timeToX(pts[j + 1].time);
+        const y2 = priceToY(pts[j + 1].price);
         if (x1 == null || y1 == null || x2 == null || y2 == null) continue;
+        drawDebug("HIT_REGION", {
+          source: "DrawingHitRegions.polylineSegment",
+          drawingId: d.id,
+          viewportVersion,
+          chartViewportVersion: getChartViewportVersion(),
+          j,
+          x1,
+          y1,
+          x2,
+          y2,
+        });
         regions.push(
           <div
             key={`${d.id}-seg-${j}`}
@@ -164,8 +220,8 @@ export function DrawingHitRegions({
         );
       }
       pts.forEach((_, i) => {
-        const x = timeToCoordinate(pts[i].time);
-        const y = priceToCoordinate(pts[i].price);
+        const x = timeToX(pts[i].time);
+        const y = priceToY(pts[i].price);
         if (x == null || y == null) return;
         regions.push(
           <div

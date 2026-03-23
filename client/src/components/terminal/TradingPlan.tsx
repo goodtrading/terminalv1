@@ -26,7 +26,7 @@ function bandTone(scoreTotal: number) {
   return "text-terminal-negative";
 }
 
-export function TradingPlan() {
+export function TradingPlan({ collapsed = false }: { collapsed?: boolean }) {
   const { data: state } = useTerminalState();
   const { saasDisabled, access } = useTerminalAuth();
   const prevStateRef = useRef<any>(null);
@@ -100,7 +100,11 @@ export function TradingPlan() {
 
   if (!panelModel || !playbook)
     return (
-      <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-[0.65] min-w-[260px] min-h-0 max-[1200px]:min-w-[220px] max-[1000px]:min-w-0 max-[1000px]:flex-1">
+      <TerminalPanel
+        title="ACTIVE TRADING PLAN"
+        collapsed={collapsed}
+        className="flex-[0.65] min-w-[260px] min-h-0 max-[1200px]:min-w-[220px] max-[1000px]:min-w-0 max-[1000px]:flex-1"
+      >
         <div className="text-[10px] text-white/55 font-mono">Loading...</div>
       </TerminalPanel>
     );
@@ -160,7 +164,11 @@ export function TradingPlan() {
   })();
 
   return (
-    <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-[0.65] min-w-[260px] min-h-0 max-[1200px]:min-w-[220px] max-[1000px]:min-w-0 max-[1000px]:flex-1">
+    <TerminalPanel
+      title="ACTIVE TRADING PLAN"
+      collapsed={collapsed}
+      className="flex-[0.65] min-w-[260px] min-h-0 max-[1200px]:min-w-[220px] max-[1000px]:min-w-0 max-[1000px]:flex-1"
+    >
       <div className="flex flex-col gap-3">
         {subExpiryWarn ? (
           <div className="text-[10px] font-mono text-amber-400/90 border border-amber-500/30 bg-amber-500/10 px-2 py-1 rounded-sm">

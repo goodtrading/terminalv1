@@ -100,17 +100,18 @@ export type TradingScenario = typeof tradingScenarios.$inferSelect;
 export type OptionData = typeof optionsData.$inferSelect;
 export type DealerHedgingFlow = typeof dealerHedgingFlow.$inferSelect;
 
-/** SaaS / terminal access */
-export const users = pgTable("users", {
+/** SaaS / terminal access — prefijo saas_ para no chocar con tablas legacy en la misma DB */
+export const users = pgTable("saas_users", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("user"),
   isActive: boolean("is_active").notNull().default(true),
+  onboardingStatus: text("onboarding_status").notNull().default("pending_approval"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const subscriptionPlans = pgTable("subscription_plans", {
+export const subscriptionPlans = pgTable("saas_subscription_plans", {
   id: serial("id").primaryKey(),
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
@@ -121,7 +122,7 @@ export const subscriptionPlans = pgTable("subscription_plans", {
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
-export const subscriptions = pgTable("subscriptions", {
+export const subscriptions = pgTable("saas_subscriptions", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .notNull()
@@ -135,7 +136,7 @@ export const subscriptions = pgTable("subscriptions", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const payments = pgTable("payments", {
+export const payments = pgTable("saas_payments", {
   id: serial("id").primaryKey(),
   userId: integer("user_id")
     .notNull()

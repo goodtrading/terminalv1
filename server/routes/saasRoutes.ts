@@ -14,11 +14,14 @@ import {
   findUserById,
   listUsersForAdmin,
   setUserActive,
+  setUserOnboardingStatus,
   updateUserRole,
 } from "../services/userService";
 import { getAccessForUserId } from "../services/accessService";
 import {
+  getLatestSubscriptionForUser,
   ensureDefaultPlans,
+  deactivateSubscriptionForUser,
   grantSubscriptionForUser,
   listPlans,
 } from "../services/subscriptionService";
@@ -44,6 +47,16 @@ const paymentReportBody = z.object({
 const patchUserBody = z.object({
   role: z.enum(["user", "admin"]).optional(),
   isActive: z.boolean().optional(),
+  onboardingStatus: z
+    .enum([
+      "pending_approval",
+      "approved_to_pay",
+      "pending_payment_review",
+      "active",
+      "inactive",
+      "rejected",
+    ])
+    .optional(),
 });
 
 const grantSubBody = z.object({
@@ -115,10 +128,6 @@ export function registerSaasRoutes(app: Express): void {
         res.status(401).json({ error: "INVALID_CREDENTIALS" });
         return;
       }
-      if (!user.isActive) {
-        res.status(403).json({ error: "ACCOUNT_DISABLED" });
-        return;
-      }
       const token = signUserToken({
         id: user.id,
         email: user.email,
@@ -169,6 +178,11 @@ export function registerSaasRoutes(app: Express): void {
 
   app.post("/api/payments/report", requireSaasAuth, async (req: Request, res: Response) => {
     try {
+      const currentAccess = await getAccessForUserId(req.saasUser!.id);
+      if (currentAccess.allowed) {
+        res.status(400).json({ error: "ALREADY_ACTIVE" });
+        return;
+      }
       const parsed = paymentReportBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
@@ -194,13 +208,24 @@ export function registerSaasRoutes(app: Express): void {
       const out = await Promise.all(
         users.map(async (u) => {
           const access = await getAccessForUserId(u.id);
+          const latestSub = await getLatestSubscriptionForUser(u.id);
           return {
             id: u.id,
             email: u.email,
             role: u.role,
             isActive: u.isActive,
+            onboardingStatus: (u as any).onboardingStatus ?? (u.isActive ? "approved_to_pay" : "pending_approval"),
             createdAt: u.createdAt?.toISOString?.() ?? null,
             access,
+            latestSubscription: latestSub
+              ? {
+                  status: latestSub.subscription.status,
+                  startsAt: latestSub.subscription.startsAt.toISOString(),
+                  endsAt: latestSub.subscription.endsAt.toISOString(),
+                  planName: latestSub.plan.name,
+                  planId: latestSub.plan.id,
+                }
+              : null,
           };
         }),
       );
@@ -234,6 +259,9 @@ export function registerSaasRoutes(app: Express): void {
       if (parsed.data.isActive !== undefined) {
         await setUserActive(id, parsed.data.isActive);
       }
+      if (parsed.data.onboardingStatus) {
+        await setUserOnboardingStatus(id, parsed.data.onboardingStatus);
+      }
       const updated = await findUserById(id);
       res.json({ user: updated });
     } catch (e: any) {
@@ -241,6 +269,64 @@ export function registerSaasRoutes(app: Express): void {
       res.status(500).json({ error: "ADMIN_PATCH_FAILED" });
     }
   });
+
+  app.post(
+    "/api/admin/users/:id/approve-to-pay",
+    requireSaasAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const id = Number(req.params.id);
+        if (!Number.isFinite(id)) {
+          res.status(400).json({ error: "BAD_ID" });
+          return;
+        }
+        const target = await findUserById(id);
+        if (!target) {
+          res.status(404).json({ error: "NOT_FOUND" });
+          return;
+        }
+        await setUserActive(id, true);
+        await setUserOnboardingStatus(id, "approved_to_pay");
+        const access = await getAccessForUserId(id);
+        res.json({ ok: true, access });
+      } catch (e: any) {
+        console.error("[SaaS] admin approve-to-pay", e);
+        res.status(500).json({ error: "ADMIN_APPROVE_TO_PAY_FAILED" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/users/:id/activate-access",
+    requireSaasAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const id = Number(req.params.id);
+        if (!Number.isFinite(id)) {
+          res.status(400).json({ error: "BAD_ID" });
+          return;
+        }
+        const parsed = grantSubBody.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
+          return;
+        }
+        const target = await findUserById(id);
+        if (!target) {
+          res.status(404).json({ error: "NOT_FOUND" });
+          return;
+        }
+        await setUserActive(id, true);
+        await grantSubscriptionForUser(id, parsed.data.planId, parsed.data.extraDays);
+        await setUserOnboardingStatus(id, "active");
+        const access = await getAccessForUserId(id);
+        res.json({ ok: true, access });
+      } catch (e: any) {
+        console.error("[SaaS] admin activate-access", e);
+        res.status(500).json({ error: "ADMIN_ACTIVATE_ACCESS_FAILED" });
+      }
+    },
+  );
 
   app.post(
     "/api/admin/users/:id/subscription",
@@ -263,11 +349,40 @@ export function registerSaasRoutes(app: Express): void {
           return;
         }
         await grantSubscriptionForUser(id, parsed.data.planId, parsed.data.extraDays);
+        await setUserOnboardingStatus(id, "active");
         const access = await getAccessForUserId(id);
         res.json({ ok: true, access });
       } catch (e: any) {
         console.error("[SaaS] admin grant sub", e);
         res.status(500).json({ error: "ADMIN_GRANT_FAILED" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/users/:id/subscription/deactivate",
+    requireSaasAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const id = Number(req.params.id);
+        if (!Number.isFinite(id)) {
+          res.status(400).json({ error: "BAD_ID" });
+          return;
+        }
+        const target = await findUserById(id);
+        if (!target) {
+          res.status(404).json({ error: "NOT_FOUND" });
+          return;
+        }
+        await deactivateSubscriptionForUser(id);
+        if (target.role !== "admin") {
+          await setUserOnboardingStatus(id, target.isActive ? "approved_to_pay" : "pending_approval");
+        }
+        const access = await getAccessForUserId(id);
+        res.json({ ok: true, access });
+      } catch (e: any) {
+        console.error("[SaaS] admin deactivate sub", e);
+        res.status(500).json({ error: "ADMIN_DEACTIVATE_SUB_FAILED" });
       }
     },
   );

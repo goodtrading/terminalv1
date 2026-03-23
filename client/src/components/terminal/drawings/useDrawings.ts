@@ -4,16 +4,44 @@ import { DEFAULT_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_OPACITY, getToolPointCount }
 import { loadDrawings, saveDrawings } from "./persistence";
 
 const MAX_POLYLINE_POINTS = 10;
+const HIT_THRESHOLD = 10;
+const ANCHOR_HIT_THRESHOLD = 12;
+
+function isValidNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+function sanitizePoint(pt: DrawingPoint | null | undefined): DrawingPoint | null {
+  if (!pt) return null;
+  if (!isValidNumber(pt.time) || !isValidNumber(pt.price)) return null;
+  return { time: pt.time, price: pt.price };
+}
+
+function sanitizeDrawing(d: Drawing): Drawing | null {
+  if (!d || typeof d.id !== "string" || !d.id || typeof d.tool !== "string") return null;
+  const points = (d.points ?? []).map((pt) => sanitizePoint(pt)).filter((pt): pt is DrawingPoint => pt != null);
+  if (points.length === 0) return null;
+  return { ...d, points };
+}
+
+function sanitizeDrawings(list: Drawing[]): Drawing[] {
+  return list.map((d) => sanitizeDrawing(d)).filter((d): d is Drawing => d != null);
+}
 
 export function useDrawings(symbol: string, timeframe: string) {
-  const [drawings, setDrawings] = useState<Drawing[]>(() => loadDrawings(symbol, timeframe));
+  const [drawings, setDrawings] = useState<Drawing[]>(() => sanitizeDrawings(loadDrawings(symbol, timeframe)));
   const [activeTool, setActiveTool] = useState<DrawingTool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingDrawing, setPendingDrawing] = useState<Drawing | null>(null);
   const [draggingAnchor, setDraggingAnchor] = useState<{ id: string; pointIndex: number } | null>(null);
 
   useEffect(() => {
-    saveDrawings(symbol, timeframe, drawings);
+    const clean = sanitizeDrawings(drawings);
+    if (clean.length !== drawings.length) {
+      setDrawings(clean);
+      return;
+    }
+    saveDrawings(symbol, timeframe, clean);
   }, [drawings, symbol, timeframe]);
 
   const addDrawing = useCallback((d: Omit<Drawing, "id" | "createdAt">) => {
@@ -22,28 +50,36 @@ export function useDrawings(symbol: string, timeframe: string) {
       id: crypto.randomUUID(),
       createdAt: Date.now(),
     };
-    setDrawings((prev) => [...prev, full]);
+    const clean = sanitizeDrawing(full);
+    if (!clean) return null;
+    setDrawings((prev) => [...prev, clean]);
     setPendingDrawing(null);
-    return full.id;
+    return clean.id;
   }, []);
 
   const updateDrawing = useCallback((id: string, updates: Partial<Drawing>) => {
     setDrawings((prev) =>
-      prev.map((d) => (d.id === id ? ({ ...d, ...updates } as Drawing) : d))
+      prev
+        .map((d) => (d.id === id ? ({ ...d, ...updates } as Drawing) : d))
+        .map((d) => sanitizeDrawing(d))
+        .filter((d): d is Drawing => d != null)
     );
   }, []);
 
   const updatePoint = useCallback((id: string, pointIndex: number, pt: DrawingPoint) => {
     setDrawings((prev) =>
-      prev.map((d) => {
-        if (d.id !== id) return d;
-        const next = [...d.points];
-        if (pointIndex >= 0 && pointIndex < next.length) {
-          next[pointIndex] = pt;
-          return { ...d, points: next };
-        }
-        return d;
-      })
+      prev
+        .map((d) => {
+          if (d.id !== id) return d;
+          const next = [...d.points];
+          if (pointIndex >= 0 && pointIndex < next.length) {
+            next[pointIndex] = pt;
+            return { ...d, points: next };
+          }
+          return d;
+        })
+        .map((d) => sanitizeDrawing(d))
+        .filter((d): d is Drawing => d != null)
     );
   }, []);
 
@@ -68,7 +104,7 @@ export function useDrawings(symbol: string, timeframe: string) {
 
   const hitTest = useCallback(
     (x: number, y: number, timeToX: (t: number) => number | null, priceToY: (p: number) => number | null): Drawing | null => {
-      const threshold = 14;
+      const threshold = HIT_THRESHOLD;
       for (let i = drawings.length - 1; i >= 0; i--) {
         const d = drawings[i];
         if (d.locked) continue;
@@ -116,7 +152,7 @@ export function useDrawings(symbol: string, timeframe: string) {
 
   const hitTestAnchor = useCallback(
     (x: number, y: number, timeToX: (t: number) => number | null, priceToY: (p: number) => number | null): { drawing: Drawing; pointIndex: number } | null => {
-      const threshold = 10;
+      const threshold = ANCHOR_HIT_THRESHOLD;
       for (let i = drawings.length - 1; i >= 0; i--) {
         const d = drawings[i];
         if (d.locked || !d.selected) continue;
