@@ -544,5 +544,25 @@ export async function registerRoutes(
     }
   });
 
+  if (process.env.DATABASE_URL) {
+    try {
+      const { registerSaasRoutes } = await import("./routes/saasRoutes");
+      registerSaasRoutes(app);
+      const { startExpireSubscriptionsJob } = await import("./jobs/expireSubscriptions");
+      startExpireSubscriptionsJob();
+    } catch (e) {
+      console.error("[SaaS] Failed to register SaaS routes:", e);
+    }
+  } else {
+    console.warn("[SaaS] DATABASE_URL not set — auth/subscription API disabled");
+    // Prevent dev catch-all from returning HTML for these paths
+    app.get("/api/auth/me", (_req, res) => {
+      res.json({ user: null, access: null, saasDisabled: true });
+    });
+    app.get("/api/plans", (_req, res) => {
+      res.json({ plans: [], saasDisabled: true });
+    });
+  }
+
   return httpServer;
 }

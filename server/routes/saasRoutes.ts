@@ -1,0 +1,274 @@
+import type { Express, Request, Response } from "express";
+import { z } from "zod";
+import { verifyPassword } from "../lib/password";
+import { signUserToken } from "../lib/jwt";
+import {
+  optionalSaasAuth,
+  requireSaasAuth,
+  requireSaasAdmin,
+} from "../middleware/saasAuth";
+import {
+  createUser,
+  ensureBootstrapAdmin,
+  findUserByEmail,
+  findUserById,
+  listUsersForAdmin,
+  setUserActive,
+  updateUserRole,
+} from "../services/userService";
+import { getAccessForUserId } from "../services/accessService";
+import {
+  ensureDefaultPlans,
+  grantSubscriptionForUser,
+  listPlans,
+} from "../services/subscriptionService";
+import { createPaymentReport } from "../services/paymentService";
+
+const registerBody = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+
+const loginBody = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
+const paymentReportBody = z.object({
+  amountUsd: z.number().positive(),
+  method: z.enum(["usdt", "paypal", "other"]),
+  externalRef: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+const patchUserBody = z.object({
+  role: z.enum(["user", "admin"]).optional(),
+  isActive: z.boolean().optional(),
+});
+
+const grantSubBody = z.object({
+  planId: z.number().int().positive(),
+  extraDays: z.number().int().positive().optional(),
+});
+
+export function registerSaasRoutes(app: Express): void {
+  void (async () => {
+    try {
+      await ensureDefaultPlans();
+      await ensureBootstrapAdmin();
+    } catch (e) {
+      console.error("[SaaS] startup seed failed:", e);
+    }
+  })();
+
+  app.get("/api/plans", async (_req: Request, res: Response) => {
+    try {
+      const plans = await listPlans();
+      res.json({ plans });
+    } catch (e: any) {
+      console.error("[SaaS] /api/plans", e);
+      res.status(500).json({ error: "PLANS_FAILED" });
+    }
+  });
+
+  app.post("/api/auth/register", async (req: Request, res: Response) => {
+    try {
+      const parsed = registerBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
+        return;
+      }
+      const { email, password } = parsed.data;
+      const existing = await findUserByEmail(email);
+      if (existing) {
+        res.status(409).json({ error: "EMAIL_TAKEN" });
+        return;
+      }
+      const user = await createUser(email, password, "user");
+      const token = signUserToken({
+        id: user.id,
+        email: user.email,
+        role: user.role,
+      });
+      const access = await getAccessForUserId(user.id);
+      res.json({
+        token,
+        user: { id: user.id, email: user.email, role: user.role },
+        access,
+      });
+    } catch (e: any) {
+      console.error("[SaaS] register", e);
+      res.status(500).json({ error: "REGISTER_FAILED" });
+    }
+  });
+
+  app.post("/api/auth/login", async (req: Request, res: Response) => {
+    try {
+      const parsed = loginBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
+        return;
+      }
+      const { email, password } = parsed.data;
+      const user = await findUserByEmail(email);
+      if (!user || !verifyPassword(password, user.passwordHash)) {
+        res.status(401).json({ error: "INVALID_CREDENTIALS" });
+        return;
+      }
+      if (!user.isActive) {
+        res.status(403).json({ error: "ACCOUNT_DISABLED" });
+        return;
+      }
+      const token = signUserToken({
+        id: user.id,
+        email: user.email,
+        role: user.role,
+      });
+      const access = await getAccessForUserId(user.id);
+      res.json({
+        token,
+        user: { id: user.id, email: user.email, role: user.role },
+        access,
+      });
+    } catch (e: any) {
+      console.error("[SaaS] login", e);
+      res.status(500).json({ error: "LOGIN_FAILED" });
+    }
+  });
+
+  app.get("/api/auth/me", optionalSaasAuth, async (req: Request, res: Response) => {
+    try {
+      if (!req.saasUser) {
+        res.json({ user: null, access: null });
+        return;
+      }
+      const access = await getAccessForUserId(req.saasUser.id);
+      res.json({
+        user: {
+          id: req.saasUser.id,
+          email: req.saasUser.email,
+          role: req.saasUser.role,
+        },
+        access,
+      });
+    } catch (e: any) {
+      console.error("[SaaS] /api/auth/me", e);
+      res.status(500).json({ error: "ME_FAILED" });
+    }
+  });
+
+  app.get("/api/auth/access", requireSaasAuth, async (req: Request, res: Response) => {
+    try {
+      const access = await getAccessForUserId(req.saasUser!.id);
+      res.json(access);
+    } catch (e: any) {
+      console.error("[SaaS] /api/auth/access", e);
+      res.status(500).json({ error: "ACCESS_FAILED" });
+    }
+  });
+
+  app.post("/api/payments/report", requireSaasAuth, async (req: Request, res: Response) => {
+    try {
+      const parsed = paymentReportBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
+        return;
+      }
+      const row = await createPaymentReport({
+        userId: req.saasUser!.id,
+        amountUsd: parsed.data.amountUsd,
+        method: parsed.data.method,
+        externalRef: parsed.data.externalRef,
+        notes: parsed.data.notes,
+      });
+      res.json({ payment: row });
+    } catch (e: any) {
+      console.error("[SaaS] payment report", e);
+      res.status(500).json({ error: "PAYMENT_REPORT_FAILED" });
+    }
+  });
+
+  app.get("/api/admin/users", requireSaasAdmin, async (_req: Request, res: Response) => {
+    try {
+      const users = await listUsersForAdmin();
+      const out = await Promise.all(
+        users.map(async (u) => {
+          const access = await getAccessForUserId(u.id);
+          return {
+            id: u.id,
+            email: u.email,
+            role: u.role,
+            isActive: u.isActive,
+            createdAt: u.createdAt?.toISOString?.() ?? null,
+            access,
+          };
+        }),
+      );
+      res.json({ users: out });
+    } catch (e: any) {
+      console.error("[SaaS] admin users", e);
+      res.status(500).json({ error: "ADMIN_LIST_FAILED" });
+    }
+  });
+
+  app.patch("/api/admin/users/:id", requireSaasAdmin, async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        res.status(400).json({ error: "BAD_ID" });
+        return;
+      }
+      const parsed = patchUserBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
+        return;
+      }
+      const target = await findUserById(id);
+      if (!target) {
+        res.status(404).json({ error: "NOT_FOUND" });
+        return;
+      }
+      if (parsed.data.role) {
+        await updateUserRole(id, parsed.data.role);
+      }
+      if (parsed.data.isActive !== undefined) {
+        await setUserActive(id, parsed.data.isActive);
+      }
+      const updated = await findUserById(id);
+      res.json({ user: updated });
+    } catch (e: any) {
+      console.error("[SaaS] admin patch user", e);
+      res.status(500).json({ error: "ADMIN_PATCH_FAILED" });
+    }
+  });
+
+  app.post(
+    "/api/admin/users/:id/subscription",
+    requireSaasAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const id = Number(req.params.id);
+        if (!Number.isFinite(id)) {
+          res.status(400).json({ error: "BAD_ID" });
+          return;
+        }
+        const parsed = grantSubBody.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
+          return;
+        }
+        const target = await findUserById(id);
+        if (!target) {
+          res.status(404).json({ error: "NOT_FOUND" });
+          return;
+        }
+        await grantSubscriptionForUser(id, parsed.data.planId, parsed.data.extraDays);
+        const access = await getAccessForUserId(id);
+        res.json({ ok: true, access });
+      } catch (e: any) {
+        console.error("[SaaS] admin grant sub", e);
+        res.status(500).json({ error: "ADMIN_GRANT_FAILED" });
+      }
+    },
+  );
+}

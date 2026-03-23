@@ -1,12 +1,15 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 import { useLearnMode } from "@/hooks/useLearnMode";
 import { useTerminalState } from "@/hooks/useTerminalState";
+import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 
 export function TopNav() {
   const [activeTab, setActiveTab] = useState("TERMINAL");
   const { learnMode, toggleLearnMode } = useLearnMode();
   const { data: terminalState } = useTerminalState();
+  const { saasDisabled, user, logout } = useTerminalAuth();
 
   const tabs = ["TERMINAL", "OPTIONS", "FLOWS", "VOLATILITY", "REPORTS"];
 
@@ -83,6 +86,29 @@ export function TopNav() {
           <div className="w-2 h-2 rounded-full bg-terminal-positive animate-pulse"></div>
           <span className="text-terminal-positive font-bold tracking-widest">LIVE</span>
         </div>
+
+        {!saasDisabled && user && (
+          <div className="flex items-center gap-3 ml-2 pl-3 border-l border-terminal-border">
+            <span className="text-terminal-muted max-w-[140px] truncate" title={user.email}>
+              {user.email}
+            </span>
+            {user.role === "admin" && (
+              <Link
+                href="/admin"
+                className="text-[10px] font-mono text-terminal-accent hover:underline"
+              >
+                ADMIN
+              </Link>
+            )}
+            <button
+              type="button"
+              onClick={() => logout()}
+              className="text-[10px] font-mono border border-terminal-border px-2 py-0.5 rounded-sm text-terminal-muted hover:text-white"
+            >
+              LOG OUT
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

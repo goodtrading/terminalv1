@@ -1,5 +1,6 @@
 import { TerminalPanel } from "./TerminalPanel";
 import { useTerminalState } from "@/hooks/useTerminalState";
+import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { computePlaybook } from "@/lib/playbookEngine";
 import { toast } from "@/hooks/use-toast";
@@ -27,6 +28,7 @@ function bandTone(scoreTotal: number) {
 
 export function TradingPlan() {
   const { data: state } = useTerminalState();
+  const { saasDisabled, access } = useTerminalAuth();
   const prevStateRef = useRef<any>(null);
 
   const fsmStateRef = useRef<PlaybookState>("NO_TRADE");
@@ -149,9 +151,22 @@ export function TradingPlan() {
     return entries.slice(0, 3);
   })();
 
+  const subExpiryWarn = (() => {
+    if (saasDisabled || !access?.subscription?.endsAt) return null;
+    const end = new Date(access.subscription.endsAt).getTime();
+    const days = (end - Date.now()) / 86400000;
+    if (days > 3 || days < 0) return null;
+    return `Subscription ends in ${Math.max(1, Math.ceil(days))} day(s).`;
+  })();
+
   return (
     <TerminalPanel title="ACTIVE TRADING PLAN" className="flex-[0.65] min-w-[260px] min-h-0 max-[1200px]:min-w-[220px] max-[1000px]:min-w-0 max-[1000px]:flex-1">
       <div className="flex flex-col gap-3">
+        {subExpiryWarn ? (
+          <div className="text-[10px] font-mono text-amber-400/90 border border-amber-500/30 bg-amber-500/10 px-2 py-1 rounded-sm">
+            {subExpiryWarn}
+          </div>
+        ) : null}
         {/* A) SESSION CONTEXT */}
         <div className="border border-white/[0.06] rounded-sm p-3">
           <div className="text-[10px] text-terminal-accent font-bold uppercase tracking-widest mb-2">SESSION CONTEXT</div>

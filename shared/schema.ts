@@ -1,4 +1,12 @@
-import { pgTable, text, serial, doublePrecision, integer, timestamp } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  serial,
+  doublePrecision,
+  integer,
+  timestamp,
+  boolean,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -91,3 +99,56 @@ export type KeyLevels = typeof keyLevels.$inferSelect;
 export type TradingScenario = typeof tradingScenarios.$inferSelect;
 export type OptionData = typeof optionsData.$inferSelect;
 export type DealerHedgingFlow = typeof dealerHedgingFlow.$inferSelect;
+
+/** SaaS / terminal access */
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  role: text("role").notNull().default("user"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const subscriptionPlans = pgTable("subscription_plans", {
+  id: serial("id").primaryKey(),
+  slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  priceUsd: doublePrecision("price_usd").notNull(),
+  durationDays: integer("duration_days").notNull(),
+  paypalLink: text("paypal_link"),
+  usdtAddress: text("usdt_address"),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const subscriptions = pgTable("subscriptions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  planId: integer("plan_id")
+    .notNull()
+    .references(() => subscriptionPlans.id),
+  status: text("status").notNull(),
+  startsAt: timestamp("starts_at").notNull(),
+  endsAt: timestamp("ends_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const payments = pgTable("payments", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  amountUsd: doublePrecision("amount_usd").notNull(),
+  method: text("method").notNull(),
+  status: text("status").notNull().default("pending"),
+  externalRef: text("external_ref"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type User = typeof users.$inferSelect;
+export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
+export type Subscription = typeof subscriptions.$inferSelect;
+export type Payment = typeof payments.$inferSelect;
