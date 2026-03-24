@@ -16,9 +16,10 @@ import {
   findUserByEmail,
   findUserById,
   listUsersForAdmin,
+  onboardingStatusToDbStatus,
   setUserActive,
   setUserOnboardingStatus,
-  updateUserRole,
+  updateUserAdminPatch,
 } from "../services/userService";
 import { getAccessForUserId } from "../services/accessService";
 import {
@@ -68,14 +69,15 @@ const grantSubBody = z.object({
   extraDays: z.number().int().positive().optional(),
 });
 
+/** Admin table: derive onboarding column from DB `users.status` (includes legacy values if still present). */
 function statusToOnboardingStatus(status: string): string {
   const m: Record<string, string> = {
     pending: "pending_approval",
-    approved_to_pay: "approved_to_pay",
-    pending_payment_review: "pending_payment_review",
     active: "active",
     inactive: "inactive",
-    rejected: "rejected",
+    rejected: "inactive",
+    approved_to_pay: "approved_to_pay",
+    pending_payment_review: "pending_payment_review",
   };
   return m[status] ?? status;
 }
@@ -311,6 +313,7 @@ export function registerSaasRoutes(app: Express): void {
   });
 
   app.patch("/api/admin/users/:id", requireSaasAdmin, async (req: Request, res: Response) => {
+    console.log("UPDATE USER PAYLOAD:", req.body);
     try {
       const id = Number(req.params.id);
       if (!Number.isFinite(id)) {
@@ -327,15 +330,31 @@ export function registerSaasRoutes(app: Express): void {
         res.status(404).json({ error: "NOT_FOUND" });
         return;
       }
-      if (parsed.data.role) {
-        await updateUserRole(id, parsed.data.role);
+
+      let dbStatus: ReturnType<typeof onboardingStatusToDbStatus> | undefined;
+      if (parsed.data.onboardingStatus != null) {
+        dbStatus = onboardingStatusToDbStatus(parsed.data.onboardingStatus);
+      } else if (parsed.data.isActive !== undefined) {
+        dbStatus = parsed.data.isActive ? "active" : "inactive";
       }
-      if (parsed.data.isActive !== undefined) {
-        await setUserActive(id, parsed.data.isActive);
+
+      let dbRole: string | undefined;
+      if (parsed.data.role != null) {
+        const role = parsed.data.role;
+        dbRole = role === "user" ? "member" : role;
       }
-      if (parsed.data.onboardingStatus) {
-        await setUserOnboardingStatus(id, parsed.data.onboardingStatus);
+
+      if (dbStatus === undefined && dbRole === undefined) {
+        res.json({
+          user: {
+            ...target,
+            role: dbRoleToApiRole(target.role),
+          },
+        });
+        return;
       }
+
+      await updateUserAdminPatch(id, { status: dbStatus, role: dbRole });
       const updated = await findUserById(id);
       res.json({
         user: updated
@@ -345,9 +364,13 @@ export function registerSaasRoutes(app: Express): void {
             }
           : undefined,
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const err = e as { message?: string };
       console.error("[SaaS] admin patch user", e);
-      res.status(500).json({ error: "ADMIN_PATCH_FAILED" });
+      res.status(500).json({
+        error: "UPDATE_FAILED",
+        detail: err?.message ?? String(e),
+      });
     }
   });
 

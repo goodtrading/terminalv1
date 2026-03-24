@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 import { SubscriptionPage } from "@/pages/auth/SubscriptionPage";
 import PendingApprovalScreen from "@/pages/auth/PendingApprovalScreen";
+import AccountInactiveScreen from "@/pages/auth/AccountInactiveScreen";
 import ExpiredSubscriptionScreen from "@/pages/auth/ExpiredSubscriptionScreen";
 import { cn } from "@/lib/utils";
 
@@ -234,8 +235,11 @@ export default function BlockedAccessScreen({ children }: { children: ReactNode 
 
   if (!access?.allowed) {
     const reason = access?.reason || "inactive";
-    if (reason === "inactive") {
+    if (reason === "pending_approval") {
       return <PendingApprovalScreen />;
+    }
+    if (reason === "inactive") {
+      return <AccountInactiveScreen />;
     }
     if (reason === "expired") {
       if (renewingExpired) return <SubscriptionPage />;

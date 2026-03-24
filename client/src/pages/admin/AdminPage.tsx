@@ -157,6 +157,10 @@ export default function AdminPage() {
       body: JSON.stringify(body),
     });
     if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+      if (data.detail) {
+        console.error("[admin patch user] detail:", data.detail);
+      }
       setErr("No se pudo actualizar usuario");
       return;
     }

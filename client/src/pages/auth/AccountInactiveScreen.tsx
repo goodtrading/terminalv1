@@ -2,7 +2,8 @@ import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 
-export default function PendingApprovalScreen() {
+/** Account disabled / rejected — not the same as pending admin approval. */
+export default function AccountInactiveScreen() {
   const { user, logout } = useTerminalAuth();
   const [, setLocation] = useLocation();
 
@@ -18,10 +19,7 @@ export default function PendingApprovalScreen() {
         <div className="space-y-2">
           <h1 className="text-lg font-bold tracking-widest text-white uppercase">Acceso no disponible</h1>
           <p className="text-xs text-terminal-muted font-mono leading-relaxed">
-            Tu cuenta fue registrada, pero aún no está aprobada por el administrador.
-          </p>
-          <p className="text-xs text-terminal-muted font-mono leading-relaxed">
-            Todavía no podés acceder al panel de pago. Primero debés ser habilitado para pagar.
+            Tu cuenta está inactiva o fue rechazada. Contactá al administrador si creés que es un error.
           </p>
           <p className="text-xs text-terminal-muted font-mono">
             Usuario: <span className="text-terminal-accent">{user?.email}</span>
@@ -47,10 +45,6 @@ export default function PendingApprovalScreen() {
             Cerrar sesión
           </button>
         </div>
-
-        <p className="mt-4 text-[10px] text-terminal-muted/90 font-mono leading-relaxed text-center">
-          Tu cuenta será habilitada una vez aprobada por el administrador.
-        </p>
       </div>
     </div>
   );

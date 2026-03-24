@@ -8,11 +8,13 @@ import NotFound from "@/pages/not-found";
 import TerminalLayout from "@/pages/terminal/TerminalLayout";
 import { TerminalAuthProvider } from "@/contexts/TerminalAuthContext";
 import BlockedAccessScreen from "@/pages/auth/BlockedAccessScreen";
+import LoginRoute from "@/pages/auth/LoginRoute";
 import AdminPage from "@/pages/admin/AdminPage";
 
 function Router() {
   return (
     <Switch>
+      <Route path="/login" component={LoginRoute} />
       <Route path="/admin" component={AdminPage} />
       <Route path="/">
         <BlockedAccessScreen>

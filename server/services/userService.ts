@@ -13,14 +13,25 @@ export type OnboardingStatus =
   | "inactive"
   | "rejected";
 
-const ONBOARDING_TO_STATUS: Record<OnboardingStatus, string> = {
-  pending_approval: "pending",
-  approved_to_pay: "approved_to_pay",
-  pending_payment_review: "pending_payment_review",
-  active: "active",
-  inactive: "inactive",
-  rejected: "rejected",
-};
+/** Values allowed by typical `users` status CHECK in production (active | pending | inactive). */
+export type DbUserStatus = "active" | "pending" | "inactive";
+
+/** Map admin/API onboarding labels to DB `users.status` literals. */
+export function onboardingStatusToDbStatus(onboarding: OnboardingStatus): DbUserStatus {
+  switch (onboarding) {
+    case "pending_approval":
+      return "pending";
+    case "approved_to_pay":
+    case "pending_payment_review":
+    case "active":
+      return "active";
+    case "inactive":
+    case "rejected":
+      return "inactive";
+    default:
+      return "pending";
+  }
+}
 
 function requireDb() {
   if (!db) throw new Error("DATABASE_UNAVAILABLE");
@@ -59,7 +70,6 @@ export async function createUser(
   const fullName = resolveUserFullName(normalizedEmail, opts?.fullName ?? null);
   const status = role === "admin" ? "active" : "pending";
   const roleDb = role === "admin" ? getUsersDbRoleAdmin() : getUsersDbRoleUser();
-  console.log("ROLE INSERTING:", roleDb);
   const inserted = await db!
     .insert(users)
     .values({
@@ -88,6 +98,22 @@ export async function updateUserRole(
   return rows[0];
 }
 
+/** Single row update for admin PATCH (status + role in one statement when both provided). */
+export async function updateUserAdminPatch(
+  userId: number,
+  patch: { status?: DbUserStatus; role?: string },
+): Promise<User | undefined> {
+  requireDb();
+  const set: { status?: string; role?: string } = {};
+  if (patch.status !== undefined) set.status = patch.status;
+  if (patch.role !== undefined) set.role = patch.role;
+  if (Object.keys(set).length === 0) {
+    return findUserById(userId);
+  }
+  const rows = await db!.update(users).set(set).where(eq(users.id, userId)).returning();
+  return rows[0];
+}
+
 export async function setUserActive(userId: number, isActive: boolean): Promise<User | undefined> {
   requireDb();
   const status = isActive ? "active" : "inactive";
@@ -104,7 +130,7 @@ export async function setUserOnboardingStatus(
   onboardingStatus: OnboardingStatus,
 ): Promise<User | undefined> {
   requireDb();
-  const status = ONBOARDING_TO_STATUS[onboardingStatus];
+  const status = onboardingStatusToDbStatus(onboardingStatus);
   const rows = await db!
     .update(users)
     .set({ status })
