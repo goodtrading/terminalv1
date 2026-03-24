@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -63,8 +64,8 @@ async function fetchMe(): Promise<MeResponse> {
 }
 
 /**
- * If the server does not confirm a user but we still hold a token, the token is stale — clear it.
- * When SaaS is disabled, we also clear any orphan token so enabling SaaS later starts clean.
+ * If the server does not confirm a user but we still hold a token in localStorage, that copy is stale.
+ * Does not affect httpOnly cookie — server remains authoritative via /api/auth/me.
  */
 function reconcileTokenWithServerResponse(me: MeResponse): void {
   const hadToken = Boolean(getAuthToken());
@@ -79,6 +80,8 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
   const [access, setAccess] = useState<AccessSnapshot | null>(null);
   const [saasDisabled, setSaasDisabled] = useState(false);
   const [token, setTokenState] = useState<string | null>(() => getAuthToken());
+  /** Bumps on login/register/logout so late /api/auth/me responses cannot overwrite a newer session. */
+  const sessionGenerationRef = useRef(0);
 
   const applyToken = useCallback((t: string | null) => {
     setAuthToken(t);
@@ -86,27 +89,35 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const invalidateSession = useCallback(() => {
+    sessionGenerationRef.current += 1;
     clearAuthStorage();
     setTokenState(null);
     setUser(null);
     setAccess(null);
   }, []);
 
+  const applyMeResponse = useCallback((me: MeResponse) => {
+    reconcileTokenWithServerResponse(me);
+    setTokenState(getAuthToken());
+    if (me.saasDisabled) {
+      setSaasDisabled(true);
+      setUser(null);
+      setAccess(null);
+      return;
+    }
+    setSaasDisabled(false);
+    setUser(me.user);
+    setAccess(me.access);
+  }, []);
+
   const refreshSession = useCallback(async () => {
+    const genAtStart = sessionGenerationRef.current;
     try {
       const me = await fetchMe();
-      reconcileTokenWithServerResponse(me);
-      setTokenState(getAuthToken());
-      if (me.saasDisabled) {
-        setSaasDisabled(true);
-        setUser(null);
-        setAccess(null);
-        return;
-      }
-      setSaasDisabled(false);
-      setUser(me.user);
-      setAccess(me.access);
+      if (genAtStart !== sessionGenerationRef.current) return;
+      applyMeResponse(me);
     } catch (e) {
+      if (genAtStart !== sessionGenerationRef.current) return;
       const msg = e instanceof Error ? e.message : "";
       if (msg === "me:401") {
         invalidateSession();
@@ -116,14 +127,15 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
       setAccess(null);
       setTokenState(getAuthToken());
     }
-  }, [invalidateSession]);
+  }, [applyMeResponse, invalidateSession]);
 
   useEffect(() => {
     let cancelled = false;
+    const genAtStart = sessionGenerationRef.current;
     (async () => {
       try {
         const me = await fetchMe();
-        if (cancelled) return;
+        if (cancelled || genAtStart !== sessionGenerationRef.current) return;
         reconcileTokenWithServerResponse(me);
         if (me.saasDisabled) {
           setSaasDisabled(true);
@@ -136,15 +148,14 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
         }
         setTokenState(getAuthToken());
       } catch (e) {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : "";
-          if (msg === "me:401") {
-            invalidateSession();
-          } else {
-            setUser(null);
-            setAccess(null);
-            setTokenState(getAuthToken());
-          }
+        if (cancelled || genAtStart !== sessionGenerationRef.current) return;
+        const msg = e instanceof Error ? e.message : "";
+        if (msg === "me:401") {
+          invalidateSession();
+        } else {
+          setUser(null);
+          setAccess(null);
+          setTokenState(getAuthToken());
         }
       } finally {
         if (!cancelled) setAuthReady(true);
@@ -182,6 +193,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
         invalidateSession();
         throw new Error("LOGIN_INCOMPLETE");
       }
+      sessionGenerationRef.current += 1;
       applyToken(t);
       setUser(u);
       setAccess((data as { access: AccessSnapshot }).access);
@@ -207,6 +219,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
         invalidateSession();
         throw new Error("REGISTER_INCOMPLETE");
       }
+      sessionGenerationRef.current += 1;
       applyToken(t);
       setUser(u);
       setAccess((data as { access: AccessSnapshot }).access);

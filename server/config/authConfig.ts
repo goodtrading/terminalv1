@@ -1,5 +1,11 @@
+/**
+ * Single secret for sign + verify. Prefer JWT_SECRET in env; SAAS_JWT_SECRET is a legacy alias only.
+ * If both are set, JWT_SECRET wins — keep them identical in Railway to avoid rotation bugs.
+ */
 export function getJwtSecret(): string {
-  const s = process.env.JWT_SECRET || process.env.SAAS_JWT_SECRET;
+  const explicitJwt = process.env.JWT_SECRET?.trim();
+  const legacySaas = process.env.SAAS_JWT_SECRET?.trim();
+  const s = explicitJwt || legacySaas;
   if (s && s.length >= 16) return s;
   if (process.env.NODE_ENV === "development") {
     console.warn(

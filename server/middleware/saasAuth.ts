@@ -18,12 +18,11 @@ function extractBearer(req: Request): string | null {
   return m ? m[1]!.trim() || null : null;
 }
 
+/** Cookie first: httpOnly session is source of truth; stale Bearer in localStorage must not shadow it. */
 function extractToken(req: Request): string | null {
-  const bearer = extractBearer(req);
-  if (bearer) return bearer;
   const c = req.cookies?.[AUTH_COOKIE_NAME];
   if (typeof c === "string" && c.length > 0) return c.trim();
-  return null;
+  return extractBearer(req);
 }
 
 export async function optionalSaasAuth(
