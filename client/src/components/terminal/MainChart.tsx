@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createChart, ColorType, LineStyle, CandlestickSeries, HistogramSeries, LineSeries, IChartApi, ISeriesApi } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
@@ -119,6 +119,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const ghostSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const ghostBarsCountRef = useRef(0);
   const priceLinesRef = useRef<any[]>([]);
   const livePriceLineRef = useRef<any>(null);
 
@@ -136,6 +137,9 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     lastTimeSec: number | null;
     barSec: number;
   }>({ lastTimeSec: null, barSec: 900 });
+  const FUTURE_GHOST_BASE = 400;
+  const FUTURE_GHOST_EXTEND_STEP = 150;
+  const FUTURE_GHOST_EXTEND_BUFFER = 40;
   const [lastCandle, setLastCandle] = useState<any>(null);
   const [activePanels, setActivePanels] = useState<Set<MapMode>>(() => {
   // Load from localStorage on initialization
@@ -185,6 +189,19 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   const [manualPriceRange, setManualPriceRange] = useState<{from: number, to: number} | null>(null);
   const [selectedScenario, setSelectedScenario] = useState<TradingScenario | null>(null);
   const scenarioLevelsRef = useRef<any[]>([]);
+
+  const rebuildGhostBars = useCallback((barsCount: number) => {
+    const chart = chartRef.current;
+    const ghostSeries = ghostSeriesRef.current;
+    const anchor = drawingsTimeProjectionRef.current;
+    if (!chart || !ghostSeries || anchor.lastTimeSec == null || !Number.isFinite(anchor.barSec) || anchor.barSec <= 0) return;
+    const clampedCount = Math.max(FUTURE_GHOST_BASE, Math.floor(barsCount));
+    const ghostData = Array.from({ length: clampedCount }, (_, i) => ({
+      time: (anchor.lastTimeSec! + (i + 1) * anchor.barSec) as UTCTimestamp,
+    }));
+    ghostSeries.setData(ghostData as any);
+    ghostBarsCountRef.current = clampedCount;
+  }, []);
 
   const sessionLiquidityManagerRef = useRef<SessionLiquidityManager>(new SessionLiquidityManager());
   const sessionLiquidityLinesRef = useRef<any[]>([]);
@@ -518,7 +535,21 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
         drawDebug("CHART_VIEWPORT", { viewportVersion: next, source: "MainChart.onViewportChange" });
         return next;
       });
-    const onViewportChange = () => bumpDrawingsViewport();
+    const onViewportChange = () => {
+      bumpDrawingsViewport();
+      const lastTimeSec = drawingsTimeProjectionRef.current.lastTimeSec;
+      const barSec = drawingsTimeProjectionRef.current.barSec;
+      if (lastTimeSec == null || !Number.isFinite(barSec) || barSec <= 0) return;
+      const timeToLogical = (ts as any).timeToLogical as ((t: UTCTimestamp) => number | null) | undefined;
+      const visible = ts.getVisibleLogicalRange();
+      if (!timeToLogical || !visible) return;
+      const lastLogical = timeToLogical(lastTimeSec as UTCTimestamp);
+      if (typeof lastLogical !== "number") return;
+      const ghostHorizonLogical = lastLogical + Math.max(FUTURE_GHOST_BASE, ghostBarsCountRef.current || FUTURE_GHOST_BASE);
+      if (visible.to >= ghostHorizonLogical - FUTURE_GHOST_EXTEND_BUFFER) {
+        rebuildGhostBars((ghostBarsCountRef.current || FUTURE_GHOST_BASE) + FUTURE_GHOST_EXTEND_STEP);
+      }
+    };
     const ts = chart.timeScale();
     const ensureFutureSpace = () => {
       ts.applyOptions({
@@ -613,7 +644,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       setChartReady(false);
       setChartSize(null);
     };
-  }, []);
+  }, [rebuildGhostBars]);
 
   useEffect(() => {
     const series = candleSeriesRef.current;
@@ -633,7 +664,6 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       low: Number(c.low),
       close: Number(c.close),
     }));
-    const FUTURE_GHOST_BARS = 40;
     if (candlesForChart.length >= 2) {
       const t1 = Number(candlesForChart[candlesForChart.length - 1].time);
       const t0 = Number(candlesForChart[candlesForChart.length - 2].time);
@@ -646,15 +676,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       };
     }
     series.setData(candlesForChart);
-    if (ghostSeries && candlesForChart.length >= 1) {
-      const lastTime = Number(candlesForChart[candlesForChart.length - 1].time);
-      const barSec = drawingsTimeProjectionRef.current.barSec;
-      const ghostData = Array.from({ length: FUTURE_GHOST_BARS }, (_, i) => ({
-        time: (lastTime + (i + 1) * barSec) as UTCTimestamp,
-      }));
-      // Ghost bars are whitespace points on a transparent series: they extend time scale only.
-      ghostSeries.setData(ghostData as any);
-    }
+    if (ghostSeries && candlesForChart.length >= 1) rebuildGhostBars(FUTURE_GHOST_BASE);
     if (isInitialLoad && chartRef.current) {
       chartRef.current.timeScale().fitContent();
       chartRef.current.timeScale().applyOptions({ rightOffset: 36, rightBarStaysOnScroll: true });
@@ -662,7 +684,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     }
     const lastHistoryCandle = history[history.length - 1];
     if (lastHistoryCandle && !lastCandle) setLastCandle(lastHistoryCandle);
-  }, [history, chartReady]);
+  }, [history, chartReady, rebuildGhostBars]);
 
   useEffect(() => {
     if (SAFE_CHART_MODE) {

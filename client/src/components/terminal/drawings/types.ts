@@ -12,6 +12,8 @@ export type DrawingTool =
   | "text"
   | "polyline";
 
+export type SmartToolKind = "gammaZone" | "liquidityZone" | "sweep" | "magnet";
+
 export interface DrawingPoint {
   time: number;
   price: number;
@@ -20,6 +22,7 @@ export interface DrawingPoint {
 export interface BaseDrawing {
   id: string;
   tool: DrawingTool;
+  smartKind?: SmartToolKind;
   points: DrawingPoint[];
   color: string;
   opacity: number;

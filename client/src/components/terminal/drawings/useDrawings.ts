@@ -1,11 +1,18 @@
 import { useState, useCallback, useEffect } from "react";
-import type { Drawing, DrawingPoint, DrawingTool } from "./types";
+import type { Drawing, DrawingPoint, DrawingTool, SmartToolKind } from "./types";
 import { DEFAULT_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_OPACITY, getToolPointCount } from "./types";
 import { loadDrawings, saveDrawings } from "./persistence";
 
 const MAX_POLYLINE_POINTS = 10;
 const HIT_THRESHOLD = 10;
 const ANCHOR_HIT_THRESHOLD = 12;
+
+const SMART_STYLES: Record<SmartToolKind, { color: string; lineWidth: number; opacity: number }> = {
+  gammaZone: { color: "#f97316", lineWidth: 2, opacity: 0.45 },
+  liquidityZone: { color: "#ef4444", lineWidth: 2, opacity: 0.6 },
+  sweep: { color: "#22c55e", lineWidth: 2, opacity: 0.55 },
+  magnet: { color: "#9ca3af", lineWidth: 1, opacity: 0.4 },
+};
 
 function isValidNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
@@ -34,6 +41,15 @@ export function useDrawings(symbol: string, timeframe: string) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingDrawing, setPendingDrawing] = useState<Drawing | null>(null);
   const [draggingAnchor, setDraggingAnchor] = useState<{ id: string; pointIndex: number } | null>(null);
+  const [toolStyles, setToolStyles] = useState<Record<DrawingTool, { color: string; lineWidth: number; opacity: number }>>({
+    select: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
+    horizontalLine: { color: "#ffffff", lineWidth: 1, opacity: 1 },
+    trendLine: { color: "#ffffff", lineWidth: 1, opacity: 1 },
+    arrow: { color: "#ffffff", lineWidth: 2, opacity: 1 },
+    rectangle: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
+    text: { color: "#ffffff", lineWidth: 1, opacity: 1 },
+    polyline: { color: "#ffffff", lineWidth: 2, opacity: 1 },
+  });
 
   useEffect(() => {
     const clean = sanitizeDrawings(drawings);
@@ -94,6 +110,21 @@ export function useDrawings(symbol: string, timeframe: string) {
       setSelectedId(null);
     }
   }, [selectedId, removeDrawing]);
+
+  const undoLast = useCallback(() => {
+    setDrawings((prev) => {
+      if (prev.length === 0) return prev;
+      return prev.slice(0, -1);
+    });
+    setSelectedId(null);
+  }, []);
+
+  const clearAll = useCallback(() => {
+    setDrawings([]);
+    setSelectedId(null);
+    setPendingDrawing(null);
+    setDraggingAnchor(null);
+  }, []);
 
   const selectDrawing = useCallback((id: string | null) => {
     setDrawings((prev) =>
@@ -172,10 +203,11 @@ export function useDrawings(symbol: string, timeframe: string) {
   const startDrawing = useCallback(
     (time: number, price: number) => {
       if (activeTool === "select") return;
+      const toolStyle = toolStyles[activeTool] ?? { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY };
       const base: Partial<Drawing> = {
-        color: DEFAULT_COLOR,
-        opacity: DEFAULT_OPACITY,
-        lineWidth: DEFAULT_LINE_WIDTH,
+        color: toolStyle.color,
+        opacity: toolStyle.opacity,
+        lineWidth: toolStyle.lineWidth,
         locked: false,
         selected: false,
         points: [],
@@ -200,7 +232,39 @@ export function useDrawings(symbol: string, timeframe: string) {
         } as Drawing);
       }
     },
-    [activeTool, addDrawing]
+    [activeTool, addDrawing, toolStyles]
+  );
+
+  const setToolStyle = useCallback((tool: DrawingTool, updates: Partial<{ color: string; lineWidth: number; opacity: number }>) => {
+    setToolStyles((prev) => ({
+      ...prev,
+      [tool]: { ...prev[tool], ...updates },
+    }));
+  }, []);
+
+  const setSmartKind = useCallback((id: string, smartKind: SmartToolKind | undefined) => {
+    setDrawings((prev) =>
+      prev.map((d) => {
+        if (d.id !== id) return d;
+        if (!smartKind) return { ...d, smartKind: undefined };
+        const style = SMART_STYLES[smartKind];
+        return {
+          ...d,
+          smartKind,
+          color: style.color,
+          lineWidth: style.lineWidth,
+          opacity: style.opacity,
+        };
+      })
+    );
+  }, []);
+
+  const convertSelectedToSmart = useCallback(
+    (smartKind: SmartToolKind) => {
+      if (!selectedId) return;
+      setSmartKind(selectedId, smartKind);
+    },
+    [selectedId, setSmartKind]
   );
 
   const addPolylinePoint = useCallback(
@@ -297,6 +361,8 @@ export function useDrawings(symbol: string, timeframe: string) {
     drawings,
     activeTool,
     setActiveTool,
+    toolStyles,
+    setToolStyle,
     selectedId,
     selectDrawing,
     pendingDrawing,
@@ -304,9 +370,13 @@ export function useDrawings(symbol: string, timeframe: string) {
     setDraggingAnchor,
     addDrawing,
     updateDrawing,
+    setSmartKind,
+    convertSelectedToSmart,
     updatePoint,
     removeDrawing,
     removeSelected,
+    undoLast,
+    clearAll,
     hitTest,
     hitTestAnchor,
     startDrawing,

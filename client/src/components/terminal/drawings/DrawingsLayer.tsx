@@ -55,25 +55,58 @@ export function DrawingsLayer({
     removeLastPolylinePoint,
     cancelPending,
     updateDrawing,
+    toolStyles,
+    setToolStyle,
+    setSmartKind,
+    convertSelectedToSmart,
   } = useDrawings(symbol, timeframe);
 
-  const isDrawMode = activeTool !== "select" || pendingDrawing != null;
   const selectedDrawing = selectedId ? drawings.find((d) => d.id === selectedId) : null;
+  const showContextual = activeTool !== "select" || selectedDrawing != null;
 
   return (
     <>
-      <div className="absolute left-2 bottom-10 z-[14] pointer-events-auto" title="Drawing tools">
-        <DrawingsToolbar activeTool={activeTool} onToolChange={setActiveTool} isDrawMode={isDrawMode} />
+      <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[14] pointer-events-auto" title="Drawing tools">
+        <DrawingsToolbar
+          activeTool={activeTool}
+          onToolChange={setActiveTool}
+          onToolVariantSelect={(tool, style) => {
+            setActiveTool(tool);
+            if (style) setToolStyle(tool, style);
+          }}
+          onSmartVariantSelect={(smartKind, style) => {
+            setActiveTool("rectangle");
+            if (style) setToolStyle("rectangle", style);
+            if (selectedDrawing && selectedDrawing.tool === "rectangle") {
+              setSmartKind(selectedDrawing.id, smartKind);
+            }
+          }}
+        />
       </div>
 
-      {selectedDrawing && (
-        <div className="absolute left-2 bottom-[4.5rem] z-[14] pointer-events-auto" title="Edit selected">
-          <DrawingsContextualBar
-            drawing={selectedDrawing}
-            onUpdate={(u) => updateDrawing(selectedId!, u)}
-            onDelete={removeSelected}
-            onDeselect={() => selectDrawing(null)}
-          />
+      {showContextual && (
+        <div className="absolute left-14 top-1/2 -translate-y-1/2 z-[14] pointer-events-auto" title="Drawing style">
+          {selectedDrawing ? (
+            <DrawingsContextualBar
+              drawing={selectedDrawing}
+              toolStyle={toolStyles[activeTool]}
+              onConvertToSmart={(smartKind) => convertSelectedToSmart(smartKind)}
+              onToolStyleChange={(u) => setToolStyle(activeTool, u)}
+              onUpdate={(u) => updateDrawing(selectedId!, u)}
+              onDelete={removeSelected}
+              onDeselect={() => selectDrawing(null)}
+            />
+          ) : (
+            <DrawingsContextualBar
+              drawing={null}
+              toolStyle={toolStyles[activeTool]}
+              onConvertToSmart={() => {}}
+              onToolStyleChange={(u) => setToolStyle(activeTool, u)}
+              onUpdate={() => {}}
+              onDelete={() => {}}
+              onDeselect={() => setActiveTool("select")}
+            />
+          )}
         </div>
       )}
 
