@@ -1,5 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { createServer } from "http";
+import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
 
@@ -33,6 +34,7 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

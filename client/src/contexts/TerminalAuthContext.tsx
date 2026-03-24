@@ -215,7 +215,9 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    invalidateSession();
+    void fetch("/api/auth/logout", { method: "POST", credentials: "include" }).finally(() => {
+      invalidateSession();
+    });
   }, [invalidateSession]);
 
   const value = useMemo(

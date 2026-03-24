@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { AUTH_COOKIE_NAME } from "../lib/authCookie";
 import { verifyUserToken } from "../lib/jwt";
 import { findUserById, userMayAuthenticate } from "../services/userService";
 
@@ -14,7 +15,15 @@ function extractBearer(req: Request): string | null {
   const h = req.headers.authorization;
   if (!h || typeof h !== "string") return null;
   const m = /^Bearer\s+(.+)$/i.exec(h.trim());
-  return m ? m[1]! : null;
+  return m ? m[1]!.trim() || null : null;
+}
+
+function extractToken(req: Request): string | null {
+  const bearer = extractBearer(req);
+  if (bearer) return bearer;
+  const c = req.cookies?.[AUTH_COOKIE_NAME];
+  if (typeof c === "string" && c.length > 0) return c.trim();
+  return null;
 }
 
 export async function optionalSaasAuth(
@@ -23,7 +32,7 @@ export async function optionalSaasAuth(
   next: NextFunction,
 ) {
   req.saasUser = undefined;
-  const token = extractBearer(req);
+  const token = extractToken(req);
   if (!token) {
     next();
     return;
@@ -47,7 +56,7 @@ export async function requireSaasAuth(
   res: Response,
   next: NextFunction,
 ) {
-  const token = extractBearer(req);
+  const token = extractToken(req);
   if (!token) {
     res.status(401).json({ error: "UNAUTHORIZED" });
     return;
@@ -71,7 +80,7 @@ export async function requireSaasAdmin(
   res: Response,
   next: NextFunction,
 ) {
-  const token = extractBearer(req);
+  const token = extractToken(req);
   if (!token) {
     res.status(401).json({ error: "UNAUTHORIZED" });
     return;

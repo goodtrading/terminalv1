@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
+import { AUTH_COOKIE_NAME, clearAuthCookie, getAuthCookieOptions } from "../lib/authCookie";
 import { verifyPassword } from "../lib/password";
 import { signUserToken } from "../lib/jwt";
 import {
@@ -136,6 +137,7 @@ export function registerSaasRoutes(app: Express): void {
         role: user.role,
       });
       const access = await getAccessForUserId(user.id);
+      res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
       res.status(201).json({
         message: "Account created. Your status is pending until an administrator approves access.",
         status: user.status,
@@ -173,6 +175,7 @@ export function registerSaasRoutes(app: Express): void {
         role: user.role,
       });
       const access = await getAccessForUserId(user.id);
+      res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
       res.json({
         token,
         user: { id: user.id, email: user.email, role: user.role },
@@ -182,6 +185,11 @@ export function registerSaasRoutes(app: Express): void {
       console.error("[SaaS] login", e);
       res.status(500).json({ error: "LOGIN_FAILED" });
     }
+  });
+
+  app.post("/api/auth/logout", (_req: Request, res: Response) => {
+    clearAuthCookie(res);
+    res.json({ ok: true });
   });
 
   app.get("/api/auth/me", optionalSaasAuth, async (req: Request, res: Response) => {

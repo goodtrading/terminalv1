@@ -576,6 +576,7 @@ export async function registerRoutes(
     // Mutations / protected reads: explicit 503 JSON (otherwise Vite returns index.html)
     app.post("/api/auth/login", saasNotConfigured);
     app.post("/api/auth/register", saasNotConfigured);
+    app.post("/api/auth/logout", (_req, res) => res.json({ ok: true }));
     app.get("/api/auth/access", saasNotConfigured);
     app.post("/api/payments/report", saasNotConfigured);
     app.get("/api/admin/users", saasNotConfigured);
