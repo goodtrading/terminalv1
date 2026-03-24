@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { AUTH_COOKIE_NAME } from "../lib/authCookie";
 import { verifyUserToken } from "../lib/jwt";
 import { findUserById, userMayAuthenticate } from "../services/userService";
 
@@ -10,14 +11,20 @@ declare global {
   }
 }
 
-/** httpOnly `token` cookie wins; legacy Bearer (e.g. localStorage) is fallback only. */
 function extractToken(req: Request): string | null {
-  const c = req.cookies?.token;
-  if (typeof c === "string" && c.length > 0) return c.trim();
+  console.log("TOKEN FROM COOKIE:", req.cookies);
+
+  const cookieToken = req.cookies?.[AUTH_COOKIE_NAME];
+  if (typeof cookieToken === "string" && cookieToken.trim().length > 0) {
+    return cookieToken.trim();
+  }
+
   const auth = req.headers.authorization;
   if (typeof auth === "string" && auth.startsWith("Bearer ")) {
-    return auth.slice(7).trim() || null;
+    const bearerToken = auth.slice("Bearer ".length).trim();
+    if (bearerToken.length > 0) return bearerToken;
   }
+
   return null;
 }
 

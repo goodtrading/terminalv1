@@ -15,20 +15,22 @@ function authHeaders(): Record<string, string> {
 }
 
 export async function apiRequest(
-  method: string,
   url: string,
-  data?: unknown | undefined,
+  options: RequestInit & { skipAuth?: boolean; assertOk?: boolean } = {},
 ): Promise<Response> {
-  const headers: Record<string, string> = { ...authHeaders() };
-  if (data) headers["Content-Type"] = "application/json";
+  const { skipAuth = false, assertOk = true, headers: initHeaders, ...fetchInit } = options;
+  const headers = new Headers(initHeaders as HeadersInit | undefined);
+  if (!skipAuth) {
+    for (const [k, v] of Object.entries(authHeaders())) {
+      if (v) headers.set(k, v);
+    }
+  }
   const res = await fetch(url, {
-    method,
-    headers,
-    body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
+    ...fetchInit,
+    headers,
   });
-
-  await throwIfResNotOk(res);
+  if (assertOk) await throwIfResNotOk(res);
   return res;
 }
 

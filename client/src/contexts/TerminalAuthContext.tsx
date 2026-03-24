@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { getAuthToken, setAuthToken, clearAuthStorage } from "@/lib/authToken";
+import { apiRequest } from "@/lib/queryClient";
 
 export interface AuthUser {
   id: number;
@@ -49,18 +50,14 @@ interface TerminalAuthContextValue {
 
 const TerminalAuthContext = createContext<TerminalAuthContextValue | null>(null);
 
-/**
- * Session is httpOnly cookie (`credentials: "include"`). Optional Bearer only for legacy localStorage fallback;
- * the server prefers the cookie, so a missing localStorage token never blocks a valid cookie.
- */
+/** /api/auth/me: httpOnly cookie only (`skipAuth`), never Bearer. */
 async function fetchMe(): Promise<MeResponse> {
-  const token = getAuthToken();
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch("/api/auth/me", {
+  const res = await apiRequest("/api/auth/me", {
+    method: "GET",
     credentials: "include",
     cache: "no-store",
-    headers: Object.keys(headers).length ? headers : undefined,
+    skipAuth: true,
+    assertOk: false,
   });
   if (res.status === 401) {
     throw new Error("me:401");
