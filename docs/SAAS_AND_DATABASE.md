@@ -64,9 +64,9 @@ Sin DB: `GET /api/auth/me` y `GET /api/plans` responden 200 con `saasDisabled`; 
 
 ## `users.role` y `users_role_check`
 
-En Postgres suele existir un `CHECK` (p. ej. solo `USER` y `ADMIN`). El servidor escribe esos valores usando **`USERS_DB_ROLE_USER`** y **`USERS_DB_ROLE_ADMIN`** (por defecto `USER` / `ADMIN`). La API y el JWT siguen exponiendo `user` / `admin` en minúsculas.
+En Postgres suele existir un `CHECK` (p. ej. `user` y `admin` en minúsculas). El servidor persiste **`user` / `admin`** por defecto (`getUsersDbRoleUser` / `getUsersDbRoleAdmin`). La API y el JWT usan los mismos literales.
 
-Si tu constraint usa otros literales, define en `.env`:
+Si tu constraint usa otros valores, define en `.env`:
 
 - `USERS_DB_ROLE_USER=...`
 - `USERS_DB_ROLE_ADMIN=...`
