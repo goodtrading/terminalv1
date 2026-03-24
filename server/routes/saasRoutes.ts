@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { describeJwtSecretSource } from "../config/authConfig";
+import { dbRoleToApiRole, isAdminRole } from "../lib/userRoles";
 import { AUTH_COOKIE_NAME, clearAuthCookie, getAuthCookieOptions } from "../lib/authCookie";
 import { verifyPassword } from "../lib/password";
 import { signUserToken } from "../lib/jwt";
@@ -135,7 +136,7 @@ export function registerSaasRoutes(app: Express): void {
       const token = signUserToken({
         id: user.id,
         email: user.email,
-        role: user.role,
+        role: dbRoleToApiRole(user.role),
       });
       const access = await getAccessForUserId(user.id);
       res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
@@ -146,7 +147,7 @@ export function registerSaasRoutes(app: Express): void {
         user: {
           id: user.id,
           email: user.email,
-          role: user.role,
+          role: dbRoleToApiRole(user.role),
           fullName: user.fullName,
         },
         access,
@@ -181,13 +182,13 @@ export function registerSaasRoutes(app: Express): void {
       const token = signUserToken({
         id: user.id,
         email: user.email,
-        role: user.role,
+        role: dbRoleToApiRole(user.role),
       });
       const access = await getAccessForUserId(user.id);
       res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
       res.json({
         token,
-        user: { id: user.id, email: user.email, role: user.role },
+        user: { id: user.id, email: user.email, role: dbRoleToApiRole(user.role) },
         access,
       });
     } catch (e: any) {
@@ -285,7 +286,7 @@ export function registerSaasRoutes(app: Express): void {
           return {
             id: u.id,
             email: u.email,
-            role: u.role,
+            role: dbRoleToApiRole(u.role),
             isActive: userIsActiveish(u),
             onboardingStatus: statusToOnboardingStatus(u.status),
             createdAt: u.createdAt?.toISOString?.() ?? null,
@@ -336,7 +337,14 @@ export function registerSaasRoutes(app: Express): void {
         await setUserOnboardingStatus(id, parsed.data.onboardingStatus);
       }
       const updated = await findUserById(id);
-      res.json({ user: updated });
+      res.json({
+        user: updated
+          ? {
+              ...updated,
+              role: dbRoleToApiRole(updated.role),
+            }
+          : undefined,
+      });
     } catch (e: any) {
       console.error("[SaaS] admin patch user", e);
       res.status(500).json({ error: "ADMIN_PATCH_FAILED" });
@@ -448,7 +456,7 @@ export function registerSaasRoutes(app: Express): void {
           return;
         }
         await deactivateSubscriptionForUser(id);
-        if (target.role !== "admin") {
+        if (!isAdminRole(target.role)) {
           await setUserOnboardingStatus(
             id,
             userIsActiveish(target) ? "approved_to_pay" : "pending_approval",

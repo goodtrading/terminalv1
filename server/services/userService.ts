@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { users, type User } from "@shared/schema";
 import { hashPassword } from "../lib/password";
+import { apiRoleToDbRole, isAdminRole } from "../lib/userRoles";
 
 export type OnboardingStatus =
   | "pending_approval"
@@ -56,13 +57,14 @@ export async function createUser(
   const normalizedEmail = email.toLowerCase().trim();
   const fullName = resolveUserFullName(normalizedEmail, opts?.fullName ?? null);
   const status = role === "admin" ? "active" : "pending";
+  const roleDb = apiRoleToDbRole(role);
   const inserted = await db!
     .insert(users)
     .values({
       email: normalizedEmail,
       passwordHash,
       fullName,
-      role,
+      role: roleDb,
       status,
     })
     .returning();
@@ -79,7 +81,8 @@ export async function updateUserRole(
   role: "user" | "admin",
 ): Promise<User | undefined> {
   requireDb();
-  const rows = await db!.update(users).set({ role }).where(eq(users.id, userId)).returning();
+  const roleDb = apiRoleToDbRole(role);
+  const rows = await db!.update(users).set({ role: roleDb }).where(eq(users.id, userId)).returning();
   return rows[0];
 }
 
@@ -118,7 +121,7 @@ export async function ensureBootstrapAdmin(): Promise<void> {
   if (!email || !password) return;
   const existing = await findUserByEmail(email);
   if (existing) {
-    if (existing.role === "admin" && existing.status !== "active") {
+    if (isAdminRole(existing.role) && existing.status !== "active") {
       await db!
         .update(users)
         .set({ status: "active" })

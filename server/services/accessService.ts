@@ -4,6 +4,7 @@ import {
   markSubscriptionExpiredById,
 } from "./subscriptionService";
 import { findUserById } from "./userService";
+import { isAdminRole } from "../lib/userRoles";
 
 export interface AccessSnapshot {
   allowed: boolean;
@@ -32,7 +33,7 @@ export async function getAccessForUserId(userId: number): Promise<AccessSnapshot
   if (user.status === "inactive" || user.status === "rejected") {
     return { allowed: false, reason: "inactive" };
   }
-  if (user.role === "admin") {
+  if (isAdminRole(user.role)) {
     return { allowed: true, reason: "admin" };
   }
   if (user.status === "pending") {

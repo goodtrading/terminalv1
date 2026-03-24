@@ -62,6 +62,15 @@ Sin DB: `GET /api/auth/me` y `GET /api/plans` responden 200 con `saasDisabled`; 
 | `TradingPlan` | `saasDisabled` / `access.subscription` para aviso de caducidad |
 | `TerminalAuthContext` | `/api/auth/me` |
 
+## `users.role` y `users_role_check`
+
+En Postgres suele existir un `CHECK` (p. ej. solo `USER` y `ADMIN`). El servidor escribe esos valores usando **`USERS_DB_ROLE_USER`** y **`USERS_DB_ROLE_ADMIN`** (por defecto `USER` / `ADMIN`). La API y el JWT siguen exponiendo `user` / `admin` en minúsculas.
+
+Si tu constraint usa otros literales, define en `.env`:
+
+- `USERS_DB_ROLE_USER=...`
+- `USERS_DB_ROLE_ADMIN=...`
+
 ## Checklist con DB real
 
 1. En `.env`: `DATABASE_URL=postgresql://...` (Neon: **Connection string → URI**, `sslmode=require`).

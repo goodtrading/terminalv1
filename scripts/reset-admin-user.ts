@@ -1,4 +1,6 @@
 import { eq } from "drizzle-orm";
+import { getUsersDbRoleAdmin } from "../server/config/usersDbRoles";
+import { resolveUserFullName } from "../server/services/userService";
 import { db, pool } from "../server/db";
 import { users } from "../shared/schema";
 import { hashPassword } from "../server/lib/password";
@@ -53,8 +55,8 @@ async function main() {
       .values({
         email,
         passwordHash,
-        fullName: fullName || null,
-        role: "admin",
+        fullName: fullNameResolved,
+        role: roleDb,
         status: "active",
       })
       .returning();

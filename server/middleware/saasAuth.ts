@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { describeJwtSecretSource } from "../config/authConfig";
 import { AUTH_COOKIE_NAME } from "../lib/authCookie";
 import { verifyUserToken, verifyUserTokenDebug } from "../lib/jwt";
+import { dbRoleToApiRole, isAdminRole } from "../lib/userRoles";
 import { findUserById, userMayAuthenticate } from "../services/userService";
 
 declare global {
@@ -99,7 +100,7 @@ export async function optionalSaasAuth(
       next();
       return;
     }
-    req.saasUser = { id: user.id, email: user.email, role: user.role };
+    req.saasUser = { id: user.id, email: user.email, role: dbRoleToApiRole(user.role) };
     console.log("[saasAuth/optionalSaasAuth] req.saasUser SET:", req.saasUser);
   } catch (err) {
     console.error("[saasAuth/optionalSaasAuth] unexpected error:", err);
@@ -129,7 +130,7 @@ export async function requireSaasAuth(
     res.status(401).json({ error: "UNAUTHORIZED" });
     return;
   }
-  req.saasUser = { id: user.id, email: user.email, role: user.role };
+  req.saasUser = { id: user.id, email: user.email, role: dbRoleToApiRole(user.role) };
   next();
 }
 
@@ -153,10 +154,10 @@ export async function requireSaasAdmin(
     res.status(401).json({ error: "UNAUTHORIZED" });
     return;
   }
-  if (user.role !== "admin") {
+  if (!isAdminRole(user.role)) {
     res.status(403).json({ error: "FORBIDDEN" });
     return;
   }
-  req.saasUser = { id: user.id, email: user.email, role: user.role };
+  req.saasUser = { id: user.id, email: user.email, role: dbRoleToApiRole(user.role) };
   next();
 }

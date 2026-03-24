@@ -106,6 +106,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   fullName: text("full_name"),
+  /** DB may enforce `users_role_check`; app uses USERS_DB_ROLE_* / `apiRoleToDbRole` (default USER/ADMIN). */
   role: text("role").notNull().default("user"),
   status: text("status").notNull().default("pending"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
