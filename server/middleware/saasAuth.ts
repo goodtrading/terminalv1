@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
+import { describeJwtSecretSource } from "../config/authConfig";
 import { AUTH_COOKIE_NAME } from "../lib/authCookie";
-import { verifyUserToken } from "../lib/jwt";
+import { verifyUserToken, verifyUserTokenDebug } from "../lib/jwt";
 import { findUserById, userMayAuthenticate } from "../services/userService";
 
 declare global {
@@ -11,20 +12,40 @@ declare global {
   }
 }
 
-function extractToken(req: Request): string | null {
-  console.log("TOKEN FROM COOKIE:", req.cookies);
+/** @param label — optional middleware name for log prefix (e.g. optionalSaasAuth). */
+function extractToken(req: Request, label?: string): string | null {
+  const logP = `[saasAuth/extractToken${label ? `/${label}` : ""}]`;
+  console.log(logP, "AUTH_COOKIE_NAME:", AUTH_COOKIE_NAME);
+  console.log(logP, "REQ COOKIES:", req.cookies);
 
   const cookieToken = req.cookies?.[AUTH_COOKIE_NAME];
-  if (typeof cookieToken === "string" && cookieToken.trim().length > 0) {
-    return cookieToken.trim();
-  }
+  const cookieOk = typeof cookieToken === "string" && cookieToken.trim().length > 0;
+  console.log(
+    logP,
+    "COOKIE TOKEN FOUND:",
+    cookieOk,
+    cookieOk ? `(len=${cookieToken!.trim().length})` : "",
+  );
 
   const auth = req.headers.authorization;
-  if (typeof auth === "string" && auth.startsWith("Bearer ")) {
-    const bearerToken = auth.slice("Bearer ".length).trim();
-    if (bearerToken.length > 0) return bearerToken;
+  const bearerPresent =
+    typeof auth === "string" && auth.startsWith("Bearer ") && auth.slice("Bearer ".length).trim().length > 0;
+  console.log(logP, "BEARER FOUND:", bearerPresent);
+
+  if (cookieOk) {
+    console.log(logP, "USING_TOKEN_SOURCE: cookie");
+    return cookieToken!.trim();
   }
 
+  if (typeof auth === "string" && auth.startsWith("Bearer ")) {
+    const bearerToken = auth.slice("Bearer ".length).trim();
+    if (bearerToken.length > 0) {
+      console.log(logP, "USING_TOKEN_SOURCE: bearer");
+      return bearerToken;
+    }
+  }
+
+  console.log(logP, "USING_TOKEN_SOURCE: none");
   return null;
 }
 
@@ -34,22 +55,57 @@ export async function optionalSaasAuth(
   next: NextFunction,
 ) {
   req.saasUser = undefined;
-  const token = extractToken(req);
+  const token = extractToken(req, "optionalSaasAuth");
   if (!token) {
+    console.log("[saasAuth/optionalSaasAuth] no token — skipping verify, req.saasUser unset");
     next();
     return;
   }
-  const payload = verifyUserToken(token);
-  if (!payload) {
+  console.log(
+    "[saasAuth/optionalSaasAuth] token preview:",
+    `${token.slice(0, 12)}…`,
+    "len=",
+    token.length,
+    "| jwtSecretSource:",
+    describeJwtSecretSource(),
+  );
+
+  try {
+    const dbg = verifyUserTokenDebug(token);
+    if (!dbg.payload) {
+      console.error(
+        "[saasAuth/optionalSaasAuth] JWT VERIFY FAILED:",
+        dbg.error,
+        "| jwtSecretSource:",
+        describeJwtSecretSource(),
+      );
+      next();
+      return;
+    }
+    console.log("[saasAuth/optionalSaasAuth] JWT PAYLOAD OK:", {
+      sub: dbg.payload.sub,
+      email: dbg.payload.email,
+      role: dbg.payload.role,
+      exp: dbg.payload.exp,
+    });
+
+    const user = await findUserById(dbg.payload.sub);
+    if (!user) {
+      console.error(
+        "[saasAuth/optionalSaasAuth] USER ROW MISSING for sub:",
+        dbg.payload.sub,
+        "(JWT ok but findUserById returned nothing)",
+      );
+      next();
+      return;
+    }
+    req.saasUser = { id: user.id, email: user.email, role: user.role };
+    console.log("[saasAuth/optionalSaasAuth] req.saasUser SET:", req.saasUser);
+  } catch (err) {
+    console.error("[saasAuth/optionalSaasAuth] unexpected error:", err);
     next();
     return;
   }
-  const user = await findUserById(payload.sub);
-  if (!user) {
-    next();
-    return;
-  }
-  req.saasUser = { id: user.id, email: user.email, role: user.role };
   next();
 }
 

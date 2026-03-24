@@ -17,3 +17,17 @@ export function getJwtSecret(): string {
     "JWT_SECRET (or SAAS_JWT_SECRET) must be set to a string of at least 16 characters",
   );
 }
+
+/** For diagnostics only: which env key supplies the secret (sign + verify use the same). */
+export function describeJwtSecretSource(): string {
+  const explicitJwt = process.env.JWT_SECRET?.trim();
+  const legacySaas = process.env.SAAS_JWT_SECRET?.trim();
+  if (explicitJwt && explicitJwt.length >= 16) {
+    return legacySaas && legacySaas.length >= 16
+      ? "JWT_SECRET (SAAS_JWT_SECRET also set but ignored for signing/verify)"
+      : "JWT_SECRET";
+  }
+  if (legacySaas && legacySaas.length >= 16) return "SAAS_JWT_SECRET";
+  if (process.env.NODE_ENV === "development") return "dev-fallback (JWT_SECRET unset)";
+  return "none (would throw on getJwtSecret)";
+}

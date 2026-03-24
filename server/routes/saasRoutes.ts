@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
+import { describeJwtSecretSource } from "../config/authConfig";
 import { AUTH_COOKIE_NAME, clearAuthCookie, getAuthCookieOptions } from "../lib/authCookie";
 import { verifyPassword } from "../lib/password";
 import { signUserToken } from "../lib/jwt";
@@ -198,12 +199,24 @@ export function registerSaasRoutes(app: Express): void {
       Pragma: "no-cache",
       Expires: "0",
     });
+    const meLog = "[SaaS GET /api/auth/me]";
+    console.log(meLog, "AUTH_COOKIE_NAME (expected):", AUTH_COOKIE_NAME);
+    console.log(meLog, "raw Cookie header present:", Boolean(req.headers.cookie), "length:", req.headers.cookie?.length ?? 0);
+    console.log(meLog, "req.cookies (parsed):", req.cookies);
+    console.log(meLog, "optionalSaasAuth result — req.saasUser (not req.user):", req.saasUser ?? null);
+    console.log(
+      meLog,
+      "JWT secret source (login/register/signUserToken + verifyUserToken):",
+      describeJwtSecretSource(),
+    );
     try {
       if (!req.saasUser) {
+        console.log(meLog, "responding: user null (no req.saasUser) — check prior [saasAuth/optionalSaasAuth] logs");
         res.json({ user: null, access: null });
         return;
       }
       const access = await getAccessForUserId(req.saasUser.id);
+      console.log(meLog, "responding with user id:", req.saasUser.id, "access.allowed:", access.allowed);
       res.json({
         user: {
           id: req.saasUser.id,

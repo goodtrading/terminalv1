@@ -45,23 +45,38 @@ export function signUserToken(
   return `${header}.${body}.${sigB64}`;
 }
 
-export function verifyUserToken(token: string): JwtPayload | null {
+export interface VerifyUserTokenDebugResult {
+  payload: JwtPayload | null;
+  /** Set when payload is null — diagnostic only, do not expose to clients. */
+  error?: string;
+}
+
+/** Same rules as verifyUserToken but returns a failure reason for server logs. */
+export function verifyUserTokenDebug(token: string): VerifyUserTokenDebugResult {
   try {
     const parts = token.split(".");
-    if (parts.length !== 3) return null;
+    if (parts.length !== 3) return { payload: null, error: "bad_segment_count" };
     const [header, body, sig] = parts;
     const secret = getJwtSecret();
     const expected = createHmac("sha256", secret).update(`${header}.${body}`).digest();
     const got = b64urlDecode(sig);
     if (got.length !== expected.length || !timingSafeEqual(got, expected)) {
-      return null;
+      return { payload: null, error: "bad_signature_or_wrong_secret" };
     }
     const payload = JSON.parse(b64urlDecode(body).toString("utf8")) as JwtPayload;
-    if (typeof payload.sub !== "number" || !payload.email) return null;
+    if (typeof payload.sub !== "number") return { payload: null, error: "bad_payload_sub" };
+    if (!payload.email) return { payload: null, error: "bad_payload_email" };
     const now = Math.floor(Date.now() / 1000);
-    if (payload.exp <= now) return null;
-    return payload;
-  } catch {
-    return null;
+    if (payload.exp <= now) return { payload: null, error: "expired" };
+    return { payload };
+  } catch (e) {
+    return {
+      payload: null,
+      error: e instanceof Error ? `exception:${e.message}` : "exception",
+    };
   }
+}
+
+export function verifyUserToken(token: string): JwtPayload | null {
+  return verifyUserTokenDebug(token).payload;
 }
