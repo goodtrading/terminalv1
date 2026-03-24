@@ -49,6 +49,9 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  const { registerDebugDbRoutes } = await import("./routes/debugDbRoutes");
+  registerDebugDbRoutes(app);
+
   // --- Raw Order Book Endpoint (unified shape: exchange, bids, asks, timestamp) ---
   app.get("/api/orderbook/raw", async (req: Request, res: Response) => {
     const source = (req.query.source as string)?.toLowerCase();
