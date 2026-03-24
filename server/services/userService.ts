@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { users, type User } from "@shared/schema";
+import { getUsersDbRoleAdmin, getUsersDbRoleUser } from "../config/usersDbRoles";
 import { hashPassword } from "../lib/password";
 import { apiRoleToDbRole, isAdminRole } from "../lib/userRoles";
 
@@ -57,7 +58,8 @@ export async function createUser(
   const normalizedEmail = email.toLowerCase().trim();
   const fullName = resolveUserFullName(normalizedEmail, opts?.fullName ?? null);
   const status = role === "admin" ? "active" : "pending";
-  const roleDb = apiRoleToDbRole(role);
+  const roleDb = role === "admin" ? getUsersDbRoleAdmin() : getUsersDbRoleUser();
+  console.log("ROLE INSERTING:", roleDb);
   const inserted = await db!
     .insert(users)
     .values({

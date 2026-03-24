@@ -1,11 +1,8 @@
-/**
- * Values written to `users.role`. Must match `users_role_check` in Postgres.
- * API/JWT stay on `user` / `admin`; env only overrides the persisted literal if your DB differs.
- */
+/** Hardcoded literals for `users.role` — must match `users_role_check` (lowercase). Env ignored until constraint is stable. */
 export function getUsersDbRoleUser(): string {
-  return process.env.USERS_DB_ROLE_USER?.trim() || "user";
+  return "user";
 }
 
 export function getUsersDbRoleAdmin(): string {
-  return process.env.USERS_DB_ROLE_ADMIN?.trim() || "admin";
+  return "admin";
 }

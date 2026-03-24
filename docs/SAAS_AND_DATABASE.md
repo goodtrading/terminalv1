@@ -66,10 +66,7 @@ Sin DB: `GET /api/auth/me` y `GET /api/plans` responden 200 con `saasDisabled`; 
 
 En Postgres suele existir un `CHECK` (p. ej. `user` y `admin` en minúsculas). El servidor persiste **`user` / `admin`** por defecto (`getUsersDbRoleUser` / `getUsersDbRoleAdmin`). La API y el JWT usan los mismos literales.
 
-Si tu constraint usa otros valores, define en `.env`:
-
-- `USERS_DB_ROLE_USER=...`
-- `USERS_DB_ROLE_ADMIN=...`
+Los valores persistidos son fijos en código (`user` / `admin`) vía `server/config/usersDbRoles.ts` (sin leer env por ahora).
 
 ## Checklist con DB real
 
