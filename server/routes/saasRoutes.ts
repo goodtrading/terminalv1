@@ -65,8 +65,10 @@ const patchUserBody = z.object({
 });
 
 const grantSubBody = z.object({
-  planId: z.number().int().positive(),
-  extraDays: z.number().int().positive().optional(),
+  planId: z.coerce.number().int().positive(),
+  extraDays: z.coerce.number().int().positive().optional(),
+  startsAt: z.string().optional(),
+  endsAt: z.string().optional(),
 });
 
 /** Admin table: derive onboarding column from DB `users.status` (includes legacy values if still present). */
@@ -421,13 +423,35 @@ export function registerSaasRoutes(app: Express): void {
           return;
         }
         await setUserActive(id, true);
-        await grantSubscriptionForUser(id, parsed.data.planId, parsed.data.extraDays);
+        const startsAt = parsed.data.startsAt ? new Date(parsed.data.startsAt) : undefined;
+        const endsAt = parsed.data.endsAt ? new Date(parsed.data.endsAt) : undefined;
+        if (parsed.data.startsAt && Number.isNaN(startsAt!.getTime())) {
+          res.status(400).json({ error: "BAD_DATES", detail: "startsAt is not a valid date" });
+          return;
+        }
+        if (parsed.data.endsAt && Number.isNaN(endsAt!.getTime())) {
+          res.status(400).json({ error: "BAD_DATES", detail: "endsAt is not a valid date" });
+          return;
+        }
+        await grantSubscriptionForUser(id, parsed.data.planId, {
+          extraDays: parsed.data.extraDays,
+          startsAt,
+          endsAt,
+        });
         await setUserOnboardingStatus(id, "active");
         const access = await getAccessForUserId(id);
         res.json({ ok: true, access });
-      } catch (e: any) {
-        console.error("[SaaS] admin activate-access", e);
-        res.status(500).json({ error: "ADMIN_ACTIVATE_ACCESS_FAILED" });
+      } catch (e: unknown) {
+        const err = e as { message?: string };
+        console.error("SUBSCRIPTION ERROR:", e);
+        if (err?.message === "PLAN_NOT_FOUND") {
+          res.status(400).json({ error: "PLAN_NOT_FOUND", detail: err.message });
+          return;
+        }
+        res.status(500).json({
+          error: "SUBSCRIPTION_FAILED",
+          detail: err?.message ?? String(e),
+        });
       }
     },
   );
@@ -436,6 +460,7 @@ export function registerSaasRoutes(app: Express): void {
     "/api/admin/users/:id/subscription",
     requireSaasAdmin,
     async (req: Request, res: Response) => {
+      console.log("ACTIVATE SUBSCRIPTION PAYLOAD:", req.body);
       try {
         const id = Number(req.params.id);
         if (!Number.isFinite(id)) {
@@ -452,13 +477,35 @@ export function registerSaasRoutes(app: Express): void {
           res.status(404).json({ error: "NOT_FOUND" });
           return;
         }
-        await grantSubscriptionForUser(id, parsed.data.planId, parsed.data.extraDays);
+        const startsAt = parsed.data.startsAt ? new Date(parsed.data.startsAt) : undefined;
+        const endsAt = parsed.data.endsAt ? new Date(parsed.data.endsAt) : undefined;
+        if (parsed.data.startsAt && Number.isNaN(startsAt!.getTime())) {
+          res.status(400).json({ error: "BAD_DATES", detail: "startsAt is not a valid date" });
+          return;
+        }
+        if (parsed.data.endsAt && Number.isNaN(endsAt!.getTime())) {
+          res.status(400).json({ error: "BAD_DATES", detail: "endsAt is not a valid date" });
+          return;
+        }
+        await grantSubscriptionForUser(id, parsed.data.planId, {
+          extraDays: parsed.data.extraDays,
+          startsAt,
+          endsAt,
+        });
         await setUserOnboardingStatus(id, "active");
         const access = await getAccessForUserId(id);
         res.json({ ok: true, access });
-      } catch (e: any) {
-        console.error("[SaaS] admin grant sub", e);
-        res.status(500).json({ error: "ADMIN_GRANT_FAILED" });
+      } catch (e: unknown) {
+        const err = e as { message?: string };
+        console.error("SUBSCRIPTION ERROR:", e);
+        if (err?.message === "PLAN_NOT_FOUND") {
+          res.status(400).json({ error: "PLAN_NOT_FOUND", detail: err.message });
+          return;
+        }
+        res.status(500).json({
+          error: "SUBSCRIPTION_FAILED",
+          detail: err?.message ?? String(e),
+        });
       }
     },
   );

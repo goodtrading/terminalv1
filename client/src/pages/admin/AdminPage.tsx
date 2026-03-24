@@ -66,7 +66,8 @@ function userStateBadge(state: ReturnType<typeof userState>) {
 function subscriptionState(row: AdminUserRow): string {
   if (!row.isActive) return "INACTIVE USER";
   if (row.access?.allowed) return "ACTIVE";
-  if (row.latestSubscription?.status === "expired") return "EXPIRED";
+  if (row.latestSubscription?.status === "expired" || row.latestSubscription?.status === "inactive")
+    return "EXPIRED";
   const reason = row.access?.reason || "";
   if (reason === "no_subscription") return "NO SUBSCRIPTION";
   if (reason === "expired") return "EXPIRED";
@@ -170,6 +171,11 @@ export default function AdminPage() {
   const activateSubscription = async (userId: number) => {
     const token = getAuthToken();
     if (!token) return;
+    if (!plans.length || !plans.some((p) => p.id === grantPlanId)) {
+      setErr("Seleccioná un plan válido (esperá a que carguen los planes).");
+      console.error("[admin activate subscription] invalid grantPlanId:", grantPlanId, "plans:", plans);
+      return;
+    }
     const res = await fetch(`/api/admin/users/${userId}/subscription`, {
       method: "POST",
       headers: {
@@ -180,6 +186,10 @@ export default function AdminPage() {
       body: JSON.stringify({ planId: grantPlanId }),
     });
     if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { detail?: string; error?: string };
+      if (data.detail) {
+        console.error("[admin activate subscription] detail:", data.detail);
+      }
       setErr("No se pudo activar suscripción");
       return;
     }

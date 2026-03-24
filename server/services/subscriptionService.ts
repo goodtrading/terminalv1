@@ -2,8 +2,26 @@ import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
 import { db } from "../db";
 import { subscriptionPlans, subscriptions, type SubscriptionPlan } from "@shared/schema";
 
+/** DB / CHECK-friendly literals (lowercase only). */
+export const SUBSCRIPTION_STATUS = {
+  ACTIVE: "active",
+  EXPIRED: "expired",
+  INACTIVE: "inactive",
+} as const;
+
 function requireDb() {
   if (!db) throw new Error("DATABASE_UNAVAILABLE");
+}
+
+function computeDefaultEndsAt(startsAt: Date, plan: SubscriptionPlan, extraDays?: number): Date {
+  const end = new Date(startsAt);
+  const days = extraDays ?? plan.durationDays;
+  if (days > 0) {
+    end.setDate(end.getDate() + days);
+    return end;
+  }
+  end.setMonth(end.getMonth() + 1);
+  return end;
 }
 
 export async function ensureDefaultPlans(): Promise<void> {
@@ -70,7 +88,7 @@ export async function getLatestActiveSubscriptionForUser(userId: number) {
     .where(
       and(
         eq(subscriptions.userId, userId),
-        eq(subscriptions.status, "active"),
+        eq(subscriptions.status, SUBSCRIPTION_STATUS.ACTIVE),
         gt(subscriptions.endsAt, now),
       ),
     )
@@ -98,8 +116,8 @@ export async function markSubscriptionExpiredById(subscriptionId: number): Promi
   requireDb();
   const rows = await db!
     .update(subscriptions)
-    .set({ status: "expired" })
-    .where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.status, "active")))
+    .set({ status: SUBSCRIPTION_STATUS.EXPIRED })
+    .where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.status, SUBSCRIPTION_STATUS.ACTIVE)))
     .returning({ id: subscriptions.id });
   return rows.length > 0;
 }
@@ -109,15 +127,15 @@ export async function createSubscriptionForUser(
   planId: number,
   startsAt = new Date(),
 ): Promise<void> {
+  requireDb();
   const plan = await getPlanById(planId);
   if (!plan) throw new Error("PLAN_NOT_FOUND");
-  const endsAt = new Date(startsAt);
-  endsAt.setDate(endsAt.getDate() + plan.durationDays);
+  const endsAt = computeDefaultEndsAt(startsAt, plan);
 
   await db!.insert(subscriptions).values({
     userId,
     planId,
-    status: "active",
+    status: SUBSCRIPTION_STATUS.ACTIVE,
     startsAt,
     endsAt,
   });
@@ -128,38 +146,65 @@ export async function expireSubscriptionsPastDue(): Promise<number> {
   requireDb();
   const rows = await db!
     .update(subscriptions)
-    .set({ status: "expired" })
-    .where(and(eq(subscriptions.status, "active"), lte(subscriptions.endsAt, now)))
+    .set({ status: SUBSCRIPTION_STATUS.EXPIRED })
+    .where(
+      and(eq(subscriptions.status, SUBSCRIPTION_STATUS.ACTIVE), lte(subscriptions.endsAt, now)),
+    )
     .returning({ id: subscriptions.id });
   return rows.length;
 }
 
+export type GrantSubscriptionOpts = {
+  extraDays?: number;
+  /** If omitted, uses `new Date()` */
+  startsAt?: Date;
+  /** If omitted, computed from plan duration (or +1 month fallback) */
+  endsAt?: Date;
+};
+
+/**
+ * Marks current active rows expired, then inserts one active row into `saas_subscriptions`
+ * (columns: user_id, plan_id, status, starts_at, ends_at).
+ */
 export async function grantSubscriptionForUser(
   userId: number,
   planId: number,
-  extraDays?: number,
+  opts?: GrantSubscriptionOpts,
 ): Promise<void> {
+  requireDb();
   const plan = await getPlanById(planId);
   if (!plan) throw new Error("PLAN_NOT_FOUND");
-  const existing = await getLatestActiveSubscriptionForUser(userId);
-  const startsAt = new Date();
+
   const now = new Date();
+  const startsAt =
+    opts?.startsAt && !Number.isNaN(opts.startsAt.getTime()) ? new Date(opts.startsAt) : new Date();
+
   let endsAt: Date;
-  if (existing && existing.subscription.endsAt > now) {
-    endsAt = new Date(existing.subscription.endsAt);
-    endsAt.setDate(endsAt.getDate() + (extraDays ?? plan.durationDays));
+  if (opts?.endsAt && !Number.isNaN(opts.endsAt.getTime())) {
+    endsAt = new Date(opts.endsAt);
   } else {
-    endsAt = new Date(startsAt);
-    endsAt.setDate(endsAt.getDate() + (extraDays ?? plan.durationDays));
+    const existing = await getLatestActiveSubscriptionForUser(userId);
+    const addDays = opts?.extraDays ?? plan.durationDays;
+    if (existing && existing.subscription.endsAt > now) {
+      endsAt = new Date(existing.subscription.endsAt);
+      const bump = addDays > 0 ? addDays : 30;
+      endsAt.setDate(endsAt.getDate() + bump);
+    } else {
+      endsAt = computeDefaultEndsAt(startsAt, plan, opts?.extraDays);
+    }
   }
+
   await db!
     .update(subscriptions)
-    .set({ status: "expired" })
-    .where(and(eq(subscriptions.userId, userId), eq(subscriptions.status, "active")));
+    .set({ status: SUBSCRIPTION_STATUS.EXPIRED })
+    .where(
+      and(eq(subscriptions.userId, userId), eq(subscriptions.status, SUBSCRIPTION_STATUS.ACTIVE)),
+    );
+
   await db!.insert(subscriptions).values({
     userId,
     planId,
-    status: "active",
+    status: SUBSCRIPTION_STATUS.ACTIVE,
     startsAt,
     endsAt,
   });
@@ -169,8 +214,10 @@ export async function deactivateSubscriptionForUser(userId: number): Promise<num
   requireDb();
   const rows = await db!
     .update(subscriptions)
-    .set({ status: "cancelled" })
-    .where(and(eq(subscriptions.userId, userId), eq(subscriptions.status, "active")))
+    .set({ status: SUBSCRIPTION_STATUS.INACTIVE })
+    .where(
+      and(eq(subscriptions.userId, userId), eq(subscriptions.status, SUBSCRIPTION_STATUS.ACTIVE)),
+    )
     .returning({ id: subscriptions.id });
   return rows.length;
 }
