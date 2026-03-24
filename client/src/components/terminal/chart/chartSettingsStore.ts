@@ -1,10 +1,15 @@
 import { useSyncExternalStore } from "react";
 import type { ChartSettings } from "./chartSettingsTypes";
-import { DEFAULT_CHART_SETTINGS, loadChartSettings, saveChartSettings } from "./persistChartSettings";
+import {
+  DEFAULT_SETTINGS,
+  loadTerminalSettings,
+  resetTerminalSettingsStorage,
+  saveTerminalSettings,
+} from "@/lib/terminalSettings";
 
 const PERSIST_DEBOUNCE_MS = 220;
 
-let state: ChartSettings = loadChartSettings();
+let state: ChartSettings = loadTerminalSettings();
 const listeners = new Set<() => void>();
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -16,7 +21,7 @@ function schedulePersist() {
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
-    saveChartSettings(state);
+    saveTerminalSettings(state);
   }, PERSIST_DEBOUNCE_MS);
 }
 
@@ -44,9 +49,9 @@ export function replaceChartSettings(next: ChartSettings): void {
 }
 
 export function resetChartSettings(): void {
-  state = JSON.parse(JSON.stringify(DEFAULT_CHART_SETTINGS)) as ChartSettings;
+  state = resetTerminalSettingsStorage();
   emit();
-  saveChartSettings(state);
+  saveTerminalSettings(state);
 }
 
 export function subscribeChartSettings(listener: () => void): () => void {

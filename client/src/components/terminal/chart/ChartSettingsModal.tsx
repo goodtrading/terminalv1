@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Switch } from "../common/Switch";
 import type { ChartSettings, ChartSettingsTabId } from "./chartSettingsTypes";
-import { getChartSettings, replaceChartSettings, resetChartSettings, setChartSettings } from "./chartSettingsStore";
+import { getChartSettings, resetChartSettings, setChartSettings } from "./chartSettingsStore";
 
 const TABS: { id: ChartSettingsTabId; label: string }[] = [
   { id: "appearance", label: "Apariencia" },
@@ -42,22 +42,17 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 export function ChartSettingsModal({ open, onClose }: ChartSettingsModalProps) {
   const [tab, setTab] = useState<ChartSettingsTabId>("appearance");
   const [draft, setDraft] = useState<ChartSettings>(() => getChartSettings());
-  const snapshotRef = useRef<ChartSettings | null>(null);
 
+  // Re-sync local draft when opening so tabs reflect current store (e.g. after external updates).
   useEffect(() => {
     if (!open) return;
-    const current = getChartSettings();
-    snapshotRef.current = JSON.parse(JSON.stringify(current)) as ChartSettings;
-    setDraft(current);
+    setDraft(getChartSettings());
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (snapshotRef.current) replaceChartSettings(snapshotRef.current);
-        onClose();
-      }
+      if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -75,15 +70,9 @@ export function ChartSettingsModal({ open, onClose }: ChartSettingsModalProps) {
     }
   };
 
-  const handleCancel = () => {
-    if (snapshotRef.current) replaceChartSettings(snapshotRef.current);
-    onClose();
-  };
-
   const handleResetDefaults = () => {
     resetChartSettings();
-    const now = getChartSettings();
-    setDraft(now);
+    setDraft(getChartSettings());
     window.dispatchEvent(new CustomEvent("gt-chart-drawings-defaults"));
   };
 
@@ -100,9 +89,11 @@ export function ChartSettingsModal({ open, onClose }: ChartSettingsModalProps) {
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.08]">
           <div>
             <h2 className="text-[11px] font-mono font-bold tracking-[0.14em] text-white/90 uppercase">Opciones de configuracion</h2>
-            <p className="text-[10px] font-mono text-white/45 mt-0.5">Aplicacion en vivo + persistencia automatica</p>
+            <p className="text-[10px] font-mono text-white/45 mt-0.5">
+              Cambios en vivo; se guardan solos. Cerrar no deshace nada.
+            </p>
           </div>
-          <button type="button" onClick={handleCancel} className="text-[10px] font-mono text-white/45 hover:text-white/80 px-2 py-1">
+          <button type="button" onClick={onClose} className="text-[10px] font-mono text-white/45 hover:text-white/80 px-2 py-1">
             Esc
           </button>
         </div>
@@ -366,10 +357,10 @@ export function ChartSettingsModal({ open, onClose }: ChartSettingsModalProps) {
           </button>
           <button
             type="button"
-            onClick={handleCancel}
+            onClick={onClose}
             className="px-3 py-1.5 text-[10px] font-mono border border-white/15 rounded-sm text-white/75 hover:bg-white/5 transition-colors"
           >
-            Cancelar sesion
+            Cerrar
           </button>
         </div>
       </div>
