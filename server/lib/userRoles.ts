@@ -16,5 +16,8 @@ export function apiRoleToDbRole(api: "user" | "admin"): string {
 
 /** Map stored `users.role` to the API / JWT shape (`user` | `admin`). */
 export function dbRoleToApiRole(db: string): "user" | "admin" {
+  const n = db.trim().toLowerCase();
+  if (n === getUsersDbRoleAdmin().toLowerCase()) return API_ROLE_ADMIN;
+  if (n === getUsersDbRoleUser().toLowerCase()) return API_ROLE_USER;
   return isAdminRole(db) ? API_ROLE_ADMIN : API_ROLE_USER;
 }
