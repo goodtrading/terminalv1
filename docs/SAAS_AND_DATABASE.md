@@ -1,15 +1,25 @@
 # SaaS, auth y `DATABASE_URL`
 
-## Tablas en Postgres (prefijo `saas_`)
+## Tablas en Postgres
 
-Para no chocar con tablas **legacy** en la misma base (`users`, `subscriptions`, etc.), el esquema Drizzle usa:
+Auth y perfil viven en **`users`**. Planes y suscripciones usan prefijo `saas_` en el nombre de tabla, pero **`user_id` siempre referencia `users.id`** (no existe `saas_users` en el código).
 
 | Tabla Drizzle | Nombre en DB |
 |---------------|----------------|
-| `users` | `saas_users` |
+| `users` | `users` |
 | `subscriptionPlans` | `saas_subscription_plans` |
-| `subscriptions` | `saas_subscriptions` |
-| `payments` | `saas_payments` |
+| `subscriptions` | `saas_subscriptions` (`user_id` → `users.id`) |
+| `payments` | `saas_payments` (`user_id` → `users.id`) |
+
+### FK antigua apuntando a `saas_users`
+
+Si Postgres devuelve error del tipo `Key (user_id) is not present in table "saas_users"`, la FK en `saas_subscriptions` (y a veces `saas_payments`) sigue referenciando una tabla equivocada. Corregir:
+
+```bash
+npm run db:fix:saas-fk-users
+```
+
+O ejecutar manualmente `scripts/sql/repoint_saas_subscriptions_user_id_to_users.sql` en Neon/psql.
 
 ### Aplicar solo DDL SaaS (sin prompts de renombre)
 

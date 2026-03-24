@@ -164,7 +164,7 @@ export type GrantSubscriptionOpts = {
 
 /**
  * Marks current active rows expired, then inserts one active row into `saas_subscriptions`
- * (columns: user_id, plan_id, status, starts_at, ends_at).
+ * (`user_id` = `users.id` from app auth; never `saas_users`).
  */
 export async function grantSubscriptionForUser(
   userId: number,
