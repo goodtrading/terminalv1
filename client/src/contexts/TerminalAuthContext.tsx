@@ -59,6 +59,7 @@ async function fetchMe(): Promise<MeResponse> {
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch("/api/auth/me", {
     credentials: "include",
+    cache: "no-store",
     headers: Object.keys(headers).length ? headers : undefined,
   });
   if (res.status === 401) {

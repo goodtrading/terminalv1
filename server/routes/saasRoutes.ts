@@ -193,6 +193,11 @@ export function registerSaasRoutes(app: Express): void {
   });
 
   app.get("/api/auth/me", optionalSaasAuth, async (req: Request, res: Response) => {
+    res.set({
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    });
     try {
       if (!req.saasUser) {
         res.json({ user: null, access: null });

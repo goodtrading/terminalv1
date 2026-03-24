@@ -568,6 +568,11 @@ export async function registerRoutes(
     };
     // GET: frontend needs JSON + saasDisabled (not HTML from Vite catch-all)
     app.get("/api/auth/me", (_req, res) => {
+      res.set({
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      });
       res.json({ user: null, access: null, saasDisabled: true });
     });
     app.get("/api/plans", (_req, res) => {
