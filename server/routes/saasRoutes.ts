@@ -130,7 +130,7 @@ export function registerSaasRoutes(app: Express): void {
       }
 
       const user = await createUser(normalizedEmail, password, "user", { fullName });
-      console.info(logPrefix, "insert ok", { id: user.id, email: user.email, status: user.status });
+      console.info(logPrefix, "insert ok", { id: user.id, email: user.email, fullName: user.fullName, status: user.status });
 
       const token = signUserToken({
         id: user.id,
@@ -147,12 +147,20 @@ export function registerSaasRoutes(app: Express): void {
           id: user.id,
           email: user.email,
           role: user.role,
-          fullName: user.fullName ?? null,
+          fullName: user.fullName,
         },
         access,
       });
     } catch (e: any) {
-      console.error(logPrefix, "failed", e?.message ?? e, e?.stack);
+      const pg = e && typeof e === "object";
+      console.error(logPrefix, "failed", {
+        message: e?.message ?? String(e),
+        code: pg ? e.code : undefined,
+        detail: pg ? e.detail : undefined,
+        constraint: pg ? e.constraint : undefined,
+        column: pg ? e.column : undefined,
+        stack: e?.stack,
+      });
       res.status(500).json({ error: "REGISTER_FAILED" });
     }
   });

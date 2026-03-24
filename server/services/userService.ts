@@ -24,6 +24,15 @@ function requireDb() {
   if (!db) throw new Error("DATABASE_UNAVAILABLE");
 }
 
+/** DB requires non-null full_name; name stays optional in API — fallback to email local part. */
+export function resolveUserFullName(email: string, optionalName?: string | null): string {
+  const n = typeof optionalName === "string" ? optionalName.trim() : "";
+  if (n.length > 0) return n;
+  const local = email.split("@")[0]?.trim();
+  if (local && local.length > 0) return local;
+  return "user";
+}
+
 export async function findUserByEmail(email: string): Promise<User | undefined> {
   requireDb();
   const rows = await db!.select().from(users).where(eq(users.email, email.toLowerCase().trim()));
@@ -44,12 +53,13 @@ export async function createUser(
 ): Promise<User> {
   requireDb();
   const passwordHash = await hashPassword(password);
-  const fullName = opts?.fullName?.trim() ?? null;
+  const normalizedEmail = email.toLowerCase().trim();
+  const fullName = resolveUserFullName(normalizedEmail, opts?.fullName ?? null);
   const status = role === "admin" ? "active" : "pending";
   const inserted = await db!
     .insert(users)
     .values({
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       passwordHash,
       fullName,
       role,
