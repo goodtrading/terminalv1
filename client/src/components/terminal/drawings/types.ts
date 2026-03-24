@@ -10,7 +10,9 @@ export type DrawingTool =
   | "arrow"
   | "rectangle"
   | "text"
-  | "polyline";
+  | "polyline"
+  | "longPosition"
+  | "shortPosition";
 
 export type SmartToolKind = "gammaZone" | "liquidityZone" | "sweep" | "magnet";
 
@@ -31,6 +33,17 @@ export interface BaseDrawing {
   selected?: boolean;
   createdAt: number;
   text?: string;
+  entryPrice?: number;
+  stopPrice?: number;
+  targetPrice?: number;
+  accountSize?: number;
+  riskPercent?: number;
+  leverage?: number;
+  quantity?: number;
+  showLabels?: boolean;
+  labelPrecision?: number;
+  targetColor?: string;
+  stopColor?: string;
 }
 
 export type Drawing = BaseDrawing;
@@ -47,6 +60,9 @@ export function getToolPointCount(tool: DrawingTool): number | { min: number; ma
       return 2;
     case "polyline":
       return { min: 2, max: 10 };
+    case "longPosition":
+    case "shortPosition":
+      return 2;
     default:
       return 0;
   }

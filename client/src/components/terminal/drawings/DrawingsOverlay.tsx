@@ -1,10 +1,23 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo, forwardRef } from "react";
+import type { MutableRefObject } from "react";
 import { DrawingsCanvas } from "./DrawingsCanvas";
 import { DrawingHitRegions } from "./DrawingHitRegions";
 import { DrawingAnchorHandles } from "./DrawingAnchorHandles";
 import { drawDebug, getChartViewportVersion } from "./debug";
 import { createDrawingProjection } from "./projection";
 import type { Drawing, DrawingTool } from "./types";
+import { getPositionMetrics, isPositionDrawing } from "./positionUtils";
+import { PositionDrawingEditor } from "./PositionDrawingEditor";
+
+type PositionDragMode = "position-entry" | "position-stop" | "position-target" | "position-right-edge" | null;
+
+function resolvePositionDragMode(pointIndex: number): PositionDragMode {
+  if (pointIndex === 100) return "position-entry";
+  if (pointIndex === 101) return "position-stop";
+  if (pointIndex === 102) return "position-target";
+  if (pointIndex === 103) return "position-right-edge";
+  return null;
+}
 
 export interface DrawingsState {
   drawings: Drawing[];
@@ -22,6 +35,9 @@ export interface DrawingsState {
   addPolylinePoint: (time: number, price: number) => void;
   updatePendingEnd: (time: number, price: number) => void;
   updatePoint: (id: string, pointIndex: number, pt: { time: number; price: number }) => void;
+  updateDrawing: (id: string, updates: Partial<Drawing>) => void;
+  updatePositionLevels: (id: string, updates: Partial<Pick<Drawing, "entryPrice" | "targetPrice" | "stopPrice">>) => void;
+  movePositionDrawing: (id: string, deltaTime: number, deltaPrice: number) => void;
   finishDrawing: (time?: number, price?: number) => void;
   confirmTextDrawing: (text: string) => void;
   completePolyline: () => void;
@@ -42,6 +58,7 @@ interface DrawingsCoordinateHelpers {
 }
 
 interface DrawingsOverlayProps {
+  editorOpenRequestId?: string | null;
   chartWidth: number;
   chartHeight: number;
   viewportVersion?: number;
@@ -49,13 +66,17 @@ interface DrawingsOverlayProps {
   drawingsState: DrawingsState;
 }
 
-export function DrawingsOverlay({
+export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(function DrawingsOverlay(
+  {
+  editorOpenRequestId = null,
   chartWidth,
   chartHeight,
   viewportVersion = 0,
   coordinates,
   drawingsState,
-}: DrawingsOverlayProps) {
+  },
+  forwardedRef
+) {
   const {
     priceToCoordinate,
     timeToCoordinate,
@@ -81,6 +102,9 @@ export function DrawingsOverlay({
     addPolylinePoint,
     updatePendingEnd,
     updatePoint,
+    updateDrawing,
+    updatePositionLevels,
+    movePositionDrawing,
     finishDrawing,
     confirmTextDrawing,
     completePolyline,
@@ -89,10 +113,21 @@ export function DrawingsOverlay({
   } = drawingsState;
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const setContainerRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      containerRef.current = el;
+      if (typeof forwardedRef === "function") forwardedRef(el);
+      else if (forwardedRef) (forwardedRef as MutableRefObject<HTMLDivElement | null>).current = el;
+    },
+    [forwardedRef]
+  );
   const textInputRef = useRef<HTMLInputElement | null>(null);
   const [textInput, setTextInput] = useState<{ x: number; y: number; time: number; price: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [interactionTick, setInteractionTick] = useState(0);
+  const [positionBodyDrag, setPositionBodyDrag] = useState<{ id: string; anchorTime: number; anchorPrice: number } | null>(null);
+  const [positionEditorOpen, setPositionEditorOpen] = useState(false);
+  const lastDragReleaseAtRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const interactionRef = useRef(false);
   const wheelEndRef = useRef<number | null>(null);
@@ -292,7 +327,9 @@ export function DrawingsOverlay({
     (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (isDraggingAnchor) setDraggingAnchor(null);
-        else {
+        else if (positionEditorOpen && selectedDrawing && isPositionDrawing(selectedDrawing)) {
+          setPositionEditorOpen(false);
+        } else {
           cancelPending();
           setTextInput(null);
           selectDrawing(null);
@@ -305,13 +342,26 @@ export function DrawingsOverlay({
       if (e.key === "Delete" || e.key === "Backspace") removeSelected();
       if (e.key === "Enter" && pendingDrawing?.tool === "polyline") completePolyline();
     },
-    [isDraggingAnchor, setDraggingAnchor, cancelPending, selectDrawing, removeSelected, removeLastPolylinePoint, pendingDrawing, completePolyline]
+    [isDraggingAnchor, positionEditorOpen, selectedDrawing, setDraggingAnchor, cancelPending, selectDrawing, removeSelected, removeLastPolylinePoint, pendingDrawing, completePolyline]
   );
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
+
+  useEffect(() => {
+    if (!editorOpenRequestId) return;
+    if (selectedDrawing && selectedDrawing.id === editorOpenRequestId && isPositionDrawing(selectedDrawing)) {
+      setPositionEditorOpen(true);
+    }
+  }, [editorOpenRequestId, selectedDrawing]);
+
+  useEffect(() => {
+    if (!selectedDrawing || !isPositionDrawing(selectedDrawing) || activeTool !== "select") {
+      setPositionEditorOpen(false);
+    }
+  }, [selectedDrawing, activeTool]);
 
   useEffect(() => {
     if (!draggingAnchor) return;
@@ -322,8 +372,41 @@ export function DrawingsOverlay({
       const y = e.clientY - rect.top;
       const time = coordinateToTime(x);
       const price = coordinateToPrice(y);
-      if (time == null || price == null) return;
       const d = drawings.find((x) => x.id === draggingAnchor.id);
+      if (!d || d.locked) return;
+      const dragMode = resolvePositionDragMode(draggingAnchor.pointIndex);
+      if (isPositionDrawing(d) && dragMode) {
+        if (dragMode === "position-right-edge") {
+          if (time == null) return;
+          const startTime = d.points[0]?.time ?? time;
+          const barSec = Math.max(1, Math.floor(getBarSec?.() ?? 900));
+          const minSpanSec = barSec; // at least one bar
+          const maxSpanSec = barSec * 2500; // defensive bound to avoid pathological spans
+          const minAllowed = startTime + minSpanSec;
+          const maxAllowed = startTime + maxSpanSec;
+          const nextTime = Math.min(maxAllowed, Math.max(minAllowed, time));
+          if (!Number.isFinite(nextTime)) return;
+          const p1 = d.points[1];
+          if (!p1) return;
+          updatePoint(d.id, 1, { time: nextTime, price: p1.price });
+          return;
+        }
+        if (price == null) return;
+        if (dragMode === "position-target") {
+          updatePositionLevels(d.id, { targetPrice: price });
+          return;
+        }
+        if (dragMode === "position-stop") {
+          updatePositionLevels(d.id, { stopPrice: price });
+          return;
+        }
+        if (dragMode === "position-entry") {
+          const currentEntry = d.entryPrice ?? d.points[0]?.price ?? price;
+          movePositionDrawing(d.id, 0, price - currentEntry);
+          return;
+        }
+      }
+      if (time == null || price == null) return;
       const pt = d?.points?.[draggingAnchor.pointIndex];
       if (d?.tool === "horizontalLine" && pt != null) {
         updatePoint(draggingAnchor.id, draggingAnchor.pointIndex, { time: pt.time, price });
@@ -338,10 +421,12 @@ export function DrawingsOverlay({
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [draggingAnchor, drawings, coordinateToTime, coordinateToPrice, updatePoint, setDraggingAnchor]);
+  }, [draggingAnchor, drawings, coordinateToTime, coordinateToPrice, getBarSec, updatePoint, updatePositionLevels, movePositionDrawing, setDraggingAnchor]);
 
   const handleDrawClick = useCallback(
     (e: React.MouseEvent) => {
+      // Position tools use explicit mouse down/move/up flow; avoid click-driven partial creation.
+      if (activeTool === "longPosition" || activeTool === "shortPosition") return;
       const c = getCoords(e);
       if (!c) return;
 
@@ -365,7 +450,10 @@ export function DrawingsOverlay({
         return;
       }
 
-      if (pendingDrawing && (pendingDrawing.tool === "trendLine" || pendingDrawing.tool === "arrow" || pendingDrawing.tool === "rectangle")) {
+      if (
+        pendingDrawing &&
+        (pendingDrawing.tool === "trendLine" || pendingDrawing.tool === "arrow" || pendingDrawing.tool === "rectangle")
+      ) {
         finishDrawing(c.time, c.price);
       } else {
         drawDebug("START_POINT", {
@@ -437,6 +525,12 @@ export function DrawingsOverlay({
         return;
       }
 
+      if ((activeTool === "longPosition" || activeTool === "shortPosition") && !pendingDrawing) {
+        startDrawing(c.time, c.price);
+        setIsDragging(true);
+        return;
+      }
+
       if (activeTool === "rectangle" && !pendingDrawing) {
         drawDebug("START_POINT", {
           source: "DrawingsOverlay.handleDrawMouseDown:rectangle",
@@ -460,34 +554,162 @@ export function DrawingsOverlay({
       const c = getCoords(e);
       if (!c) return;
 
-      if (draggingAnchor) {
-        const d = drawings.find((x) => x.id === draggingAnchor.id);
-        if (d && !d.locked) updatePoint(draggingAnchor.id, draggingAnchor.pointIndex, { time: c.time, price: c.price });
+      if (positionBodyDrag) {
+        const d = drawings.find((x) => x.id === positionBodyDrag.id);
+        if (d && isPositionDrawing(d)) {
+          movePositionDrawing(d.id, c.time - positionBodyDrag.anchorTime, c.price - positionBodyDrag.anchorPrice);
+          setPositionBodyDrag({ id: d.id, anchorTime: c.time, anchorPrice: c.price });
+        }
         return;
       }
 
-      if (isDragging && pendingDrawing?.tool === "rectangle") {
+      if (draggingAnchor) {
+        const d = drawings.find((x) => x.id === draggingAnchor.id);
+        if (d && !d.locked) {
+          if (isPositionDrawing(d) && draggingAnchor.pointIndex >= 100) {
+            const kind = draggingAnchor.pointIndex - 100;
+            if (kind === 0) updatePositionLevels(d.id, { entryPrice: c.price });
+            if (kind === 1) updatePositionLevels(d.id, { stopPrice: c.price });
+            if (kind === 2) updatePositionLevels(d.id, { targetPrice: c.price });
+          } else {
+            updatePoint(draggingAnchor.id, draggingAnchor.pointIndex, { time: c.time, price: c.price });
+          }
+        }
+        return;
+      }
+
+      if (
+        isDragging &&
+        pendingDrawing &&
+        (pendingDrawing.tool === "rectangle" || pendingDrawing.tool === "longPosition" || pendingDrawing.tool === "shortPosition")
+      ) {
         updatePendingEnd(c.time, c.price);
       } else if (pendingDrawing && (pendingDrawing.tool === "trendLine" || pendingDrawing.tool === "arrow" || pendingDrawing.tool === "rectangle")) {
         updatePendingEnd(c.time, c.price);
       }
     },
-    [draggingAnchor, isDragging, pendingDrawing, drawings, getCoords, updatePoint, updatePendingEnd]
+    [positionBodyDrag, draggingAnchor, isDragging, pendingDrawing, drawings, getCoords, movePositionDrawing, updatePositionLevels, updatePoint, updatePendingEnd]
   );
 
   const handleDrawMouseUp = useCallback(
     (e: React.MouseEvent) => {
       if (draggingAnchor) {
         setDraggingAnchor(null);
+        lastDragReleaseAtRef.current = Date.now();
         return;
       }
-      if (isDragging && pendingDrawing?.tool === "rectangle") {
+      if (positionBodyDrag) {
+        setPositionBodyDrag(null);
+        lastDragReleaseAtRef.current = Date.now();
+        return;
+      }
+      if (
+        isDragging &&
+        pendingDrawing &&
+        (pendingDrawing.tool === "rectangle" || pendingDrawing.tool === "longPosition" || pendingDrawing.tool === "shortPosition")
+      ) {
         const c = getCoords(e);
-        if (c) finishDrawing(c.time, c.price);
+        if (c) {
+          if (pendingDrawing.tool === "longPosition" || pendingDrawing.tool === "shortPosition") {
+            const firstTime = pendingDrawing.points[0]?.time ?? c.time;
+            const barSec = getBarSec?.() ?? 900;
+            const minSpan = Math.max(1, Math.floor(barSec * 6));
+            const finalTime = Math.max(firstTime + minSpan, c.time);
+            // Let finishDrawing decide validity using normalized levels.
+            finishDrawing(finalTime, c.price);
+          } else {
+            finishDrawing(c.time, c.price);
+          }
+        }
         setIsDragging(false);
+        lastDragReleaseAtRef.current = Date.now();
       }
     },
-    [draggingAnchor, isDragging, pendingDrawing, getCoords, setDraggingAnchor, finishDrawing]
+    [draggingAnchor, positionBodyDrag, isDragging, pendingDrawing, getCoords, setDraggingAnchor, finishDrawing, getBarSec]
+  );
+
+  const handleSelectMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (!selectedDrawing || !isPositionDrawing(selectedDrawing) || selectedDrawing.locked) return;
+      const c = getCoords(e);
+      if (!c) return;
+      const metrics = getPositionMetrics(selectedDrawing);
+      if (!metrics || selectedDrawing.points.length < 2) return;
+      const x1 = timeToX(selectedDrawing.points[0].time);
+      const x2 = timeToX(selectedDrawing.points[1].time);
+      const yTop = priceToY(Math.max(metrics.entry, metrics.stop, metrics.target));
+      const yBot = priceToY(Math.min(metrics.entry, metrics.stop, metrics.target));
+      if (x1 == null || x2 == null || yTop == null || yBot == null) return;
+      const left = Math.min(x1, x2);
+      const right = Math.max(x1, x2);
+      const top = Math.min(yTop, yBot);
+      const bottom = Math.max(yTop, yBot);
+      if (c.x >= left && c.x <= right && c.y >= top && c.y <= bottom) {
+        setPositionEditorOpen(false);
+        setPositionBodyDrag({ id: selectedDrawing.id, anchorTime: c.time, anchorPrice: c.price });
+        e.preventDefault();
+      }
+    },
+    [selectedDrawing, getCoords, timeToX, priceToY]
+  );
+
+  const isPointInsideSelectedPosition = useCallback(
+    (x: number, y: number) => {
+      if (!selectedDrawing || !isPositionDrawing(selectedDrawing)) return false;
+      const m = getPositionMetrics(selectedDrawing);
+      if (!m || selectedDrawing.points.length < 2) return false;
+      const x1 = timeToX(selectedDrawing.points[0].time);
+      const x2 = timeToX(selectedDrawing.points[1].time);
+      const yTop = priceToY(Math.max(m.entry, m.stop, m.target));
+      const yBot = priceToY(Math.min(m.entry, m.stop, m.target));
+      if (x1 == null || x2 == null || yTop == null || yBot == null) return false;
+      const left = Math.min(x1, x2);
+      const right = Math.max(x1, x2);
+      const top = Math.min(yTop, yBot);
+      const bottom = Math.max(yTop, yBot);
+      return x >= left && x <= right && y >= top && y <= bottom;
+    },
+    [selectedDrawing, timeToX, priceToY]
+  );
+
+  const handleSelectClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (!selectedDrawing || !isPositionDrawing(selectedDrawing)) return;
+      const c = getCoords(e);
+      if (!c) return;
+      const hit = hitTest(c.x, c.y, timeToX, priceToY);
+      if (hit == null) {
+        setPositionEditorOpen(false);
+        selectDrawing(null);
+        e.stopPropagation();
+        return;
+      }
+      if (hit.id === selectedDrawing.id && isPointInsideSelectedPosition(c.x, c.y)) {
+        return;
+      }
+      selectDrawing(hit.id);
+      setPositionEditorOpen(false);
+      e.stopPropagation();
+    },
+    [selectedDrawing, getCoords, hitTest, timeToX, priceToY, isPointInsideSelectedPosition, selectDrawing]
+  );
+
+  const handleSelectDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (!selectedDrawing || !isPositionDrawing(selectedDrawing)) return;
+      if (Date.now() - lastDragReleaseAtRef.current < 500) return;
+      const c = getCoords(e);
+      if (!c) return;
+      if (isPointInsideSelectedPosition(c.x, c.y)) {
+        setPositionEditorOpen(true);
+        e.stopPropagation();
+        return;
+      }
+      setPositionEditorOpen(false);
+      selectDrawing(null);
+      e.stopPropagation();
+    },
+    [selectedDrawing, getCoords, isPointInsideSelectedPosition, selectDrawing]
   );
 
   const handleTextSubmit = useCallback(
@@ -498,9 +720,23 @@ export function DrawingsOverlay({
     [confirmTextDrawing]
   );
 
+  const handleEmptyClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (!selectedDrawing) return;
+      const c = getCoords(e);
+      if (!c) return;
+      const hit = hitTest(c.x, c.y, timeToX, priceToY);
+      if (hit == null) {
+        selectDrawing(null);
+        e.stopPropagation();
+      }
+    },
+    [selectedDrawing, getCoords, hitTest, timeToX, priceToY, selectDrawing]
+  );
+
   return (
     <div
-      ref={containerRef}
+      ref={setContainerRef}
       className="absolute inset-0 z-[15] pointer-events-none"
       style={{ width: chartWidth, height: chartHeight }}
     >
@@ -530,6 +766,13 @@ export function DrawingsOverlay({
         />
       )}
 
+      {!isDrawMode && selectedDrawing && !isPositionDrawing(selectedDrawing) && (
+        <div
+          className="absolute inset-0 pointer-events-auto"
+          style={{ zIndex: 1 }}
+          onClick={handleEmptyClick}
+        />
+      )}
       {!isDrawMode && drawings.length > 0 && (
         <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 2 }}>
           <DrawingHitRegions
@@ -556,6 +799,15 @@ export function DrawingsOverlay({
             onAnchorMouseDown={(pointIndex) => setDraggingAnchor({ id: selectedDrawing.id, pointIndex })}
           />
         </div>
+      )}
+      {!isDrawMode && selectedDrawing && isPositionDrawing(selectedDrawing) && (
+        <div
+          className="absolute inset-0 pointer-events-auto"
+          style={{ zIndex: 2 }}
+          onClick={handleSelectClick}
+          onMouseDown={handleSelectMouseDown}
+          onDoubleClick={handleSelectDoubleClick}
+        />
       )}
 
 
@@ -587,6 +839,15 @@ export function DrawingsOverlay({
           />
         </div>
       )}
+      {selectedDrawing && isPositionDrawing(selectedDrawing) && (
+        <PositionDrawingEditor
+          open={positionEditorOpen}
+          drawing={selectedDrawing}
+          onClose={() => setPositionEditorOpen(false)}
+          onUpdate={(updates) => updateDrawing(selectedDrawing.id, updates)}
+          onUpdateLevels={(updates) => updatePositionLevels(selectedDrawing.id, updates)}
+        />
+      )}
     </div>
   );
-}
+});

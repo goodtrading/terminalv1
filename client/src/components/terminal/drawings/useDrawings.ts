@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect } from "react";
 import type { Drawing, DrawingPoint, DrawingTool, SmartToolKind } from "./types";
 import { DEFAULT_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_OPACITY, getToolPointCount } from "./types";
 import { loadDrawings, saveDrawings } from "./persistence";
+import { getChartSettings } from "../chart/chartSettingsStore";
+import { getPositionMetrics, isPositionDrawing, nextPositionLevels } from "./positionUtils";
 
 const MAX_POLYLINE_POINTS = 10;
 const HIT_THRESHOLD = 10;
@@ -49,7 +51,30 @@ export function useDrawings(symbol: string, timeframe: string) {
     rectangle: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
     text: { color: "#ffffff", lineWidth: 1, opacity: 1 },
     polyline: { color: "#ffffff", lineWidth: 2, opacity: 1 },
+    longPosition: { color: "#22c55e", lineWidth: 1, opacity: 0.9 },
+    shortPosition: { color: "#ef4444", lineWidth: 1, opacity: 0.9 },
   });
+
+  useEffect(() => {
+    const onDrawingDefaults = () => {
+      const ds = getChartSettings().drawings;
+      setToolStyles((prev) => {
+        const next = { ...prev };
+        (Object.keys(next) as DrawingTool[]).forEach((t) => {
+          if (t === "select") return;
+          next[t] = {
+            ...next[t],
+            color: ds.defaultColor,
+            lineWidth: ds.defaultLineWidth,
+            opacity: ds.defaultOpacity,
+          };
+        });
+        return next;
+      });
+    };
+    window.addEventListener("gt-chart-drawings-defaults", onDrawingDefaults);
+    return () => window.removeEventListener("gt-chart-drawings-defaults", onDrawingDefaults);
+  }, []);
 
   useEffect(() => {
     const clean = sanitizeDrawings(drawings);
@@ -81,6 +106,25 @@ export function useDrawings(symbol: string, timeframe: string) {
         .filter((d): d is Drawing => d != null)
     );
   }, []);
+
+  const duplicateDrawing = useCallback(
+    (id: string) => {
+      const d = drawings.find((x) => x.id === id);
+      if (!d) return;
+      addDrawing({
+        tool: d.tool,
+        points: d.points.map((p) => ({ ...p })),
+        color: d.color,
+        opacity: d.opacity,
+        lineWidth: d.lineWidth,
+        locked: false,
+        selected: false,
+        text: d.text,
+        smartKind: d.smartKind,
+      });
+    },
+    [drawings, addDrawing]
+  );
 
   const updatePoint = useCallback((id: string, pointIndex: number, pt: DrawingPoint) => {
     setDrawings((prev) =>
@@ -133,6 +177,70 @@ export function useDrawings(symbol: string, timeframe: string) {
     setSelectedId(id);
   }, []);
 
+  /** Hit-test including locked drawings (context menu / inspect). */
+  const hitTestForContextMenu = useCallback(
+    (x: number, y: number, timeToX: (t: number) => number | null, priceToY: (p: number) => number | null): Drawing | null => {
+      const threshold = HIT_THRESHOLD;
+      for (let i = drawings.length - 1; i >= 0; i--) {
+        const d = drawings[i];
+        for (const pt of d.points) {
+          const dx = timeToX(pt.time);
+          const dy = priceToY(pt.price);
+          if (dx != null && dy != null && Math.abs(x - dx) <= threshold && Math.abs(y - dy) <= threshold)
+            return d;
+        }
+        if (d.tool === "horizontalLine" && d.points[0]) {
+          const lineY = priceToY(d.points[0].price);
+          if (lineY != null && Math.abs(y - lineY) <= threshold) return d;
+        }
+        if (d.tool === "rectangle" && d.points.length >= 2) {
+          const x1 = timeToX(d.points[0].time);
+          const y1 = priceToY(d.points[0].price);
+          const x2 = timeToX(d.points[1].time);
+          const y2 = priceToY(d.points[1].price);
+          if (x1 != null && y1 != null && x2 != null && y2 != null) {
+            const left = Math.min(x1, x2) - threshold;
+            const right = Math.max(x1, x2) + threshold;
+            const top = Math.min(y1, y2) - threshold;
+            const bottom = Math.max(y1, y2) + threshold;
+            if (x >= left && x <= right && y >= top && y <= bottom) return d;
+          }
+        }
+        if (d.tool === "polyline" && d.points.length >= 2) {
+          for (let j = 0; j < d.points.length - 1; j++) {
+            const p1 = d.points[j];
+            const p2 = d.points[j + 1];
+            const x1 = timeToX(p1.time);
+            const y1 = priceToY(p1.price);
+            const x2 = timeToX(p2.time);
+            const y2 = priceToY(p2.price);
+            if (x1 == null || y1 == null || x2 == null || y2 == null) continue;
+            const dist = distanceToSegment(x, y, x1, y1, x2, y2);
+            if (dist <= threshold) return d;
+          }
+        }
+        if (isPositionDrawing(d) && d.points.length >= 2) {
+          const m = getPositionMetrics(d);
+          const x1 = timeToX(d.points[0].time);
+          const x2 = timeToX(d.points[1].time);
+          if (!m || x1 == null || x2 == null) continue;
+          const yTopV = Math.max(m.entry, m.stop, m.target);
+          const yBottomV = Math.min(m.entry, m.stop, m.target);
+          const yTop = priceToY(yTopV);
+          const yBottom = priceToY(yBottomV);
+          if (yTop == null || yBottom == null) continue;
+          const left = Math.min(x1, x2) - threshold;
+          const right = Math.max(x1, x2) + threshold;
+          const top = Math.min(yTop, yBottom) - threshold;
+          const bottom = Math.max(yTop, yBottom) + threshold;
+          if (x >= left && x <= right && y >= top && y <= bottom) return d;
+        }
+      }
+      return null;
+    },
+    [drawings]
+  );
+
   const hitTest = useCallback(
     (x: number, y: number, timeToX: (t: number) => number | null, priceToY: (p: number) => number | null): Drawing | null => {
       const threshold = HIT_THRESHOLD;
@@ -175,6 +283,22 @@ export function useDrawings(symbol: string, timeframe: string) {
             if (dist <= threshold) return d;
           }
         }
+        if (isPositionDrawing(d) && d.points.length >= 2) {
+          const m = getPositionMetrics(d);
+          const x1 = timeToX(d.points[0].time);
+          const x2 = timeToX(d.points[1].time);
+          if (!m || x1 == null || x2 == null) continue;
+          const yTopV = Math.max(m.entry, m.stop, m.target);
+          const yBottomV = Math.min(m.entry, m.stop, m.target);
+          const yTop = priceToY(yTopV);
+          const yBottom = priceToY(yBottomV);
+          if (yTop == null || yBottom == null) continue;
+          const left = Math.min(x1, x2) - threshold;
+          const right = Math.max(x1, x2) + threshold;
+          const top = Math.min(yTop, yBottom) - threshold;
+          const bottom = Math.max(yTop, yBottom) + threshold;
+          if (x >= left && x <= right && y >= top && y <= bottom) return d;
+        }
       }
       return null;
     },
@@ -193,6 +317,33 @@ export function useDrawings(symbol: string, timeframe: string) {
           const dy = priceToY(pt.price);
           if (dx != null && dy != null && Math.abs(x - dx) <= threshold && Math.abs(y - dy) <= threshold)
             return { drawing: d, pointIndex: j };
+        }
+        if (isPositionDrawing(d) && d.points.length >= 2) {
+          const m = getPositionMetrics(d);
+          const x1 = timeToX(d.points[0].time);
+          const x2 = timeToX(d.points[1].time);
+          if (!m || x2 == null) continue;
+          const entryY = priceToY(m.entry);
+          const stopY = priceToY(m.stop);
+          const targetY = priceToY(m.target);
+          const anchors: Array<number | null> = [entryY, stopY, targetY];
+          for (let k = 0; k < anchors.length; k++) {
+            const ay = anchors[k];
+            if (ay == null) continue;
+            if (Math.abs(x - x2) <= threshold && Math.abs(y - ay) <= threshold) {
+              return { drawing: d, pointIndex: 100 + k };
+            }
+          }
+          if (x1 != null) {
+            const yTop = priceToY(Math.max(m.entry, m.stop, m.target));
+            const yBottom = priceToY(Math.min(m.entry, m.stop, m.target));
+            if (yTop != null && yBottom != null) {
+              const midY = (yTop + yBottom) / 2;
+              if (Math.abs(x - x2) <= threshold && Math.abs(y - midY) <= Math.max(threshold, 14)) {
+                return { drawing: d, pointIndex: 103 };
+              }
+            }
+          }
         }
       }
       return null;
@@ -223,6 +374,23 @@ export function useDrawings(symbol: string, timeframe: string) {
           ...base,
           tool: activeTool,
           points: [pt, { ...pt }],
+        } as Drawing);
+      } else if (activeTool === "longPosition" || activeTool === "shortPosition") {
+        const levels = nextPositionLevels(activeTool, price, price);
+        setPendingDrawing({
+          ...base,
+          tool: activeTool,
+          points: [pt, { ...pt }],
+          entryPrice: price,
+          targetPrice: levels.targetPrice,
+          stopPrice: levels.stopPrice,
+          showLabels: true,
+          labelPrecision: 2,
+          targetColor: activeTool === "longPosition" ? "#22c55e" : "#22c55e",
+          stopColor: activeTool === "longPosition" ? "#ef4444" : "#ef4444",
+          accountSize: 10000,
+          riskPercent: 1,
+          leverage: 1,
         } as Drawing);
       } else if (activeTool === "polyline") {
         setPendingDrawing({
@@ -289,9 +457,21 @@ export function useDrawings(symbol: string, timeframe: string) {
     (time: number, price: number) => {
       if (!pendingDrawing) return;
       const pts = [...pendingDrawing.points];
-      if (pts.length >= 2 && (pendingDrawing.tool === "trendLine" || pendingDrawing.tool === "arrow" || pendingDrawing.tool === "rectangle")) {
+      if (
+        pts.length >= 2 &&
+        (pendingDrawing.tool === "trendLine" ||
+          pendingDrawing.tool === "arrow" ||
+          pendingDrawing.tool === "rectangle" ||
+          pendingDrawing.tool === "longPosition" ||
+          pendingDrawing.tool === "shortPosition")
+      ) {
         pts[1] = { time, price };
-        setPendingDrawing({ ...pendingDrawing, points: pts });
+        if (pendingDrawing.tool === "longPosition" || pendingDrawing.tool === "shortPosition") {
+          const levels = nextPositionLevels(pendingDrawing.tool, pendingDrawing.entryPrice ?? pts[0].price, price);
+          setPendingDrawing({ ...pendingDrawing, points: pts, ...levels });
+        } else {
+          setPendingDrawing({ ...pendingDrawing, points: pts });
+        }
       }
     },
     [pendingDrawing]
@@ -300,11 +480,36 @@ export function useDrawings(symbol: string, timeframe: string) {
   const finishDrawing = useCallback(
     (time?: number, price?: number) => {
       if (!pendingDrawing) return;
-      if (pendingDrawing.tool === "trendLine" || pendingDrawing.tool === "arrow" || pendingDrawing.tool === "rectangle") {
+      if (
+        pendingDrawing.tool === "trendLine" ||
+        pendingDrawing.tool === "arrow" ||
+        pendingDrawing.tool === "rectangle" ||
+        pendingDrawing.tool === "longPosition" ||
+        pendingDrawing.tool === "shortPosition"
+      ) {
         const pts = [...pendingDrawing.points];
         if (pts.length >= 2) {
           if (time != null && price != null) pts[1] = { time, price };
-          addDrawing({ ...pendingDrawing, points: pts } as Drawing);
+          if (pendingDrawing.tool === "longPosition" || pendingDrawing.tool === "shortPosition") {
+            const startTime = pts[0]?.time ?? 0;
+            const endTimeRaw = pts[1]?.time ?? startTime;
+            const endTime = Math.max(startTime + 1, endTimeRaw);
+            pts[1] = { ...(pts[1] ?? pts[0]), time: endTime, price: pts[1]?.price ?? pts[0]?.price ?? 0 };
+            const levels = nextPositionLevels(
+              pendingDrawing.tool,
+              pendingDrawing.entryPrice ?? pts[0].price,
+              price ?? pts[1].price
+            );
+            const entry = pendingDrawing.entryPrice ?? pts[0].price;
+            const hasVerticalDefinition =
+              Math.abs((levels.targetPrice ?? entry) - entry) > 1e-9 || Math.abs((levels.stopPrice ?? entry) - entry) > 1e-9;
+            const hasTimeSpan = Math.abs((pts[1]?.time ?? pts[0].time) - pts[0].time) >= 1;
+            if (hasVerticalDefinition && hasTimeSpan) {
+              addDrawing({ ...pendingDrawing, points: pts, ...levels } as Drawing);
+            }
+          } else {
+            addDrawing({ ...pendingDrawing, points: pts } as Drawing);
+          }
         }
       } else if (pendingDrawing.tool === "polyline" && pendingDrawing.points.length >= 2) {
         addDrawing(pendingDrawing);
@@ -357,6 +562,47 @@ export function useDrawings(symbol: string, timeframe: string) {
     setActiveTool("select");
   }, []);
 
+  const updatePositionLevels = useCallback(
+    (id: string, updates: Partial<Pick<Drawing, "entryPrice" | "targetPrice" | "stopPrice">>) => {
+      setDrawings((prev) =>
+        prev.map((d) => {
+          if (d.id !== id || !isPositionDrawing(d)) return d;
+          const entry = updates.entryPrice ?? d.entryPrice ?? d.points[0]?.price ?? 0;
+          const targetRaw = updates.targetPrice ?? d.targetPrice ?? entry;
+          const stopRaw = updates.stopPrice ?? d.stopPrice ?? entry;
+          const minOffset = Math.max(Math.abs(entry), 1e-9) * 0.002;
+          const normalized =
+            d.tool === "longPosition"
+              ? {
+                  targetPrice: Math.max(targetRaw, entry + minOffset),
+                  stopPrice: Math.min(stopRaw, entry - minOffset),
+                }
+              : {
+                  targetPrice: Math.min(targetRaw, entry - minOffset),
+                  stopPrice: Math.max(stopRaw, entry + minOffset),
+                };
+          return { ...d, entryPrice: entry, ...normalized };
+        })
+      );
+    },
+    []
+  );
+
+  const movePositionDrawing = useCallback((id: string, deltaTime: number, deltaPrice: number) => {
+    setDrawings((prev) =>
+      prev.map((d) => {
+        if (d.id !== id || !isPositionDrawing(d)) return d;
+        return {
+          ...d,
+          points: d.points.map((p) => ({ time: p.time + deltaTime, price: p.price + deltaPrice })),
+          entryPrice: (d.entryPrice ?? d.points[0]?.price ?? 0) + deltaPrice,
+          targetPrice: (d.targetPrice ?? d.points[0]?.price ?? 0) + deltaPrice,
+          stopPrice: (d.stopPrice ?? d.points[0]?.price ?? 0) + deltaPrice,
+        };
+      })
+    );
+  }, []);
+
   return {
     drawings,
     activeTool,
@@ -370,6 +616,7 @@ export function useDrawings(symbol: string, timeframe: string) {
     setDraggingAnchor,
     addDrawing,
     updateDrawing,
+    duplicateDrawing,
     setSmartKind,
     convertSelectedToSmart,
     updatePoint,
@@ -378,6 +625,7 @@ export function useDrawings(symbol: string, timeframe: string) {
     undoLast,
     clearAll,
     hitTest,
+    hitTestForContextMenu,
     hitTestAnchor,
     startDrawing,
     addPolylinePoint,
@@ -387,6 +635,9 @@ export function useDrawings(symbol: string, timeframe: string) {
     completePolyline,
     removeLastPolylinePoint,
     cancelPending,
+    updatePositionLevels,
+    movePositionDrawing,
+    getPositionMetrics,
   };
 }
 

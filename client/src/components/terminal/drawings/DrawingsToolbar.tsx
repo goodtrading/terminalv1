@@ -12,6 +12,8 @@ import {
   Type,
   Wind,
   Zap,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { DrawingTool, SmartToolKind } from "./types";
@@ -46,6 +48,8 @@ export function DrawingsToolbar({
         { tool: "polyline" as DrawingTool, Icon: Spline, style: { color: "#ffffff", opacity: 1, lineWidth: 2 }, title: "Polyline" },
         { tool: "horizontalLine" as DrawingTool, Icon: Minus, style: { color: "#ffffff", opacity: 1, lineWidth: 1 }, title: "Horizontal line" },
         { tool: "text" as DrawingTool, Icon: Type, style: { color: "#ffffff", opacity: 1, lineWidth: 1 }, title: "Text" },
+        { tool: "longPosition" as DrawingTool, Icon: TrendingUp, style: { color: "#22c55e", opacity: 0.9, lineWidth: 1 }, title: "Long position" },
+        { tool: "shortPosition" as DrawingTool, Icon: TrendingDown, style: { color: "#ef4444", opacity: 0.9, lineWidth: 1 }, title: "Short position" },
       ] as const,
     [],
   );

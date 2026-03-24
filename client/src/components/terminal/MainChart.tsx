@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ChartContextMenu, type ChartContextMenuAction } from "./chart/ChartContextMenu";
+import { ChartSettingsModal } from "./chart/ChartSettingsModal";
+import { useChartContextMenu } from "./chart/useChartContextMenu";
+import { getChartSettings, setChartSettings, useChartSettings } from "./chart/chartSettingsStore";
+import type { ChartMenuContext, ChartMenuOverlayKind } from "./chart/chartContextTypes";
+import type { DrawingsLayerHandle } from "./drawings/DrawingsLayer";
 import { useQuery } from "@tanstack/react-query";
 import { createChart, ColorType, LineStyle, CandlestickSeries, HistogramSeries, LineSeries, IChartApi, ISeriesApi } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
@@ -115,6 +121,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   onActiveScenarioChange: (scenario: "BASE" | "ALT" | "VOL") => void;
 }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const drawingsLayerRef = useRef<DrawingsLayerHandle | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -256,6 +263,10 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   const { data: terminalState } = useTerminalState();
   const positioning_engines = terminalState?.positioning as any;
   const { learnMode } = useLearnMode();
+
+  const chartSettings = useChartSettings();
+  const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
+  const chartContextMenu = useChartContextMenu({ closeDeps: [] });
 
   const { data: history, error: historyError, isLoading: historyLoading } = useQuery({
     queryKey: ["btc-history"],
@@ -1690,6 +1701,216 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     }
   }, [market, positioning, levels, lastCandle, activePanels, positioning_engines, rawOrderBook, showAccelZones, showAbsorbZones, showGravityZones, terminalState?.gravityMap, terminalState?.options]);
 
+  const probeInstitutionalOverlay = useCallback(
+    (ctx: ChartMenuContext): ChartMenuContext => {
+      if (ctx.kind !== "empty" || ctx.price == null) return ctx;
+      const price = ctx.price;
+      const flip = market?.gammaFlip;
+      if (activePanels.has("GAMMA") && typeof flip === "number" && price > 0) {
+        const rel = Math.abs(price - flip) / price;
+        if (rel < 0.004) return { kind: "overlay", overlayKind: "gamma" };
+      }
+      return ctx;
+    },
+    [market?.gammaFlip, activePanels]
+  );
+
+  const resolveFallbackMenuContext = useCallback((clientX: number, clientY: number): ChartMenuContext => {
+    const el = chartContainerRef.current;
+    if (!el) return { kind: "empty", price: null, time: null };
+    const rect = el.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const series = candleSeriesRef.current;
+    const chart = chartRef.current;
+    let price: number | null = null;
+    let time: number | null = null;
+    try {
+      const py = series?.coordinateToPrice(y);
+      price = typeof py === "number" ? py : null;
+    } catch {
+      price = null;
+    }
+    try {
+      const t = chart?.timeScale().coordinateToTime(x);
+      time = typeof t === "number" ? t : null;
+    } catch {
+      time = null;
+    }
+    return { kind: "empty", price, time };
+  }, []);
+
+  const handleChartContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      const s = getChartSettings();
+      if (!s.interaction.rightClickEnabled) return;
+      e.preventDefault();
+      e.stopPropagation();
+      let ctx: ChartMenuContext = drawingsLayerRef.current
+        ? drawingsLayerRef.current.resolveContextMenu(e.clientX, e.clientY)
+        : resolveFallbackMenuContext(e.clientX, e.clientY);
+      if (ctx.kind === "empty" && ctx.price == null && ctx.time == null) {
+        ctx = resolveFallbackMenuContext(e.clientX, e.clientY);
+      }
+      ctx = probeInstitutionalOverlay(ctx);
+      chartContextMenu.openMenu(e.clientX, e.clientY, ctx);
+    },
+    [chartContextMenu, probeInstitutionalOverlay, resolveFallbackMenuContext]
+  );
+
+  const hideOverlayKind = useCallback(
+    (kind: ChartMenuOverlayKind) => {
+      const o = getChartSettings().overlays;
+      switch (kind) {
+        case "gamma":
+          setChartSettings({ overlays: { ...o, showGamma: false } });
+          break;
+        case "heatmap":
+          setChartSettings({ overlays: { ...o, showHeatmap: false } });
+          break;
+        case "liquidity":
+          setChartSettings({ overlays: { ...o, showLiquidity: false } });
+          break;
+        case "sweep":
+          setChartSettings({ overlays: { ...o, showSweeps: false } });
+          break;
+        case "absorption":
+          setChartSettings({ overlays: { ...o, showAbsorptions: false } });
+          break;
+        case "magnet":
+          setChartSettings({ overlays: { ...o, showMagnets: false } });
+          break;
+        default:
+          break;
+      }
+    },
+    []
+  );
+
+  const handleChartMenuAction = useCallback(
+    (action: ChartContextMenuAction) => {
+      const layer = drawingsLayerRef.current;
+      switch (action.type) {
+        case "reset_view":
+          resetScale();
+          break;
+        case "copy_price":
+          void navigator.clipboard?.writeText(String(action.price));
+          break;
+        case "add_alert":
+          console.info("[Chart] Añadir alerta (stub)", action);
+          break;
+        case "add_drawing":
+          window.dispatchEvent(new CustomEvent("gt-set-drawing-tool", { detail: { tool: "horizontalLine" } }));
+          break;
+        case "lock_vertical_time": {
+          const cs = getChartSettings();
+          setChartSettings({
+            interaction: { ...cs.interaction, lockCrosshairByTime: !cs.interaction.lockCrosshairByTime },
+          });
+          break;
+        }
+        case "toggle_overlays": {
+          const anyOn =
+            chartSettings.overlays.showLiquidity ||
+            chartSettings.overlays.showGamma ||
+            chartSettings.overlays.showHeatmap ||
+            chartSettings.overlays.showSweeps ||
+            chartSettings.overlays.showAbsorptions ||
+            chartSettings.overlays.showMagnets;
+          setChartSettings({
+            overlays: {
+              ...chartSettings.overlays,
+              showLiquidity: !anyOn,
+              showGamma: false,
+              showHeatmap: false,
+              showSweeps: false,
+              showAbsorptions: !anyOn,
+              showMagnets: false,
+            },
+          });
+          break;
+        }
+        case "open_settings":
+          setChartSettingsOpen(true);
+          break;
+        case "drawing_edit_style":
+          layer?.openPositionEditor(action.drawingId);
+          break;
+        case "drawing_duplicate":
+          layer?.duplicateDrawing(action.drawingId);
+          break;
+        case "drawing_lock":
+          layer?.updateDrawing(action.drawingId, { locked: action.locked });
+          break;
+        case "drawing_delete":
+          layer?.removeDrawing(action.drawingId);
+          break;
+        case "overlay_details":
+          console.info("[Chart] Detalle capa", action.overlayKind);
+          break;
+        case "overlay_highlight":
+          console.info("[Chart] Resaltar capa", action.overlayKind);
+          break;
+        case "overlay_hide_layer":
+          hideOverlayKind(action.overlayKind);
+          break;
+        default:
+          break;
+      }
+    },
+    [chartSettings.overlays, hideOverlayKind, resetScale]
+  );
+
+  useEffect(() => {
+    const o = chartSettings.overlays;
+    setActivePanels((prev) => {
+      const next = new Set<MapMode>();
+      if (o.showLiquidity) next.add("LEVELS");
+      if (o.showGamma) next.add("GAMMA");
+      if (o.showHeatmap) next.add("HEATMAP");
+      if (o.showSweeps) next.add("SQUEEZE");
+      if (prev.has("CASCADE")) next.add("CASCADE");
+      return next;
+    });
+    setShowAbsorbZones(o.showAbsorptions);
+    setShowGravityZones(o.showMagnets);
+  }, [chartSettings.overlays]);
+
+  useEffect(() => {
+    if (!chartReady || !chartRef.current || !candleSeriesRef.current) return;
+    const a = chartSettings.appearance;
+    const s = chartSettings.scales;
+    const i = chartSettings.interaction;
+    const chart = chartRef.current;
+    const series = candleSeriesRef.current;
+    const gridColor = `rgba(255,255,255,${Math.min(0.28, a.gridOpacity * 0.9)})`;
+    chart.applyOptions({
+      layout: {
+        background: { type: ColorType.Solid, color: a.background },
+        textColor: a.textColor,
+      },
+      grid: {
+        vertLines: { visible: a.showGrid, color: gridColor },
+        horzLines: { visible: a.showGrid, color: gridColor },
+      },
+      crosshair: {
+        vertLine: { visible: i.showCrosshairVertical },
+        horzLine: { visible: i.showCrosshairHorizontal },
+      },
+      rightPriceScale: { borderColor: "#1a1a1a", visible: s.showPriceScale },
+      timeScale: { borderColor: "#1a1a1a", visible: s.showTimeScale },
+    });
+    chart.priceScale("right").applyOptions({ autoScale: s.autoScale });
+    series.applyOptions({
+      upColor: a.candleUpColor,
+      downColor: a.candleDownColor,
+      wickUpColor: a.candleUpColor,
+      wickDownColor: a.candleDownColor,
+      priceFormat: { type: "price", precision: s.pricePrecision, minMove: 10 ** -s.pricePrecision },
+    });
+  }, [chartSettings, chartReady]);
+
   if (historyError) {
     return (
       <TerminalPanel className="flex-1 w-full h-full border border-terminal-border flex items-center justify-center">
@@ -1718,16 +1939,33 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   };
 
   const handleLayerToggle = (layer: LayerGroup) => {
+    const o = getChartSettings().overlays;
     if (layer === "accel") {
       setShowAccelZones((prev) => !prev);
       return;
     }
     if (layer === "absorb") {
-      setShowAbsorbZones((prev) => !prev);
+      setChartSettings({ overlays: { ...o, showAbsorptions: !o.showAbsorptions } });
       return;
     }
     if (layer === "gravity") {
-      setShowGravityZones((prev) => !prev);
+      setChartSettings({ overlays: { ...o, showMagnets: !o.showMagnets } });
+      return;
+    }
+    if (layer === "levels") {
+      setChartSettings({ overlays: { ...o, showLiquidity: !o.showLiquidity } });
+      return;
+    }
+    if (layer === "gamma") {
+      setChartSettings({ overlays: { ...o, showGamma: !o.showGamma } });
+      return;
+    }
+    if (layer === "heatmap") {
+      setChartSettings({ overlays: { ...o, showHeatmap: !o.showHeatmap } });
+      return;
+    }
+    if (layer === "squeeze") {
+      setChartSettings({ overlays: { ...o, showSweeps: !o.showSweeps } });
       return;
     }
     const mode = layerToMode[layer];
@@ -1852,7 +2090,12 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
             </>
           );
         })()}
-        <div ref={chartContainerRef} className="absolute inset-0 pr-[100px]" style={{ pointerEvents: 'auto' }} />
+        <div
+          className="absolute inset-0 pr-[100px] z-[5]"
+          style={{ pointerEvents: "auto" }}
+          onContextMenu={handleChartContextMenu}
+        >
+        <div ref={chartContainerRef} className="absolute inset-0" />
         {SAFE_CHART_MODE && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
         {chartReady && chartContainerRef.current && chartSize && (() => {
@@ -1860,6 +2103,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           const timeScaleWidth = (tsWidth != null && tsWidth > 0) ? tsWidth : chartSize.w;
           return (
           <DrawingsLayer
+            ref={drawingsLayerRef}
             chartWidth={timeScaleWidth}
             chartHeight={chartSize.h}
             symbol="BTCUSDT"
@@ -2039,6 +2283,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           />
           );
         })()}
+        </div>
         {activePanels.has("HEATMAP") && chartContainerRef.current && (
           <HeatmapCanvas
             isActive={activePanels.has("HEATMAP")}
@@ -2074,6 +2319,19 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
             }}
           />
         )}
+        <ChartContextMenu
+          open={chartContextMenu.open}
+          x={chartContextMenu.position.x}
+          y={chartContextMenu.position.y}
+          context={chartContextMenu.context}
+          menuRef={chartContextMenu.menuRef}
+          onClose={chartContextMenu.closeMenu}
+          onAction={handleChartMenuAction}
+        />
+        <ChartSettingsModal
+          open={chartSettingsOpen}
+          onClose={() => setChartSettingsOpen(false)}
+        />
       </TerminalPanel>
     </div>
   );

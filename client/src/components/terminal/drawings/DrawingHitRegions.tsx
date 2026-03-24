@@ -1,6 +1,7 @@
 import type { Drawing } from "./types";
 import { drawDebug, getChartViewportVersion } from "./debug";
 import { createDrawingProjection } from "./projection";
+import { getPositionMetrics, isPositionDrawing } from "./positionUtils";
 
 interface DrawingHitRegionsProps {
   drawings: Drawing[];
@@ -240,6 +241,29 @@ export function DrawingHitRegions({
           />
         );
       });
+    } else if (isPositionDrawing(d) && pts.length >= 2) {
+      const metrics = getPositionMetrics(d);
+      const x1 = timeToX(pts[0].time);
+      const x2 = timeToX(pts[1].time);
+      if (!metrics || x1 == null || x2 == null) continue;
+      const yTop = priceToY(Math.max(metrics.entry, metrics.stop, metrics.target));
+      const yBottom = priceToY(Math.min(metrics.entry, metrics.stop, metrics.target));
+      if (yTop == null || yBottom == null) continue;
+      const left = Math.max(0, Math.min(x1, x2) - HIT_THRESHOLD);
+      const top = Math.max(0, Math.min(yTop, yBottom) - HIT_THRESHOLD);
+      const width = Math.min(chartWidth - left, Math.abs(x2 - x1) + HIT_THRESHOLD * 2);
+      const height = Math.min(chartHeight - top, Math.abs(yTop - yBottom) + HIT_THRESHOLD * 2);
+      regions.push(
+        <div
+          key={d.id}
+          className="absolute cursor-pointer pointer-events-auto"
+          style={{ left, top, width, height }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(d);
+          }}
+        />
+      );
     }
   }
 
