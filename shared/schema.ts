@@ -100,14 +100,14 @@ export type TradingScenario = typeof tradingScenarios.$inferSelect;
 export type OptionData = typeof optionsData.$inferSelect;
 export type DealerHedgingFlow = typeof dealerHedgingFlow.$inferSelect;
 
-/** SaaS / terminal access — prefijo saas_ para no chocar con tablas legacy en la misma DB */
-export const users = pgTable("saas_users", {
+/** SaaS / terminal auth — tabla users (Neon) */
+export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
+  fullName: text("full_name"),
   role: text("role").notNull().default("user"),
-  isActive: boolean("is_active").notNull().default(true),
-  onboardingStatus: text("onboarding_status").notNull().default("pending_approval"),
+  status: text("status").notNull().default("pending"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

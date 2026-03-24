@@ -1,19 +1,18 @@
 /**
- * Crea solo tablas SaaS/auth (prefijo saas_) con CREATE IF NOT EXISTS.
- * Evita colisiones con tablas legacy (users, subscriptions, …) en la misma base.
+ * Crea tablas SaaS/auth. Tabla principal: users (alineada con Neon).
  * Uso: npm run db:push:saas
  */
 import "dotenv/config";
 import pg from "pg";
 
 const DDL = `
-CREATE TABLE IF NOT EXISTS saas_users (
+CREATE TABLE IF NOT EXISTS users (
   id serial PRIMARY KEY,
   email text NOT NULL UNIQUE,
   password_hash text NOT NULL,
+  full_name text,
   role text NOT NULL DEFAULT 'user',
-  is_active boolean NOT NULL DEFAULT true,
-  onboarding_status text NOT NULL DEFAULT 'pending_approval',
+  status text NOT NULL DEFAULT 'pending',
   created_at timestamp DEFAULT now() NOT NULL
 );
 
@@ -30,7 +29,7 @@ CREATE TABLE IF NOT EXISTS saas_subscription_plans (
 
 CREATE TABLE IF NOT EXISTS saas_subscriptions (
   id serial PRIMARY KEY,
-  user_id integer NOT NULL REFERENCES saas_users(id),
+  user_id integer NOT NULL REFERENCES users(id),
   plan_id integer NOT NULL REFERENCES saas_subscription_plans(id),
   status text NOT NULL,
   starts_at timestamp NOT NULL,
@@ -40,7 +39,7 @@ CREATE TABLE IF NOT EXISTS saas_subscriptions (
 
 CREATE TABLE IF NOT EXISTS saas_payments (
   id serial PRIMARY KEY,
-  user_id integer NOT NULL REFERENCES saas_users(id),
+  user_id integer NOT NULL REFERENCES users(id),
   amount_usd double precision NOT NULL,
   method text NOT NULL,
   status text NOT NULL DEFAULT 'pending',
@@ -49,12 +48,10 @@ CREATE TABLE IF NOT EXISTS saas_payments (
   created_at timestamp DEFAULT now() NOT NULL
 );
 
-ALTER TABLE saas_users
-  ADD COLUMN IF NOT EXISTS onboarding_status text NOT NULL DEFAULT 'pending_approval';
-
-UPDATE saas_users
-SET onboarding_status = CASE WHEN role = 'admin' THEN 'active' ELSE 'pending_approval' END
-WHERE onboarding_status IS NULL OR onboarding_status = '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS status text;
+UPDATE users SET status = 'pending' WHERE status IS NULL;
+ALTER TABLE users ALTER COLUMN status SET DEFAULT 'pending';
 `;
 
 async function main() {
@@ -66,7 +63,7 @@ async function main() {
   try {
     await pool.query(DDL);
     console.log(
-      "[apply-saas-tables] OK: saas_users, saas_subscription_plans, saas_subscriptions, saas_payments (IF NOT EXISTS)",
+      "[apply-saas-tables] OK: users, saas_subscription_plans, saas_subscriptions, saas_payments (IF NOT EXISTS)",
     );
   } finally {
     await pool.end();

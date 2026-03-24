@@ -29,10 +29,25 @@ export interface AccessSnapshot {
 export async function getAccessForUserId(userId: number): Promise<AccessSnapshot> {
   const user = await findUserById(userId);
   if (!user) return { allowed: false, reason: "unknown" };
-  if (!user.isActive) return { allowed: false, reason: "inactive" };
+  if (user.status === "inactive" || user.status === "rejected") {
+    return { allowed: false, reason: "inactive" };
+  }
   if (user.role === "admin") {
     return { allowed: true, reason: "admin" };
   }
+  if (user.status === "pending") {
+    return { allowed: false, reason: "pending_approval" };
+  }
+  if (user.status === "approved_to_pay") {
+    return { allowed: false, reason: "approved_to_pay" };
+  }
+  if (user.status === "pending_payment_review") {
+    return { allowed: false, reason: "pending_payment_review" };
+  }
+  if (user.status !== "active") {
+    return { allowed: false, reason: "unknown" };
+  }
+
   // Lazy expiration: if latest is still marked active but date already passed, expire it now.
   const latest = await getLatestSubscriptionForUser(userId);
   if (latest && latest.subscription.status === "active" && latest.subscription.endsAt <= new Date()) {

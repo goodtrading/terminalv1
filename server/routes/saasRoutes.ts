@@ -29,7 +29,8 @@ import { createPaymentReport } from "../services/paymentService";
 
 const registerBody = z.object({
   email: z.string().email(),
-  password: z.string().min(8),
+  password: z.string().min(1, "Password is required"),
+  fullName: z.string().max(200).optional(),
 });
 
 const loginBody = z.object({
@@ -64,6 +65,22 @@ const grantSubBody = z.object({
   extraDays: z.number().int().positive().optional(),
 });
 
+function statusToOnboardingStatus(status: string): string {
+  const m: Record<string, string> = {
+    pending: "pending_approval",
+    approved_to_pay: "approved_to_pay",
+    pending_payment_review: "pending_payment_review",
+    active: "active",
+    inactive: "inactive",
+    rejected: "rejected",
+  };
+  return m[status] ?? status;
+}
+
+function userIsActiveish(u: { status: string }): boolean {
+  return ["active", "approved_to_pay", "pending_payment_review"].includes(u.status);
+}
+
 export function registerSaasRoutes(app: Express): void {
   void (async () => {
     try {
@@ -85,32 +102,54 @@ export function registerSaasRoutes(app: Express): void {
   });
 
   app.post("/api/auth/register", async (req: Request, res: Response) => {
+    const logPrefix = "[auth/register]";
     try {
       const parsed = registerBody.safeParse(req.body);
       if (!parsed.success) {
+        console.warn(logPrefix, "validation failed", parsed.error.flatten());
         res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
         return;
       }
-      const { email, password } = parsed.data;
-      const existing = await findUserByEmail(email);
-      if (existing) {
-        res.status(409).json({ error: "EMAIL_TAKEN" });
+      const { email, password, fullName } = parsed.data;
+      if (!password || password.length < 8) {
+        console.warn(logPrefix, "password too short or empty", { email: email.toLowerCase() });
+        res.status(400).json({ error: "PASSWORD_TOO_SHORT", message: "Password must be at least 8 characters" });
         return;
       }
-      const user = await createUser(email, password, "user");
+
+      const normalizedEmail = email.toLowerCase().trim();
+      console.info(logPrefix, "attempt", { email: normalizedEmail });
+
+      const existing = await findUserByEmail(normalizedEmail);
+      if (existing) {
+        console.info(logPrefix, "email already exists", { id: existing.id, email: normalizedEmail });
+        res.status(409).json({ error: "EMAIL_TAKEN", message: "An account with this email already exists" });
+        return;
+      }
+
+      const user = await createUser(normalizedEmail, password, "user", { fullName });
+      console.info(logPrefix, "insert ok", { id: user.id, email: user.email, status: user.status });
+
       const token = signUserToken({
         id: user.id,
         email: user.email,
         role: user.role,
       });
       const access = await getAccessForUserId(user.id);
-      res.json({
+      res.status(201).json({
+        message: "Account created. Your status is pending until an administrator approves access.",
+        status: user.status,
         token,
-        user: { id: user.id, email: user.email, role: user.role },
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          fullName: user.fullName ?? null,
+        },
         access,
       });
     } catch (e: any) {
-      console.error("[SaaS] register", e);
+      console.error(logPrefix, "failed", e?.message ?? e, e?.stack);
       res.status(500).json({ error: "REGISTER_FAILED" });
     }
   });
@@ -213,8 +252,8 @@ export function registerSaasRoutes(app: Express): void {
             id: u.id,
             email: u.email,
             role: u.role,
-            isActive: u.isActive,
-            onboardingStatus: (u as any).onboardingStatus ?? (u.isActive ? "approved_to_pay" : "pending_approval"),
+            isActive: userIsActiveish(u),
+            onboardingStatus: statusToOnboardingStatus(u.status),
             createdAt: u.createdAt?.toISOString?.() ?? null,
             access,
             latestSubscription: latestSub
@@ -376,7 +415,10 @@ export function registerSaasRoutes(app: Express): void {
         }
         await deactivateSubscriptionForUser(id);
         if (target.role !== "admin") {
-          await setUserOnboardingStatus(id, target.isActive ? "approved_to_pay" : "pending_approval");
+          await setUserOnboardingStatus(
+            id,
+            userIsActiveish(target) ? "approved_to_pay" : "pending_approval",
+          );
         }
         const access = await getAccessForUserId(id);
         res.json({ ok: true, access });

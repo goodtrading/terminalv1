@@ -3,6 +3,23 @@ import { db } from "../db";
 import { users, type User } from "@shared/schema";
 import { hashPassword } from "../lib/password";
 
+export type OnboardingStatus =
+  | "pending_approval"
+  | "approved_to_pay"
+  | "pending_payment_review"
+  | "active"
+  | "inactive"
+  | "rejected";
+
+const ONBOARDING_TO_STATUS: Record<OnboardingStatus, string> = {
+  pending_approval: "pending",
+  approved_to_pay: "approved_to_pay",
+  pending_payment_review: "pending_payment_review",
+  active: "active",
+  inactive: "inactive",
+  rejected: "rejected",
+};
+
 function requireDb() {
   if (!db) throw new Error("DATABASE_UNAVAILABLE");
 }
@@ -23,17 +40,20 @@ export async function createUser(
   email: string,
   password: string,
   role: "user" | "admin" = "user",
+  opts?: { fullName?: string | null },
 ): Promise<User> {
   requireDb();
-  const passwordHash = hashPassword(password);
+  const passwordHash = await hashPassword(password);
+  const fullName = opts?.fullName?.trim() ?? null;
+  const status = role === "admin" ? "active" : "pending";
   const inserted = await db!
     .insert(users)
     .values({
       email: email.toLowerCase().trim(),
       passwordHash,
+      fullName,
       role,
-      isActive: role === "admin",
-      onboardingStatus: role === "admin" ? "active" : "pending_approval",
+      status,
     })
     .returning();
   return inserted[0]!;
@@ -55,9 +75,10 @@ export async function updateUserRole(
 
 export async function setUserActive(userId: number, isActive: boolean): Promise<User | undefined> {
   requireDb();
+  const status = isActive ? "active" : "inactive";
   const rows = await db!
     .update(users)
-    .set({ isActive })
+    .set({ status })
     .where(eq(users.id, userId))
     .returning();
   return rows[0];
@@ -65,21 +86,20 @@ export async function setUserActive(userId: number, isActive: boolean): Promise<
 
 export async function setUserOnboardingStatus(
   userId: number,
-  onboardingStatus:
-    | "pending_approval"
-    | "approved_to_pay"
-    | "pending_payment_review"
-    | "active"
-    | "inactive"
-    | "rejected",
+  onboardingStatus: OnboardingStatus,
 ): Promise<User | undefined> {
   requireDb();
+  const status = ONBOARDING_TO_STATUS[onboardingStatus];
   const rows = await db!
     .update(users)
-    .set({ onboardingStatus })
+    .set({ status })
     .where(eq(users.id, userId))
     .returning();
   return rows[0];
+}
+
+export function userMayAuthenticate(user: User): boolean {
+  return user.status !== "inactive" && user.status !== "rejected";
 }
 
 export async function ensureBootstrapAdmin(): Promise<void> {
@@ -88,8 +108,11 @@ export async function ensureBootstrapAdmin(): Promise<void> {
   if (!email || !password) return;
   const existing = await findUserByEmail(email);
   if (existing) {
-    if (existing.role === "admin" && existing.onboardingStatus !== "active") {
-      await setUserOnboardingStatus(existing.id, "active");
+    if (existing.role === "admin" && existing.status !== "active") {
+      await db!
+        .update(users)
+        .set({ status: "active" })
+        .where(eq(users.id, existing.id));
     }
     return;
   }

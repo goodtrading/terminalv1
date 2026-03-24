@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { verifyUserToken } from "../lib/jwt";
-import { findUserById } from "../services/userService";
+import { findUserById, userMayAuthenticate } from "../services/userService";
 
 declare global {
   namespace Express {
@@ -58,7 +58,7 @@ export async function requireSaasAuth(
     return;
   }
   const user = await findUserById(payload.sub);
-  if (!user || !user.isActive) {
+  if (!user || !userMayAuthenticate(user)) {
     res.status(401).json({ error: "UNAUTHORIZED" });
     return;
   }
@@ -82,7 +82,7 @@ export async function requireSaasAdmin(
     return;
   }
   const user = await findUserById(payload.sub);
-  if (!user || !user.isActive) {
+  if (!user || !userMayAuthenticate(user)) {
     res.status(401).json({ error: "UNAUTHORIZED" });
     return;
   }
