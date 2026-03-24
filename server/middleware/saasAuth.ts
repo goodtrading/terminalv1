@@ -1,5 +1,4 @@
 import type { Request, Response, NextFunction } from "express";
-import { AUTH_COOKIE_NAME } from "../lib/authCookie";
 import { verifyUserToken } from "../lib/jwt";
 import { findUserById, userMayAuthenticate } from "../services/userService";
 
@@ -11,18 +10,15 @@ declare global {
   }
 }
 
-function extractBearer(req: Request): string | null {
-  const h = req.headers.authorization;
-  if (!h || typeof h !== "string") return null;
-  const m = /^Bearer\s+(.+)$/i.exec(h.trim());
-  return m ? m[1]!.trim() || null : null;
-}
-
-/** Cookie first: httpOnly session is source of truth; stale Bearer in localStorage must not shadow it. */
+/** httpOnly `token` cookie wins; legacy Bearer (e.g. localStorage) is fallback only. */
 function extractToken(req: Request): string | null {
-  const c = req.cookies?.[AUTH_COOKIE_NAME];
+  const c = req.cookies?.token;
   if (typeof c === "string" && c.length > 0) return c.trim();
-  return extractBearer(req);
+  const auth = req.headers.authorization;
+  if (typeof auth === "string" && auth.startsWith("Bearer ")) {
+    return auth.slice(7).trim() || null;
+  }
+  return null;
 }
 
 export async function optionalSaasAuth(

@@ -49,11 +49,18 @@ interface TerminalAuthContextValue {
 
 const TerminalAuthContext = createContext<TerminalAuthContextValue | null>(null);
 
+/**
+ * Session is httpOnly cookie (`credentials: "include"`). Optional Bearer only for legacy localStorage fallback;
+ * the server prefers the cookie, so a missing localStorage token never blocks a valid cookie.
+ */
 async function fetchMe(): Promise<MeResponse> {
   const token = getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch("/api/auth/me", { credentials: "include", headers });
+  const res = await fetch("/api/auth/me", {
+    credentials: "include",
+    headers: Object.keys(headers).length ? headers : undefined,
+  });
   if (res.status === 401) {
     throw new Error("me:401");
   }
@@ -123,8 +130,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
         invalidateSession();
         return;
       }
-      setUser(null);
-      setAccess(null);
+      // Do not clear user on transient /me failures — cookie may still be valid; avoid false "logged out".
       setTokenState(getAuthToken());
     }
   }, [applyMeResponse, invalidateSession]);
@@ -153,8 +159,6 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
         if (msg === "me:401") {
           invalidateSession();
         } else {
-          setUser(null);
-          setAccess(null);
           setTokenState(getAuthToken());
         }
       } finally {
@@ -228,9 +232,8 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    void fetch("/api/auth/logout", { method: "POST", credentials: "include" }).finally(() => {
-      invalidateSession();
-    });
+    invalidateSession();
+    void fetch("/api/auth/logout", { method: "POST", credentials: "include" });
   }, [invalidateSession]);
 
   const value = useMemo(
