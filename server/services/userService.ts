@@ -58,6 +58,12 @@ export async function findUserById(id: number): Promise<User | undefined> {
   return rows[0];
 }
 
+/** Subscriptions reference `users.id` only — call before inserting into `saas_subscriptions`. */
+export async function requireUserIdInUsersTable(userId: number): Promise<void> {
+  const u = await findUserById(userId);
+  if (!u) throw new Error("USER_NOT_FOUND_IN_USERS_TABLE");
+}
+
 export async function createUser(
   email: string,
   password: string,

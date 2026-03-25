@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
-import { db } from "../db";
+import { db, pool } from "../db";
 import { subscriptionPlans, subscriptions, type SubscriptionPlan } from "@shared/schema";
+import { requireUserIdInUsersTable } from "./userService";
 
 /** DB / CHECK-friendly literals (lowercase only). */
 export const SUBSCRIPTION_STATUS = {
@@ -11,6 +12,12 @@ export const SUBSCRIPTION_STATUS = {
 
 function requireDb() {
   if (!db) throw new Error("DATABASE_UNAVAILABLE");
+}
+
+function requirePool() {
+  requireDb();
+  if (!pool) throw new Error("DATABASE_UNAVAILABLE");
+  return pool;
 }
 
 function computeDefaultEndsAt(startsAt: Date, plan: SubscriptionPlan, extraDays?: number): Date {
@@ -128,17 +135,17 @@ export async function createSubscriptionForUser(
   startsAt = new Date(),
 ): Promise<void> {
   requireDb();
+  await requireUserIdInUsersTable(userId);
   const plan = await getPlanById(planId);
   if (!plan) throw new Error("PLAN_NOT_FOUND");
   const endsAt = computeDefaultEndsAt(startsAt, plan);
 
-  await db!.insert(subscriptions).values({
-    userId,
-    planId,
-    status: SUBSCRIPTION_STATUS.ACTIVE,
-    startsAt,
-    endsAt,
-  });
+  const p = requirePool();
+  await p.query(
+    `INSERT INTO public.saas_subscriptions (user_id, plan_id, status, starts_at, ends_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [userId, planId, SUBSCRIPTION_STATUS.ACTIVE, startsAt, endsAt],
+  );
 }
 
 export async function expireSubscriptionsPastDue(): Promise<number> {
@@ -163,8 +170,9 @@ export type GrantSubscriptionOpts = {
 };
 
 /**
- * Marks current active rows expired, then inserts one active row into `saas_subscriptions`
- * (`user_id` = `users.id` from app auth; never `saas_users`).
+ * Marks current active rows expired, then inserts into `public.saas_subscriptions`.
+ * `user_id` is always `public.users.id` (validated before write). No `saas_users` in this codebase;
+ * if Postgres still reports FK violations against `saas_users`, the constraint lives in the DB.
  */
 export async function grantSubscriptionForUser(
   userId: number,
@@ -172,6 +180,7 @@ export async function grantSubscriptionForUser(
   opts?: GrantSubscriptionOpts,
 ): Promise<void> {
   requireDb();
+  await requireUserIdInUsersTable(userId);
   const plan = await getPlanById(planId);
   if (!plan) throw new Error("PLAN_NOT_FOUND");
 
@@ -194,20 +203,28 @@ export async function grantSubscriptionForUser(
     }
   }
 
-  await db!
-    .update(subscriptions)
-    .set({ status: SUBSCRIPTION_STATUS.EXPIRED })
-    .where(
-      and(eq(subscriptions.userId, userId), eq(subscriptions.status, SUBSCRIPTION_STATUS.ACTIVE)),
+  const p = requirePool();
+  const client = await p.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE public.saas_subscriptions
+       SET status = $1
+       WHERE user_id = $2 AND status = $3`,
+      [SUBSCRIPTION_STATUS.EXPIRED, userId, SUBSCRIPTION_STATUS.ACTIVE],
     );
-
-  await db!.insert(subscriptions).values({
-    userId,
-    planId,
-    status: SUBSCRIPTION_STATUS.ACTIVE,
-    startsAt,
-    endsAt,
-  });
+    await client.query(
+      `INSERT INTO public.saas_subscriptions (user_id, plan_id, status, starts_at, ends_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [userId, planId, SUBSCRIPTION_STATUS.ACTIVE, startsAt, endsAt],
+    );
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export async function deactivateSubscriptionForUser(userId: number): Promise<number> {

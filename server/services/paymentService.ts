@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { payments } from "@shared/schema";
+import { requireUserIdInUsersTable } from "./userService";
 
 function requireDb() {
   if (!db) throw new Error("DATABASE_UNAVAILABLE");
@@ -14,6 +15,7 @@ export async function createPaymentReport(params: {
   notes?: string | null;
 }) {
   requireDb();
+  await requireUserIdInUsersTable(params.userId);
   const rows = await db!
     .insert(payments)
     .values({

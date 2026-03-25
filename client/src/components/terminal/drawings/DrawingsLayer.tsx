@@ -146,7 +146,8 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
 
   return (
     <>
-      <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[14] pointer-events-auto" title="Drawing tools">
+      {/* Above DrawingsOverlay (z-15) so chart hit-layers do not steal clicks from tools */}
+      <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[20] pointer-events-auto" title="Drawing tools">
         <DrawingsToolbar
           activeTool={activeTool}
           onToolChange={setActiveTool}
@@ -165,7 +166,7 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
       </div>
 
       {showContextual && (
-        <div className="absolute left-14 top-1/2 -translate-y-1/2 z-[14] pointer-events-auto" title="Drawing style">
+        <div className="absolute left-14 top-1/2 -translate-y-1/2 z-[20] pointer-events-auto" title="Drawing style">
           {selectedDrawing ? (
             <DrawingsContextualBar
               drawing={selectedDrawing}

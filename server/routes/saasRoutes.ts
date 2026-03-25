@@ -448,6 +448,10 @@ export function registerSaasRoutes(app: Express): void {
           res.status(400).json({ error: "PLAN_NOT_FOUND", detail: err.message });
           return;
         }
+        if (err?.message === "USER_NOT_FOUND_IN_USERS_TABLE") {
+          res.status(400).json({ error: "USER_NOT_FOUND", detail: err.message });
+          return;
+        }
         res.status(500).json({
           error: "SUBSCRIPTION_FAILED",
           detail: err?.message ?? String(e),
@@ -500,6 +504,10 @@ export function registerSaasRoutes(app: Express): void {
         console.error("SUBSCRIPTION ERROR:", e);
         if (err?.message === "PLAN_NOT_FOUND") {
           res.status(400).json({ error: "PLAN_NOT_FOUND", detail: err.message });
+          return;
+        }
+        if (err?.message === "USER_NOT_FOUND_IN_USERS_TABLE") {
+          res.status(400).json({ error: "USER_NOT_FOUND", detail: err.message });
           return;
         }
         res.status(500).json({

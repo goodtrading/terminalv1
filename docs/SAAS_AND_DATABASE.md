@@ -21,6 +21,12 @@ npm run db:fix:saas-fk-users
 
 O ejecutar manualmente `scripts/sql/repoint_saas_subscriptions_user_id_to_users.sql` en Neon/psql.
 
+Si el error **sigue** mencionando `saas_users`, Postgres todavía tiene **alguna** FK (u objeto) que referencia esa tabla. Listarlas:
+
+`scripts/sql/list_foreign_keys_referencing_saas_users.sql`
+
+El backend solo escribe `user_id` alineado con `public.users.id` (ver `requireUserIdInUsersTable` + `INSERT` explícito en `subscriptionService`).
+
 ### Aplicar solo DDL SaaS (sin prompts de renombre)
 
 ```bash
