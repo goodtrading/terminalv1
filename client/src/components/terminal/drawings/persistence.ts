@@ -1,7 +1,7 @@
 /**
- * Persist drawings by symbol and timeframe.
- * Key: goodtrading:drawings:<symbol>:<timeframe>
- * Migrates legacy format to unified points-based model.
+ * Persist drawings per symbol (absolute time + price — shared across chart timeframes).
+ * Primary key: goodtrading:drawings:<symbol>
+ * Migrates legacy keys goodtrading:drawings:<symbol>:<timeframe> (first non-empty wins).
  */
 
 import type { Drawing, DrawingPoint } from "./types";
@@ -9,7 +9,16 @@ import { DEFAULT_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_OPACITY } from "./types";
 
 const PREFIX = "goodtrading:drawings:";
 
-const VALID_TOOLS = ["horizontalLine", "trendLine", "arrow", "rectangle", "text", "polyline"] as const;
+const VALID_TOOLS = [
+  "horizontalLine",
+  "trendLine",
+  "arrow",
+  "rectangle",
+  "text",
+  "polyline",
+  "longPosition",
+  "shortPosition",
+] as const;
 
 function isValidDrawing(d: Drawing): boolean {
   if (!d || typeof d.id !== "string" || d.id.trim() === "") return false;
@@ -25,7 +34,15 @@ function isValidDrawing(d: Drawing): boolean {
     if (pts.length !== 1) return false;
     if (typeof d.text !== "string" || d.text.length === 0) return false;
   }
-  if ((d.tool === "trendLine" || d.tool === "arrow" || d.tool === "rectangle") && pts.length !== 2) return false;
+  if (
+    (d.tool === "trendLine" ||
+      d.tool === "arrow" ||
+      d.tool === "rectangle" ||
+      d.tool === "longPosition" ||
+      d.tool === "shortPosition") &&
+    pts.length !== 2
+  )
+    return false;
   if (d.tool === "polyline" && (pts.length < 2 || pts.length > 10)) return false;
   return true;
 }
@@ -134,10 +151,26 @@ function normalizeDrawing(d: unknown): Drawing | null {
   return migrateLegacy(obj as LegacyDrawing);
 }
 
-export function loadDrawings(symbol: string, timeframe: string): Drawing[] {
+function storageKeySymbol(symbol: string): string {
+  return `${PREFIX}${symbol}`;
+}
+
+/** @deprecated timeframe ignored — kept for call-site compatibility */
+export function loadDrawings(symbol: string, _timeframe?: string): Drawing[] {
   try {
-    const key = `${PREFIX}${symbol}:${timeframe}`;
-    const raw = localStorage.getItem(key);
+    const symKey = storageKeySymbol(symbol);
+    let raw = localStorage.getItem(symKey);
+    if (!raw) {
+      const legacy = localStorage.getItem(`${PREFIX}${symbol}:15m`);
+      if (legacy) {
+        raw = legacy;
+        try {
+          localStorage.setItem(symKey, legacy);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown[];
     if (!Array.isArray(parsed)) return [];
@@ -155,10 +188,10 @@ export function loadDrawings(symbol: string, timeframe: string): Drawing[] {
   }
 }
 
-export function saveDrawings(symbol: string, timeframe: string, drawings: Drawing[]): void {
+/** @deprecated timeframe ignored */
+export function saveDrawings(symbol: string, _timeframe: string | undefined, drawings: Drawing[]): void {
   try {
-    const key = `${PREFIX}${symbol}:${timeframe}`;
-    localStorage.setItem(key, JSON.stringify(drawings));
+    localStorage.setItem(storageKeySymbol(symbol), JSON.stringify(drawings));
   } catch (e) {
     console.warn("[Drawings] Failed to save:", e);
   }

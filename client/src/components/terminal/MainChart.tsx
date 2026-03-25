@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChartContextMenu, type ChartContextMenuAction } from "./chart/ChartContextMenu";
 import { ChartSettingsModal } from "./chart/ChartSettingsModal";
+import { ChartTimeframeSelector } from "./chart/ChartTimeframeSelector";
 import { useChartContextMenu } from "./chart/useChartContextMenu";
+import type { ChartTimeframeId } from "@/lib/chartTimeframes";
+import { getChartTimeframeMeta } from "@/lib/chartTimeframes";
+import {
+  applyMarketTicker,
+  fetchAndShapeBtcBasePack,
+  getCandlesSliceForTimeframe,
+  getChartTimeframe,
+  getLastCandleForTimeframe,
+  hydrateMarketEngine,
+  subscribeMarketData,
+  useChartTimeframe,
+} from "@/stores/marketEngineStore";
 import { getChartSettings, setChartSettings, useChartSettings } from "./chart/chartSettingsStore";
 import type { ChartMenuContext, ChartMenuOverlayKind } from "./chart/chartContextTypes";
 import type { DrawingsLayerHandle } from "./drawings/DrawingsLayer";
@@ -22,99 +35,12 @@ import { LayerGroupControls } from "./overlay/LayerGroupControls";
 import { DrawingsLayer } from "./drawings/DrawingsLayer";
 import { drawDebug, setChartViewportVersion } from "./drawings/debug";
 import type { LayerGroup } from "./overlay/layerGroups";
+import { BTC_TICKER_REFETCH_MS, LIVE_CANDLE_CHART_DISABLED } from "@/lib/liveChartConfig";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
 type UTCTimestamp = number;
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
-
-// Strict time extraction - returns number | null, never objects
-function extractTime(value: unknown): number | null {
-  // Direct number - already in seconds
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-
-  // Numeric string - parse to number
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  // Date string - parse to timestamp
-  if (typeof value === 'string') {
-    const date = new Date(value);
-    return Number.isFinite(date.getTime()) ? Math.floor(date.getTime() / 1000) : null;
-  }
-
-  // Object with known time keys
-  if (value && typeof value === 'object') {
-    const obj = value as Record<string, unknown>;
-    
-    // Try known time keys
-    for (const key of ['time', 'timestamp', 'openTime', 't', 'ts']) {
-      if (key in obj) {
-        const timeValue = obj[key];
-        if (typeof timeValue === 'number') {
-          const num = Number(timeValue);
-          // Convert milliseconds to seconds if needed
-          if (num > 1e10) { // If timestamp looks like milliseconds
-            return Math.floor(num / 1000);
-          }
-          return Number.isFinite(num) ? num : null;
-        }
-        if (typeof timeValue === 'string') {
-          const parsed = Number(timeValue);
-          return Number.isFinite(parsed) ? parsed : null;
-        }
-      }
-    }
-  }
-
-  return null;
-}
-
-// Strict candle normalization - returns clean candle or null
-function normalizeCandle(input: unknown): { time: number; open: number; high: number; low: number; close: number; volume?: number } | null {
-  if (!input || typeof input !== 'object') {
-    return null;
-  }
-
-  const obj = input as Record<string, unknown>;
-  
-  // Extract and validate time first
-  const time = extractTime(obj.time || obj.timestamp || obj.openTime || obj.t || obj.ts);
-  if (time === null) {
-    return null;
-  }
-
-  // Extract and validate OHLC
-  const open = typeof obj.open === 'number' ? obj.open : 
-                 typeof obj.open === 'string' ? Number(obj.open) : null;
-  const high = typeof obj.high === 'number' ? obj.high : 
-                 typeof obj.high === 'string' ? Number(obj.high) : null;
-  const low = typeof obj.low === 'number' ? obj.low : 
-                typeof obj.low === 'string' ? Number(obj.low) : null;
-  const close = typeof obj.close === 'number' ? obj.close : 
-                 typeof obj.close === 'string' ? Number(obj.close) : null;
-  const volume = obj.volume !== undefined ? (typeof obj.volume === 'number' ? obj.volume : 
-                                                     typeof obj.volume === 'string' ? Number(obj.volume) : 0) : 0;
-
-  // Reject if any OHLC is invalid
-  if (open === null || high === null || low === null || close === null || !Number.isFinite(open) || 
-   !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
-    return null;
-  }
-
-  return {
-    time,
-    open,
-    high,
-    low,
-    close,
-    volume
-  };
-}
 
 export function MainChart({ activeScenario, onActiveScenarioChange }: { 
   activeScenario: "BASE" | "ALT" | "VOL";
@@ -130,20 +56,21 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   const priceLinesRef = useRef<any[]>([]);
   const livePriceLineRef = useRef<any>(null);
 
-  const SAFE_CHART_MODE = true;
-  console.log("[SAFE CHART MODE ACTIVATED] - Live candle updates disabled, chart stabilized for tomorrow stream");
-
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const shouldFitContentRef = useRef(true);
+  const chartFullResyncRef = useRef(true);
+  const lastChartPushRef = useRef<{ tf: ChartTimeframeId; len: number; lastTime: number } | null>(null);
   const [chartReady, setChartReady] = useState(false);
   const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
   const [drawingsViewportVersion, setDrawingsViewportVersion] = useState(0);
   const drawingsInteractionActiveRef = useRef(false);
   const drawingsInteractionRafRef = useRef<number | null>(null);
   const drawingsWheelStopTimeoutRef = useRef<number | null>(null);
+  const chartTimeframe = useChartTimeframe();
+
   const drawingsTimeProjectionRef = useRef<{
     lastTimeSec: number | null;
     barSec: number;
-  }>({ lastTimeSec: null, barSec: 900 });
+  }>({ lastTimeSec: null, barSec: getChartTimeframeMeta(chartTimeframe).barSec });
   const FUTURE_GHOST_BASE = 400;
   const FUTURE_GHOST_EXTEND_STEP = 150;
   const FUTURE_GHOST_EXTEND_BUFFER = 40;
@@ -268,41 +195,22 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const chartContextMenu = useChartContextMenu({ closeDeps: [] });
 
-  const { data: history, error: historyError, isLoading: historyLoading } = useQuery({
-    queryKey: ["btc-history"],
-    queryFn: async () => {
-      const url = "/api/market/candles?symbol=BTCUSDT&interval=15m&limit=500";
-      console.log("[CANDLES FETCH] URL:", url);
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch history");
-      const rawCandles = await res.json();
-      const isArray = Array.isArray(rawCandles);
-      console.log("[CANDLES FETCH] Response: isArray=" + isArray + ", rawCount=" + (isArray ? rawCandles.length : "N/A"), isArray && rawCandles[0] ? "firstCandleSample=" + JSON.stringify(rawCandles[0]) : "");
-
-      if (!isArray) {
-        console.error("[CANDLES FETCH] Expected array, got:", typeof rawCandles, rawCandles);
-        return [];
-      }
-
-      // Normalize candles with strict validation
-      const normalizedCandles = rawCandles
-        .map((candle: unknown) => normalizeCandle(candle))
-        .filter((candle): candle is NonNullable<typeof candle> => candle !== null);
-
-      console.log("[CANDLES FETCH] After normalize: normalizedCount=" + normalizedCandles.length + (normalizedCandles[0] ? ", firstNormalized=" + JSON.stringify(normalizedCandles[0]) : ""));
-
-      if (normalizedCandles.length !== rawCandles.length) {
-        console.error("[CANDLE NORMALIZATION REJECTIONS]", {
-          totalRaw: rawCandles.length,
-          validNormalized: normalizedCandles.length,
-          rejected: rawCandles.length - normalizedCandles.length
-        });
-      }
-
-      return normalizedCandles;
-    },
-    refetchInterval: 60000
+  const {
+    data: basePack,
+    error: baseError,
+    isLoading: baseLoading,
+  } = useQuery({
+    queryKey: ["btc-market-engine-base"],
+    queryFn: fetchAndShapeBtcBasePack,
+    refetchInterval: 60_000,
+    staleTime: 45_000,
   });
+
+  useEffect(() => {
+    if (!basePack?.base?.length) return;
+    chartFullResyncRef.current = true;
+    hydrateMarketEngine(basePack);
+  }, [basePack]);
 
   const { data: ticker, error: tickerError } = useQuery({
     queryKey: ["btc-ticker"],
@@ -314,47 +222,29 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       }
       return res.json();
     },
-    refetchInterval: 2000,
-    enabled: !historyLoading && !!history
+    refetchInterval: BTC_TICKER_REFETCH_MS,
+    staleTime: 0,
+    enabled: !baseLoading && !!(basePack?.base?.length ?? 0),
   });
 
   useEffect(() => {
-    if (ticker && history && history.length > 0) {
-      const tickerTime = Math.floor(ticker.timestamp / (15 * 60 * 1000)) * (15 * 60);
-      setLastCandle((prev: unknown) => {
-        // Normalize previous candle
-        const prevNormalized = prev ? normalizeCandle(prev) : null;
-        
-        if (prevNormalized && prevNormalized.time === tickerTime) {
-          // Update existing candle with explicit field mapping
-          const updatedCandle = {
-            time: prevNormalized.time,
-            open: prevNormalized.open,
-            close: ticker.price,
-            high: Math.max(prevNormalized.high, ticker.price),
-            low: Math.min(prevNormalized.low, ticker.price),
-            volume: prevNormalized.volume
-          };
-          
-          const normalizedUpdated = normalizeCandle(updatedCandle);
-          return normalizedUpdated;
-        }
-        
-        // Create new candle
-        const newCandle = {
-          time: tickerTime / 1000, // Convert to seconds for Lightweight Charts
-          open: ticker.price,
-          high: ticker.price,
-          low: ticker.price,
-          close: ticker.price,
-          volume: 0
-        };
-        
-        const normalizedNew = normalizeCandle(newCandle);
-        return normalizedNew;
-      });
+    if (ticker == null || baseLoading || !basePack?.base?.length) return;
+    applyMarketTicker(ticker.price, ticker.timestamp);
+  }, [ticker?.price, ticker?.timestamp, baseLoading, basePack?.base?.length]);
+
+  useEffect(() => {
+    const barSec = getChartTimeframeMeta(chartTimeframe).barSec;
+    drawingsTimeProjectionRef.current.barSec = barSec;
+  }, [chartTimeframe]);
+
+  const prevTimeframeRef = useRef(chartTimeframe);
+  useEffect(() => {
+    if (prevTimeframeRef.current !== chartTimeframe) {
+      prevTimeframeRef.current = chartTimeframe;
+      shouldFitContentRef.current = true;
+      chartFullResyncRef.current = true;
     }
-  }, [ticker, history]);
+  }, [chartTimeframe]);
 
   const { data: positioning } = useQuery<OptionsPositioning>({ queryKey: ["/api/options-positioning"], refetchInterval: 5000 });
   const { data: market } = useQuery<MarketState>({ queryKey: ["/api/market-state"], refetchInterval: 5000 });
@@ -390,10 +280,11 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
         }
         return res.json();
       },
-      refetchInterval: 2000,
+      refetchInterval: BTC_TICKER_REFETCH_MS,
+      staleTime: 0,
     });
 
-    if (!ticker || SAFE_CHART_MODE) return null;
+    if (!ticker) return null;
 
     return (
       <div className="absolute top-4 right-4 z-10 pointer-events-none">
@@ -660,67 +551,116 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   useEffect(() => {
     const series = candleSeriesRef.current;
     const ghostSeries = ghostSeriesRef.current;
-    if (!history?.length || !series) return;
+    if (!chartReady || !series) return;
 
-    // Strict format for Lightweight Charts: { time: UTCTimestamp, open, high, low, close } — no volume
-    const toUTCTimestamp = (t: unknown): UTCTimestamp => {
+    const toUTCTimestamp = (t: number): UTCTimestamp => {
       const n = Number(t);
       if (!Number.isFinite(n)) return 0 as UTCTimestamp;
       return (n > 1e10 ? Math.floor(n / 1000) : Math.floor(n)) as UTCTimestamp;
     };
-    const candlesForChart = history.map((c) => ({
-      time: toUTCTimestamp(c.time),
-      open: Number(c.open),
-      high: Number(c.high),
-      low: Number(c.low),
-      close: Number(c.close),
-    }));
-    if (candlesForChart.length >= 2) {
-      const t1 = Number(candlesForChart[candlesForChart.length - 1].time);
-      const t0 = Number(candlesForChart[candlesForChart.length - 2].time);
-      const barSec = Math.max(1, Math.round(t1 - t0));
-      drawingsTimeProjectionRef.current = { lastTimeSec: t1, barSec };
-    } else if (candlesForChart.length === 1) {
+
+    const applyEngineToChart = () => {
+      const tf = getChartTimeframe();
+      const raw = getCandlesSliceForTimeframe(tf);
+      if (raw.length === 0) return;
+
+      const candlesForChart = raw.map((c) => ({
+        time: toUTCTimestamp(c.time),
+        open: Number(c.open),
+        high: Number(c.high),
+        low: Number(c.low),
+        close: Number(c.close),
+      }));
+
+      const lastBar = candlesForChart[candlesForChart.length - 1]!;
+      const expectedBarSec = getChartTimeframeMeta(tf).barSec;
       drawingsTimeProjectionRef.current = {
-        lastTimeSec: Number(candlesForChart[0].time),
-        barSec: drawingsTimeProjectionRef.current.barSec,
+        lastTimeSec: Number(lastBar.time),
+        barSec: expectedBarSec,
       };
-    }
-    series.setData(candlesForChart);
-    if (ghostSeries && candlesForChart.length >= 1) rebuildGhostBars(FUTURE_GHOST_BASE);
-    if (isInitialLoad && chartRef.current) {
-      chartRef.current.timeScale().fitContent();
-      chartRef.current.timeScale().applyOptions({ rightOffset: 36, rightBarStaysOnScroll: true });
-      setIsInitialLoad(false);
-    }
-    const lastHistoryCandle = history[history.length - 1];
-    if (lastHistoryCandle && !lastCandle) setLastCandle(lastHistoryCandle);
-  }, [history, chartReady, rebuildGhostBars]);
+
+      const lastLc = getLastCandleForTimeframe(tf);
+      if (lastLc) setLastCandle(lastLc);
+
+      if (LIVE_CANDLE_CHART_DISABLED) {
+        if (chartFullResyncRef.current) {
+          series.setData(candlesForChart);
+          if (ghostSeries) rebuildGhostBars(FUTURE_GHOST_BASE);
+          chartFullResyncRef.current = false;
+          lastChartPushRef.current = {
+            tf,
+            len: candlesForChart.length,
+            lastTime: Number(lastBar.time),
+          };
+          if (shouldFitContentRef.current && chartRef.current) {
+            chartRef.current.timeScale().fitContent();
+            chartRef.current.timeScale().applyOptions({ rightOffset: 36, rightBarStaysOnScroll: true });
+            shouldFitContentRef.current = false;
+          }
+        }
+        return;
+      }
+
+      const p = lastChartPushRef.current;
+      if (!p || p.tf !== tf) {
+        series.setData(candlesForChart);
+        lastChartPushRef.current = {
+          tf,
+          len: candlesForChart.length,
+          lastTime: Number(lastBar.time),
+        };
+      } else if (
+        candlesForChart.length === p.len &&
+        Number(lastBar.time) === p.lastTime
+      ) {
+        series.update(lastBar);
+      } else if (
+        candlesForChart.length === p.len + 1 &&
+        Number(lastBar.time) > p.lastTime
+      ) {
+        series.update(lastBar);
+        lastChartPushRef.current = {
+          tf,
+          len: candlesForChart.length,
+          lastTime: Number(lastBar.time),
+        };
+      } else {
+        series.setData(candlesForChart);
+        lastChartPushRef.current = {
+          tf,
+          len: candlesForChart.length,
+          lastTime: Number(lastBar.time),
+        };
+      }
+
+      if (ghostSeries) rebuildGhostBars(FUTURE_GHOST_BASE);
+      if (shouldFitContentRef.current && chartRef.current) {
+        chartRef.current.timeScale().fitContent();
+        chartRef.current.timeScale().applyOptions({ rightOffset: 36, rightBarStaysOnScroll: true });
+        shouldFitContentRef.current = false;
+      }
+    };
+
+    applyEngineToChart();
+    return subscribeMarketData(applyEngineToChart);
+  }, [chartReady, rebuildGhostBars]);
 
   useEffect(() => {
-    if (SAFE_CHART_MODE) {
-      // DISABLED: Live candle updates disabled in safe mode
-      console.log("[LIVE CANDLE UPDATES DISABLED] - Safe chart mode active");
+    if (LIVE_CANDLE_CHART_DISABLED) {
       return;
     }
 
     if (candleSeriesRef.current && lastCandle && lastCandle.time) {
-      // Ensure candle is valid before chart update
-      if (!Number.isFinite(lastCandle.time) || 
-          !Number.isFinite(lastCandle.open) || 
-          !Number.isFinite(lastCandle.high) || 
-          !Number.isFinite(lastCandle.low) || 
+      if (!Number.isFinite(lastCandle.time) ||
+          !Number.isFinite(lastCandle.open) ||
+          !Number.isFinite(lastCandle.high) ||
+          !Number.isFinite(lastCandle.low) ||
           !Number.isFinite(lastCandle.close)) {
         console.error("[INVALID CANDLE FOR UPDATE]", lastCandle);
         return;
       }
-      
-      candleSeriesRef.current.update(lastCandle);
-      const t = Number(lastCandle.time);
-      if (Number.isFinite(t)) {
-        const sec = t > 1e10 ? Math.floor(t / 1000) : Math.floor(t);
-        drawingsTimeProjectionRef.current.lastTimeSec = sec;
-      }
+
+      // OHLC is driven by marketEngineStore subscriber; only refresh the live price line here.
       const isUp = lastCandle.close >= lastCandle.open;
       if (livePriceLineRef.current) candleSeriesRef.current.removePriceLine(livePriceLineRef.current);
       if (toggles.price) {
@@ -1911,13 +1851,13 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     });
   }, [chartSettings, chartReady]);
 
-  if (historyError) {
+  if (baseError) {
     return (
       <TerminalPanel className="flex-1 w-full h-full border border-terminal-border flex items-center justify-center">
         <div className="text-terminal-negative font-mono text-center">
           <p className="text-lg font-bold uppercase tracking-widest">Market Data Offline</p>
           <div className="mt-4 p-4 border border-terminal-negative/20 bg-terminal-negative/5 inline-block">
-            <p className="text-[10px] opacity-70 uppercase mb-4">Internal Gateway Error: {historyError.message}</p>
+            <p className="text-[10px] opacity-70 uppercase mb-4">Internal Gateway Error: {baseError.message}</p>
             <button onClick={() => window.location.reload()} className="px-4 py-2 border border-terminal-negative/40 hover:bg-terminal-negative/10 text-[10px] uppercase font-bold transition-all" data-testid="button-reconnect">Reconnect Terminal</button>
           </div>
         </div>
@@ -1984,9 +1924,10 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       <TerminalPanel className="flex-1 w-full min-w-0 min-h-0 border border-terminal-border relative overflow-hidden" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
         <div className="absolute inset-0 pointer-events-none z-10">
           <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start">
-            <div className="flex flex-col">
-              <div className="flex items-baseline space-x-3">
+            <div className="flex flex-col pointer-events-auto">
+              <div className="flex items-baseline flex-wrap gap-x-3 gap-y-2">
                 <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
+                <ChartTimeframeSelector />
                 <span className={`text-2xl font-mono font-bold ${isLive ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{(lastCandle?.close || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                 <div className="flex items-center ml-2">
                   <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", isLive ? "bg-terminal-positive" : "bg-terminal-negative")} />
@@ -2096,7 +2037,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           onContextMenu={handleChartContextMenu}
         >
         <div ref={chartContainerRef} className="absolute inset-0" />
-        {SAFE_CHART_MODE && <LivePriceMarker />}
+        {LIVE_CANDLE_CHART_DISABLED && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
         {chartReady && chartContainerRef.current && chartSize && (() => {
           const tsWidth = chartRef.current?.timeScale().width();
@@ -2107,7 +2048,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
             chartWidth={timeScaleWidth}
             chartHeight={chartSize.h}
             symbol="BTCUSDT"
-            timeframe="15m"
+            timeframe={chartTimeframe}
             viewportVersion={drawingsViewportVersion}
             coordinates={{
               priceToCoordinate: (price: number) => {

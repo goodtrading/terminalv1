@@ -37,8 +37,8 @@ function sanitizeDrawings(list: Drawing[]): Drawing[] {
   return list.map((d) => sanitizeDrawing(d)).filter((d): d is Drawing => d != null);
 }
 
-export function useDrawings(symbol: string, timeframe: string) {
-  const [drawings, setDrawings] = useState<Drawing[]>(() => sanitizeDrawings(loadDrawings(symbol, timeframe)));
+export function useDrawings(symbol: string, _timeframe?: string) {
+  const [drawings, setDrawings] = useState<Drawing[]>(() => sanitizeDrawings(loadDrawings(symbol)));
   const [activeTool, setActiveTool] = useState<DrawingTool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingDrawing, setPendingDrawing] = useState<Drawing | null>(null);
@@ -77,13 +77,17 @@ export function useDrawings(symbol: string, timeframe: string) {
   }, []);
 
   useEffect(() => {
+    setDrawings(sanitizeDrawings(loadDrawings(symbol)));
+  }, [symbol]);
+
+  useEffect(() => {
     const clean = sanitizeDrawings(drawings);
     if (clean.length !== drawings.length) {
       setDrawings(clean);
       return;
     }
-    saveDrawings(symbol, timeframe, clean);
-  }, [drawings, symbol, timeframe]);
+    saveDrawings(symbol, _timeframe, clean);
+  }, [drawings, symbol, _timeframe]);
 
   const addDrawing = useCallback((d: Omit<Drawing, "id" | "createdAt">) => {
     const full: Drawing = {

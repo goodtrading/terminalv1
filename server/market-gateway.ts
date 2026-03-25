@@ -1,5 +1,37 @@
 import { z } from "zod";
 import { getKrakenTicker, getKrakenCandles } from "./kraken-gateway";
+import { aggregateOhlcvCandles } from "./lib/candleAggregation";
+
+/** Bybit spot kline `interval` param (minutes or D/W/M). */
+function bybitIntervalFromApi(iv: string): string {
+  const m: Record<string, string> = {
+    "1m": "1",
+    "3m": "3",
+    "5m": "5",
+    "15m": "15",
+    "30m": "30",
+    "1h": "60",
+    "2h": "120",
+    "4h": "240",
+    "6h": "360",
+    "12h": "720",
+    "1d": "D",
+  };
+  return m[iv] ?? iv;
+}
+
+/** Coinbase candles granularity in seconds. */
+function coinbaseGranularitySeconds(iv: string): number {
+  const m: Record<string, number> = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "6h": 21600,
+    "1d": 86400,
+  };
+  return m[iv] ?? 900;
+}
 
 // --- Internal Market Data Schemas ---
 
@@ -86,19 +118,65 @@ export class MarketDataGateway {
     return { data: await response.json(), provider: "Coinbase", latency };
   }
 
+  /**
+   * 15s bars from Binance 1s klines (max 1000 → ~66 fifteen-second bars). No other provider in this path.
+   */
+  private static async getCandles15sFrom1s(symbol: string, limit: number): Promise<Candle[]> {
+    const BINANCE_1S_MAX = 1000;
+    const out = await this.fetchBinance(
+      `/api/v3/klines?symbol=${symbol}&interval=1s&limit=${BINANCE_1S_MAX}`,
+    );
+    const oneSec = this.validateAndSort(this.normalizeBinance(out.data));
+    if (oneSec.length === 0) return [];
+    const asAgg = oneSec.map((c) => ({
+      time: c.time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume,
+    }));
+    const fifteen = aggregateOhlcvCandles(asAgg, 15);
+    return fifteen.slice(-limit);
+  }
+
   static async getCandles(symbol: string, interval: string = "15m", limit: number = 500, preferredSource?: string): Promise<Candle[]> {
+    const iv = interval.trim().toLowerCase();
+    if (iv === "15s") {
+      try {
+        return await this.getCandles15sFrom1s(symbol, limit);
+      } catch (e: any) {
+        console.warn("[Gateway] 15s via 1s failed:", e?.message ?? e);
+        throw e;
+      }
+    }
+
     const krakenProvider = {
       name: 'Kraken',
       fetch: async (): Promise<{ data: Candle[]; provider: string; latency: number }> => {
-        const candles = await getKrakenCandles(symbol, interval, limit);
+        const candles = await getKrakenCandles(symbol, iv, limit);
         return { data: candles, provider: 'Kraken', latency: 0 };
       },
       normalize: (d: Candle[]) => d
     };
     const baseProviders = [
-      { name: 'Binance', fetch: () => this.fetchBinance(`/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`), normalize: (d: any) => this.normalizeBinance(d) },
-      { name: 'Bybit', fetch: () => this.fetchBybit(`/v5/market/kline?category=spot&symbol=${symbol}&interval=${interval === '15m' ? '15' : interval}&limit=${limit}`), normalize: (d: any) => this.normalizeBybit(d) },
-      { name: 'Coinbase', fetch: () => this.fetchCoinbase(`/products/${symbol.replace('USDT', '-USDT')}/candles?granularity=${interval === '15m' ? 900 : 3600}`), normalize: (d: any) => this.normalizeCoinbase(d) }
+      { name: 'Binance', fetch: () => this.fetchBinance(`/api/v3/klines?symbol=${symbol}&interval=${iv}&limit=${limit}`), normalize: (d: any) => this.normalizeBinance(d) },
+      {
+        name: 'Bybit',
+        fetch: () =>
+          this.fetchBybit(
+            `/v5/market/kline?category=spot&symbol=${symbol}&interval=${bybitIntervalFromApi(iv)}&limit=${limit}`,
+          ),
+        normalize: (d: any) => this.normalizeBybit(d),
+      },
+      {
+        name: 'Coinbase',
+        fetch: () =>
+          this.fetchCoinbase(
+            `/products/${symbol.replace('USDT', '-USDT')}/candles?granularity=${coinbaseGranularitySeconds(iv)}`,
+          ),
+        normalize: (d: any) => this.normalizeCoinbase(d),
+      },
     ];
     const providers = preferredSource === 'kraken'
       ? [krakenProvider, ...baseProviders]
