@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChartContextMenu, type ChartContextMenuAction } from "./chart/ChartContextMenu";
 import { ChartSettingsModal } from "./chart/ChartSettingsModal";
 import { ChartTimeframeSelector } from "./chart/ChartTimeframeSelector";
+import { FootprintLayer } from "./chart/FootprintLayer";
 import { useChartContextMenu } from "./chart/useChartContextMenu";
 import type { ChartTimeframeId } from "@/lib/chartTimeframes";
 import { getChartTimeframeMeta } from "@/lib/chartTimeframes";
@@ -36,6 +37,14 @@ import { DrawingsLayer } from "./drawings/DrawingsLayer";
 import { drawDebug, setChartViewportVersion } from "./drawings/debug";
 import type { LayerGroup } from "./overlay/layerGroups";
 import { BTC_TICKER_REFETCH_MS, LIVE_CANDLE_CHART_DISABLED } from "@/lib/liveChartConfig";
+import {
+  buildLevelTimingContextFromState,
+  horizonShort,
+  timingTitleSuffix,
+  urgencyShort,
+} from "@/lib/levelTiming";
+import type { OperationalLevelKind, OperationalLevelSource } from "@/lib/levelTimingTypes";
+import { computeLevelTiming } from "@/lib/computeLevelTiming";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
 type UTCTimestamp = number;
@@ -60,6 +69,8 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
   const chartFullResyncRef = useRef(true);
   const lastChartPushRef = useRef<{ tf: ChartTimeframeId; len: number; lastTime: number } | null>(null);
   const [chartReady, setChartReady] = useState(false);
+  /** Footprint zoom mode: ghost LW candle bodies so footprint rows are visible. */
+  const [footprintVisualActive, setFootprintVisualActive] = useState(false);
   const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
   const [drawingsViewportVersion, setDrawingsViewportVersion] = useState(0);
   const drawingsInteractionActiveRef = useRef(false);
@@ -516,22 +527,32 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           return { w, h };
         });
 
-        // Ensure Lightweight Charts recalculates internal layout after size changes.
-        chartRef.current.timeScale().fitContent();
+        // Do NOT call fitContent() here: it recomputes the full visible range on every px of drag,
+        // freezes the UI, and resets the user's zoom. applyOptions(width/height) is enough for LW reflow.
         ensureFutureSpace();
       }
     };
+
+    /** One layout pass per animation frame (ResizeObserver + window.resize often fire together). */
+    let resizeRaf = 0;
+    const scheduleUpdateSize = () => {
+      if (resizeRaf) return;
+      resizeRaf = window.requestAnimationFrame(() => {
+        resizeRaf = 0;
+        updateSize();
+      });
+    };
+
     updateSize();
 
     // TradingView needs a proper reflow when container height changes (e.g., bottom dock resize).
     // ResizeObserver provides that deterministically without relying on window resize.
     const ro = new ResizeObserver(() => {
-      // Coalesce rapid events into the next frame.
-      requestAnimationFrame(() => updateSize());
+      scheduleUpdateSize();
     });
     if (chartContainerRef.current) ro.observe(chartContainerRef.current);
 
-    window.addEventListener("resize", updateSize);
+    window.addEventListener("resize", scheduleUpdateSize);
     return () => {
       ts.unsubscribeVisibleTimeRangeChange(onViewportChange);
       ts.unsubscribeVisibleLogicalRangeChange(onViewportChange);
@@ -539,7 +560,8 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       interactionTarget?.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointerup", onPointerUp);
       stopInteractionRaf();
-      window.removeEventListener("resize", updateSize);
+      window.removeEventListener("resize", scheduleUpdateSize);
+      if (resizeRaf) window.cancelAnimationFrame(resizeRaf);
       ro.disconnect();
       chart.remove();
       ghostSeriesRef.current = null;
@@ -709,12 +731,77 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     const sweepDirColor = sweepDetector?.sweepDirection === "UP" ? "34, 197, 94" : sweepDetector?.sweepDirection === "DOWN" ? "239, 68, 68" : "168, 85, 247";
     const dim = (base: number, factor: number) => sweepActive ? +(base * factor).toFixed(2) : base;
 
-    type LevelEntry = { price: number; priority: number; label: string; shortLabel: string; color: string; style: number; width: number; axisLabel: boolean; isBandFill?: boolean };
+    type LevelEntry = {
+      price: number;
+      priority: number;
+      label: string;
+      shortLabel: string;
+      color: string;
+      style: number;
+      width: number;
+      axisLabel: boolean;
+      isBandFill?: boolean;
+      timing?: ReturnType<typeof computeLevelTiming>;
+      kind?: OperationalLevelKind;
+      source?: OperationalLevelSource;
+    };
     const entries: LevelEntry[] = [];
+    const timingCtx = buildLevelTimingContextFromState(
+      price,
+      { market, positioning, levels, positioning_engines, options: terminalState?.options },
+      getChartTimeframeMeta(chartTimeframe).barSec,
+    );
 
-    const pushEntry = (p: number, priority: number, label: string, shortLabel: string, color: string, style = LineStyle.Solid, width = 1, isBandFill = false, allowOutsideThreshold = false) => {
+    const pushEntry = (
+      p: number,
+      priority: number,
+      label: string,
+      shortLabel: string,
+      color: string,
+      style = LineStyle.Solid,
+      width = 1,
+      isBandFill = false,
+      allowOutsideThreshold = false,
+      kind: OperationalLevelKind = "unknown",
+      source: OperationalLevelSource = "chart-overlay",
+      strength?: number,
+      structural = false,
+    ) => {
       if (!allowOutsideThreshold && Math.abs(p - price) > threshold) return;
-      entries.push({ price: p, priority, label, shortLabel, color, style, width, axisLabel: !isBandFill, isBandFill });
+      const timing = isBandFill
+        ? undefined
+        : computeLevelTiming(
+            { kind, price: p, label, source, strength, structural },
+            timingCtx,
+          );
+      const horizonTag = timing ? horizonShort(timing.horizon) : null;
+      const urgencyTag = timing ? urgencyShort(timing.urgency) : null;
+      const stateScale =
+        timing?.state === "active" ? 1.12 : timing?.state === "invalidated" ? 0.72 : 1;
+      const lineWidthScaled = Math.max(1, Math.min(5, width * stateScale));
+      const axisLabel =
+        !isBandFill &&
+        timing?.state !== "invalidated";
+      const labelWithTiming =
+        !isBandFill && timing
+          ? `${label} ${horizonTag} ${urgencyTag}${timingTitleSuffix(timing)}`
+          : label;
+      const shortWithTiming =
+        !isBandFill && timing ? `${shortLabel} ${horizonTag}` : shortLabel;
+      entries.push({
+        price: p,
+        priority,
+        label: labelWithTiming,
+        shortLabel: shortWithTiming,
+        color,
+        style,
+        width: lineWidthScaled,
+        axisLabel,
+        isBandFill,
+        timing,
+        kind,
+        source,
+      });
     };
 
     if (activePanels.has("LEVELS")) {
@@ -727,16 +814,16 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       const putWallLabel = putWallUsd != null && Number.isFinite(putWallUsd)
         ? `PUT WALL (${formatNotional(putWallUsd)}) ${fmtK(pw!)}`
         : "PUT WALL";
-      if (cw) pushEntry(cw, 1, callWallLabel, pos?.activeCallWall ? "CW (active)" : "CW", `rgba(239, 68, 68, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
-      if (pw) pushEntry(pw, 1, putWallLabel, pos?.activePutWall ? "PW (active)" : "PW", `rgba(34, 197, 94, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2);
+      if (cw) pushEntry(cw, 1, callWallLabel, pos?.activeCallWall ? "CW (active)" : "CW", `rgba(239, 68, 68, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2, false, false, "call_wall", "options", 0.88, true);
+      if (pw) pushEntry(pw, 1, putWallLabel, pos?.activePutWall ? "PW (active)" : "PW", `rgba(34, 197, 94, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2, false, false, "put_wall", "options", 0.88, true);
       if (levels?.gammaMagnets) {
-        levels.gammaMagnets.forEach((m, i) => pushEntry(m, 3, `MAG ${fmtK(m)}`, "M", `rgba(59, 130, 246, ${dim(0.4, 0.5)})`, LineStyle.Dashed));
+        levels.gammaMagnets.forEach((m, i) => pushEntry(m, 3, `MAG ${fmtK(m)}`, "M", `rgba(59, 130, 246, ${dim(0.4, 0.5)})`, LineStyle.Dashed, 1, false, false, "gamma_magnet", "gamma", 0.64, true));
       }
-      if (positioning?.dealerPivot) pushEntry(positioning.dealerPivot, 2, "PIVOT", "PV", `rgba(255, 255, 255, ${dim(0.3, 0.7)})`, LineStyle.Dashed);
+      if (positioning?.dealerPivot) pushEntry(positioning.dealerPivot, 2, "PIVOT", "PV", `rgba(255, 255, 255, ${dim(0.3, 0.7)})`, LineStyle.Dashed, 1, false, false, "dealer_pivot", "options", 0.58, false);
     }
 
     if (activePanels.has("GAMMA")) {
-      if (market?.gammaFlip) pushEntry(market.gammaFlip, 1, "GAMMA FLIP", "FLIP", `rgba(250, 240, 180, ${dim(0.85, 0.7)})`, LineStyle.Solid, 2);
+      if (market?.gammaFlip) pushEntry(market.gammaFlip, 1, "GAMMA FLIP", "FLIP", `rgba(250, 240, 180, ${dim(0.85, 0.7)})`, LineStyle.Solid, 2, false, false, "gamma_flip", "gamma", 0.92, true);
       if (market?.transitionZoneStart && market?.transitionZoneEnd) {
         pushEntry(market.transitionZoneStart, 4, "TR LO", "TL", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
         pushEntry(market.transitionZoneEnd, 4, "TR HI", "TH", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
@@ -1639,7 +1726,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       });
       if (line) priceLinesRef.current.push(line);
     }
-  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines, rawOrderBook, showAccelZones, showAbsorbZones, showGravityZones, terminalState?.gravityMap, terminalState?.options]);
+  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines, rawOrderBook, showAccelZones, showAbsorbZones, showGravityZones, terminalState?.gravityMap, terminalState?.options, chartTimeframe]);
 
   const probeInstitutionalOverlay = useCallback(
     (ctx: ChartMenuContext): ChartMenuContext => {
@@ -1843,13 +1930,13 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     });
     chart.priceScale("right").applyOptions({ autoScale: s.autoScale });
     series.applyOptions({
-      upColor: a.candleUpColor,
-      downColor: a.candleDownColor,
-      wickUpColor: a.candleUpColor,
-      wickDownColor: a.candleDownColor,
+      upColor: footprintVisualActive ? "rgba(0,0,0,0)" : a.candleUpColor,
+      downColor: footprintVisualActive ? "rgba(0,0,0,0)" : a.candleDownColor,
+      wickUpColor: footprintVisualActive ? "rgba(148, 163, 184, 0.55)" : a.candleUpColor,
+      wickDownColor: footprintVisualActive ? "rgba(148, 163, 184, 0.55)" : a.candleDownColor,
       priceFormat: { type: "price", precision: s.pricePrecision, minMove: 10 ** -s.pricePrecision },
     });
-  }, [chartSettings, chartReady]);
+  }, [chartSettings, chartReady, footprintVisualActive]);
 
   if (baseError) {
     return (
@@ -1936,7 +2023,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
               </div>
               <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
                 <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>
-                <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span><span className="text-[11px] font-bold font-mono text-white">{market?.distanceToFlip?.toFixed(2) || "0.00"}%</span></div>
+                <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span><span className="text-[11px] font-bold font-mono text-white">{market?.distanceToFlip != null ? `${market.distanceToFlip.toFixed(2)}%` : "--"}</span></div>
               </div>
               {activePanels.has("GAMMA") && (
                 <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Showing Flip, Transition Zone, and Key Gamma Cliffs</div>
@@ -2039,6 +2126,19 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
         <div ref={chartContainerRef} className="absolute inset-0" />
         {LIVE_CANDLE_CHART_DISABLED && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
+        {chartReady && chartSize && (
+          <FootprintLayer
+            chartRef={chartRef}
+            candleSeriesRef={candleSeriesRef}
+            chartReady={chartReady}
+            viewportVersion={drawingsViewportVersion}
+            barSec={getChartTimeframeMeta(chartTimeframe).barSec}
+            width={chartSize.w}
+            height={chartSize.h}
+            symbol="BTCUSDT"
+            onFootprintVisualActiveChange={setFootprintVisualActive}
+          />
+        )}
         {chartReady && chartContainerRef.current && chartSize && (() => {
           const tsWidth = chartRef.current?.timeScale().width();
           const timeScaleWidth = (tsWidth != null && tsWidth > 0) ? tsWidth : chartSize.w;

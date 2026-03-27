@@ -14,10 +14,10 @@ export const marketState = pgTable("market_state", {
   id: serial("id").primaryKey(),
   gammaRegime: text("gamma_regime").notNull(), // "LONG GAMMA" | "SHORT GAMMA"
   totalGex: doublePrecision("total_gex").notNull(),
-  gammaFlip: doublePrecision("gamma_flip").notNull(),
-  distanceToFlip: doublePrecision("distance_to_flip").notNull(),
-  transitionZoneStart: doublePrecision("transition_zone_start").notNull(),
-  transitionZoneEnd: doublePrecision("transition_zone_end").notNull(),
+  gammaFlip: doublePrecision("gamma_flip"),
+  distanceToFlip: doublePrecision("distance_to_flip"),
+  transitionZoneStart: doublePrecision("transition_zone_start"),
+  transitionZoneEnd: doublePrecision("transition_zone_end"),
   gammaAcceleration: text("gamma_acceleration").notNull(),
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });

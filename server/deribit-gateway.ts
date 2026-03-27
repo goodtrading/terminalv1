@@ -28,10 +28,188 @@ export const normalizedOptionSchema = z.object({
   expiry: z.string(),
   optionType: z.enum(["call", "put"]),
   openInterest: z.number(),
+  /** Implied vol inputs (decimal vol, e.g. 0.65 = 65%). */
+  ivBid: z.number().optional(),
+  ivAsk: z.number().optional(),
+  /** Implied vol fallback from Deribit mark_iv (decimal vol). */
+  ivMark: z.number().optional(),
   gammaExposure: z.number().optional(),
   vannaExposure: z.number().optional(),
   charmExposure: z.number().optional()
 });
+
+export const GAMMA_OPERATIONAL_CONFIG = {
+  /** ± price band around spot for operational gamma-flip scan (spot axis). */
+  flipScanRangePct: 0.12,
+  /** Base grid step (USD); coerced to 25 USD lots and widened if point cap exceeded. */
+  flipGridStepUsd: 100,
+  flipGridMaxPoints: 450,
+  transitionWidthBps: 120,
+} as const;
+
+function parseDeribitExpiryDate(expiry: string): Date | null {
+  const raw = String(expiry || "").trim().toUpperCase();
+  const m = raw.match(/^(\d{1,2})([A-Z]{3})(\d{2})$/);
+  if (!m) return null;
+  const day = Number(m[1]);
+  const mon = m[2];
+  const yy = Number(m[3]);
+  const months: Record<string, number> = {
+    JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+    JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
+  };
+  const month = months[mon];
+  if (month == null) return null;
+  const year = 2000 + yy;
+  const dt = new Date(Date.UTC(year, month, day, 8, 0, 0)); // 08:00 UTC approx Deribit settlement hour
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function pickOperationalExpiry(options: Array<z.infer<typeof normalizedOptionSchema>>, nowMs: number): string | null {
+  const byExpiry = new Map<string, { oi: number; ts: number | null }>();
+  for (const o of options) {
+    if (!o.expiry || o.openInterest <= 0) continue;
+    const ts = parseDeribitExpiryDate(o.expiry)?.getTime() ?? null;
+    const prev = byExpiry.get(o.expiry);
+    byExpiry.set(o.expiry, {
+      oi: (prev?.oi || 0) + o.openInterest,
+      ts,
+    });
+  }
+  if (byExpiry.size === 0) return null;
+  const rows = [...byExpiry.entries()]
+    .map(([expiry, v]) => ({ expiry, oi: v.oi, ts: v.ts }))
+    .filter(r => r.ts != null && r.ts >= nowMs - 24 * 60 * 60 * 1000)
+    .sort((a, b) => {
+      const dt = (a.ts as number) - (b.ts as number);
+      if (dt !== 0) return dt;
+      return b.oi - a.oi;
+    });
+  if (rows.length === 0) {
+    const fallback = [...byExpiry.entries()]
+      .map(([expiry, v]) => ({ expiry, oi: v.oi }))
+      .sort((a, b) => b.oi - a.oi);
+    return fallback[0]?.expiry ?? null;
+  }
+  return rows[0].expiry;
+}
+
+function signedGammaExposure(opt: z.infer<typeof normalizedOptionSchema>): number {
+  const sign = opt.optionType === "call" ? 1 : -1;
+  const raw = Math.abs(opt.gammaExposure ?? 0);
+  if (raw > 0) return sign * raw;
+  // Graceful degradation when gamma field is absent in source.
+  return sign * (opt.openInterest || 0);
+}
+
+/** Signed GEX contribution for one option at evaluation spot S (calls +, puts -). Null if filtered out. */
+function signedNetGexForOptionAtSpot(
+  opt: z.infer<typeof normalizedOptionSchema>,
+  spotS: number,
+  nowMs: number,
+  maxExpiryMs: number,
+  strikeBandPct: number,
+  contractSize: number
+): number | null {
+  const expiryMs = parseDeribitExpiryDate(opt.expiry)?.getTime() ?? null;
+  const hasExpiry = expiryMs != null && Number.isFinite(expiryMs);
+  const expiryInRange = hasExpiry ? (expiryMs - nowMs) > 0 && (expiryMs - nowMs) <= maxExpiryMs : false;
+  if (!expiryInRange || !Number.isFinite(spotS) || spotS <= 0) return null;
+  if (Math.abs(opt.strike - spotS) / spotS > strikeBandPct) return null;
+
+  const ivBidOk = opt.ivBid != null && Number.isFinite(opt.ivBid) && opt.ivBid > 0;
+  const ivAskOk = opt.ivAsk != null && Number.isFinite(opt.ivAsk) && opt.ivAsk > 0;
+  const ivAvg =
+    ivBidOk && ivAskOk
+      ? (opt.ivBid! + opt.ivAsk!) / 2
+      : opt.ivMark != null && Number.isFinite(opt.ivMark) && opt.ivMark > 0
+        ? opt.ivMark
+        : null;
+  if (ivAvg == null) return null;
+
+  const T = (expiryMs! - nowMs) / (365 * 24 * 60 * 60 * 1000);
+  const sigma = ivAvg;
+  if (T <= 0 || sigma <= 0) return null;
+
+  const S = spotS;
+  const K = opt.strike;
+  const moneyness = Math.log(S / K);
+  const sqrtT = Math.sqrt(T);
+  const d1 = (moneyness + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
+  const nd1 = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+  const gamma = nd1 / (S * sigma * sqrtT);
+  const gex = gamma * opt.openInterest * contractSize * S;
+  return opt.optionType === "call" ? gex : -gex;
+}
+
+function buildOperationalFlipGrid(spot: number, rangePct: number, stepUsd: number, maxPoints: number): number[] {
+  const lo = Math.max(1, spot * (1 - rangePct));
+  const hi = spot * (1 + rangePct);
+  let step = Math.max(25, Math.round(stepUsd / 25) * 25);
+  const span = hi - lo;
+  let est = Math.floor(span / step) + 2;
+  while (est > maxPoints && step < span) {
+    step += 25;
+    est = Math.floor(span / step) + 2;
+  }
+  const out: number[] = [];
+  for (let p = lo; p <= hi; p += step) {
+    out.push(Math.round(p));
+  }
+  const last = out[out.length - 1];
+  if (last == null || last < Math.round(hi)) out.push(Math.round(hi));
+  const dedup: number[] = [];
+  for (const x of out) {
+    if (dedup.length === 0 || dedup[dedup.length - 1] !== x) dedup.push(x);
+  }
+  return dedup;
+}
+
+function findOperationalGammaFlipFromGrid(
+  grid: Array<{ spot: number; netGex: number }>,
+  referenceSpot: number
+): { flip: number | null; crossings: number[]; chosenReason: string } {
+  const crossings: number[] = [];
+  for (let i = 0; i < grid.length - 1; i++) {
+    const a = grid[i];
+    const b = grid[i + 1];
+    if (a.netGex === 0) {
+      crossings.push(a.spot);
+      continue;
+    }
+    if (b.netGex === 0) {
+      crossings.push(b.spot);
+      continue;
+    }
+    if ((a.netGex < 0 && b.netGex > 0) || (a.netGex > 0 && b.netGex < 0)) {
+      const denom = b.netGex - a.netGex;
+      if (!Number.isFinite(denom) || denom === 0) continue;
+      const t = -a.netGex / denom;
+      const flip = a.spot + t * (b.spot - a.spot);
+      if (Number.isFinite(flip)) crossings.push(flip);
+    }
+  }
+  if (crossings.length === 0) {
+    return { flip: null, crossings, chosenReason: "no_sign_crossing_in_scan_range" };
+  }
+  let best = crossings[0];
+  let bestDist = Math.abs(crossings[0] - referenceSpot);
+  for (let j = 1; j < crossings.length; j++) {
+    const d = Math.abs(crossings[j] - referenceSpot);
+    if (d < bestDist) {
+      bestDist = d;
+      best = crossings[j];
+    }
+  }
+  return {
+    flip: best,
+    crossings,
+    chosenReason:
+      crossings.length === 1
+        ? "single_crossing"
+        : `closest_of_${crossings.length}_crossings_to_spot`,
+  };
+}
 
 export const optionsSummarySchema = z.object({
   totalGex: z.number().nullable(),
@@ -337,6 +515,18 @@ export class DeribitOptionsGateway {
             expiry,
             optionType: optionType as "call" | "put",
             openInterest,
+            ivBid: (() => {
+              const raw = row["iv bid"] ?? row["iv_bid"] ?? row["ivbid"] ?? row["bid_iv"] ?? null;
+              if (raw == null) return undefined;
+              const n = parseFloat(String(raw).replace(/,/g, ""));
+              return Number.isFinite(n) ? n / 100 : undefined; // CSV IV assumed in percent
+            })(),
+            ivAsk: (() => {
+              const raw = row["iv ask"] ?? row["iv_ask"] ?? row["ivask"] ?? row["ask_iv"] ?? null;
+              if (raw == null) return undefined;
+              const n = parseFloat(String(raw).replace(/,/g, ""));
+              return Number.isFinite(n) ? n / 100 : undefined; // CSV IV assumed in percent
+            })(),
             gammaExposure: row["gamma"] ? parseFloat(row["gamma"]) : undefined,
             vannaExposure: row["vanna"] ? parseFloat(row["vanna"]) : undefined,
             charmExposure: row["charm"] ? parseFloat(row["charm"]) : undefined
@@ -401,6 +591,27 @@ export class DeribitOptionsGateway {
 
           const underlyingPrice = item.underlying_price || item.mark_price || 0;
           const markIv = item.mark_iv ? item.mark_iv / 100 : 0.5;
+          const ivMark =
+            item.mark_iv != null
+              ? (() => {
+                  const n = parseFloat(String(item.mark_iv));
+                  return Number.isFinite(n) && n > 0 ? n / 100 : undefined;
+                })()
+              : undefined;
+          const bidIvRaw = item.bid_iv;
+          const askIvRaw = item.ask_iv;
+          const bidIv = bidIvRaw != null
+            ? (() => {
+                const n = parseFloat(String(bidIvRaw));
+                return Number.isFinite(n) ? n / 100 : undefined;
+              })()
+            : undefined;
+          const askIv = askIvRaw != null
+            ? (() => {
+                const n = parseFloat(String(askIvRaw));
+                return Number.isFinite(n) ? n / 100 : undefined;
+              })()
+            : undefined;
 
           let gammaExposure: number | undefined;
           let vannaExposure: number | undefined;
@@ -418,9 +629,11 @@ export class DeribitOptionsGateway {
             const nd1 = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
 
             const rawGamma = nd1 / (underlyingPrice * sigma * sqrtT);
-            const dealerSign = optionType === "call" ? 1 : -1;
-            gammaExposure = dealerSign * rawGamma * openInterest * underlyingPrice * underlyingPrice * 0.01;
+            // gammaExposure is used as a raw-gamma hint only.
+            // The real GEX is computed later in getSummary() with the correct formula.
+            gammaExposure = rawGamma;
 
+            const dealerSign = optionType === "call" ? 1 : -1;
             const dVannaDvol = d1 * nd1 / sigma;
             vannaExposure = dealerSign * dVannaDvol * openInterest * underlyingPrice * 0.01;
 
@@ -433,6 +646,9 @@ export class DeribitOptionsGateway {
             expiry,
             optionType,
             openInterest,
+            ivBid: bidIv,
+            ivAsk: askIv,
+            ivMark,
             gammaExposure,
             vannaExposure,
             charmExposure
@@ -552,40 +768,76 @@ export class DeribitOptionsGateway {
         };
       }
 
-      let totalGex = 0, callWall = 0, putWall = 0, maxCallOi = 0, maxPutOi = 0;
+      let totalGex = 0, totalCallGex = 0, totalPutGex = 0;
+      let callWall = 0, putWall = 0, maxCallOi = 0, maxPutOi = 0;
       let totalVanna = 0, totalCharm = 0;
       const strikeMap = new Map<number, { gex: number, oi: number }>();
       const expiryOiMap = new Map<string, number>();
+
+      const contractSize = 1; // Deribit: 1 contract = 1 BTC
+      const nowMs = Date.now();
+      const maxExpiryMs = 60 * 24 * 60 * 60 * 1000; // 60 days
+      const activeRangePct = 0.15;
+      const hasSpot = spotPrice != null && Number.isFinite(spotPrice) && spotPrice > 0;
 
       options.forEach(opt => {
         if (opt.expiry && opt.openInterest > 0) {
           expiryOiMap.set(opt.expiry, (expiryOiMap.get(opt.expiry) || 0) + opt.openInterest);
         }
-        // Global GEX
-        if (opt.gammaExposure) totalGex += opt.gammaExposure;
+
+        // GEX filters:
+        // - expiries <= 60 days
+        // - strikes within ±15% of spot
+        const expiryMs = parseDeribitExpiryDate(opt.expiry)?.getTime() ?? null;
+        const hasExpiry = expiryMs != null && Number.isFinite(expiryMs);
+        const expiryInRange = hasExpiry ? (expiryMs - nowMs) > 0 && (expiryMs - nowMs) <= maxExpiryMs : false;
+        const strikeInRange = hasSpot ? Math.abs(opt.strike - spotPrice!) / spotPrice! <= activeRangePct : false;
+
+        if (expiryInRange && strikeInRange) {
+          // Walls (OI) should also stay operational: no far structural levels.
+          if (opt.optionType === "call" && opt.openInterest > maxCallOi) {
+            maxCallOi = opt.openInterest;
+            callWall = opt.strike;
+          } else if (opt.optionType === "put" && opt.openInterest > maxPutOi) {
+            maxPutOi = opt.openInterest;
+            putWall = opt.strike;
+          }
+
+          // Total GEX: identical BS + filters to `signedNetGexForOptionAtSpot` (flip scan uses same helper at each grid S).
+          if (spotPrice) {
+            const gexSigned = signedNetGexForOptionAtSpot(
+              opt,
+              spotPrice,
+              nowMs,
+              maxExpiryMs,
+              activeRangePct,
+              contractSize
+            );
+            if (gexSigned != null) {
+              if (opt.optionType === "call") totalCallGex += gexSigned;
+              else totalPutGex -= gexSigned;
+              const existing = strikeMap.get(opt.strike) || { gex: 0, oi: 0 };
+              existing.gex += gexSigned;
+              existing.oi += opt.openInterest;
+              strikeMap.set(opt.strike, existing);
+            }
+          }
+        }
+
         if (opt.vannaExposure) totalVanna += opt.vannaExposure;
         if (opt.charmExposure) totalCharm += opt.charmExposure;
-
-        // Strike aggregation
-        const existing = strikeMap.get(opt.strike) || { gex: 0, oi: 0 };
-        existing.gex += (opt.gammaExposure || 0);
-        existing.oi += (opt.openInterest || 0);
-        strikeMap.set(opt.strike, existing);
-
-        // Wall detection (global — no spot filter)
-        if (opt.optionType === "call" && opt.openInterest > maxCallOi) {
-          maxCallOi = opt.openInterest;
-          callWall = opt.strike;
-        } else if (opt.optionType === "put" && opt.openInterest > maxPutOi) {
-          maxPutOi = opt.openInterest;
-          putWall = opt.strike;
-        }
       });
+
+      totalGex = totalCallGex - totalPutGex;
+      const strikesUsed = strikeMap.size;
+      console.log(
+        `[DeribitGateway][GEX] callGex=${totalCallGex.toFixed(2)} putGex=${totalPutGex.toFixed(2)} netGex=${totalGex.toFixed(2)} strikesUsed=${strikesUsed}`
+      );
 
       const now = new Date().toISOString();
       const totalOi = options.reduce((sum, o) => sum + (o.openInterest || 0), 0);
       const avgIv = options.length
-        ? options.reduce((sum, o) => sum + (o as any).markIv ?? 0, 0) / options.length
+        ? options.reduce((sum, o) => sum + ((o as { markIv?: number }).markIv ?? 0), 0) / options.length
         : 0;
       console.log(
         `[DeribitGateway][VannaCharm] ts=${now} spot=${spotPrice ?? 0} strikes=${options.length} totalOI=${totalOi.toFixed(
@@ -604,6 +856,9 @@ export class DeribitOptionsGateway {
 
       options.forEach(opt => {
         if (!spotPrice || opt.strike < spotLo || opt.strike > spotHi) return;
+        const expiryMs = parseDeribitExpiryDate(opt.expiry)?.getTime() ?? null;
+        const expiryInRange = expiryMs != null ? (expiryMs - nowMs) > 0 && (expiryMs - nowMs) <= maxExpiryMs : false;
+        if (!expiryInRange) return;
         if (opt.optionType === "call" && opt.strike >= spotPrice && opt.openInterest > maxActiveCallOi) {
           maxActiveCallOi = opt.openInterest;
           activeCallWall = opt.strike;
@@ -632,17 +887,39 @@ export class DeribitOptionsGateway {
         return { strike: s.strike, cumulativeGamma: runningTotal };
       });
 
-      // 2. Gamma Flip Calculation
-      let gammaFlip = null;
-      for (let i = 0; i < gammaCurve.length - 1; i++) {
-        const current = gammaCurve[i];
-        const next = gammaCurve[i + 1];
-        if ((current.cumulativeGamma <= 0 && next.cumulativeGamma > 0) || 
-            (current.cumulativeGamma >= 0 && next.cumulativeGamma < 0)) {
-          gammaFlip = current.strike + (next.strike - current.strike) * 
-            (Math.abs(current.cumulativeGamma) / (Math.abs(current.cumulativeGamma) + Math.abs(next.cumulativeGamma)));
-          break;
-        }
+      // 2. Gamma Flip (operational): net GEX(S) = sum signedNetGexForOptionAtSpot at S (same filters as totalGex, strikes vs S).
+      let gammaFlip: number | null = null;
+      if (spotPrice != null && Number.isFinite(spotPrice) && spotPrice > 0 && options.length > 0) {
+        const spotGrid = buildOperationalFlipGrid(
+          spotPrice,
+          GAMMA_OPERATIONAL_CONFIG.flipScanRangePct,
+          GAMMA_OPERATIONAL_CONFIG.flipGridStepUsd,
+          GAMMA_OPERATIONAL_CONFIG.flipGridMaxPoints
+        );
+        const grid = spotGrid.map(s => {
+          let net = 0;
+          for (const o of options) {
+            const part = signedNetGexForOptionAtSpot(o, s, nowMs, maxExpiryMs, activeRangePct, contractSize);
+            if (part != null) net += part;
+          }
+          return { spot: s, netGex: net };
+        });
+        const flipScan = findOperationalGammaFlipFromGrid(grid, spotPrice);
+        gammaFlip = flipScan.flip;
+        const lo = spotGrid[0] ?? 0;
+        const hi = spotGrid[spotGrid.length - 1] ?? 0;
+        const flipDistPct =
+          gammaFlip != null && spotPrice > 0 ? (Math.abs(spotPrice - gammaFlip) / spotPrice) * 100 : null;
+        const tzHalf = GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000;
+        console.log(
+          `[GammaFlipTrace][Solver] spot=${spotPrice.toFixed(2)} grid=${lo.toFixed(0)}..${hi.toFixed(0)} n=${
+            spotGrid.length
+          } stepUsd≈${spotGrid.length > 1 ? ((hi - lo) / (spotGrid.length - 1)).toFixed(0) : "n/a"} netAtSpot=${totalGex.toFixed(
+            2
+          )} crossings=${flipScan.crossings.map(c => c.toFixed(0)).join("|") || "none"} flip=${gammaFlip?.toFixed(2) ?? "null"} reason=${
+            flipScan.chosenReason
+          } distToFlipPct=${flipDistPct?.toFixed(3) ?? "n/a"} transitionZone=${gammaFlip != null ? `${(gammaFlip * (1 - tzHalf)).toFixed(0)}..${(gammaFlip * (1 + tzHalf)).toFixed(0)}` : "null"}`
+        );
       }
 
       // 3. Gamma Magnets (Top 3 highest positive gamma)
@@ -1937,7 +2214,7 @@ export class DeribitOptionsGateway {
       return {
         totalGex: totalGex || 0,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
-        gammaFlip: gammaFlip || 0, 
+        gammaFlip: gammaFlip ?? null,
         callWall: callWall || 0, 
         putWall: putWall || 0,
         activeCallWall: activeCallWall > 0 ? activeCallWall : null,
@@ -1986,7 +2263,7 @@ export class DeribitOptionsGateway {
     } catch (e) {
       console.error("[DeribitGateway] Summary error:", e);
       return {
-        totalGex: 0, gammaState: "LONG GAMMA", gammaFlip: 0,
+        totalGex: 0, gammaState: "LONG GAMMA", gammaFlip: null,
         callWall: 0, putWall: 0, magnets: [],
         shortGammaPockets: [], vannaBias: "NEUTRAL", charmBias: "NEUTRAL",
         gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],

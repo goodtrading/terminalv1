@@ -24,7 +24,7 @@ export async function refreshOptionsEngine(): Promise<void> {
     const summary = await DeribitOptionsGateway.getSummary(options, spotPrice, source);
 
     const totalGex = summary.totalGex ?? 0;
-    const gammaFlip = summary.gammaFlip ?? 0;
+    const gammaFlip = summary.gammaFlip ?? null;
     const callWall = summary.callWall ?? 0;
     const putWall = summary.putWall ?? 0;
     const s = summary as any;
@@ -38,38 +38,35 @@ export async function refreshOptionsEngine(): Promise<void> {
     const activeGammaZoneHigh = (rawActiveZH != null && rawActiveZH > 0) ? rawActiveZH : undefined;
     const activeGammaZoneLow = (rawActiveZL != null && rawActiveZL > 0) ? rawActiveZL : undefined;
 
-    if (gammaFlip > 0 || totalGex !== 0 || callWall > 0 || putWall > 0) {
-      const pockets = s.shortGammaPockets ?? [];
-      const shortGammaZones = pockets.map((z: { start: number; end: number }) => ({
-        startStrike: z.start,
-        endStrike: z.end,
-      }));
-      console.log("[OptionsEngine][PassToStorage]", {
+    const pockets = s.shortGammaPockets ?? [];
+    const shortGammaZones = pockets.map((z: { start: number; end: number }) => ({
+      startStrike: z.start,
+      endStrike: z.end,
+    }));
+
+    console.log("[OptionsEngine][PassToStorage]", {
+      totalVanna: s.totalVanna,
+      totalCharm: s.totalCharm,
+    });
+
+    storage.updateFromDeribitSummary(
+      {
+        totalGex,
+        gammaFlip,
+        callWall,
+        putWall,
+        activeCallWall,
+        activePutWall,
+        activeGammaZoneHigh,
+        activeGammaZoneLow,
+        gammaMagnets: summary.gammaMagnets ?? [],
+        shortGammaZones,
         totalVanna: s.totalVanna,
         totalCharm: s.totalCharm,
-      });
-
-      storage.updateFromDeribitSummary(
-        {
-          totalGex,
-          gammaFlip,
-          callWall,
-          putWall,
-          activeCallWall,
-          activePutWall,
-          activeGammaZoneHigh,
-          activeGammaZoneLow,
-          gammaMagnets: summary.gammaMagnets ?? [],
-          shortGammaZones,
-          totalVanna: s.totalVanna,
-          totalCharm: s.totalCharm,
-        },
-        spotPrice
-      );
-      console.log("[OptionsEngine] refresh success");
-    } else {
-      console.log("[OptionsEngine] No valid gamma levels, keeping last state");
-    }
+      },
+      spotPrice
+    );
+    console.log("[OptionsEngine] refresh success");
   } catch (e) {
     console.log("[OptionsEngine] refresh failed:", e instanceof Error ? e.message : "unknown");
   }

@@ -3,6 +3,7 @@ import {
   type MarketState, type DealerExposure, type OptionsPositioning, type KeyLevels, type TradingScenario, type OptionData, type DealerHedgingFlow
 } from "@shared/schema";
 import { parseOptionsCSV, calculateGEX, findGammaFlip, calculateVanna, calculateCharm, detectWalls, calculateKeyLevels, calculateAcceleration } from "./analytics";
+import { GAMMA_OPERATIONAL_CONFIG } from "./deribit-gateway";
 import { generateDynamicScenarios } from "./scenarios";
 import path from "path";
 
@@ -54,19 +55,20 @@ export class MemStorage implements IStorage {
     const spotPrice = 68250; 
     
     const totalGex = calculateGEX(data, spotPrice);
-    const flip = findGammaFlip(data);
+    const rawFlip = findGammaFlip(data);
+    const flip = Number.isFinite(rawFlip) && rawFlip > 0 ? rawFlip : null;
     const walls = detectWalls(data);
     const levels = calculateKeyLevels(data, spotPrice);
     const accel = calculateAcceleration(data, spotPrice);
 
     const ms: MarketState = {
       id: 1,
-      gammaRegime: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
+      gammaRegime: totalGex > 0 ? "LONG GAMMA" : "SHORT GAMMA",
       totalGex,
       gammaFlip: flip,
-      distanceToFlip: Math.abs(((flip - spotPrice) / spotPrice) * 100),
-      transitionZoneStart: flip * 0.995,
-      transitionZoneEnd: flip * 1.005,
+      distanceToFlip: flip != null ? Math.abs(((flip - spotPrice) / spotPrice) * 100) : null,
+      transitionZoneStart: flip != null ? flip * (1 - GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000) : null,
+      transitionZoneEnd: flip != null ? flip * (1 + GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000) : null,
       gammaAcceleration: accel,
       timestamp: new Date()
     };
@@ -161,7 +163,10 @@ export class MemStorage implements IStorage {
     flowScore += isAbovePivot ? 1 : -1;
 
     // 4. Transition Zone Logic
-    const isInsideTransition = spotPrice >= ms.transitionZoneStart && spotPrice <= ms.transitionZoneEnd;
+    const isInsideTransition = ms.transitionZoneStart != null &&
+      ms.transitionZoneEnd != null &&
+      spotPrice >= ms.transitionZoneStart &&
+      spotPrice <= ms.transitionZoneEnd;
     if (isInsideTransition) {
       flowScore *= 0.5;
     }
@@ -171,7 +176,7 @@ export class MemStorage implements IStorage {
 
     // 5. Intensity Logic
     const totalExposure = vannaAbs + charmAbs;
-    const distToFlip = Math.abs(spotPrice - ms.gammaFlip) / spotPrice;
+    const distToFlip = ms.gammaFlip != null ? Math.abs(spotPrice - ms.gammaFlip) / spotPrice : Infinity;
     const distToPivot = Math.abs(spotPrice - op.dealerPivot) / spotPrice;
     
     let intensityScore = 0;
@@ -185,14 +190,20 @@ export class MemStorage implements IStorage {
 
     // 6. Acceleration Risk Refinement
     const strongAlignment = (de.vannaBias === de.charmBias) && (vannaAbs + charmAbs > 0.8);
-    const accelerationRisk = (!isLongGamma || (spotPrice < ms.gammaFlip * 1.01 && !isLongGamma) || strongAlignment) ? "HIGH" : "LOW";
+    const nearFlipInShortGamma =
+      !isLongGamma &&
+      ms.gammaFlip != null &&
+      spotPrice < ms.gammaFlip * 1.01;
+    const accelerationRisk = (!isLongGamma || nearFlipInShortGamma || strongAlignment) ? "HIGH" : "LOW";
 
     // 7. Trigger Selection Refinement
     const flowTriggerUp = [op.dealerPivot, ms.gammaFlip, ms.transitionZoneEnd, op.callWall]
+      .filter((l): l is number => l != null && Number.isFinite(l))
       .filter(l => l > spotPrice + 10) // Small buffer
       .sort((a, b) => a - b)[0] || op.callWall;
 
     const flowTriggerDown = [op.dealerPivot, ms.gammaFlip, ms.transitionZoneStart, op.putWall]
+      .filter((l): l is number => l != null && Number.isFinite(l))
       .filter(l => l < spotPrice - 10) // Small buffer
       .sort((a, b) => b - a)[0] || op.putWall;
 
@@ -248,22 +259,43 @@ export class MemStorage implements IStorage {
       this.marketState = {
         ...this.marketState,
         totalGex: gex,
-        gammaRegime: gex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
+        gammaRegime: gex > 0 ? "LONG GAMMA" : "SHORT GAMMA",
         timestamp: new Date()
       };
       updated = true;
     }
-    if (flip != null && flip > 0) {
+    const transitionPct = GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000;
+    const flipValid = flip != null && Number.isFinite(flip) && flip > 0;
+    if (flipValid) {
       this.marketState = {
         ...this.marketState,
         gammaFlip: flip,
         distanceToFlip: Math.abs(((flip - spotPrice) / spotPrice) * 100),
-        transitionZoneStart: flip * 0.995,
-        transitionZoneEnd: flip * 1.005,
+        transitionZoneStart: flip * (1 - transitionPct),
+        transitionZoneEnd: flip * (1 + transitionPct),
+        timestamp: new Date()
+      };
+      updated = true;
+    } else {
+      // Reset stale flip-derived fields when flip is missing.
+      this.marketState = {
+        ...this.marketState,
+        gammaFlip: null,
+        distanceToFlip: null,
+        transitionZoneStart: null,
+        transitionZoneEnd: null,
         timestamp: new Date()
       };
       updated = true;
     }
+    console.log("[GammaFlipTrace][Storage]", {
+      incomingFlip: flip,
+      flipValid,
+      storedGammaFlip: this.marketState.gammaFlip,
+      storedDistanceToFlip: this.marketState.distanceToFlip,
+      storedTransitionZoneStart: this.marketState.transitionZoneStart,
+      storedTransitionZoneEnd: this.marketState.transitionZoneEnd,
+    });
     if (callWall != null && callWall > 0 && putWall != null && putWall > 0) {
       this.optionsPositioning = {
         ...this.optionsPositioning,

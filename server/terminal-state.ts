@@ -64,6 +64,27 @@ export async function getTerminalState(): Promise<TerminalState> {
       storage.getTradingScenarios()
     ]);
 
+    const gammaFlipValid =
+      market?.gammaFlip != null &&
+      Number.isFinite(market.gammaFlip) &&
+      market.gammaFlip > 0;
+    const gammaFlipForEngines = gammaFlipValid ? market.gammaFlip : null;
+    const transitionZoneStartForEngines =
+      gammaFlipValid && market.transitionZoneStart > 0 ? market.transitionZoneStart : null;
+    const transitionZoneEndForEngines =
+      gammaFlipValid && market.transitionZoneEnd > 0 ? market.transitionZoneEnd : null;
+
+    // UI convention: when flip is missing, expose null so blocks/labels hide correctly.
+    const marketForClient = market
+      ? {
+          ...market,
+          gammaFlip: gammaFlipForEngines,
+          distanceToFlip: gammaFlipValid ? market.distanceToFlip : null,
+          transitionZoneStart: transitionZoneStartForEngines,
+          transitionZoneEnd: transitionZoneEndForEngines,
+        }
+      : market;
+
   let livePlaybook = null;
   let liveVolExpansion = null;
   let liveGammaCurve = null;
@@ -95,13 +116,13 @@ export async function getTerminalState(): Promise<TerminalState> {
     if (cachedTicker?.price) {
       try {
         const gammaContext = {
-          gammaFlip: market?.gammaFlip ?? null,
+          gammaFlip: gammaFlipForEngines,
           gammaMagnets: levels?.gammaMagnets ?? [],
         };
         liveHeatmap = await OrderBookGateway.getLiquidityHeatmap(cachedTicker.price, gammaContext);
         const accZones = computeGammaAccelerationZones({
           spotPrice: cachedTicker.price,
-          gammaFlip: market?.gammaFlip ?? null,
+          gammaFlip: gammaFlipForEngines,
           gammaMagnets: levels?.gammaMagnets ?? [],
           liquidityHeatZones: liveHeatmap?.liquidityHeatZones ?? [],
           liquidityVacuum: liveHeatmap?.liquidityVacuum ?? null,
@@ -171,7 +192,7 @@ export async function getTerminalState(): Promise<TerminalState> {
         callWall: positioning?.callWall ?? null,
         putWall: positioning?.putWall ?? null,
         gammaMagnets: levels?.gammaMagnets ?? [],
-        gammaFlip: market?.gammaFlip ?? null,
+        gammaFlip: gammaFlipForEngines,
         accelZones: (liveHeatmap as any).gammaAccelerationZones ?? [],
       });
       if (result && typeof result === "object" && result.signal != null) {
@@ -233,9 +254,9 @@ export async function getTerminalState(): Promise<TerminalState> {
     if (spot > 0 && optionsSnapshot?.strikes?.length) {
       gravityMap = computeGravityMap({
         spotPrice: spot,
-        gammaFlip: market?.gammaFlip ?? optionsSnapshot?.gammaFlip ?? null,
-        transitionZoneStart: market?.transitionZoneStart ?? null,
-        transitionZoneEnd: market?.transitionZoneEnd ?? null,
+        gammaFlip: gammaFlipForEngines,
+        transitionZoneStart: transitionZoneStartForEngines,
+        transitionZoneEnd: transitionZoneEndForEngines,
         gammaMagnets: levels?.gammaMagnets ?? [],
         shortGammaPocketStart: levels?.shortGammaPocketStart ?? null,
         shortGammaPocketEnd: levels?.shortGammaPocketEnd ?? null,
@@ -334,9 +355,9 @@ export async function getTerminalState(): Promise<TerminalState> {
   const finalOptions = {
     asOf: enrichedOptionsSnapshot?.asOf ?? null,
     spot: enrichedOptionsSnapshot?.spot ?? ticker?.price ?? null,
-    totalGex: enrichedOptionsSnapshot?.totalGex ?? 0,
-    gammaRegime: enrichedOptionsSnapshot?.gammaRegime ?? "NEUTRAL",
-    gammaFlip: enrichedOptionsSnapshot?.gammaFlip ?? null,
+    totalGex: marketForClient?.totalGex ?? enrichedOptionsSnapshot?.totalGex ?? 0,
+    gammaRegime: marketForClient?.gammaRegime ?? enrichedOptionsSnapshot?.gammaRegime ?? "NEUTRAL",
+    gammaFlip: marketForClient?.gammaFlip ?? null,
     topMagnets: Array.isArray(enrichedOptionsSnapshot?.topMagnets) ? enrichedOptionsSnapshot.topMagnets : [],
     strikeCount: strikesArray.length,
     strikes: strikesArray,
@@ -347,6 +368,13 @@ export async function getTerminalState(): Promise<TerminalState> {
     callWall: positioning?.callWall ?? null,
     putWall: positioning?.putWall ?? null,
   };
+  console.warn("[GammaFlipTrace][TerminalState]", {
+    storageMarketGammaFlip: market?.gammaFlip ?? null,
+    marketForClientGammaFlip: marketForClient?.gammaFlip ?? null,
+    optionsSnapshotGammaFlip: enrichedOptionsSnapshot?.gammaFlip ?? null,
+    finalOptionsGammaFlip: finalOptions.gammaFlip ?? null,
+    source: optionsSource ?? "unknown",
+  });
   DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState final options keys]", Object.keys(finalOptions));
   DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState final options sample]", {
     hasSpot: finalOptions.spot != null,
@@ -358,7 +386,7 @@ export async function getTerminalState(): Promise<TerminalState> {
   });
 
     return {
-      market,
+      market: marketForClient,
       exposure,
       positioning: enrichedPositioning,
       levels,

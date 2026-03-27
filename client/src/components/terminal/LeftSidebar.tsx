@@ -159,6 +159,16 @@ export function LeftSidebar() {
     dealerPrevRef.current = dealer;
   }, [dealer?.vannaExposure, dealer?.charmExposure]);
 
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    console.log("[GammaFlipTrace][UI][LeftSidebar][/api/market-state]", {
+      gammaFlip: market?.gammaFlip ?? null,
+      distanceToFlip: market?.distanceToFlip ?? null,
+      transitionZoneStart: market?.transitionZoneStart ?? null,
+      transitionZoneEnd: market?.transitionZoneEnd ?? null,
+    });
+  }, [market?.gammaFlip, market?.distanceToFlip, market?.transitionZoneStart, market?.transitionZoneEnd]);
+
   return (
     <div className="h-full flex flex-col gap-1 overflow-y-auto p-1 border-r border-terminal-border bg-terminal-bg shrink-0 min-w-0 w-[280px] max-[1400px]:w-[240px] max-[1000px]:hidden">
       
@@ -199,9 +209,28 @@ export function LeftSidebar() {
       <TerminalPanel title="MARKET STATE">
         <TerminalValue label="Gamma Regime" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge tooltip="Gamma Regime" />
         <TerminalValue label="Total GEX" value={market ? `${(market.totalGex / 1e9).toFixed(2)}B` : "--"} trend={market && market.totalGex > 0 ? "positive" : "negative"} />
-        <TerminalValue label="Gamma Flip" value={market?.gammaFlip ?? "--"} tooltip="Gamma Flip" />
-        <TerminalValue label="Dist. to Flip" value={market?.distanceToFlip != null ? `${market.distanceToFlip.toFixed(2)}%` : "--"} trend={market && market.distanceToFlip < 5 ? "positive" : "neutral"} />
-        <TerminalValue label="Transition Zone" value={market?.transitionZoneStart != null && market?.transitionZoneEnd != null ? `${Math.round(market.transitionZoneStart)} - ${Math.round(market.transitionZoneEnd)}` : "--"} tooltip="Transition Zone" />
+        <TerminalValue
+          label="Gamma Flip"
+          value={market?.gammaFlip != null && market.gammaFlip > 0 ? market.gammaFlip : "--"}
+          tooltip="Gamma Flip"
+        />
+        <TerminalValue
+          label="Dist. to Flip"
+          value={market?.distanceToFlip != null ? `${market.distanceToFlip.toFixed(2)}%` : "--"}
+          trend={market?.distanceToFlip != null && market.distanceToFlip < 5 ? "positive" : "neutral"}
+        />
+        <TerminalValue
+          label="Transition Zone"
+          value={
+            market?.transitionZoneStart != null &&
+            market?.transitionZoneEnd != null &&
+            market.transitionZoneStart > 0 &&
+            market.transitionZoneEnd > 0
+              ? `${Math.round(market.transitionZoneStart)} - ${Math.round(market.transitionZoneEnd)}`
+              : "--"
+          }
+          tooltip="Transition Zone"
+        />
         <TerminalValue label="Gamma Accel" value={market?.gammaAcceleration ?? "--"} trend="positive" />
         <OptionsDataFreshness market={market as (MarketState & { optionsLastUpdated?: number }) | undefined} />
       </TerminalPanel>

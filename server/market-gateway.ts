@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { getKrakenTicker, getKrakenCandles } from "./kraken-gateway";
 import { aggregateOhlcvCandles } from "./lib/candleAggregation";
+import {
+  getBufferCoverage,
+  queryBufferedAggTrades,
+  type BufferedAggTrade,
+} from "./services/aggTradeBufferService";
 
 /** Bybit spot kline `interval` param (minutes or D/W/M). */
 function bybitIntervalFromApi(iv: string): string {
@@ -53,6 +58,16 @@ export const tickerSchema = z.object({
 
 export type Candle = z.infer<typeof candleSchema>;
 export type Ticker = z.infer<typeof tickerSchema>;
+
+/** Normalized Binance aggTrades row — `side` is aggressor (market) side */
+export type AggTrade = {
+  id: string;
+  price: number;
+  qty: number;
+  /** Exchange event time (ms) */
+  time: number;
+  side: "buy" | "sell";
+};
 
 // --- In-Memory Cache for Deterministic Access ---
 let lastTickerCache: Ticker | null = null;
@@ -281,6 +296,214 @@ export class MarketDataGateway {
       close: Number(k[4]),
       volume: Number(k[5])
     }));
+  }
+
+  private static normalizeAggTradeRow(row: any): AggTrade {
+    const isBuyerMaker = row.m === true;
+    return {
+      id: String(row.a),
+      price: parseFloat(row.p),
+      qty: parseFloat(row.q),
+      time: Number(row.T),
+      side: isBuyerMaker ? ("sell" as const) : ("buy" as const),
+    };
+  }
+
+  private static readonly AGG_TRADES_PAGE = 1000;
+  /** Footprint client cap — keep paginated REST bounded to avoid Binance timeouts / 503 to the UI. */
+  private static readonly AGG_TRADES_CLIENT_CAP = 5000;
+  /** Historical backfill cap for visible-range footprint reconstruction. */
+  private static readonly AGG_TRADES_HISTORICAL_CAP = 220_000;
+  /** Safety cap for one paged walk. */
+  private static readonly AGG_TRADES_PAGED_HARD_CAP = 220_000;
+
+  /** Binance REST aggTrades (max 1000 rows per request). */
+  private static async fetchAggTradesRest(
+    symbol: string,
+    opts: { startTimeMs?: number; endTimeMs?: number; limit?: number },
+  ): Promise<AggTrade[]> {
+    const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
+    const limit = Math.min(1000, Math.max(1, opts.limit ?? 800));
+    const params = new URLSearchParams({ symbol: sym, limit: String(limit) });
+    if (opts.startTimeMs != null) params.set("startTime", String(Math.floor(opts.startTimeMs)));
+    if (opts.endTimeMs != null) params.set("endTime", String(Math.floor(opts.endTimeMs)));
+    const { data } = await this.fetchBinance(`/api/v3/aggTrades?${params.toString()}`);
+    if (!Array.isArray(data)) return [];
+    const out: AggTrade[] = [];
+    for (const row of data) {
+      try {
+        const t = this.normalizeAggTradeRow(row);
+        if (Number.isFinite(t.price) && Number.isFinite(t.qty) && Number.isFinite(t.time) && t.qty > 0) {
+          out.push(t);
+        }
+      } catch {
+        /* skip malformed row */
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Walk Binance aggTrades in windows of 1000 until range is covered or caps hit.
+   * Page count is bounded by `maxRows` so a single user request cannot fan out to hundreds of REST calls.
+   */
+  private static async fetchAggTradesRestPaged(
+    symbol: string,
+    startMs: number,
+    endMs: number,
+    maxRows: number,
+  ): Promise<AggTrade[]> {
+    const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
+    if (endMs < startMs) return [];
+    const cap = Math.min(this.AGG_TRADES_PAGED_HARD_CAP, Math.max(1, maxRows));
+    const map = new Map<string, AggTrade>();
+    let cursor = startMs;
+    let pages = 0;
+    const maxPages = Math.min(420, Math.ceil(cap / this.AGG_TRADES_PAGE) + 4);
+
+    while (cursor <= endMs && map.size < cap && pages < maxPages) {
+      pages++;
+      let batch: AggTrade[];
+      try {
+        batch = await this.fetchAggTradesRest(sym, {
+          startTimeMs: cursor,
+          endTimeMs: endMs,
+          limit: this.AGG_TRADES_PAGE,
+        });
+      } catch (e: any) {
+        console.error("[fetchAggTradesRestPaged] page failed", { sym, cursor, endMs, page: pages, err: e?.message ?? e });
+        break;
+      }
+      if (batch.length === 0) break;
+      for (const t of batch) {
+        if (t.time < startMs || t.time > endMs) continue;
+        map.set(t.id, t);
+      }
+      const last = batch[batch.length - 1]!;
+      if (last.time >= endMs || batch.length < this.AGG_TRADES_PAGE) break;
+      const next = last.time + 1;
+      if (next <= cursor) break;
+      cursor = next;
+    }
+
+    return [...map.values()].sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+  }
+
+  private static mergeAggTradesById(parts: AggTrade[][]): AggTrade[] {
+    const map = new Map<string, AggTrade>();
+    for (const arr of parts) {
+      for (const t of arr) map.set(t.id, t);
+    }
+    const out = [...map.values()].sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+    return out;
+  }
+
+  private static bufferedToAgg(buf: BufferedAggTrade[]): AggTrade[] {
+    return buf.map((t) => ({ ...t }));
+  }
+
+  /**
+   * Recent aggregated trades (Binance aggTrades). Used for footprint / tape style features.
+   * `side` = taker: buy lifted ask, sell hit bid.
+   *
+   * For `BTCUSDT`, prefers the in-memory WebSocket buffer when the window lies in retention;
+   * Binance REST fills gaps (before oldest buffered, or stale tail vs requested `endTime`).
+   *
+   * Never throws: logs and returns [] on failure so HTTP layer can always emit JSON array.
+   */
+  static async getAggTrades(
+    symbol: string,
+    opts: { startTimeMs?: number; endTimeMs?: number; limit?: number; fullRange?: boolean } = {},
+  ): Promise<AggTrade[]> {
+    try {
+      return await this.getAggTradesImpl(symbol, opts);
+    } catch (e: any) {
+      console.error("[MarketDataGateway.getAggTrades] error:", e?.message ?? e, e?.stack);
+      return [];
+    }
+  }
+
+  private static async getAggTradesImpl(
+    symbol: string,
+    opts: { startTimeMs?: number; endTimeMs?: number; limit?: number; fullRange?: boolean },
+  ): Promise<AggTrade[]> {
+    const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
+    const clientLimit = Math.min(this.AGG_TRADES_CLIENT_CAP, Math.max(1, opts.limit ?? this.AGG_TRADES_CLIENT_CAP));
+    const effectiveLimit = opts.fullRange ? this.AGG_TRADES_HISTORICAL_CAP : clientLimit;
+    const startRaw = opts.startTimeMs;
+    const endRaw = opts.endTimeMs;
+    const hasWindow = Number.isFinite(startRaw) && Number.isFinite(endRaw);
+
+    if (!hasWindow) {
+      try {
+        return await this.fetchAggTradesRest(sym, { limit: Math.min(1000, clientLimit) });
+      } catch (e: any) {
+        console.error("[getAggTradesImpl] no-window fetch failed:", e?.message ?? e);
+        return [];
+      }
+    }
+
+    let startMs = Math.floor(startRaw!);
+    let endMs = Math.floor(endRaw!);
+    if (endMs < startMs) [startMs, endMs] = [endMs, startMs];
+    const now = Date.now();
+    if (endMs > now) endMs = now;
+    const MAX_SPAN_MS = 48 * 60 * 60 * 1000;
+    if (endMs - startMs > MAX_SPAN_MS) {
+      startMs = endMs - MAX_SPAN_MS;
+    }
+
+    const cov = getBufferCoverage(sym);
+    console.log(
+      "[getAggTrades]",
+      `sym=${sym} startMs=${startMs} endMs=${endMs} limit=${effectiveLimit} fullRange=${opts.fullRange ? 1 : 0} buf={connected:${cov.connected} size:${cov.size} oldest:${cov.oldestMs ?? "null"} newest:${cov.newestMs ?? "null"}}`,
+    );
+
+    let buf: AggTrade[] = [];
+    try {
+      const bufRaw = queryBufferedAggTrades(sym, startMs, endMs);
+      buf = this.bufferedToAgg(bufRaw);
+    } catch (e: any) {
+      console.error("[getAggTrades] buffer query failed:", e?.message ?? e);
+    }
+
+    if (sym !== "BTCUSDT") {
+      const paged = await this.fetchAggTradesRestPaged(sym, startMs, endMs, effectiveLimit);
+      return paged.length <= effectiveLimit ? paged : paged.slice(0, effectiveLimit);
+    }
+
+    const useBuffer = cov.size > 0 || cov.connected;
+    if (!useBuffer) {
+      const paged = await this.fetchAggTradesRestPaged(sym, startMs, endMs, effectiveLimit);
+      return paged.length <= effectiveLimit ? paged : paged.slice(0, effectiveLimit);
+    }
+
+    const headParts: AggTrade[] = [];
+    const tailParts: AggTrade[] = [];
+
+    if (cov.oldestMs != null && startMs < cov.oldestMs) {
+      const headEnd = Math.min(endMs, cov.oldestMs - 1);
+      if (startMs <= headEnd) {
+        headParts.push(...(await this.fetchAggTradesRestPaged(sym, startMs, headEnd, effectiveLimit)));
+      }
+    }
+
+    const TAIL_STALE_MS = 2000;
+    if (cov.newestMs != null && endMs > cov.newestMs + TAIL_STALE_MS) {
+      const tailStart = Math.max(startMs, cov.newestMs - 1);
+      if (tailStart <= endMs) {
+        tailParts.push(...(await this.fetchAggTradesRestPaged(sym, tailStart, endMs, effectiveLimit)));
+      }
+    }
+
+    let merged = this.mergeAggTradesById([headParts, buf, tailParts]);
+
+    if (merged.length === 0) {
+      merged = await this.fetchAggTradesRestPaged(sym, startMs, endMs, effectiveLimit);
+    }
+
+    if (merged.length <= effectiveLimit) return merged;
+    return merged.slice(0, effectiveLimit);
   }
 
   private static validateAndSort(candles: Candle[]): Candle[] {

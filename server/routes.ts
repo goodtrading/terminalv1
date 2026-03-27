@@ -41,6 +41,10 @@ initializeFullDepth().catch(console.error);
 
 // Import the service to start the WebSocket connection
 import "./services/orderbookService";
+import {
+  queryBufferedAggTrades,
+  subscribeAggTradeBuffer,
+} from "./services/aggTradeBufferService";
 import { startOptionsRefreshInterval } from "./options-engine";
 
 startOptionsRefreshInterval();
@@ -227,6 +231,12 @@ export async function registerRoutes(
   app.get("/api/market-state", async (_req, res) => {
     const data = await storage.getMarketState();
     const optionsLastUpdated = storage.getOptionsLastUpdated();
+    console.log("[GammaFlipTrace][Route:/api/market-state]", {
+      gammaFlip: data?.gammaFlip ?? null,
+      distanceToFlip: data?.distanceToFlip ?? null,
+      transitionZoneStart: data?.transitionZoneStart ?? null,
+      transitionZoneEnd: data?.transitionZoneEnd ?? null,
+    });
     res.json({ ...data, optionsLastUpdated });
   });
 
@@ -324,6 +334,97 @@ export async function registerRoutes(
         details: error.message
       });
     }
+  });
+
+  /** Aggregated trades for footprint / order flow (Binance aggTrades proxy). */
+  app.get("/api/market/agg-trades", async (req, res) => {
+    const rid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const symbolRaw = (req.query.symbol as string) || "BTCUSDT";
+    const symbol = symbolRaw.replace(/[^A-Za-z0-9]/g, "").toUpperCase() || "BTCUSDT";
+
+    let startTime: number | undefined =
+      req.query.startTime != null ? Number(req.query.startTime) : undefined;
+    let endTime: number | undefined = req.query.endTime != null ? Number(req.query.endTime) : undefined;
+
+    const limitRaw = req.query.limit != null ? Number(req.query.limit) : 5000;
+    const limit = Number.isFinite(limitRaw) ? Math.min(5000, Math.max(1, limitRaw)) : 5000;
+    const fullRange =
+      String(req.query.fullRange ?? "").toLowerCase() === "1" ||
+      String(req.query.fullRange ?? "").toLowerCase() === "true";
+
+    const logCtx = () =>
+      `[agg-trades ${rid}] symbol=${symbol} startMs=${startTime} endMs=${endTime} limit=${limit} fullRange=${fullRange ? 1 : 0}`;
+
+    try {
+      if (startTime != null && endTime != null) {
+        if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+          console.warn(`${logCtx()} invalid window (non-finite) → empty array`);
+          return res.status(200).json([]);
+        }
+        if (startTime > endTime) {
+          const tmp = startTime;
+          startTime = endTime;
+          endTime = tmp;
+        }
+        const now = Date.now();
+        if (endTime > now) endTime = now;
+        const MAX_SPAN_MS = 48 * 60 * 60 * 1000;
+        if (endTime - startTime > MAX_SPAN_MS) {
+          startTime = endTime - MAX_SPAN_MS;
+        }
+      }
+
+      console.log(`${logCtx()} → gateway`);
+
+      const trades = await MarketDataGateway.getAggTrades(symbol, {
+        startTimeMs: startTime != null && Number.isFinite(startTime) ? startTime : undefined,
+        endTimeMs: endTime != null && Number.isFinite(endTime) ? endTime : undefined,
+        limit,
+        fullRange,
+      });
+
+      console.log(`${logCtx()} ← count=${Array.isArray(trades) ? trades.length : "not-array"}`);
+
+      res.status(200).json(Array.isArray(trades) ? trades : []);
+    } catch (error: any) {
+      console.error(`${logCtx()} exception:`, error?.message ?? error, error?.stack);
+      res.status(200).json([]);
+    }
+  });
+
+  /** Real-time aggTrades stream (SSE) for live footprint updates. */
+  app.get("/api/market/agg-trades/stream", (req, res) => {
+    const symbolRaw = (req.query.symbol as string) || "BTCUSDT";
+    const symbol = symbolRaw.replace(/[^A-Za-z0-9]/g, "").toUpperCase() || "BTCUSDT";
+    const sinceRaw = req.query.since != null ? Number(req.query.since) : NaN;
+    const since = Number.isFinite(sinceRaw) ? Math.floor(sinceRaw) : Date.now() - 2_000;
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    const send = (t: any) => {
+      res.write(`data: ${JSON.stringify(t)}\n\n`);
+    };
+    res.write(`event: ready\ndata: {"ok":true}\n\n`);
+
+    const seed = queryBufferedAggTrades(symbol, since, Date.now());
+    for (const t of seed) send(t);
+
+    const unsubscribe = subscribeAggTradeBuffer(symbol, (trade) => {
+      send(trade);
+    });
+
+    const hb = setInterval(() => {
+      res.write(`event: ping\ndata: {}\n\n`);
+    }, 15_000);
+
+    req.on("close", () => {
+      clearInterval(hb);
+      unsubscribe();
+    });
   });
 
   app.get("/api/liquidity/heatmap", async (_req, res) => {

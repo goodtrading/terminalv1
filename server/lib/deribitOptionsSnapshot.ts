@@ -131,6 +131,12 @@ export function getDeribitOptionsSnapshot(): DeribitOptionsSnapshot {
         snapshot.gammaFlip ?? "n/a"
       } strikes=${snapshot.strikeCount} mappedStrikeRows=${strikes.length}`
     );
+    console.warn("[GammaFlipTrace][OptionsSnapshotFile]", {
+      file: OUTPUT_FILE,
+      asOf: snapshot.asOf,
+      gammaFlip: snapshot.gammaFlip,
+      gammaRegime: snapshot.gammaRegime,
+    });
 
     return {
       asOf: snapshot.asOf,

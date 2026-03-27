@@ -8,6 +8,11 @@ import {
   buildSessionContext,
   buildStructuralContext,
 } from "./playbookEngine";
+import {
+  collectOperationalLevelsFromState,
+  horizonShort,
+  prioritizeLevelsForPlaybook,
+} from "./levelTiming";
 
 export type TradeGateStatus = "NO_TRADE" | "PREPARE" | "TRADE VALID" | "INVALID";
 
@@ -51,6 +56,11 @@ export interface TradingPlanPanelModel {
     why: string;
     blockers: string[];
     entryPermission: "allowed" | "blocked";
+  };
+  timingPriority?: {
+    activeTactical: Array<{ price: number; horizon: string; urgency: string; state: string; score: number; kind: string }>;
+    intraday: Array<{ price: number; horizon: string; urgency: string; state: string; score: number; kind: string }>;
+    structural: Array<{ price: number; horizon: string; urgency: string; state: string; score: number; kind: string }>;
   };
   score: {
     total: number;
@@ -500,12 +510,23 @@ export function buildTradingPlanPanelModel(params: {
   const preSetup = derivePreSetupPanel(playbook, fsmState, fsmContext);
 
   const tradeGate = deriveTradeGate(playbook, fsmState, fsmContext, preSetup);
+  const timingGroups = (() => {
+    const spot = sess.spot;
+    if (!isFiniteNumber(spot)) {
+      return { activeTactical: [], intraday: [], structural: [] as any[] };
+    }
+    return prioritizeLevelsForPlaybook(collectOperationalLevelsFromState(currentState, spot, 60));
+  })();
 
   // Score uses only conservative proxies; never inflate.
   const score = deriveSetupScore(playbook, fsmState, fsmContext, preSetup, struct, tradeGate.status);
 
   const stateWhy = (() => {
     if (fsmDebug?.winningTrigger) return `Trigger: ${fsmDebug.winningTrigger}`;
+    const t0 = timingGroups.activeTactical[0];
+    if (t0?.timingMeta) {
+      return `Priority ${horizonShort(t0.timingMeta.horizon)} ${t0.timingMeta.urgency.toUpperCase()} ${Math.round(t0.price)} (score ${t0.timingMeta.score})`;
+    }
     if (tradeGate.status === "NO_TRADE") return playbook.whyNoTrade ?? "No clear trigger edge";
     return playbook.invalidation;
   })();
@@ -527,6 +548,32 @@ export function buildTradingPlanPanelModel(params: {
     },
     preSetup,
     tradeGate,
+    timingPriority: {
+      activeTactical: timingGroups.activeTactical.slice(0, 5).map((l) => ({
+        price: l.price,
+        horizon: l.timingMeta?.horizon ?? "intraday",
+        urgency: l.timingMeta?.urgency ?? "medium",
+        state: l.timingMeta?.state ?? "pending",
+        score: l.timingMeta?.score ?? 0,
+        kind: l.kind,
+      })),
+      intraday: timingGroups.intraday.slice(0, 6).map((l) => ({
+        price: l.price,
+        horizon: l.timingMeta?.horizon ?? "intraday",
+        urgency: l.timingMeta?.urgency ?? "medium",
+        state: l.timingMeta?.state ?? "pending",
+        score: l.timingMeta?.score ?? 0,
+        kind: l.kind,
+      })),
+      structural: timingGroups.structural.slice(0, 6).map((l) => ({
+        price: l.price,
+        horizon: l.timingMeta?.horizon ?? "swing",
+        urgency: l.timingMeta?.urgency ?? "low",
+        state: l.timingMeta?.state ?? "pending",
+        score: l.timingMeta?.score ?? 0,
+        kind: l.kind,
+      })),
+    },
     score,
     debug: fsmDebug
       ? {

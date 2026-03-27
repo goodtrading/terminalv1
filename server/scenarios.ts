@@ -9,12 +9,12 @@ export function generateDynamicScenarios(
   const isLongGamma = market.gammaRegime === "LONG GAMMA";
   const magnets = levels.gammaMagnets.map(m => `${(m / 1000).toFixed(0)}k`);
   const firstMagnet = magnets[0] || "Target";
-  const flip = market.gammaFlip.toLocaleString();
+  const flip = market.gammaFlip != null ? market.gammaFlip.toLocaleString() : "N/A";
   
   // Use numeric values for ALT CASE levels, not formatted strings
   const callWallNumeric = positioning.callWall.toString();
   const putWallNumeric = positioning.putWall.toString();
-  const flipNumeric = market.gammaFlip.toString();
+  const flipNumeric = market.gammaFlip != null ? market.gammaFlip.toString() : "N/A";
   
   const isVannaBullish = dealer.vannaBias === "BULLISH";
   const isCharmBullish = dealer.charmBias === "BULLISH";

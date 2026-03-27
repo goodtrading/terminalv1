@@ -12,6 +12,11 @@ import { useSweepHistory } from "@/hooks/useSweepHistory";
 import { pushSweepEvent } from "@/lib/sweepHistory";
 import { LearnHelper, LearnExplanation } from "./Tooltip";
 import { useQuery } from "@tanstack/react-query";
+import {
+  collectOperationalLevelsFromState,
+  horizonShort,
+  prioritizeLevelsForPlaybook,
+} from "@/lib/levelTiming";
 
 // Import vacuum engine types
 interface VacuumAnalysisResult {
@@ -228,11 +233,11 @@ function LiquidityMapPanel() {
 }
 
 // Distance to Gamma Flip — uses market.distanceToFlip (% distance to flip level)
-function DistanceToFlipBlock({ market }: { market: { gammaFlip?: number; distanceToFlip?: number } | null }) {
+function DistanceToFlipBlock({ market }: { market: { gammaFlip?: number | null; distanceToFlip?: number | null } | null }) {
   const dist = market?.distanceToFlip;
   const flip = market?.gammaFlip;
 
-  if (dist == null && flip == null) {
+  if (flip == null || dist == null) {
     return (
       <div className="text-[11px] font-mono text-white/40 py-2">—</div>
     );
@@ -475,6 +480,16 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
   const edge = useMemo(() => deriveEdge(positioning, market), [positioning, market]);
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const opts = (state as any)?.options;
+    console.log("[GammaFlipTrace][UI][RightSidebar][/api/terminal/state]", {
+      marketGammaFlip: market?.gammaFlip ?? null,
+      optionsGammaFlip: opts?.gammaFlip ?? null,
+      optionsAsOf: opts?.asOf ?? null,
+    });
+  }, [state?.market, (state as any)?.options]);
+
+  useEffect(() => {
     const sweep = (positioning as any)?.liquiditySweepDetector;
     if (!sweep?.type || !sweep?.sweepDirection) return;
     const eventTypes = ["CONTINUATION", "FAILED", "ABSORPTION", "EXHAUSTION"];
@@ -505,6 +520,19 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
 
     return { condition, flowState, volRisk };
   }, [market, state?.exposure]);
+
+  const timingGroups = useMemo(() => {
+    const spot = (state as any)?.options?.spot ?? (state as any)?.ticker?.price;
+    if (typeof spot !== "number" || !Number.isFinite(spot)) {
+      return { activeTactical: [], intraday: [], structural: [] };
+    }
+    const levels = collectOperationalLevelsFromState(
+      state,
+      spot,
+      60,
+    );
+    return prioritizeLevelsForPlaybook(levels);
+  }, [state]);
 
   const handleScenarioClick = (scenario: TradingScenario) => {
     const newId = selectedId === scenario.id ? null : scenario.id;
@@ -605,6 +633,50 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
             <LearnHelper text={getVolRiskHelper(tradeSetup.volRisk)} />
           </div>
           <LearnExplanation text="MARKET CONDITION: setup confirmation. FLOW STATE: dealer flow. VOLATILITY RISK: expected vol level." />
+        </div>
+      </SidebarPanel>
+
+      <SidebarPanel title="Operational Timing">
+        <div className="flex flex-col gap-2">
+          <div>
+            <div className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Active Levels</div>
+            <div className="mt-1 flex flex-col gap-1">
+              {timingGroups.activeTactical.length === 0 ? (
+                <div className="text-[10px] text-white/30 italic">No active tactical levels</div>
+              ) : (
+                timingGroups.activeTactical.map((l, i) => (
+                  <div key={`act-${i}-${l.price}`} className="text-[10px] font-mono text-white/70 flex items-center justify-between">
+                    <span>{Math.round(l.price)} — {horizonShort(l.timingMeta!.horizon)} — {l.timingMeta!.urgency.toUpperCase()}</span>
+                    <span className={cn("text-[9px]", l.timingMeta!.state === "active" ? "text-green-400" : "text-white/45")}>
+                      {l.timingMeta!.state.toUpperCase()} · {l.timingMeta!.score}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          <div>
+            <div className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Intraday Levels</div>
+            <div className="mt-1 flex flex-col gap-1">
+              {timingGroups.intraday.slice(0, 4).map((l, i) => (
+                <div key={`intra-${i}-${l.price}`} className="text-[10px] font-mono text-white/60 flex items-center justify-between">
+                  <span>{Math.round(l.price)} — {horizonShort(l.timingMeta!.horizon)} — {l.label}</span>
+                  <span className="text-[9px] text-white/45">{l.timingMeta!.score}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Structural Levels</div>
+            <div className="mt-1 flex flex-col gap-1">
+              {timingGroups.structural.slice(0, 4).map((l, i) => (
+                <div key={`str-${i}-${l.price}`} className="text-[10px] font-mono text-white/55 flex items-center justify-between">
+                  <span>{Math.round(l.price)} — {horizonShort(l.timingMeta!.horizon)} — {l.timingMeta!.urgency.toUpperCase()}</span>
+                  <span className="text-[9px] text-white/40">{l.timingMeta!.state.toUpperCase()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </SidebarPanel>
 
