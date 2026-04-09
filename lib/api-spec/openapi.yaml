@@ -10,6 +10,12 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: market
+    description: Market state and intelligence
+  - name: alerts
+    description: Trading alerts
+  - name: terminal
+    description: Terminal data ingestion (internal)
 paths:
   /healthz:
     get:
@@ -24,7 +30,87 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /market/state:
+    get:
+      operationId: getMarketState
+      tags: [market]
+      summary: Get current market state
+      description: Returns the current bias, gamma state, key zone and active scenario. Poll every 5-10 seconds.
+      responses:
+        "200":
+          description: Current market state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketState"
+
+  /alerts:
+    get:
+      operationId: getAlerts
+      tags: [alerts]
+      summary: Get trading alerts
+      description: Returns the list of active and executed alerts ordered by recency.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, executed]
+          description: Filter alerts by status. Omit to return all.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Maximum number of alerts to return.
+      responses:
+        "200":
+          description: List of alerts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertsResponse"
+
+  /terminal/push:
+    post:
+      operationId: terminalPush
+      tags: [terminal]
+      summary: Push market data from terminal
+      description: Ingests a complete state update from the trading terminal. Requires X-Terminal-Key header.
+      security:
+        - terminalKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TerminalPayload"
+      responses:
+        "200":
+          description: State updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushResult"
+        "401":
+          description: Invalid or missing terminal key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
+  securitySchemes:
+    terminalKey:
+      type: apiKey
+      in: header
+      name: X-Terminal-Key
+
   schemas:
     HealthStatus:
       type: object
@@ -34,3 +120,151 @@ components:
       required:
         - status
 
+    MarketState:
+      type: object
+      description: Complete market intelligence state
+      properties:
+        bias:
+          type: string
+          enum: [BULLISH, BEARISH, NEUTRAL]
+          description: Directional market bias
+        gamma:
+          type: string
+          enum: [LONG, SHORT, NEUTRAL]
+          description: Net gamma positioning state
+        zone:
+          type: string
+          description: Current key price zone (e.g. "$82K")
+        scenario:
+          type: string
+          description: Active market scenario label
+        setup:
+          type: string
+          description: Active setup description (e.g. "RECHAZO → CONTINUACIÓN")
+        probability:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Scenario probability percentage
+        outlook:
+          type: string
+          description: Directional outlook summary
+        timeframe:
+          type: string
+          description: Relevant timeframe for the scenario
+        tags:
+          type: array
+          items:
+            type: string
+          description: Scenario classification tags
+        biasStrength:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Bias conviction percentage
+        gammaLevel:
+          type: integer
+          minimum: -100
+          maximum: 100
+          description: Gamma level (-100 = max short, +100 = max long)
+        netGamma:
+          type: string
+          description: Net gamma dollar value (e.g. "-$1.2B")
+        flipPoint:
+          type: string
+          description: Gamma flip price level
+        dominantExpiry:
+          type: string
+          description: Dominant options expiry date
+        lastUpdate:
+          type: string
+          description: ISO timestamp of last update
+      required:
+        - bias
+        - gamma
+        - zone
+        - scenario
+        - setup
+        - probability
+        - lastUpdate
+
+    Alert:
+      type: object
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+          description: Alert message
+        timestamp:
+          type: string
+          description: Human-readable timestamp
+        issuedAt:
+          type: string
+          format: date-time
+          description: ISO datetime when alert was issued
+        status:
+          type: string
+          enum: [active, executed]
+        type:
+          type: string
+          enum: [price, gamma, zone, absorption, scenario]
+      required:
+        - id
+        - text
+        - timestamp
+        - issuedAt
+        - status
+        - type
+
+    AlertsResponse:
+      type: object
+      properties:
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Alert"
+        total:
+          type: integer
+        activeCount:
+          type: integer
+      required:
+        - alerts
+        - total
+        - activeCount
+
+    TerminalPayload:
+      type: object
+      description: Full state update from the trading terminal
+      properties:
+        marketState:
+          $ref: "#/components/schemas/MarketState"
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Alert"
+          description: Optional list of new alerts to merge
+      required:
+        - marketState
+
+    PushResult:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - ok
+        - updatedAt
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+      required:
+        - error

@@ -14,3 +14,199 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * Returns the current bias, gamma state, key zone and active scenario. Poll every 5-10 seconds.
+ * @summary Get current market state
+ */
+export const getMarketStateResponseProbabilityMin = 0;
+export const getMarketStateResponseProbabilityMax = 100;
+
+export const getMarketStateResponseBiasStrengthMin = 0;
+export const getMarketStateResponseBiasStrengthMax = 100;
+
+export const getMarketStateResponseGammaLevelMin = -100;
+export const getMarketStateResponseGammaLevelMax = 100;
+
+export const GetMarketStateResponse = zod
+  .object({
+    bias: zod
+      .enum(["BULLISH", "BEARISH", "NEUTRAL"])
+      .describe("Directional market bias"),
+    gamma: zod
+      .enum(["LONG", "SHORT", "NEUTRAL"])
+      .describe("Net gamma positioning state"),
+    zone: zod.string().describe('Current key price zone (e.g. \"$82K\")'),
+    scenario: zod.string().describe("Active market scenario label"),
+    setup: zod
+      .string()
+      .describe('Active setup description (e.g. \"RECHAZO → CONTINUACIÓN\")'),
+    probability: zod
+      .number()
+      .min(getMarketStateResponseProbabilityMin)
+      .max(getMarketStateResponseProbabilityMax)
+      .describe("Scenario probability percentage"),
+    outlook: zod.string().optional().describe("Directional outlook summary"),
+    timeframe: zod
+      .string()
+      .optional()
+      .describe("Relevant timeframe for the scenario"),
+    tags: zod
+      .array(zod.string())
+      .optional()
+      .describe("Scenario classification tags"),
+    biasStrength: zod
+      .number()
+      .min(getMarketStateResponseBiasStrengthMin)
+      .max(getMarketStateResponseBiasStrengthMax)
+      .optional()
+      .describe("Bias conviction percentage"),
+    gammaLevel: zod
+      .number()
+      .min(getMarketStateResponseGammaLevelMin)
+      .max(getMarketStateResponseGammaLevelMax)
+      .optional()
+      .describe("Gamma level (-100 = max short, +100 = max long)"),
+    netGamma: zod
+      .string()
+      .optional()
+      .describe('Net gamma dollar value (e.g. \"-$1.2B\")'),
+    flipPoint: zod.string().optional().describe("Gamma flip price level"),
+    dominantExpiry: zod
+      .string()
+      .optional()
+      .describe("Dominant options expiry date"),
+    lastUpdate: zod.string().describe("ISO timestamp of last update"),
+  })
+  .describe("Complete market intelligence state");
+
+/**
+ * Returns the list of active and executed alerts ordered by recency.
+ * @summary Get trading alerts
+ */
+export const getAlertsQueryLimitDefault = 50;
+export const getAlertsQueryLimitMax = 100;
+
+export const GetAlertsQueryParams = zod.object({
+  status: zod
+    .enum(["active", "executed"])
+    .optional()
+    .describe("Filter alerts by status. Omit to return all."),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(getAlertsQueryLimitMax)
+    .default(getAlertsQueryLimitDefault)
+    .describe("Maximum number of alerts to return."),
+});
+
+export const GetAlertsResponse = zod.object({
+  alerts: zod.array(
+    zod.object({
+      id: zod.string(),
+      text: zod.string().describe("Alert message"),
+      timestamp: zod.string().describe("Human-readable timestamp"),
+      issuedAt: zod.coerce
+        .date()
+        .describe("ISO datetime when alert was issued"),
+      status: zod.enum(["active", "executed"]),
+      type: zod.enum(["price", "gamma", "zone", "absorption", "scenario"]),
+    }),
+  ),
+  total: zod.number(),
+  activeCount: zod.number(),
+});
+
+/**
+ * Ingests a complete state update from the trading terminal. Requires X-Terminal-Key header.
+ * @summary Push market data from terminal
+ */
+export const terminalPushBodyMarketStateProbabilityMin = 0;
+export const terminalPushBodyMarketStateProbabilityMax = 100;
+
+export const terminalPushBodyMarketStateBiasStrengthMin = 0;
+export const terminalPushBodyMarketStateBiasStrengthMax = 100;
+
+export const terminalPushBodyMarketStateGammaLevelMin = -100;
+export const terminalPushBodyMarketStateGammaLevelMax = 100;
+
+export const TerminalPushBody = zod
+  .object({
+    marketState: zod
+      .object({
+        bias: zod
+          .enum(["BULLISH", "BEARISH", "NEUTRAL"])
+          .describe("Directional market bias"),
+        gamma: zod
+          .enum(["LONG", "SHORT", "NEUTRAL"])
+          .describe("Net gamma positioning state"),
+        zone: zod.string().describe('Current key price zone (e.g. \"$82K\")'),
+        scenario: zod.string().describe("Active market scenario label"),
+        setup: zod
+          .string()
+          .describe(
+            'Active setup description (e.g. \"RECHAZO → CONTINUACIÓN\")',
+          ),
+        probability: zod
+          .number()
+          .min(terminalPushBodyMarketStateProbabilityMin)
+          .max(terminalPushBodyMarketStateProbabilityMax)
+          .describe("Scenario probability percentage"),
+        outlook: zod
+          .string()
+          .optional()
+          .describe("Directional outlook summary"),
+        timeframe: zod
+          .string()
+          .optional()
+          .describe("Relevant timeframe for the scenario"),
+        tags: zod
+          .array(zod.string())
+          .optional()
+          .describe("Scenario classification tags"),
+        biasStrength: zod
+          .number()
+          .min(terminalPushBodyMarketStateBiasStrengthMin)
+          .max(terminalPushBodyMarketStateBiasStrengthMax)
+          .optional()
+          .describe("Bias conviction percentage"),
+        gammaLevel: zod
+          .number()
+          .min(terminalPushBodyMarketStateGammaLevelMin)
+          .max(terminalPushBodyMarketStateGammaLevelMax)
+          .optional()
+          .describe("Gamma level (-100 = max short, +100 = max long)"),
+        netGamma: zod
+          .string()
+          .optional()
+          .describe('Net gamma dollar value (e.g. \"-$1.2B\")'),
+        flipPoint: zod.string().optional().describe("Gamma flip price level"),
+        dominantExpiry: zod
+          .string()
+          .optional()
+          .describe("Dominant options expiry date"),
+        lastUpdate: zod.string().describe("ISO timestamp of last update"),
+      })
+      .describe("Complete market intelligence state"),
+    alerts: zod
+      .array(
+        zod.object({
+          id: zod.string(),
+          text: zod.string().describe("Alert message"),
+          timestamp: zod.string().describe("Human-readable timestamp"),
+          issuedAt: zod.coerce
+            .date()
+            .describe("ISO datetime when alert was issued"),
+          status: zod.enum(["active", "executed"]),
+          type: zod.enum(["price", "gamma", "zone", "absorption", "scenario"]),
+        }),
+      )
+      .optional()
+      .describe("Optional list of new alerts to merge"),
+  })
+  .describe("Full state update from the trading terminal");
+
+export const TerminalPushResponse = zod.object({
+  ok: zod.boolean(),
+  updatedAt: zod.coerce.date(),
+});

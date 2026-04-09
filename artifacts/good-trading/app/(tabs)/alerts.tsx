@@ -1,49 +1,77 @@
 import React, { useState } from "react";
-import { ScrollView, View, Text, StyleSheet, TouchableOpacity, Platform } from "react-native";
+import {
+  ScrollView,
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Platform,
+  ActivityIndicator,
+  RefreshControl,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
+import { useGetAlerts, getGetAlertsQueryKey } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useColors } from "@/hooks/useColors";
 import { AlertItem } from "@/components/AlertItem";
-import { alerts } from "@/data/mockData";
 
 type FilterType = "all" | "active" | "executed";
 
 export default function AlertsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState<FilterType>("all");
+  const [refreshing, setRefreshing] = useState(false);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 + 84 : insets.bottom + 84;
 
-  const filtered = alerts.filter((a) => {
-    if (filter === "all") return true;
-    return a.status === filter;
+  const params = filter !== "all" ? { status: filter as "active" | "executed" } : {};
+
+  const { data, isLoading, isError } = useGetAlerts(params, {
+    query: {
+      refetchInterval: 7_000,
+      staleTime: 5_000,
+      queryKey: getGetAlertsQueryKey(params),
+    },
   });
 
-  const activeCount = alerts.filter((a) => a.status === "active").length;
+  const alerts = data?.alerts ?? [];
+  const activeCount = data?.activeCount ?? 0;
+  const total = data?.total ?? 0;
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await queryClient.invalidateQueries({ queryKey: getGetAlertsQueryKey(params) });
+    setRefreshing(false);
+  };
 
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: colors.background }]}
       contentContainerStyle={{ paddingTop: topPad + 16, paddingBottom: bottomPad, paddingHorizontal: 16 }}
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor={colors.primary}
+          colors={[colors.primary]}
+        />
+      }
     >
       <View style={styles.headerRow}>
         <View>
           <Text style={[styles.title, { color: colors.foreground }]}>ALERTAS</Text>
           <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
             <Text style={{ color: colors.primary }}>{activeCount} ACTIVAS</Text>
-            {" · "}{alerts.length} TOTAL
+            {" · "}{total} TOTAL
           </Text>
         </View>
         {activeCount > 0 && (
-          <View
-            style={[
-              styles.urgencyPill,
-              { backgroundColor: "#1a0005", borderColor: colors.primary },
-            ]}
-          >
+          <View style={[styles.urgencyPill, { backgroundColor: "#1a0005", borderColor: colors.primary }]}>
             <Feather name="alert-circle" size={11} color={colors.primary} />
             <Text style={[styles.urgencyText, { color: colors.primary }]}>REQUIEREN ATENCIÓN</Text>
           </View>
@@ -54,11 +82,7 @@ export default function AlertsScreen() {
         {(["all", "active", "executed"] as FilterType[]).map((f) => (
           <TouchableOpacity
             key={f}
-            style={[
-              styles.filterBtn,
-              filter === f && { backgroundColor: colors.primary },
-              filter !== f && { borderColor: "transparent" },
-            ]}
+            style={[styles.filterBtn, filter === f && { backgroundColor: colors.primary }]}
             onPress={() => setFilter(f)}
             activeOpacity={0.75}
           >
@@ -74,13 +98,26 @@ export default function AlertsScreen() {
         ))}
       </View>
 
-      {filtered.length === 0 ? (
-        <View style={styles.empty}>
+      {isLoading && alerts.length === 0 ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      ) : isError && alerts.length === 0 ? (
+        <View style={styles.center}>
+          <Feather name="wifi-off" size={24} color={colors.mutedForeground} />
+          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+            Sin conexión al servidor
+          </Text>
+        </View>
+      ) : alerts.length === 0 ? (
+        <View style={styles.center}>
           <Feather name="bell-off" size={28} color={colors.mutedForeground} />
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>Sin alertas en esta categoría</Text>
+          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+            Sin alertas en esta categoría
+          </Text>
         </View>
       ) : (
-        filtered.map((alert) => (
+        alerts.map((alert) => (
           <AlertItem
             key={alert.id}
             text={alert.text}
@@ -95,9 +132,7 @@ export default function AlertsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -148,7 +183,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     letterSpacing: 0.8,
   },
-  empty: {
+  center: {
     paddingVertical: 48,
     alignItems: "center",
     gap: 10,

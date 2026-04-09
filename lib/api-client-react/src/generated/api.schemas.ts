@@ -8,3 +8,150 @@
 export interface HealthStatus {
   status: string;
 }
+
+/**
+ * Directional market bias
+ */
+export type MarketStateBias =
+  (typeof MarketStateBias)[keyof typeof MarketStateBias];
+
+export const MarketStateBias = {
+  BULLISH: "BULLISH",
+  BEARISH: "BEARISH",
+  NEUTRAL: "NEUTRAL",
+} as const;
+
+/**
+ * Net gamma positioning state
+ */
+export type MarketStateGamma =
+  (typeof MarketStateGamma)[keyof typeof MarketStateGamma];
+
+export const MarketStateGamma = {
+  LONG: "LONG",
+  SHORT: "SHORT",
+  NEUTRAL: "NEUTRAL",
+} as const;
+
+/**
+ * Complete market intelligence state
+ */
+export interface MarketState {
+  /** Directional market bias */
+  bias: MarketStateBias;
+  /** Net gamma positioning state */
+  gamma: MarketStateGamma;
+  /** Current key price zone (e.g. "$82K") */
+  zone: string;
+  /** Active market scenario label */
+  scenario: string;
+  /** Active setup description (e.g. "RECHAZO → CONTINUACIÓN") */
+  setup: string;
+  /**
+   * Scenario probability percentage
+   * @minimum 0
+   * @maximum 100
+   */
+  probability: number;
+  /** Directional outlook summary */
+  outlook?: string;
+  /** Relevant timeframe for the scenario */
+  timeframe?: string;
+  /** Scenario classification tags */
+  tags?: string[];
+  /**
+   * Bias conviction percentage
+   * @minimum 0
+   * @maximum 100
+   */
+  biasStrength?: number;
+  /**
+   * Gamma level (-100 = max short, +100 = max long)
+   * @minimum -100
+   * @maximum 100
+   */
+  gammaLevel?: number;
+  /** Net gamma dollar value (e.g. "-$1.2B") */
+  netGamma?: string;
+  /** Gamma flip price level */
+  flipPoint?: string;
+  /** Dominant options expiry date */
+  dominantExpiry?: string;
+  /** ISO timestamp of last update */
+  lastUpdate: string;
+}
+
+export type AlertStatus = (typeof AlertStatus)[keyof typeof AlertStatus];
+
+export const AlertStatus = {
+  active: "active",
+  executed: "executed",
+} as const;
+
+export type AlertType = (typeof AlertType)[keyof typeof AlertType];
+
+export const AlertType = {
+  price: "price",
+  gamma: "gamma",
+  zone: "zone",
+  absorption: "absorption",
+  scenario: "scenario",
+} as const;
+
+export interface Alert {
+  id: string;
+  /** Alert message */
+  text: string;
+  /** Human-readable timestamp */
+  timestamp: string;
+  /** ISO datetime when alert was issued */
+  issuedAt: string;
+  status: AlertStatus;
+  type: AlertType;
+}
+
+export interface AlertsResponse {
+  alerts: Alert[];
+  total: number;
+  activeCount: number;
+}
+
+/**
+ * Full state update from the trading terminal
+ */
+export interface TerminalPayload {
+  marketState: MarketState;
+  /** Optional list of new alerts to merge */
+  alerts?: Alert[];
+}
+
+export interface PushResult {
+  ok: boolean;
+  updatedAt: string;
+}
+
+export interface ErrorResponse {
+  error: string;
+  code?: string;
+}
+
+export type GetAlertsParams = {
+  /**
+   * Filter alerts by status. Omit to return all.
+   */
+  status?: GetAlertsStatus;
+  /**
+   * Maximum number of alerts to return.
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type GetAlertsStatus =
+  (typeof GetAlertsStatus)[keyof typeof GetAlertsStatus];
+
+export const GetAlertsStatus = {
+  active: "active",
+  executed: "executed",
+} as const;
