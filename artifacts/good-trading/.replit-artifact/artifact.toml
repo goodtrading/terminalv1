@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/"
+title = "GoodTrading"
+version = "1.0.0"
+id = "artifacts/good-trading"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/" ]
+localPort = 18273
+
+[services.development]
+run = "pnpm --filter @workspace/good-trading run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/good-trading", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/good-trading", "run", "serve" ]
+
+[services.env]
+PORT = "18273"
+BASE_PATH = "/"
