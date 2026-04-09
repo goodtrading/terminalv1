@@ -30,3 +30,8 @@ externalPort = 80
 [[ports]]
 localPort = 18273
 externalPort = 3000
+
+[userenv]
+
+[userenv.shared]
+TERMINAL_KEY = "gt_9f2c1d7a4b6e8f1c3a5d9e2b7f4a6c1d"
