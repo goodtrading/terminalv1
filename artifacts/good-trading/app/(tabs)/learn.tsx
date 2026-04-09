@@ -19,23 +19,25 @@ export default function LearnScreen() {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.foreground }]}>LEARN</Text>
+        <Text style={[styles.title, { color: colors.foreground }]}>INTEL</Text>
         <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-          CONCEPTOS INSTITUCIONALES · {learnCards.length} MÓDULOS
+          LO QUE EL MERCADO NO TE EXPLICA
         </Text>
       </View>
 
-      <View style={[styles.infoBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>TOCA PARA EXPANDIR</Text>
-        <Text style={[styles.infoText, { color: colors.secondaryForeground }]}>
-          Cada tarjeta contiene conceptos utilizados en el análisis institucional. Toca para ver la explicación completa y puntos clave.
+      <View style={[styles.callout, { backgroundColor: "#0d0000", borderColor: colors.primary }]}>
+        <Text style={[styles.calloutTitle, { color: colors.primary }]}>
+          El 90% pierde porque opera sin contexto.
+        </Text>
+        <Text style={[styles.calloutBody, { color: colors.secondaryForeground }]}>
+          Estos no son tutoriales. Son las reglas reales del juego — las que los institucionales conocen y el retail ignora.
         </Text>
       </View>
 
       <View style={[styles.levelRow, { borderBottomColor: colors.border }]}>
         <View style={styles.legendItem}>
           <View style={[styles.legendDot, { backgroundColor: colors.success }]} />
-          <Text style={[styles.legendText, { color: colors.mutedForeground }]}>BÁSICO</Text>
+          <Text style={[styles.legendText, { color: colors.mutedForeground }]}>FUNDAMENTOS</Text>
         </View>
         <View style={styles.legendItem}>
           <View style={[styles.legendDot, { backgroundColor: colors.warning }]} />
@@ -43,7 +45,7 @@ export default function LearnScreen() {
         </View>
         <View style={styles.legendItem}>
           <View style={[styles.legendDot, { backgroundColor: colors.primary }]} />
-          <Text style={[styles.legendText, { color: colors.mutedForeground }]}>AVANZADO</Text>
+          <Text style={[styles.legendText, { color: colors.mutedForeground }]}>INSTITUCIONAL</Text>
         </View>
       </View>
 
@@ -76,23 +78,24 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 10,
-    fontFamily: "Inter_400Regular",
-    letterSpacing: 1,
+    fontFamily: "Inter_500Medium",
+    letterSpacing: 1.5,
     marginTop: 3,
   },
-  infoBanner: {
+  callout: {
     borderRadius: 4,
     borderWidth: 1,
+    borderLeftWidth: 3,
     padding: 14,
-    marginBottom: 16,
+    marginBottom: 18,
   },
-  infoLabel: {
-    fontSize: 8,
-    fontFamily: "Inter_600SemiBold",
-    letterSpacing: 1.5,
+  calloutTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.3,
     marginBottom: 6,
   },
-  infoText: {
+  calloutBody: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
     lineHeight: 18,
@@ -116,7 +119,7 @@ const styles = StyleSheet.create({
   },
   legendText: {
     fontSize: 9,
-    fontFamily: "Inter_500Medium",
+    fontFamily: "Inter_600SemiBold",
     letterSpacing: 0.8,
   },
 });

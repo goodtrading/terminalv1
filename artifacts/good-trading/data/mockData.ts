@@ -1,9 +1,9 @@
 export const marketStatus = {
   bias: "BEARISH",
   gamma: "SHORT",
-  zone: "DISTRIBUTION",
+  zone: "$82K",
   scenario: "RISK OFF",
-  lastUpdate: "09 APR 2026 · 14:32 UTC",
+  lastUpdate: "09 ABR · 14:32 UTC",
   biasStrength: 78,
 };
 
@@ -15,6 +15,7 @@ export const scenarioDetail = {
   outlook: "NEUTRAL → BEARISH",
   timeframe: "4H – 1D",
   tags: ["DISTRIBUCIÓN", "GAMMA SHORT", "RIESGO ALTO"],
+  setup: "RECHAZO → CONTINUACIÓN",
 };
 
 export const keyZones = [
@@ -38,42 +39,42 @@ export const gammaStatus = {
 export const alerts = [
   {
     id: "1",
-    text: "BTC alcanzó zona de resistencia menor en 82,450. Reacción bajista confirmada.",
+    text: "BTC tocó resistencia menor en $82,450. Reacción bajista confirmada. Próximo objetivo: $80,500.",
     timestamp: "09 ABR · 14:30",
     status: "active",
     type: "price",
   },
   {
     id: "2",
-    text: "Gamma flip detectado. Transición de long a short gamma completada.",
+    text: "Gamma flip completado. Transición LONG → SHORT gamma. Los dealers ahora amplifican movimientos a la baja.",
     timestamp: "09 ABR · 12:15",
     status: "active",
     type: "gamma",
   },
   {
     id: "3",
-    text: "Zona de soporte 80,500 en vigilancia. Volumen institucional acumulando.",
+    text: "Zona $80,500 en vigilancia máxima. Volumen institucional absorbiendo presión vendedora.",
     timestamp: "09 ABR · 10:02",
     status: "active",
     type: "zone",
   },
   {
     id: "4",
-    text: "Alerta ejecutada: Resistencia 84,200 tocada y rechazada. -3.2% desde máximo.",
+    text: "EJECUTADA: Resistencia $84,200 rechazada con fuerza. Caída de -3.2% desde máximo. Setup funcionó.",
     timestamp: "08 ABR · 18:45",
     status: "executed",
     type: "price",
   },
   {
     id: "5",
-    text: "Absorción detectada en 80,000. Posible acumulación de interés abierto.",
+    text: "Absorción masiva detectada en $80,000. Interés abierto acumulado: +18K contratos.",
     timestamp: "08 ABR · 15:20",
     status: "executed",
     type: "absorption",
   },
   {
     id: "6",
-    text: "Escenario actualizado a RISK OFF. Bias cambia a BEARISH.",
+    text: "Escenario actualizado. Bias cambia a BEARISH. Reducir exposición larga inmediatamente.",
     timestamp: "08 ABR · 09:00",
     status: "executed",
     type: "scenario",
@@ -91,6 +92,8 @@ export const watchlist = [
     nearestLevel: "80,500",
     levelType: "support",
     levelDistance: "-2.1%",
+    pressure: "VENDEDORES",
+    pressureStrength: 74,
   },
   {
     id: "2",
@@ -102,6 +105,8 @@ export const watchlist = [
     nearestLevel: "1,800",
     levelType: "support",
     levelDistance: "-2.3%",
+    pressure: "VENDEDORES",
+    pressureStrength: 81,
   },
   {
     id: "3",
@@ -113,6 +118,8 @@ export const watchlist = [
     nearestLevel: "125.00",
     levelType: "resistance",
     levelDistance: "+5.6%",
+    pressure: "COMPRADORES",
+    pressureStrength: 55,
   },
   {
     id: "4",
@@ -124,6 +131,8 @@ export const watchlist = [
     nearestLevel: "5,000",
     levelType: "support",
     levelDistance: "-3.1%",
+    pressure: "VENDEDORES",
+    pressureStrength: 68,
   },
   {
     id: "5",
@@ -135,6 +144,8 @@ export const watchlist = [
     nearestLevel: "105.00",
     levelType: "resistance",
     levelDistance: "+1.5%",
+    pressure: "COMPRADORES",
+    pressureStrength: 62,
   },
 ];
 
@@ -142,13 +153,13 @@ export const learnCards = [
   {
     id: "1",
     title: "GAMMA EXPOSURE",
-    shortDef: "Cómo los dealers amplifican el mercado",
+    shortDef: "Por qué el mercado se mueve más rápido de lo esperado",
     content:
-      "Gamma es la tasa de cambio del Delta de las opciones. Cuando los market makers tienen gamma corta, venden cuando sube y compran cuando baja, amplificando los movimientos. Gamma larga hace lo opuesto: estabiliza el precio.",
+      "Cuando los dealers tienen gamma corta, se ven obligados a vender cuando el precio sube y comprar cuando baja. No lo hacen porque quieran: tienen que hacerlo para cubrir su posición. El resultado: cada movimiento se amplifica. No es el mercado siendo irracional — son los dealers haciendo su trabajo y llevándote por delante.",
     keyPoints: [
-      "Gamma corta = volatilidad amplificada",
-      "Gamma larga = mercado más estable",
-      "El gamma flip point es zona crítica",
+      "Gamma corta = moves de 3x lo esperado",
+      "Gamma larga = el mercado 'amortigua' en soporte",
+      "El flip point es el nivel más peligroso del día",
     ],
     category: "OPCIONES",
     level: "INTERMEDIO",
@@ -156,13 +167,13 @@ export const learnCards = [
   {
     id: "2",
     title: "LIQUIDEZ",
-    shortDef: "Donde están las órdenes institucionales",
+    shortDef: "Dónde te cazan antes de moverse",
     content:
-      "La liquidez en mercados financieros representa las órdenes pendientes acumuladas. Los precios se mueven hacia zonas de alta liquidez para ejecutar las órdenes institucionales. Entender esto permite anticipar movimientos.",
+      "El precio no se mueve al azar. Se mueve a donde están las órdenes pendientes — los stops de los traders atrapados. Los institucionales necesitan contraparte para ejecutar. Tu stop loss es su liquidez. Antes de cualquier movimiento grande, el mercado primero barrió stops. Siempre.",
     keyPoints: [
-      "Stops = fuente de liquidez",
-      "El precio 'caza' liquidez antes de revertir",
-      "Zonas redondas = alta concentración",
+      "Tus stops = combustible para el movimiento real",
+      "Los números redondos concentran órdenes (son trampas)",
+      "El precio 'visita' la liquidez antes de ir a destino",
     ],
     category: "ESTRUCTURA",
     level: "BÁSICO",
@@ -170,13 +181,13 @@ export const learnCards = [
   {
     id: "3",
     title: "ABSORCIÓN",
-    shortDef: "Señal de acumulación institucional",
+    shortDef: "Cuando el dinero grande entra en silencio",
     content:
-      "La absorción ocurre cuando grandes participantes absorben toda la presión vendedora (o compradora) sin mover significativamente el precio. Es una señal temprana de que el dinero institucional está tomando posición.",
+      "La absorción es cuando ves volumen masivo pero el precio no se mueve. Eso no es ineficiencia — es un institucional absorbiendo todo lo que el mercado lanza. Está construyendo posición sin mover el precio. Es la calma antes del movimiento. Si sabes leerla, entras con ellos. Si no la ves, eres la contraparte.",
     keyPoints: [
-      "Alto volumen + precio estable = absorción",
-      "Precede a movimientos fuertes",
-      "Visible en el perfil de volumen",
+      "Volumen alto + precio estancado = alguien acumula",
+      "Precede los movimientos más fuertes del día",
+      "Visible en el perfil de volumen como nodo de alto volumen",
     ],
     category: "VOLUMEN",
     level: "AVANZADO",
@@ -184,13 +195,13 @@ export const learnCards = [
   {
     id: "4",
     title: "BIAS DE MERCADO",
-    shortDef: "Dirección predominante institucional",
+    shortDef: "La dirección que el dinero ya decidió",
     content:
-      "El bias es la dirección de menor resistencia determinada por el posicionamiento institucional, flujos de opciones y estructura macro. No es una predicción, es un contexto operativo que define las probabilidades a favor.",
+      "El bias no es una opinión. Es la lectura del posicionamiento institucional real: flujos de opciones, interés abierto, futuros vs spot. Cuando el bias es bajista, buscar longs es nadar contra la corriente. El mercado no te debe nada — opera con el bias o acepta las consecuencias.",
     keyPoints: [
-      "Bias alcista: buscar longs en soporte",
-      "Bias bajista: buscar shorts en resistencia",
-      "Bias neutro: reducir tamaño de posición",
+      "Bias alcista: únicamente buscar entradas largas",
+      "Bias bajista: solo shorts en rebotes a resistencia",
+      "Sin bias claro: tamaño reducido o sin posición",
     ],
     category: "ANÁLISIS",
     level: "BÁSICO",

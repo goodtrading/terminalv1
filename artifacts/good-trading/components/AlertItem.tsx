@@ -1,5 +1,5 @@
-import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { View, Text, StyleSheet, Animated, Platform } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 
@@ -10,61 +10,110 @@ interface AlertItemProps {
   type: string;
 }
 
-const typeIcons: Record<string, keyof typeof Feather.glyphMap> = {
-  price: "trending-down",
-  gamma: "activity",
-  zone: "map-pin",
-  absorption: "layers",
-  scenario: "alert-circle",
+const TYPE_CONFIG: Record<string, { icon: keyof typeof Feather.glyphMap; label: string }> = {
+  price: { icon: "trending-down", label: "PRECIO" },
+  gamma: { icon: "zap", label: "GAMMA" },
+  zone: { icon: "crosshair", label: "ZONA" },
+  absorption: { icon: "layers", label: "ABSORCIÓN" },
+  scenario: { icon: "alert-octagon", label: "ESCENARIO" },
 };
 
 export function AlertItem({ text, timestamp, status, type }: AlertItemProps) {
   const colors = useColors();
   const isActive = status === "active";
+  const glowAnim = useRef(new Animated.Value(0.6)).current;
+  const config = TYPE_CONFIG[type] || { icon: "bell" as const, label: "ALERTA" };
+
+  useEffect(() => {
+    if (!isActive) return;
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowAnim, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowAnim, {
+          toValue: 0.6,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [isActive, glowAnim]);
 
   return (
     <View
       style={[
         styles.container,
         {
-          backgroundColor: colors.card,
+          backgroundColor: isActive ? "#0d0000" : colors.card,
           borderColor: isActive ? colors.primary : colors.border,
           borderLeftColor: isActive ? colors.primary : colors.border,
+          ...(Platform.OS === "ios" && isActive
+            ? {
+                shadowColor: "#e01e2e",
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.3,
+                shadowRadius: 8,
+              }
+            : {}),
         },
       ]}
     >
-      <View style={styles.iconWrapper}>
+      <Animated.View
+        style={[
+          styles.iconBox,
+          {
+            backgroundColor: isActive ? "#1a0005" : colors.secondary,
+            opacity: isActive ? glowAnim : 1,
+          },
+        ]}
+      >
         <Feather
-          name={typeIcons[type] || "bell"}
-          size={14}
+          name={config.icon}
+          size={15}
           color={isActive ? colors.primary : colors.mutedForeground}
         />
-      </View>
+      </Animated.View>
+
       <View style={styles.content}>
-        <Text style={[styles.text, { color: isActive ? colors.foreground : colors.secondaryForeground }]}>
-          {text}
-        </Text>
-        <View style={styles.footer}>
-          <Text style={[styles.timestamp, { color: colors.mutedForeground }]}>{timestamp}</Text>
+        <View style={styles.typeRow}>
+          <Text style={[styles.typeLabel, { color: isActive ? colors.primary : colors.mutedForeground }]}>
+            {config.label}
+          </Text>
           <View
             style={[
               styles.badge,
               {
                 backgroundColor: isActive ? colors.primary : "transparent",
-                borderColor: isActive ? colors.primary : colors.mutedForeground,
+                borderColor: isActive ? colors.primary : colors.border,
               },
             ]}
           >
             <Text
               style={[
                 styles.badgeText,
-                { color: isActive ? colors.primaryForeground : colors.mutedForeground },
+                { color: isActive ? "#ffffff" : colors.mutedForeground },
               ]}
             >
-              {isActive ? "ACTIVO" : "EJECUTADO"}
+              {isActive ? "● ACTIVO" : "EJECUTADO"}
             </Text>
           </View>
         </View>
+
+        <Text
+          style={[
+            styles.text,
+            { color: isActive ? colors.foreground : colors.secondaryForeground },
+          ]}
+        >
+          {text}
+        </Text>
+
+        <Text style={[styles.timestamp, { color: colors.mutedForeground }]}>{timestamp}</Text>
       </View>
     </View>
   );
@@ -79,28 +128,29 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 8,
     gap: 12,
+    alignItems: "flex-start",
   },
-  iconWrapper: {
+  iconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 3,
+    alignItems: "center",
+    justifyContent: "center",
     marginTop: 2,
   },
   content: {
     flex: 1,
-    gap: 8,
+    gap: 6,
   },
-  text: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    lineHeight: 19,
-  },
-  footer: {
+  typeRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
-  timestamp: {
-    fontSize: 10,
-    fontFamily: "Inter_400Regular",
-    letterSpacing: 0.3,
+  typeLabel: {
+    fontSize: 9,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 1.5,
   },
   badge: {
     borderWidth: 1,
@@ -112,5 +162,15 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontFamily: "Inter_700Bold",
     letterSpacing: 0.8,
+  },
+  text: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 19,
+  },
+  timestamp: {
+    fontSize: 9,
+    fontFamily: "Inter_400Regular",
+    letterSpacing: 0.3,
   },
 });

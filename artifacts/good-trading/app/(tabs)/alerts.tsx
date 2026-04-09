@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { ScrollView, View, Text, StyleSheet, TouchableOpacity, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Feather } from "@expo/vector-icons";
 import { useColors } from "@/hooks/useColors";
 import { AlertItem } from "@/components/AlertItem";
 import { alerts } from "@/data/mockData";
@@ -28,13 +29,25 @@ export default function AlertsScreen() {
       contentContainerStyle={{ paddingTop: topPad + 16, paddingBottom: bottomPad, paddingHorizontal: 16 }}
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.header}>
+      <View style={styles.headerRow}>
         <View>
           <Text style={[styles.title, { color: colors.foreground }]}>ALERTAS</Text>
           <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-            {activeCount} ACTIVAS · {alerts.length} TOTAL
+            <Text style={{ color: colors.primary }}>{activeCount} ACTIVAS</Text>
+            {" · "}{alerts.length} TOTAL
           </Text>
         </View>
+        {activeCount > 0 && (
+          <View
+            style={[
+              styles.urgencyPill,
+              { backgroundColor: "#1a0005", borderColor: colors.primary },
+            ]}
+          >
+            <Feather name="alert-circle" size={11} color={colors.primary} />
+            <Text style={[styles.urgencyText, { color: colors.primary }]}>REQUIEREN ATENCIÓN</Text>
+          </View>
+        )}
       </View>
 
       <View style={[styles.filterRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -44,6 +57,7 @@ export default function AlertsScreen() {
             style={[
               styles.filterBtn,
               filter === f && { backgroundColor: colors.primary },
+              filter !== f && { borderColor: "transparent" },
             ]}
             onPress={() => setFilter(f)}
             activeOpacity={0.75}
@@ -51,10 +65,10 @@ export default function AlertsScreen() {
             <Text
               style={[
                 styles.filterText,
-                { color: filter === f ? colors.primaryForeground : colors.mutedForeground },
+                { color: filter === f ? "#ffffff" : colors.mutedForeground },
               ]}
             >
-              {f === "all" ? "TODAS" : f === "active" ? "ACTIVAS" : "EJECUTADAS"}
+              {f === "all" ? "TODAS" : f === "active" ? `ACTIVAS (${activeCount})` : "EJECUTADAS"}
             </Text>
           </TouchableOpacity>
         ))}
@@ -62,7 +76,8 @@ export default function AlertsScreen() {
 
       {filtered.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>Sin alertas</Text>
+          <Feather name="bell-off" size={28} color={colors.mutedForeground} />
+          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>Sin alertas en esta categoría</Text>
         </View>
       ) : (
         filtered.map((alert) => (
@@ -83,7 +98,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
     marginBottom: 16,
   },
   title: {
@@ -97,6 +115,20 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginTop: 3,
   },
+  urgencyPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 2,
+  },
+  urgencyText: {
+    fontSize: 8,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.8,
+  },
   filterRow: {
     flexDirection: "row",
     borderRadius: 4,
@@ -107,7 +139,7 @@ const styles = StyleSheet.create({
   },
   filterBtn: {
     flex: 1,
-    paddingVertical: 7,
+    paddingVertical: 8,
     borderRadius: 2,
     alignItems: "center",
   },
@@ -117,11 +149,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   empty: {
-    paddingVertical: 40,
+    paddingVertical: 48,
     alignItems: "center",
+    gap: 10,
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: "Inter_400Regular",
   },
 });
