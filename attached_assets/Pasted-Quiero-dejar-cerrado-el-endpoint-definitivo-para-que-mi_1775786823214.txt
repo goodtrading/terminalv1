@@ -1,0 +1,83 @@
+Quiero dejar cerrado el endpoint definitivo para que mi terminal en Windsurf pueda empujar estado real a este backend.
+
+Mi dominio es:
+https://market-insight--nachorabanal.replit.app
+
+Objetivo:
+usar modo PUSH desde Windsurf hacia Replit cada 3 segundos, sin logs visibles en consola salvo errores críticos.
+
+Necesito que hagas esto y me devuelvas todo cerrado, sin supuestos:
+
+1. Confirmar o crear el endpoint definitivo de recepción push.
+Quiero que el path final sea:
+POST /api/terminal/push
+
+2. Generar y configurar una TERMINAL_KEY nueva, fuerte y aleatoria, guardada en Secrets.
+No la hardcodees.
+Luego mostrarme:
+- nombre exacto del secret
+- header exacto que deberá enviar Windsurf
+- ejemplo exacto del valor esperado del header
+
+3. Definir el contrato exacto del request.
+Quiero que me muestres:
+- URL final completa
+- método
+- headers obligatorios
+- body JSON exacto
+- campos obligatorios
+- campos opcionales
+- respuesta 200 esperada
+- errores posibles (401, 400, etc.)
+
+4. Definir el formato más simple posible para la V1.
+Quiero que el backend acepte este shape mínimo:
+
+{
+  "marketState": {
+    "bias": "BULLISH | BEARISH | NEUTRAL",
+    "gamma": "LONG | SHORT | NEUTRAL",
+    "zone": "string",
+    "scenario": "string",
+    "setup": "string",
+    "probability": 0,
+    "outlook": "string",
+    "timeframe": "string",
+    "gammaLevel": 0,
+    "netGamma": "string"
+  },
+  "alerts": [
+    {
+      "id": "string",
+      "text": "string",
+      "status": "active | executed",
+      "type": "string"
+    }
+  ]
+}
+
+5. Decirme exactamente qué guarda el backend cuando llega un push.
+Quiero saber:
+- qué archivo recibe el POST
+- qué función valida la key
+- qué función guarda el marketState
+- qué función mergea alerts
+- qué endpoint consume la app después
+
+6. Confirmar si la app móvil ya está leyendo ese estado resultante.
+Quiero respuesta clara:
+- sí o no
+- qué endpoint lee la app
+- cada cuánto actualiza
+
+7. Darme un bloque final listo para copiar con:
+- URL completa
+- endpoint final
+- header exacto
+- key exacta o placeholder claro si no la pueden revelar completa
+- payload exacto
+- respuesta esperada
+
+No me des teoría.
+No me des arquitectura alternativa.
+Quiero dejar cerrado el contrato final entre Windsurf y Replit.
