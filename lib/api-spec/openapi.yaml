@@ -157,6 +157,9 @@ components:
           items:
             type: string
           description: Scenario classification tags
+        asset:
+          type: string
+          description: Asset symbol (e.g. "BTC", "ETH"). Defaults to "BTC" if omitted.
         biasStrength:
           type: integer
           minimum: 0
@@ -179,6 +182,11 @@ components:
         lastUpdate:
           type: string
           description: ISO timestamp of last update
+        zones:
+          type: array
+          description: Key price zones to display. If omitted, no zones are shown.
+          items:
+            $ref: "#/components/schemas/PriceZone"
       required:
         - bias
         - gamma
@@ -187,6 +195,28 @@ components:
         - setup
         - probability
         - lastUpdate
+
+    PriceZone:
+      type: object
+      description: A key price level
+      properties:
+        label:
+          type: string
+          description: Zone label (e.g. "RESISTENCIA MAYOR")
+        price:
+          type: string
+          description: Price as formatted string (e.g. "84,200")
+        type:
+          type: string
+          enum: [resistance, support, current]
+        distance:
+          type: string
+          description: Distance from current price (e.g. "+2.1%" or "—")
+      required:
+        - label
+        - price
+        - type
+        - distance
 
     Alert:
       type: object

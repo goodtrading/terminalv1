@@ -8,6 +8,13 @@
  * V2: augment with EventEmitter / Redis pub-sub to fan out to WebSocket clients.
  */
 
+export interface PriceZone {
+  label: string;
+  price: string;
+  type: "resistance" | "support" | "current";
+  distance: string;
+}
+
 export interface MarketState {
   bias: "BULLISH" | "BEARISH" | "NEUTRAL";
   gamma: "LONG" | "SHORT" | "NEUTRAL";
@@ -15,6 +22,7 @@ export interface MarketState {
   scenario: string;
   setup: string;
   probability: number;
+  asset?: string;
   outlook?: string;
   timeframe?: string;
   tags?: string[];
@@ -24,6 +32,7 @@ export interface MarketState {
   flipPoint?: string;
   dominantExpiry?: string;
   lastUpdate: string;
+  zones?: PriceZone[];
 }
 
 export interface Alert {

@@ -1,5 +1,13 @@
 import React from "react";
-import { ScrollView, View, Text, StyleSheet, Image, Platform, ActivityIndicator } from "react-native";
+import {
+  ScrollView,
+  View,
+  Text,
+  StyleSheet,
+  Image,
+  Platform,
+  ActivityIndicator,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useGetMarketState } from "@workspace/api-client-react";
 import { useColors } from "@/hooks/useColors";
@@ -7,7 +15,9 @@ import { CommandBlock } from "@/components/CommandBlock";
 import { ScenarioCard } from "@/components/ScenarioCard";
 import { KeyZonesCard } from "@/components/KeyZonesCard";
 import { GammaCard } from "@/components/GammaCard";
-import { keyZones, gammaStatus } from "@/data/mockData";
+
+// NO mock imports. Every value shown comes from the API or shows explicit
+// "awaiting data" state. If you see real-looking numbers here, the terminal pushed them.
 
 export default function HomeScreen() {
   const colors = useColors();
@@ -23,12 +33,20 @@ export default function HomeScreen() {
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 + 84 : insets.bottom + 84;
 
+  // True while waiting for the very first response
+  const isPending = isLoading && !market;
+
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: colors.background }]}
-      contentContainerStyle={{ paddingTop: topPad + 14, paddingBottom: bottomPad, paddingHorizontal: 16 }}
+      contentContainerStyle={{
+        paddingTop: topPad + 14,
+        paddingBottom: bottomPad,
+        paddingHorizontal: 16,
+      }}
       showsVerticalScrollIndicator={false}
     >
+      {/* ── Header ─────────────────────────────────────────────── */}
       <View style={styles.topBar}>
         <Image
           source={require("@/assets/images/icon.png")}
@@ -43,61 +61,97 @@ export default function HomeScreen() {
             INSTITUTIONAL INTEL
           </Text>
         </View>
-        {isLoading && !market && (
+        {isPending && (
           <ActivityIndicator size="small" color={colors.primary} style={styles.loader} />
+        )}
+        {isError && !market && (
+          <View style={[styles.offlinePill, { borderColor: colors.primary }]}>
+            <Text style={[styles.offlineText, { color: colors.primary }]}>SIN SEÑAL</Text>
+          </View>
         )}
       </View>
 
-      {isError && !market && (
-        <View style={[styles.errorBanner, { backgroundColor: "#1a0000", borderColor: colors.border }]}>
-          <Text style={[styles.errorText, { color: colors.mutedForeground }]}>
-            Sin conexión al servidor — mostrando último estado conocido
+      {/* ── Loading skeleton ───────────────────────────────────── */}
+      {isPending && (
+        <View style={[styles.skeleton, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.skeletonText, { color: colors.mutedForeground }]}>
+            CONECTANDO CON TERMINAL…
           </Text>
         </View>
       )}
 
-      <CommandBlock
-        asset="BTC"
-        gamma={market?.gamma ?? "SHORT"}
-        zone={market?.zone ?? "$82K"}
-        setup={market?.setup ?? "RECHAZO → CONTINUACIÓN"}
-        bias={market?.bias ?? "BEARISH"}
-        probability={market?.probability ?? 78}
-        lastUpdate={
-          market?.lastUpdate
-            ? new Date(market.lastUpdate).toLocaleString("es-ES", {
-                day: "2-digit",
-                month: "short",
-                hour: "2-digit",
-                minute: "2-digit",
-              }).toUpperCase() + " UTC"
-            : "—"
-        }
-      />
+      {/* ── Data layer — only renders when market has arrived ──── */}
+      {market && (
+        <>
+          {/* CommandBlock: asset · bias · gamma · zone · setup · probability · lastUpdate */}
+          <CommandBlock
+            asset={market.asset ?? "BTC"}
+            bias={market.bias}
+            gamma={market.gamma}
+            zone={market.zone}
+            setup={market.setup}
+            probability={market.probability}
+            lastUpdate={new Date(market.lastUpdate).toLocaleString("es-ES", {
+              day: "2-digit",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            }).toUpperCase() + " UTC"}
+          />
 
-      <ScenarioCard
-        title={market?.scenario ?? "DISTRIBUCIÓN ACTIVA"}
-        description={
-          market
-            ? `Escenario activo: ${market.scenario}. Outlook: ${market.outlook ?? "—"}. Timeframe: ${market.timeframe ?? "—"}.`
-            : "El mercado se encuentra en fase de distribución institucional. La gamma corta amplifica los movimientos a la baja."
-        }
-        probability={market?.probability ?? 78}
-        outlook={market?.outlook ?? "NEUTRAL → BEARISH"}
-        timeframe={market?.timeframe ?? "4H – 1D"}
-        tags={market?.tags ?? ["DISTRIBUCIÓN", "GAMMA SHORT", "RIESGO ALTO"]}
-      />
+          {/* ScenarioCard: scenario · probability · outlook · timeframe · tags */}
+          <ScenarioCard
+            title={market.scenario}
+            description={`Escenario activo: ${market.scenario}. Outlook: ${
+              market.outlook ?? "—"
+            }. Timeframe: ${market.timeframe ?? "—"}.`}
+            probability={market.probability}
+            outlook={market.outlook ?? "—"}
+            timeframe={market.timeframe ?? "—"}
+            tags={market.tags ?? []}
+          />
 
-      <KeyZonesCard zones={keyZones} />
+          {/* KeyZonesCard: zones from terminal push — empty if terminal hasn't sent them */}
+          {market.zones && market.zones.length > 0 ? (
+            <KeyZonesCard zones={market.zones} />
+          ) : (
+            <View style={[styles.emptyZones, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.emptyZonesText, { color: colors.mutedForeground }]}>
+                ZONAS CLAVE — SIN DATOS DEL TERMINAL
+              </Text>
+              <Text style={[styles.emptyZonesHint, { color: colors.mutedForeground }]}>
+                Incluí el campo `zones[]` en tu próximo push
+              </Text>
+            </View>
+          )}
 
-      <GammaCard
-        state={market?.gamma ?? gammaStatus.state}
-        level={market?.gammaLevel ?? gammaStatus.level}
-        netGamma={market?.netGamma ?? gammaStatus.netGamma}
-        flipPoint={market?.flipPoint ?? gammaStatus.flipPoint}
-        description="Gamma neta negativa. Los market makers amplifican los movimientos. Alta volatilidad esperada en zonas de liquidez."
-        dominantExpiry={market?.dominantExpiry ?? gammaStatus.dominantExpiry}
-      />
+          {/* GammaCard: gamma · gammaLevel · netGamma · flipPoint · dominantExpiry */}
+          <GammaCard
+            state={market.gamma}
+            level={market.gammaLevel ?? 0}
+            netGamma={market.netGamma ?? "—"}
+            flipPoint={market.flipPoint ?? "—"}
+            description={
+              market.gammaLevel !== undefined
+                ? `Gamma ${market.gammaLevel > 0 ? "larga" : "corta"}. Net gamma: ${
+                    market.netGamma ?? "—"
+                  }. Flip point: ${market.flipPoint ?? "—"}.`
+                : "Datos de gamma no enviados por el terminal."
+            }
+            dominantExpiry={market.dominantExpiry ?? "—"}
+          />
+        </>
+      )}
+
+      {/* ── Error state (no market + error) ───────────────────── */}
+      {isError && !market && !isPending && (
+        <View style={[styles.errorBlock, { backgroundColor: "#0d0000", borderColor: colors.primary }]}>
+          <Text style={[styles.errorTitle, { color: colors.primary }]}>SIN CONEXIÓN</Text>
+          <Text style={[styles.errorBody, { color: colors.mutedForeground }]}>
+            No se pudo contactar al backend. La app reintenta cada 7 segundos.
+          </Text>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -129,15 +183,64 @@ const styles = StyleSheet.create({
   loader: {
     marginLeft: "auto",
   },
-  errorBanner: {
+  offlinePill: {
+    marginLeft: "auto",
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 2,
+  },
+  offlineText: {
+    fontSize: 8,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 1.5,
+  },
+  skeleton: {
     borderRadius: 4,
     borderWidth: 1,
-    padding: 10,
+    padding: 24,
     marginBottom: 12,
+    alignItems: "center",
   },
-  errorText: {
+  skeletonText: {
     fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 2,
+  },
+  emptyZones: {
+    borderRadius: 4,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    padding: 16,
+    marginBottom: 12,
+    alignItems: "center",
+    gap: 6,
+  },
+  emptyZonesText: {
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 1.5,
+  },
+  emptyZonesHint: {
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+  },
+  errorBlock: {
+    borderRadius: 4,
+    borderWidth: 1,
+    padding: 20,
+    alignItems: "center",
+    gap: 8,
+  },
+  errorTitle: {
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 2,
+  },
+  errorBody: {
+    fontSize: 12,
     fontFamily: "Inter_400Regular",
     textAlign: "center",
+    lineHeight: 18,
   },
 });

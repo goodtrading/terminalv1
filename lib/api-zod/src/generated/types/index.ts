@@ -17,5 +17,7 @@ export * from "./healthStatus";
 export * from "./marketState";
 export * from "./marketStateBias";
 export * from "./marketStateGamma";
+export * from "./priceZone";
+export * from "./priceZoneType";
 export * from "./pushResult";
 export * from "./terminalPayload";

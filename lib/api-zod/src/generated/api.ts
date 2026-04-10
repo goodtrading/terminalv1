@@ -55,6 +55,12 @@ export const GetMarketStateResponse = zod
       .array(zod.string())
       .optional()
       .describe("Scenario classification tags"),
+    asset: zod
+      .string()
+      .optional()
+      .describe(
+        'Asset symbol (e.g. \"BTC\", \"ETH\"). Defaults to \"BTC\" if omitted.',
+      ),
     biasStrength: zod
       .number()
       .min(getMarketStateResponseBiasStrengthMin)
@@ -77,6 +83,27 @@ export const GetMarketStateResponse = zod
       .optional()
       .describe("Dominant options expiry date"),
     lastUpdate: zod.string().describe("ISO timestamp of last update"),
+    zones: zod
+      .array(
+        zod
+          .object({
+            label: zod
+              .string()
+              .describe('Zone label (e.g. \"RESISTENCIA MAYOR\")'),
+            price: zod
+              .string()
+              .describe('Price as formatted string (e.g. \"84,200\")'),
+            type: zod.enum(["resistance", "support", "current"]),
+            distance: zod
+              .string()
+              .describe(
+                'Distance from current price (e.g. \"+2.1%\" or \"—\")',
+              ),
+          })
+          .describe("A key price level"),
+      )
+      .optional()
+      .describe("Key price zones to display. If omitted, no zones are shown."),
   })
   .describe("Complete market intelligence state");
 
@@ -164,6 +191,12 @@ export const TerminalPushBody = zod
           .array(zod.string())
           .optional()
           .describe("Scenario classification tags"),
+        asset: zod
+          .string()
+          .optional()
+          .describe(
+            'Asset symbol (e.g. \"BTC\", \"ETH\"). Defaults to \"BTC\" if omitted.',
+          ),
         biasStrength: zod
           .number()
           .min(terminalPushBodyMarketStateBiasStrengthMin)
@@ -186,6 +219,29 @@ export const TerminalPushBody = zod
           .optional()
           .describe("Dominant options expiry date"),
         lastUpdate: zod.string().describe("ISO timestamp of last update"),
+        zones: zod
+          .array(
+            zod
+              .object({
+                label: zod
+                  .string()
+                  .describe('Zone label (e.g. \"RESISTENCIA MAYOR\")'),
+                price: zod
+                  .string()
+                  .describe('Price as formatted string (e.g. \"84,200\")'),
+                type: zod.enum(["resistance", "support", "current"]),
+                distance: zod
+                  .string()
+                  .describe(
+                    'Distance from current price (e.g. \"+2.1%\" or \"—\")',
+                  ),
+              })
+              .describe("A key price level"),
+          )
+          .optional()
+          .describe(
+            "Key price zones to display. If omitted, no zones are shown.",
+          ),
       })
       .describe("Complete market intelligence state"),
     alerts: zod

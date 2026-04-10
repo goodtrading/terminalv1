@@ -7,6 +7,7 @@
  */
 import type { MarketStateBias } from "./marketStateBias";
 import type { MarketStateGamma } from "./marketStateGamma";
+import type { PriceZone } from "./priceZone";
 
 /**
  * Complete market intelligence state
@@ -34,6 +35,8 @@ export interface MarketState {
   timeframe?: string;
   /** Scenario classification tags */
   tags?: string[];
+  /** Asset symbol (e.g. "BTC", "ETH"). Defaults to "BTC" if omitted. */
+  asset?: string;
   /**
    * Bias conviction percentage
    * @minimum 0
@@ -54,4 +57,6 @@ export interface MarketState {
   dominantExpiry?: string;
   /** ISO timestamp of last update */
   lastUpdate: string;
+  /** Key price zones to display. If omitted, no zones are shown. */
+  zones?: PriceZone[];
 }

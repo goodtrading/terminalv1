@@ -33,6 +33,27 @@ export const MarketStateGamma = {
   NEUTRAL: "NEUTRAL",
 } as const;
 
+export type PriceZoneType = (typeof PriceZoneType)[keyof typeof PriceZoneType];
+
+export const PriceZoneType = {
+  resistance: "resistance",
+  support: "support",
+  current: "current",
+} as const;
+
+/**
+ * A key price level
+ */
+export interface PriceZone {
+  /** Zone label (e.g. "RESISTENCIA MAYOR") */
+  label: string;
+  /** Price as formatted string (e.g. "84,200") */
+  price: string;
+  type: PriceZoneType;
+  /** Distance from current price (e.g. "+2.1%" or "—") */
+  distance: string;
+}
+
 /**
  * Complete market intelligence state
  */
@@ -59,6 +80,8 @@ export interface MarketState {
   timeframe?: string;
   /** Scenario classification tags */
   tags?: string[];
+  /** Asset symbol (e.g. "BTC", "ETH"). Defaults to "BTC" if omitted. */
+  asset?: string;
   /**
    * Bias conviction percentage
    * @minimum 0
@@ -79,6 +102,8 @@ export interface MarketState {
   dominantExpiry?: string;
   /** ISO timestamp of last update */
   lastUpdate: string;
+  /** Key price zones to display. If omitted, no zones are shown. */
+  zones?: PriceZone[];
 }
 
 export type AlertStatus = (typeof AlertStatus)[keyof typeof AlertStatus];
