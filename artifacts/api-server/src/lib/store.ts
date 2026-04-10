@@ -1,14 +1,11 @@
 /**
  * In-memory market state store.
  *
- * Single source of truth for the current market intelligence state and
- * alert list. Seeded with realistic defaults so the app works immediately
- * without a terminal push. The terminal POST /terminal/push endpoint
- * replaces this state entirely on each update.
+ * Single source of truth for current market intelligence state and alerts.
+ * Seeded with realistic defaults so the app works before the first terminal push.
+ * Each terminal push replaces marketState entirely and merges alerts (dedup by id).
  *
- * V2 note: this module is designed to be augmented with an EventEmitter
- * (or Redis pub/sub) to fan out state changes to WebSocket connections
- * without further restructuring.
+ * V2: augment with EventEmitter / Redis pub-sub to fan out to WebSocket clients.
  */
 
 export interface MarketState {
@@ -18,14 +15,14 @@ export interface MarketState {
   scenario: string;
   setup: string;
   probability: number;
-  outlook: string;
-  timeframe: string;
-  tags: string[];
-  biasStrength: number;
-  gammaLevel: number;
-  netGamma: string;
-  flipPoint: string;
-  dominantExpiry: string;
+  outlook?: string;
+  timeframe?: string;
+  tags?: string[];
+  biasStrength?: number;
+  gammaLevel?: number;
+  netGamma?: string;
+  flipPoint?: string;
+  dominantExpiry?: string;
   lastUpdate: string;
 }
 
@@ -38,14 +35,29 @@ export interface Alert {
   type: "price" | "gamma" | "zone" | "absorption" | "scenario";
 }
 
+/** Provenance metadata tracked separately — not part of the public response */
+export interface StoreTrace {
+  /** Timestamp when the server process started (= seeded with defaults) */
+  bootTime: string;
+  /** Timestamp of the last accepted terminal push. null = no push yet this session */
+  lastPushAt: string | null;
+  /** How many pushes have been accepted this session */
+  pushCount: number;
+  /** Source of current marketState */
+  stateSource: "seed_default" | "terminal_push";
+}
+
 interface Store {
   marketState: MarketState;
   alerts: Alert[];
+  trace: StoreTrace;
 }
 
 function nowIso(): string {
   return new Date().toISOString();
 }
+
+const BOOT_TIME = nowIso();
 
 const DEFAULT_STATE: MarketState = {
   bias: "BEARISH",
@@ -62,7 +74,7 @@ const DEFAULT_STATE: MarketState = {
   netGamma: "-$1.2B",
   flipPoint: "83,500",
   dominantExpiry: "APR 11",
-  lastUpdate: nowIso(),
+  lastUpdate: BOOT_TIME,
 };
 
 const DEFAULT_ALERTS: Alert[] = [
@@ -116,11 +128,21 @@ const DEFAULT_ALERTS: Alert[] = [
   },
 ];
 
-// Singleton store — mutated in-place by terminal pushes
+// Singleton in-memory store
 const store: Store = {
   marketState: { ...DEFAULT_STATE },
   alerts: [...DEFAULT_ALERTS],
+  trace: {
+    bootTime: BOOT_TIME,
+    lastPushAt: null,
+    pushCount: 0,
+    stateSource: "seed_default",
+  },
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Read API
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function getMarketState(): MarketState {
   return store.marketState;
@@ -134,29 +156,37 @@ export function getAlerts(
   if (status) {
     result = result.filter((a) => a.status === status);
   }
-  // Sort newest first
   result = [...result].sort(
     (a, b) => new Date(b.issuedAt).getTime() - new Date(a.issuedAt).getTime(),
   );
   return result.slice(0, limit);
 }
 
+export function getStoreTrace(): StoreTrace {
+  return { ...store.trace };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Write API (terminal push)
+// ─────────────────────────────────────────────────────────────────────────────
+
 export function updateMarketState(state: MarketState): void {
   store.marketState = { ...state, lastUpdate: nowIso() };
+  store.trace.lastPushAt = nowIso();
+  store.trace.pushCount += 1;
+  store.trace.stateSource = "terminal_push";
 }
 
 export function mergeAlerts(incoming: Alert[]): void {
   const existingIds = new Set(store.alerts.map((a) => a.id));
   for (const alert of incoming) {
     if (existingIds.has(alert.id)) {
-      // Update existing alert in place
       const idx = store.alerts.findIndex((a) => a.id === alert.id);
       if (idx !== -1) store.alerts[idx] = alert;
     } else {
       store.alerts.unshift(alert);
     }
   }
-  // Cap at 200 to prevent unbounded growth
   if (store.alerts.length > 200) {
     store.alerts = store.alerts.slice(0, 200);
   }
