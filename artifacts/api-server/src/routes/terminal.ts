@@ -39,14 +39,29 @@ router.post("/terminal/push", (req, res) => {
     return;
   }
 
-  updateMarketState(marketState);
+  // zones may arrive at body root (Windsurf format) or inside marketState.
+  // Merge both so either format works.
+  const zonesFromRoot = req.body.zones;
+  const resolvedState = {
+    ...marketState,
+    zones:
+      zonesFromRoot !== undefined
+        ? zonesFromRoot       // prefer root-level zones (Windsurf)
+        : marketState.zones,  // fall back to zones inside marketState
+  };
+
+  console.log("PUSH DATA RECEIVED:", JSON.stringify(req.body, null, 2));
+  console.log("RESOLVED zones:", JSON.stringify(resolvedState.zones));
+  logger.info({ resolvedState, alerts }, "PUSH DATA RECEIVED");
+
+  updateMarketState(resolvedState);
 
   if (Array.isArray(alerts) && alerts.length > 0) {
     mergeAlerts(alerts);
   }
 
   const updatedAt = new Date().toISOString();
-  logger.info({ updatedAt }, "Terminal push accepted");
+  logger.info({ updatedAt, pushCount: 1 }, "Terminal push accepted");
 
   res.json({ ok: true, updatedAt });
 });

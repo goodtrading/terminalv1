@@ -111,17 +111,13 @@ export default function HomeScreen() {
             tags={market.tags ?? []}
           />
 
-          {/* KeyZonesCard: zones from terminal push — empty if terminal hasn't sent them */}
+          {/* KeyZonesCard: zones from terminal push — shows "—" if terminal hasn't sent them */}
           {market.zones && market.zones.length > 0 ? (
             <KeyZonesCard zones={market.zones} />
           ) : (
             <View style={[styles.emptyZones, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.emptyZonesText, { color: colors.mutedForeground }]}>
-                ZONAS CLAVE — SIN DATOS DEL TERMINAL
-              </Text>
-              <Text style={[styles.emptyZonesHint, { color: colors.mutedForeground }]}>
-                Incluí el campo `zones[]` en tu próximo push
-              </Text>
+              <Text style={[styles.emptyZonesLabel, { color: colors.mutedForeground }]}>ZONAS CLAVE</Text>
+              <Text style={[styles.emptyZonesDash, { color: colors.mutedForeground }]}>—</Text>
             </View>
           )}
 
@@ -216,14 +212,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  emptyZonesText: {
-    fontSize: 10,
+  emptyZonesLabel: {
+    fontSize: 8,
     fontFamily: "Inter_600SemiBold",
     letterSpacing: 1.5,
+    marginBottom: 4,
   },
-  emptyZonesHint: {
-    fontSize: 10,
-    fontFamily: "Inter_400Regular",
+  emptyZonesDash: {
+    fontSize: 20,
+    fontFamily: "Inter_700Bold",
   },
   errorBlock: {
     borderRadius: 4,
