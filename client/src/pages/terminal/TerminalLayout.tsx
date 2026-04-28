@@ -6,16 +6,14 @@ import { GammaProfile } from "@/components/terminal/GammaProfile";
 import { TradingPlan } from "@/components/terminal/TradingPlan";
 import { MarketStructureBar } from "@/components/terminal/MarketStructureBar";
 import { BottomPanel } from "@/components/terminal/BottomPanel";
-import { ViewModeToggle } from "@/components/terminal/ViewModeToggle";
-import { MarketStateBar } from "@/components/terminal/MarketStateBar";
-import { useViewMode } from "@/hooks/useViewMode";
 import { useEffect, useState } from "react";
 import DeribitOptionsBook from "@/components/options/DeribitOptionsBook";
 
 export default function TerminalLayout() {
   const [activeScenario, setActiveScenario] = useState<"BASE" | "ALT" | "VOL">("BASE");
   const [bottomPanelsMinimized, setBottomPanelsMinimized] = useState(false);
-  const [viewMode, setViewMode] = useViewMode();
+  // Fixed to PRO mode - view toggle removed
+const viewMode: "PRO" = "PRO";
   const [activeTab, setActiveTab] = useState("TERMINAL");
 
   useEffect(() => {
@@ -49,13 +47,9 @@ export default function TerminalLayout() {
             <LeftSidebar />
             
             <div className="flex-1 flex flex-col p-1 gap-1 min-w-0 min-h-0 bg-terminal-bg relative overflow-hidden">
-              {viewMode === "PRO" && <MarketStructureBar />}
+              <MarketStructureBar />
               <div className="flex flex-wrap items-start gap-2 shrink-0 min-h-0">
-                {viewMode === "SIMPLE" && (
-                  <MarketStateBar activeScenario={activeScenario} className="min-w-0 flex-1 basis-[min(100%,20rem)]" />
-                )}
-                <ViewModeToggle mode={viewMode} onChange={setViewMode} className="ml-auto shrink-0" />
-              </div>
+                                              </div>
               <div className="flex-1 min-h-0 relative overflow-hidden">
                 <MainChart
                   activeScenario={activeScenario}
