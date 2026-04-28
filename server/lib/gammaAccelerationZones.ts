@@ -3,7 +3,7 @@
  * Computes price bands where thin liquidity × gamma sensitivity × liquidity slope
  * exceeds a threshold, indicating potential acceleration (green = upside, red = downside).
  * Uses both distance to gamma flip and nearest gamma magnet for sensitivity.
- * Temporal persistence: zone appears after 2 consecutive above-threshold, disappears after 2 consecutive below.
+ * Persistence: strong zones can appear immediately; others need prior tick overlap.
  */
 
 export interface GammaAccelerationZone {
@@ -27,20 +27,30 @@ export interface GammaAccelerationInput {
   liquidityVacuum?: {
     vacuumRisk?: string;
     vacuumScore?: number;
-    activeZones?: Array<{ priceStart?: number; priceEnd?: number; direction?: string; strength?: number }>;
+    activeZones?: Array<{
+      priceStart?: number;
+      priceEnd?: number;
+      start?: number;
+      end?: number;
+      direction?: string;
+      strength?: number;
+    }>;
     nearestThinLiquidityZone?: number | null;
   } | null;
+  /** Signed mid return since last terminal tick (~5s); aligns velocity with slope direction. */
+  spotVelocityPct?: number;
 }
 
 const BAND_SIZE_PCT = 0.005; // 0.5% of spot per band
 const RANGE_PCT = 0.02; // ±2% from spot
-const ACCELERATION_THRESHOLD = 0.12;
+const ACCELERATION_THRESHOLD = 0.055;
+const THIN_BAND_SLOPE_FLOOR = 0.065;
+const STRONG_RAW_SCORE_INSTANT = 0.095;
 const MIN_ZONE_WIDTH_PCT = 0.002;
 const FLIP_DECAY_PCT = 0.01; // spotPrice * this for flip decay
 const MAGNET_DECAY_PCT = 0.01; // spotPrice * this for magnet decay
 const FLIP_WEIGHT = 0.8;
 
-const CONSECUTIVE_TO_APPEAR = 2;
 const CONSECUTIVE_TO_DISAPPEAR = 2;
 
 function zoneKey(z: GammaAccelerationZone): string {
@@ -59,8 +69,19 @@ let persistenceState: PersistenceState = {
   consecutiveBelow: new Map(),
 };
 
+function thinZoneBounds(t: {
+  priceStart?: number;
+  priceEnd?: number;
+  start?: number;
+  end?: number;
+}): { lo: number; hi: number } {
+  const lo = t.priceStart ?? t.start ?? 0;
+  const hi = t.priceEnd ?? t.end ?? 0;
+  return { lo, hi };
+}
+
 function computeRawZones(input: GammaAccelerationInput): { zones: GammaAccelerationZone[]; candidates: Array<{ mid: number; vacuumScore: number; gammaSensitivity: number; liquiditySlope: number; accelerationScore: number }> } {
-  const { spotPrice, gammaFlip, gammaMagnets, liquidityHeatZones, liquidityVacuum } = input;
+  const { spotPrice, gammaFlip, gammaMagnets, liquidityHeatZones, liquidityVacuum, spotVelocityPct } = input;
   const empty = { zones: [] as GammaAccelerationZone[], candidates: [] as Array<{ mid: number; vacuumScore: number; gammaSensitivity: number; liquiditySlope: number; accelerationScore: number }> };
   if (spotPrice <= 0) return empty;
 
@@ -96,9 +117,13 @@ function computeRawZones(input: GammaAccelerationInput): { zones: GammaAccelerat
     const bandStart = bandMid - bandSize / 2;
     const bandEnd = bandMid + bandSize / 2;
     for (const t of thinZones) {
-      const tStart = t.priceStart ?? 0;
-      const tEnd = t.priceEnd ?? 0;
-      if (bandStart < tEnd && bandEnd > tStart) return 1;
+      const { lo: tStart, hi: tEnd } = thinZoneBounds(t);
+      if (tEnd > tStart && bandStart < tEnd && bandEnd > tStart) return 1;
+    }
+    const nearest = liquidityVacuum?.nearestThinLiquidityZone;
+    if (nearest != null && Number.isFinite(nearest)) {
+      const w = bandSize * 1.5;
+      if (bandMid >= nearest - w && bandMid <= nearest + w) return 1;
     }
     return 0;
   };
@@ -139,11 +164,19 @@ function computeRawZones(input: GammaAccelerationInput): { zones: GammaAccelerat
     const prevDepth = sortedBands[i - 1][1];
     const nextDepth = sortedBands[i + 1][1];
 
-    const vacuumScore = isInThinZone(mid) ? 1 : (1 - depth / maxDepth) * 0.5 + vacuumScoreGlobal * 0.5;
+    const inThin = isInThinZone(mid) === 1;
+    const vacuumScore = inThin ? 1 : (1 - depth / maxDepth) * 0.5 + vacuumScoreGlobal * 0.5;
     const sens = gammaSensitivity(mid);
     const liquiditySlope = (nextDepth - prevDepth) / (2 * bandSize);
-    const slopeNorm = Math.abs(nextDepth - prevDepth) / maxDepth;
-    const accelerationScore = vacuumScore * sens * slopeNorm;
+    let slopeNorm = Math.abs(nextDepth - prevDepth) / maxDepth;
+    if (inThin) slopeNorm = Math.max(slopeNorm, THIN_BAND_SLOPE_FLOOR);
+    let accelerationScore = vacuumScore * sens * slopeNorm;
+    const vel = spotVelocityPct ?? 0;
+    if (Math.abs(vel) > 3e-5) {
+      const dirUp = liquiditySlope >= 0;
+      const aligns = (dirUp && vel > 0) || (!dirUp && vel < 0);
+      if (aligns) accelerationScore *= 1.32;
+    }
 
     allCandidates.push({
       mid,
@@ -210,7 +243,8 @@ export function computeGammaAccelerationZones(input: GammaAccelerationInput): Ga
   const lastKeys = state.lastRawKeys;
   const toAdd = rawZones.filter((z) => {
     const k = zoneKey(z);
-    return lastKeys.has(k) && !stillShown.some((d) => zoneKey(d) === k);
+    if (stillShown.some((d) => zoneKey(d) === k)) return false;
+    return lastKeys.has(k) || z.score >= STRONG_RAW_SCORE_INSTANT;
   });
 
   // Final displayed = stillShown (minus those that have been below 2 consecutive) + toAdd
@@ -247,4 +281,19 @@ export function computeGammaAccelerationZones(input: GammaAccelerationInput): Ga
   };
 
   return displayedZones;
+}
+
+export type GammaAccelLifecycleState = "NONE" | "SETUP" | "TRIGGERED" | "ACTIVE";
+
+/** Thin-path zones present = SETUP; slope+score = TRIGGERED; aligned velocity = ACTIVE. */
+export function deriveGammaAccelLifecycle(
+  zones: GammaAccelerationZone[],
+  spotVelocityPct: number
+): GammaAccelLifecycleState {
+  if (!zones.length) return "NONE";
+  const v = Math.abs(spotVelocityPct);
+  const maxScore = zones.reduce((m, z) => Math.max(m, z.score), 0);
+  if (v >= 0.000035) return "ACTIVE";
+  if (maxScore >= 0.078) return "TRIGGERED";
+  return "SETUP";
 }

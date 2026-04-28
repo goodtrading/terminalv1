@@ -14,17 +14,27 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null;
 export async function refreshOptionsEngine(): Promise<void> {
   try {
     const { options, source } = await DeribitOptionsGateway.ingestOptions();
-    const spotPrice = MarketDataGateway.getCachedTicker()?.price ?? 68250;
+
+    const spot = MarketDataGateway.getCachedTicker()?.price;
+    if (spot == null || !Number.isFinite(spot) || spot <= 0) {
+      console.error(
+        "[OptionsEngine] No spot price available — aborting gamma refresh (no silent fallback)"
+      );
+      return;
+    }
+    console.log("[OptionsEngine] SPOT USADO:", spot);
 
     if (options.length === 0) {
       console.log("[OptionsEngine] No options data, keeping last state");
       return;
     }
 
-    const summary = await DeribitOptionsGateway.getSummary(options, spotPrice, source);
+    const summary = await DeribitOptionsGateway.getSummary(options, spot, source);
 
     const totalGex = summary.totalGex ?? 0;
     const gammaFlip = summary.gammaFlip ?? null;
+    console.log("[OptionsEngine] GEX CALCULADO:", totalGex);
+    console.log("[OptionsEngine] GAMMA FLIP:", gammaFlip);
     const callWall = summary.callWall ?? 0;
     const putWall = summary.putWall ?? 0;
     const s = summary as any;
@@ -64,7 +74,7 @@ export async function refreshOptionsEngine(): Promise<void> {
         totalVanna: s.totalVanna,
         totalCharm: s.totalCharm,
       },
-      spotPrice
+      spot
     );
     console.log("[OptionsEngine] refresh success");
   } catch (e) {

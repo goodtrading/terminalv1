@@ -22,6 +22,7 @@ export interface ChartSettings {
     showHeatmap: boolean;
     showLiquidity: boolean;
     showSweeps: boolean;
+    showCascade: boolean;
     showAbsorptions: boolean;
     showMagnets: boolean;
   };

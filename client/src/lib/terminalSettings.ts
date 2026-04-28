@@ -27,6 +27,7 @@ export const DEFAULT_SETTINGS: ChartSettings = {
     showHeatmap: false,
     showLiquidity: true,
     showSweeps: false,
+    showCascade: false,
     showAbsorptions: true,
     showMagnets: false,
   },

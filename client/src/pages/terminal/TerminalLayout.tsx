@@ -6,11 +6,17 @@ import { GammaProfile } from "@/components/terminal/GammaProfile";
 import { TradingPlan } from "@/components/terminal/TradingPlan";
 import { MarketStructureBar } from "@/components/terminal/MarketStructureBar";
 import { BottomPanel } from "@/components/terminal/BottomPanel";
+import { ViewModeToggle } from "@/components/terminal/ViewModeToggle";
+import { MarketStateBar } from "@/components/terminal/MarketStateBar";
+import { useViewMode } from "@/hooks/useViewMode";
 import { useEffect, useState } from "react";
+import DeribitOptionsBook from "@/components/options/DeribitOptionsBook";
 
 export default function TerminalLayout() {
   const [activeScenario, setActiveScenario] = useState<"BASE" | "ALT" | "VOL">("BASE");
   const [bottomPanelsMinimized, setBottomPanelsMinimized] = useState(false);
+  const [viewMode, setViewMode] = useViewMode();
+  const [activeTab, setActiveTab] = useState("TERMINAL");
 
   useEffect(() => {
     try {
@@ -35,42 +41,81 @@ export default function TerminalLayout() {
 
   return (
     <div className="h-screen w-full flex flex-col bg-terminal-bg text-terminal-text overflow-hidden font-sans">
-      <TopNav />
+      <TopNav activeTab={activeTab} onTabChange={setActiveTab} />
       
       <div className="flex-1 flex overflow-hidden min-h-0">
-        <LeftSidebar />
-        
-        <div className="flex-1 flex flex-col p-1 gap-1 min-w-0 min-h-0 bg-terminal-bg relative overflow-hidden">
-          <MarketStructureBar />
-          <div className="flex-1 min-h-0 relative overflow-hidden">
-            <MainChart activeScenario={activeScenario} onActiveScenarioChange={setActiveScenario} />
-          </div>
-          <div
-            className={`relative flex gap-1 min-h-0 transition-all duration-200 max-[1000px]:flex-col ${
-              bottomPanelsMinimized
-                ? "h-[38px] max-[1000px]:h-[76px]"
-                : "h-[clamp(200px,30vh,288px)] max-[1200px]:h-[clamp(220px,34vh,340px)] max-[1000px]:h-[clamp(280px,44vh,460px)]"
-            }`}
-          >
-            <button
-              type="button"
-              onClick={toggleBottomPanels}
-              className="absolute right-1 top-1 z-20 h-6 px-2 border border-terminal-border bg-terminal-panel/90 text-[10px] font-mono tracking-wider text-terminal-muted hover:text-white hover:border-white/30 transition-colors"
-              title={bottomPanelsMinimized ? "Expand lower panels" : "Minimize lower panels"}
-            >
-              {bottomPanelsMinimized ? "EXPAND" : "MINIMIZE"}
-            </button>
-            <GammaProfile collapsed={bottomPanelsMinimized} />
-            <TradingPlan collapsed={bottomPanelsMinimized} />
-          </div>
-        </div>
+        {activeTab === "TERMINAL" && (
+          <>
+            <LeftSidebar />
+            
+            <div className="flex-1 flex flex-col p-1 gap-1 min-w-0 min-h-0 bg-terminal-bg relative overflow-hidden">
+              {viewMode === "PRO" && <MarketStructureBar />}
+              <div className="flex flex-wrap items-start gap-2 shrink-0 min-h-0">
+                {viewMode === "SIMPLE" && (
+                  <MarketStateBar activeScenario={activeScenario} className="min-w-0 flex-1 basis-[min(100%,20rem)]" />
+                )}
+                <ViewModeToggle mode={viewMode} onChange={setViewMode} className="ml-auto shrink-0" />
+              </div>
+              <div className="flex-1 min-h-0 relative overflow-hidden">
+                <MainChart
+                  activeScenario={activeScenario}
+                  onActiveScenarioChange={setActiveScenario}
+                  viewMode={viewMode}
+                />
+              </div>
+              
+              <div
+                className={`relative flex gap-1 min-h-0 transition-all duration-200 max-[1000px]:flex-col ${
+                  bottomPanelsMinimized
+                    ? "h-[38px] max-[1000px]:h-[76px]"
+                    : "h-[clamp(200px,30vh,288px)] max-[1200px]:h-[clamp(220px,34vh,340px)] max-[1000px]:h-[clamp(280px,44vh,460px)]"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={toggleBottomPanels}
+                  className="absolute right-1 top-1 z-20 h-6 px-2 border border-terminal-border bg-terminal-panel/90 text-[10px] font-mono tracking-wider text-terminal-muted hover:text-white hover:border-white/30 transition-colors"
+                  title={bottomPanelsMinimized ? "Expand lower panels" : "Minimize lower panels"}
+                >
+                  {bottomPanelsMinimized ? "EXPAND" : "MINIMIZE"}
+                </button>
+                <GammaProfile collapsed={bottomPanelsMinimized} />
+                <TradingPlan collapsed={bottomPanelsMinimized} />
+              </div>
+            </div>
 
-        <RightSidebar 
-          onScenarioSelect={(s) => {
-            window.dispatchEvent(new CustomEvent('scenario-select', { detail: s }));
-          }}
-          onActiveScenarioChange={setActiveScenario}
-        />
+            <RightSidebar 
+              onScenarioSelect={(s) => {
+                window.dispatchEvent(new CustomEvent('scenario-select', { detail: s }));
+              }}
+              onActiveScenarioChange={setActiveScenario}
+            />
+          </>
+        )}
+
+        {activeTab === "OPTIONS" && (
+          <div className="flex-1 overflow-hidden">
+            <DeribitOptionsBook />
+          </div>
+        )}
+
+        {activeTab === "FLOWS" && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-terminal-muted text-sm">Flows panel coming soon...</div>
+          </div>
+        )}
+
+        {activeTab === "VOLATILITY" && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-terminal-muted text-sm">Volatility panel coming soon...</div>
+          </div>
+        )}
+
+        {activeTab === "REPORTS" && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-terminal-muted text-sm">Reports panel coming soon...</div>
+          </div>
+        )}
       </div>
 
       <BottomPanel />

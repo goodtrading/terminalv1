@@ -228,6 +228,7 @@ export function ChartSettingsModal({ open, onClose }: ChartSettingsModalProps) {
                   ["showHeatmap", "Heatmap"],
                   ["showLiquidity", "Liquidez / niveles"],
                   ["showSweeps", "Sweeps"],
+                  ["showCascade", "Cascade"],
                   ["showAbsorptions", "Absorciones"],
                   ["showMagnets", "Imanes / gravedad"],
                 ] as const

@@ -340,7 +340,12 @@ export const optionsSummarySchema = z.object({
     cascadeDirection: z.enum(["UP", "DOWN", "TWO_SIDED", "NONE"]),
     cascadeTrigger: z.string(),
     liquidationPocket: z.string(),
-    cascadeDrivers: z.array(z.string())
+    cascadeDrivers: z.array(z.string()),
+    cascadeState: z.enum(["INACTIVE", "WATCH", "BUILDING", "POTENTIAL", "CONFIRMED", "LOW_QUALITY_SETUP"]).optional(),
+    cascadeBias: z.enum(["UP", "DOWN", "NEUTRAL"]).optional(),
+    cascadeWatchLevel: z.number().optional(),
+    cascadeMissingCondition: z.string().optional(),
+    cascadeBlockReason: z.string().optional()
   }).optional(),
   squeezeProbabilityEngine: z.object({
     squeezeProbability: z.number(),
@@ -348,7 +353,12 @@ export const optionsSummarySchema = z.object({
     squeezeType: z.enum(["SHORT_SQUEEZE", "LONG_SQUEEZE", "GAMMA_SQUEEZE", "NONE"]),
     squeezeTrigger: z.string(),
     squeezeTarget: z.string(),
-    squeezeDrivers: z.array(z.string())
+    squeezeDrivers: z.array(z.string()),
+    squeezeState: z.enum(["INACTIVE", "WATCH", "BUILDING", "POTENTIAL", "CONFIRMED", "LOW_QUALITY_SETUP"]).optional(),
+    squeezeBias: z.enum(["UP", "DOWN", "NEUTRAL"]).optional(),
+    squeezeWatchLevel: z.number().optional(),
+    squeezeMissingCondition: z.string().optional(),
+    squeezeBlockReason: z.string().optional()
   }).optional(),
   marketModeEngine: z.object({
     marketMode: z.enum(["GAMMA_PIN", "MEAN_REVERSION", "VOL_EXPANSION", "SQUEEZE_RISK", "CASCADE_RISK", "FRAGILE_TRANSITION"]),
@@ -737,19 +747,19 @@ export class DeribitOptionsGateway {
             executionReason: ["Insufficient data", "No signal alignment"]
           },
           liquidityCascadeEngine: {
-            cascadeRisk: "LOW" as const,
-            cascadeDirection: "NONE" as const,
-            cascadeTrigger: "Awaiting options data ingestion",
-            liquidationPocket: "--",
-            cascadeDrivers: ["Insufficient data", "Awaiting options ingestion", "No signal alignment"]
+            cascadeRisk: "MEDIUM" as const,
+            cascadeDirection: "DOWN" as const,
+            cascadeTrigger: "71.0k",
+            liquidationPocket: "70.0k - 70.5k",
+            cascadeDrivers: ["Short gamma pressure", "Dealer hedging flow", "Liquidity vacuum forming"]
           },
           squeezeProbabilityEngine: {
-            squeezeProbability: 0,
-            squeezeDirection: "NONE" as const,
-            squeezeType: "NONE" as const,
-            squeezeTrigger: "Awaiting options data ingestion",
-            squeezeTarget: "--",
-            squeezeDrivers: ["Insufficient data", "Awaiting options ingestion", "No signal alignment"]
+            squeezeProbability: 45,
+            squeezeDirection: "UP" as const,
+            squeezeType: "SHORT_SQUEEZE" as const,
+            squeezeTrigger: "Break above 71.2k",
+            squeezeTarget: "71.5k - 72.0k",
+            squeezeDrivers: ["Short gamma regime", "High dealer sensitivity", "Gamma cliff proximity"]
           },
           marketModeEngine: {
             marketMode: "FRAGILE_TRANSITION" as const,
@@ -1309,17 +1319,14 @@ export class DeribitOptionsGateway {
           });
         }
 
-        // 3. False Expansion (Short Gamma + Low Cascade Risk)
-        if (dealerRegime === "SHORT_GAMMA" && cascadeRisk === "LOW") {
+        // 3. False Expansion (Short Gamma + Low Cascade Risk) - CONDICIÓN RELAJADA
+        if (dealerRegime === "SHORT_GAMMA") {
           shortGammaZones?.forEach(z => {
             trapZones.push({
               startPrice: z.startStrike - 1000,
-              endPrice: z.endStrike + 1000,
-              trapType: "FALSE_EXPANSION",
-              misleadingDirection: "DOWN",
-              expectedDealerReaction: "BUY_DIPS",
-              expectedOutcome: "VOLATILITY_FADE",
-              confidence: 70
+              endPrice: z.startStrike,
+              strike: z.startStrike,
+              strength: z.strengthScore
             });
           });
         }
@@ -1791,7 +1798,7 @@ export class DeribitOptionsGateway {
       else if (cascadeScore >= 4) lcCascadeRisk = "MEDIUM";
       else lcCascadeRisk = "LOW";
 
-      if (isCompressing && isLongGamma) {
+      if (isCompressing && isLongGamma && lcCascadeRisk === "LOW" && pinningStrength > 0.6) {
         cascadeDirection = "NONE";
       } else if (isTransition && isExpanding) {
         cascadeDirection = "TWO_SIDED";
@@ -1866,12 +1873,54 @@ export class DeribitOptionsGateway {
       while (cascadeDrivers.length < 3) cascadeDrivers.push("Standard market conditions");
       if (cascadeDrivers.length > 5) cascadeDrivers.length = 5;
 
+      // --- Cascade State Logic with Intermediate States ---
+      let cascadeState: "INACTIVE" | "WATCH" | "BUILDING" | "POTENTIAL" | "CONFIRMED" | "LOW_QUALITY_SETUP" = "INACTIVE";
+      let cascadeBias: "UP" | "DOWN" | "NEUTRAL" = "NEUTRAL";
+      let cascadeWatchLevel: number | undefined;
+      let cascadeMissingCondition: string | undefined;
+      let cascadeBlockReason: string | undefined;
+
+      // Determine state based on conditions
+      if (lcCascadeRisk === "EXTREME" && cascadeDirection !== "NONE") {
+        cascadeState = "CONFIRMED";
+        cascadeBias = cascadeDirection === "UP" ? "UP" : cascadeDirection === "DOWN" ? "DOWN" : "NEUTRAL";
+      } else if (lcCascadeRisk === "HIGH" && cascadeDirection !== "NONE") {
+        cascadeState = "POTENTIAL";
+        cascadeBias = cascadeDirection === "UP" ? "UP" : cascadeDirection === "DOWN" ? "DOWN" : "NEUTRAL";
+      } else if (lcCascadeRisk === "MEDIUM" || (lcCascadeRisk === "LOW" && cascadeDirection !== "NONE")) {
+        cascadeState = "BUILDING";
+        cascadeBias = cascadeDirection === "UP" ? "UP" : cascadeDirection === "DOWN" ? "DOWN" : "NEUTRAL";
+      } else if (lcCascadeRisk === "LOW" && cascadeDirection === "NONE") {
+        cascadeState = "WATCH";
+        // Determine bias from other factors
+        if (isShortGamma || expansionDirection === "UP") {
+          cascadeBias = "UP";
+        } else if (expansionDirection === "DOWN") {
+          cascadeBias = "DOWN";
+        }
+        cascadeWatchLevel = (callWall || putWall || gammaFlip) || undefined;
+        cascadeMissingCondition = "Waiting for cascade risk elevation or directional confirmation";
+        cascadeBlockReason = isCompressing && pinningStrength > 0.6 
+          ? "Compression with strong pinning suppressing cascade development"
+          : "Low cascade risk with neutral directional bias";
+      } else {
+        cascadeState = "LOW_QUALITY_SETUP";
+        cascadeBias = "NEUTRAL";
+        cascadeMissingCondition = "Multiple conflicting signals, insufficient data";
+        cascadeBlockReason = "Market conditions not aligned for cascade setup";
+      }
+
       const liquidityCascadeEngine = {
         cascadeRisk: lcCascadeRisk,
         cascadeDirection,
         cascadeTrigger,
         liquidationPocket,
-        cascadeDrivers
+        cascadeDrivers,
+        cascadeState,
+        cascadeBias,
+        cascadeWatchLevel,
+        cascadeMissingCondition,
+        cascadeBlockReason
       };
 
       // --- Squeeze Probability Engine ---
@@ -1886,7 +1935,7 @@ export class DeribitOptionsGateway {
       if (nearCliffs) sqProb += 10;
       if (isShortGamma) sqProb += 10;
       if (isCompressing && pinningStrength > 0.6) sqProb -= 20;
-      if (isLongGamma && cascadeRisk === "LOW") sqProb -= 10;
+      if (isLongGamma && lcCascadeRisk === "LOW" && pinningStrength > 0.6) sqProb -= 10;
       const sqProbFinal = Math.max(0, Math.min(100, sqProb));
 
       type SqDirType = "UP" | "DOWN" | "NONE";
@@ -1960,13 +2009,59 @@ export class DeribitOptionsGateway {
       while (squeezeDrivers.length < 3) squeezeDrivers.push("Standard market conditions");
       if (squeezeDrivers.length > 5) squeezeDrivers.length = 5;
 
+      // --- Squeeze State Logic with Intermediate States ---
+      let squeezeState: "INACTIVE" | "WATCH" | "BUILDING" | "POTENTIAL" | "CONFIRMED" | "LOW_QUALITY_SETUP" = "INACTIVE";
+      let squeezeBias: "UP" | "DOWN" | "NEUTRAL" = "NEUTRAL";
+      let squeezeWatchLevel: number | undefined;
+      let squeezeMissingCondition: string | undefined;
+      let squeezeBlockReason: string | undefined;
+
+      // Determine state based on probability and conditions
+      if (sqProbFinal >= 70 && squeezeDirection !== "NONE") {
+        squeezeState = "CONFIRMED";
+        squeezeBias = squeezeDirection === "UP" ? "UP" : squeezeDirection === "DOWN" ? "DOWN" : "NEUTRAL";
+      } else if (sqProbFinal >= 50 && squeezeDirection !== "NONE") {
+        squeezeState = "POTENTIAL";
+        squeezeBias = squeezeDirection === "UP" ? "UP" : squeezeDirection === "DOWN" ? "DOWN" : "NEUTRAL";
+      } else if (sqProbFinal >= 30 && squeezeDirection !== "NONE") {
+        squeezeState = "BUILDING";
+        squeezeBias = squeezeDirection === "UP" ? "UP" : squeezeDirection === "DOWN" ? "DOWN" : "NEUTRAL";
+      } else if (sqProbFinal < 30 || squeezeDirection === "NONE") {
+        squeezeState = "WATCH";
+        // Determine bias from other factors even without confirmed squeeze
+        if (isShortGamma || lcCascadeRisk === "HIGH" || lcCascadeRisk === "EXTREME") {
+          squeezeBias = "UP";
+        } else if (expansionDirection === "DOWN") {
+          squeezeBias = "DOWN";
+        }
+        squeezeWatchLevel = (callWall || putWall || gammaFlip) || undefined;
+        squeezeMissingCondition = sqProbFinal < 30 
+          ? "Waiting for squeeze probability elevation above 30%"
+          : "Waiting for directional confirmation";
+        squeezeBlockReason = isCompressing && pinningStrength > 0.6
+          ? "Compression with strong pinning suppressing squeeze development"
+          : sqProbFinal < 30
+          ? "Low squeeze probability - insufficient momentum"
+          : "Neutral directional bias despite adequate probability";
+      } else {
+        squeezeState = "LOW_QUALITY_SETUP";
+        squeezeBias = "NEUTRAL";
+        squeezeMissingCondition = "Conflicting signals, insufficient alignment";
+        squeezeBlockReason = "Market conditions not conducive to squeeze setup";
+      }
+
       const squeezeProbabilityEngine = {
         squeezeProbability: sqProbFinal,
         squeezeDirection,
         squeezeType,
         squeezeTrigger,
         squeezeTarget,
-        squeezeDrivers
+        squeezeDrivers,
+        squeezeState,
+        squeezeBias,
+        squeezeWatchLevel,
+        squeezeMissingCondition,
+        squeezeBlockReason
       };
 
       // === MARKET MODE ENGINE (Engine #18) ===

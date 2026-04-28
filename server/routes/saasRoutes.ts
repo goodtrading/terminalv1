@@ -171,33 +171,83 @@ export function registerSaasRoutes(app: Express): void {
   });
 
   app.post("/api/auth/login", async (req: Request, res: Response) => {
+    const logPrefix = "[auth/login]";
+    console.log(logPrefix, "Request received:", { 
+      email: req.body?.email, 
+      hasPassword: !!req.body?.password,
+      userAgent: req.get('User-Agent')
+    });
+
     try {
+      // Test DB connection first
+      const { pool } = await import("../db");
+      if (!pool) {
+        console.error(logPrefix, "Database pool is null");
+        return res.status(500).json({ error: "DATABASE_NOT_CONFIGURED" });
+      }
+      
+      const dbTest = await pool.query('SELECT 1');
+      console.log(logPrefix, "DB connection test:", dbTest.rows.length > 0 ? "OK" : "FAILED");
+
       const parsed = loginBody.safeParse(req.body);
       if (!parsed.success) {
+        console.warn(logPrefix, "Validation failed:", parsed.error.flatten());
         res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
         return;
       }
+      
       const { email, password } = parsed.data;
+      console.log(logPrefix, "Looking up user:", email);
+      
       const user = await findUserByEmail(email);
-      if (!user || !verifyPassword(password, user.passwordHash)) {
+      if (!user) {
+        console.warn(logPrefix, "User not found:", email);
         res.status(401).json({ error: "INVALID_CREDENTIALS" });
         return;
       }
+      
+      console.log(logPrefix, "User found:", { id: user.id, email: user.email, role: user.role });
+      
+      const passwordValid = verifyPassword(password, user.passwordHash);
+      if (!passwordValid) {
+        console.warn(logPrefix, "Invalid password for user:", email);
+        res.status(401).json({ error: "INVALID_CREDENTIALS" });
+        return;
+      }
+      
+      console.log(logPrefix, "Password validated for user:", email);
+      
       const token = signUserToken({
         id: user.id,
         email: user.email,
         role: dbRoleToApiRole(user.role),
       });
+      
       const access = await getAccessForUserId(user.id);
       res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
+      
+      console.log(logPrefix, "Login successful:", { 
+        userId: user.id, 
+        email: user.email, 
+        accessAllowed: access.allowed 
+      });
+      
       res.json({
         token,
         user: { id: user.id, email: user.email, role: dbRoleToApiRole(user.role) },
         access,
       });
     } catch (e: any) {
-      console.error("[SaaS] login", e);
-      res.status(500).json({ error: "LOGIN_FAILED" });
+      console.error(logPrefix, "Login failed:", {
+        message: e?.message,
+        stack: e?.stack,
+        code: e?.code,
+        detail: e?.detail
+      });
+      res.status(500).json({ 
+        error: "LOGIN_FAILED",
+        message: e?.message || "Internal server error"
+      });
     }
   });
 

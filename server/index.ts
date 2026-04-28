@@ -4,20 +4,26 @@ import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
 
+console.log("[BOOT] Starting server initialization...");
+
 dotenv.config({
   path: path.resolve(process.cwd(), ".env"),
 });
 
 console.log("[ENV] cwd:", process.cwd());
 console.log("[ENV] OPENAI key exists:", !!process.env.OPENAI_API_KEY);
+console.log("[ENV] DATABASE_URL exists:", !!process.env.DATABASE_URL);
+console.log("[ENV] DATABASE_URL length:", process.env.DATABASE_URL?.length || 0);
 
 const rawKey = process.env.OPENAI_API_KEY || "";
 const visiblePrefix = rawKey ? rawKey.slice(0, 8) : "";
 console.log("[ENV] OPENAI key prefix:", visiblePrefix);
 console.log("[ENV] OPENAI key length:", rawKey.length);
 
+console.log("[BOOT] Creating Express app and HTTP server...");
 const app = express();
 const httpServer = createServer(app);
+console.log("[BOOT] Express app and HTTP server created");
 
 declare module "http" {
   interface IncomingMessage {
@@ -79,10 +85,29 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  console.log("[BOOT] Runtime entrypoint: server/index.ts");
+  
+  console.log("[BOOT] Importing routes and endpoints...");
   const { registerRoutes } = await import("./routes");
   const { serveStatic } = await import("./static");
+  const { setupMobileDirectEndpoint } = await import("./mobile-direct-endpoint");
+  console.log("[BOOT] Routes and endpoints imported");
 
+  // Register ALL API routes FIRST - before any Vite middleware
+  console.log("[BOOT] Registering API routes...");
   await registerRoutes(httpServer, app);
+  setupMobileDirectEndpoint(app);
+  console.log("[BOOT] API routes registered");
+  
+  // Log all registered routes for debugging
+  console.log("[Server] Registered API routes:");
+  if (app._router && app._router.stack) {
+    app._router.stack.forEach((middleware: any) => {
+      if (middleware.route) {
+        console.log(`  ${Object.keys(middleware.route.methods).join(',').toUpperCase()} ${middleware.route.path}`);
+      }
+    });
+  }
 
   const hasOpenaiKey = !!process.env.OPENAI_API_KEY;
   console.log("OPENAI key loaded:", hasOpenaiKey);
@@ -90,6 +115,7 @@ app.use((req, res, next) => {
   if (!hasOpenaiKey) {
     console.error("[OPENAI] OPENAI_API_KEY is missing. The /api/ai/chat endpoint will return { error: \"OPENAI_API_KEY_MISSING\" }.");
   }
+  console.log("[BOOT] API key validation complete");
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -107,18 +133,54 @@ app.use((req, res, next) => {
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
+  console.log("[BOOT] Setting up Vite/Static middleware...");
   if (process.env.NODE_ENV === "production") {
+    console.log("[BOOT] Production mode - serving static files");
     serveStatic(app);
   } else {
+    console.log("[BOOT] Development mode - setting up Vite...");
     const { setupVite } = await import("./vite");
+    console.log("[BOOT] Calling setupVite...");
     await setupVite(httpServer, app);
+    console.log("[BOOT] Vite setup complete");
+  }
+  console.log("[BOOT] Middleware setup complete");
+
+  // Health check endpoint
+  console.log("[BOOT] Registering health endpoint...");
+  app.get("/health", (_req, res) => {
+    console.log("[Server] Health endpoint hit");
+    res.status(200).json({
+      status: "ok",
+      message: "GoodTrading backend is running",
+      timestamp: new Date().toISOString(),
+    });
+  });
+  console.log("[BOOT] Health endpoint registered");
+
+  // Start mobile cache before server starts
+  console.log("[BOOT] Starting mobile state cache...");
+  const { startMobileCache } = await import("./mobile-cache");
+  startMobileCache();
+  console.log("[BOOT] Mobile cache started");
+
+  // Start Replit push service
+  console.log("[BOOT] Starting Replit push service...");
+  try {
+    const { replitPushService } = await import("./replit-push");
+    console.log("[BOOT] Replit push service imported successfully");
+    replitPushService.start();
+    console.log("[BOOT] Replit push service start() called");
+  } catch (error) {
+    console.error("[BOOT] Failed to start Replit push service:", error);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
+  // ALWAYS serve on port specified in environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+  console.log(`[BOOT] Starting server on port ${port}...`);
 
   httpServer.listen(
     {
@@ -126,6 +188,7 @@ app.use((req, res, next) => {
       host: "0.0.0.0",
     },
     () => {
+      console.log(`[BOOT] Server listening on port ${port}`);
       log(`serving on port ${port}`);
     },
   );

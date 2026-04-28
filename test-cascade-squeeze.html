@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Cascade/Squeeze Data</title>
+</head>
+<body>
+    <h1>Testing Cascade/Squeeze Data</h1>
+    <button onclick="fetchData()">Fetch Data</button>
+    <pre id="output"></pre>
+    
+    <script>
+        async function fetchData() {
+            try {
+                const response = await fetch('http://localhost:5001/api/terminal/state');
+                const data = await response.json();
+                
+                const cascadeData = data.positioning?.liquidityCascadeEngine;
+                const squeezeData = data.positioning?.squeezeProbabilityEngine;
+                
+                document.getElementById('output').innerHTML = `
+=== CASCADE ENGINE ===
+${JSON.stringify(cascadeData, null, 2)}
+
+=== SQUEEZE ENGINE ===
+${JSON.stringify(squeezeData, null, 2)}
+
+=== FULL POSITIONING ===
+${JSON.stringify(data.positioning, null, 2)}
+                `;
+            } catch (error) {
+                document.getElementById('output').innerHTML = `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>

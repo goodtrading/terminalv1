@@ -29,6 +29,7 @@ interface VacuumAnalysisResult {
   nearestThinLiquidityDirection: "ABOVE" | "BELOW" | "NONE";
   nearestThinLiquidityScore: number;
   confirmedVacuumActive: boolean;
+  vacuumLifecycleState?: "NONE" | "SETUP" | "TRIGGERED" | "ACTIVE";
   activeZones: Array<{
     start: number;
     end: number;
@@ -120,14 +121,13 @@ function deriveEdge(positioning: any, market: any): string {
 
 // Liquidity Map Panel Component
 function LiquidityMapPanel() {
-  const positioning_engines = useTerminalState((s: any) => s.positioning_engines);
+  const { data: terminalData } = useTerminalState();
+  const heatmap = (terminalData?.positioning as any)?.liquidityHeatmap;
   const { data: vacuumData } = useQuery<VacuumAnalysisResult>({
     queryKey: ["/api/vacuum"],
     refetchInterval: 5000,
-    enabled: !!positioning_engines
+    enabled: !!terminalData?.positioning,
   });
-
-  const heatmap = (positioning_engines as any)?.liquidityHeatmap;
   const lines: string[] = heatmap?.liquidityMapLines || [];
   const pressure = heatmap?.liquidityPressure || "BALANCED";
   const source = heatmap?.heatmapSummary?.source || "--";
@@ -141,6 +141,7 @@ function LiquidityMapPanel() {
   const vacuumDirection = vacuum?.vacuumDirection || "NEUTRAL";
   const vacuumProximity = vacuum?.vacuumProximity || "FAR";
   const vacuumZones = vacuum?.activeZones?.length || 0;
+  const vacuumLifecycle = vacuum?.vacuumLifecycleState ?? "NONE";
   const confirmedVacuum = vacuum?.confirmedVacuumActive || false;
   
   const vacuumRiskColor = vacuumRisk === "EXTREME" ? "red" : vacuumRisk === "HIGH" ? "orange" : vacuumRisk === "MEDIUM" ? "yellow" : "gray";
@@ -174,17 +175,24 @@ function LiquidityMapPanel() {
       <StatusValue label="Vacuum Proximity" value={vacuumProximity} color={proximityColor} />
       <StatusValue label="Thin Liquidity" value={thinLabel} color={thinZone ? "blue" : "gray"} />
       <StatusValue label="Vacuum Zones" value={String(vacuumZones)} color={vacuumZones > 0 ? "blue" : "gray"} />
+      <StatusValue label="Vacuum phase" value={vacuumLifecycle} color={vacuumLifecycle === "ACTIVE" ? "red" : vacuumLifecycle === "TRIGGERED" ? "orange" : vacuumLifecycle === "SETUP" ? "yellow" : "gray"} />
       <StatusValue label="Confirmed Vacuum" value={confirmedVacuum ? "ACTIVE" : "INACTIVE"} color={confirmedVacuum ? "red" : "gray"} />
 
       {(() => {
         const accelZones = (heatmap as any)?.gammaAccelerationZones as Array<{ direction: "UP" | "DOWN" }> | undefined;
+        const accelPhase =
+          (heatmap as any)?.gammaAccelerationLifecycle as "NONE" | "SETUP" | "TRIGGERED" | "ACTIVE" | undefined;
         const accelActive = accelZones && accelZones.length > 0;
         const upCount = accelZones?.filter((z) => z.direction === "UP").length ?? 0;
         const downCount = accelZones?.filter((z) => z.direction === "DOWN").length ?? 0;
         const accelBias = !accelActive ? "--" : upCount > 0 && downCount > 0 ? "MIXED" : upCount > 0 ? "UP" : "DOWN";
         const biasColor = accelBias === "UP" ? "green" : accelBias === "DOWN" ? "red" : accelBias === "MIXED" ? "yellow" : "gray";
+        const phaseLabel = accelPhase ?? (accelActive ? "SETUP" : "NONE");
+        const phaseColor =
+          phaseLabel === "ACTIVE" ? "blue" : phaseLabel === "TRIGGERED" ? "purple" : phaseLabel === "SETUP" ? "yellow" : "gray";
         return (
           <>
+            <StatusValue label="ACCEL phase" value={phaseLabel} color={phaseColor} />
             <StatusValue label="ACCEL ZONES" value={accelActive ? "ACTIVE" : "INACTIVE"} color={accelActive ? "blue" : "gray"} />
             <StatusValue label="ACCEL BIAS" value={accelBias} color={biasColor} />
           </>
@@ -204,9 +212,9 @@ function LiquidityMapPanel() {
       )}
       
       {/* Active zones */}
-      {vacuum?.activeZones?.length > 0 && (
+      {(vacuum?.activeZones?.length ?? 0) > 0 && (
         <div className="flex flex-col gap-0.5">
-          {vacuum.activeZones.slice(0, 3).map((z: any, i: number) => (
+          {(vacuum?.activeZones ?? []).slice(0, 3).map((z: any, i: number) => (
             <div key={i} className="flex items-start gap-1.5">
               <span className="text-[8px] mt-[3px] text-blue-400">◆</span>
               <span className="text-[10px] text-white/50 font-mono leading-snug">
@@ -937,108 +945,7 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
         })()}
       </SidebarPanel>
 
-      <SidebarPanel title="State Coherence">
-        {(() => {
-          const coherence = (state as any)?.coherence as {
-            state?: "COHERENT" | "MIXED" | "FLAPPING";
-            coherenceScore?: number;
-            flappingScore?: number;
-            alignmentScore?: number;
-            coherenceRead?: string;
-            reasons?: string[];
-            sampleWindow?: number;
-          } | undefined;
-          const cState = coherence?.state ?? "MIXED";
-          const cColor =
-            cState === "COHERENT" ? "green" : cState === "FLAPPING" ? "red" : "yellow";
-          const fmtScore = (v?: number) =>
-            typeof v === "number" && Number.isFinite(v) ? `${Math.round(v)}%` : "--";
-          const read =
-            coherence?.coherenceRead ??
-            (coherence?.sampleWindow && coherence.sampleWindow < 3
-              ? "Not enough history yet."
-              : "Recent transitions are mixed; structure is still resolving.");
-          const reasons = Array.isArray(coherence?.reasons)
-            ? coherence!.reasons.slice(0, 3)
-            : [];
-
-          return (
-            <div className="flex flex-col gap-1.5">
-              <StatusValue label="Coherence" value={cState} color={cColor} />
-              <div className="grid grid-cols-3 gap-1">
-                <StatusValue label="Coherence" value={fmtScore(coherence?.coherenceScore)} color="gray" />
-                <StatusValue label="Flapping" value={fmtScore(coherence?.flappingScore)} color="gray" />
-                <StatusValue label="Alignment" value={fmtScore(coherence?.alignmentScore)} color="gray" />
-              </div>
-              <p className="text-[10px] font-mono text-white/60 mt-0.5">{read}</p>
-              {reasons.length > 0 && (
-                <div className="flex flex-col gap-0.5 mt-0.5">
-                  {reasons.map((line, i) => (
-                    <div key={i} className="flex items-start gap-1.5">
-                      <span className="text-[8px] mt-[3px] text-cyan-400">•</span>
-                      <span className="text-[10px] text-white/50 font-mono leading-snug">
-                        {line}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-      </SidebarPanel>
-
-      <SidebarPanel title="State Timeline">
-        {(() => {
-          const timeline = (state as any)?.timeline as
-            | Array<{
-                timestamp: number;
-                transitionLabel: string;
-                playbookState?: string | null;
-                playbookBias?: string | null;
-                pressureState?: string | null;
-                resolutionState?: string | null;
-                optionsGammaRegime?: string | null;
-                optionsRegimeQuality?: string | null;
-              }>
-            | undefined;
-          const entries = Array.isArray(timeline) ? timeline.slice(0, 8) : [];
-          if (entries.length === 0) {
-            return (
-              <div className="text-[10px] text-white/40 font-mono">
-                No transitions recorded yet.
-              </div>
-            );
-          }
-          return (
-            <div className="flex flex-col gap-1">
-              {entries.map((e, idx) => {
-                const time = new Date(e.timestamp).toLocaleTimeString(undefined, {
-                  hour12: false,
-                });
-                const pb = e.playbookState || "--";
-                const bias = e.playbookBias || "";
-                const pressure = e.pressureState || "--";
-                const res = e.resolutionState || "--";
-                const optReg = e.optionsGammaRegime || "--";
-                const optQual = e.optionsRegimeQuality || "--";
-                return (
-                  <div key={idx} className="flex flex-col gap-0.25">
-                    <div className="text-[10px] font-mono text-white/70">
-                      {time} — {e.transitionLabel}
-                    </div>
-                    <div className="text-[9px] font-mono text-white/40">
-                      PB={pb}
-                      {bias ? ` (${bias})` : ""} · P={pressure} · R={res} · Opt={optReg}/{optQual}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })()}
-      </SidebarPanel>
-
+      
       <SidebarPanel title="ABSORPTION">
         {(() => {
           const rawAbsorption = state?.positioning?.absorption;

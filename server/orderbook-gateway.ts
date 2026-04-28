@@ -87,6 +87,7 @@ export const liquidityHeatmapSchema = z.object({
   liquidityMapLines: z.array(z.string()),
   liquidityVacuum: vacuumStateSchema.optional(),
   gammaAccelerationZones: z.array(gammaAccelerationZoneSchema).optional(),
+  gammaAccelerationLifecycle: z.enum(["NONE", "SETUP", "TRIGGERED", "ACTIVE"]).optional(),
 });
 
 export type LiquidityHeatZone = z.infer<typeof liquidityHeatZoneSchema>;

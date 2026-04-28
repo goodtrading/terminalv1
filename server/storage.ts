@@ -2,10 +2,40 @@ import {
   marketState, dealerExposure, optionsPositioning, keyLevels, tradingScenarios, optionsData, dealerHedgingFlow,
   type MarketState, type DealerExposure, type OptionsPositioning, type KeyLevels, type TradingScenario, type OptionData, type DealerHedgingFlow
 } from "@shared/schema";
-import { parseOptionsCSV, calculateGEX, findGammaFlip, calculateVanna, calculateCharm, detectWalls, calculateKeyLevels, calculateAcceleration } from "./analytics";
+import {
+  parseOptionsCSV,
+  calculateGEX,
+  findGammaFlip,
+  calculateVanna,
+  calculateCharm,
+  detectWalls,
+  calculateKeyLevels,
+  calculateAcceleration,
+  type OptionsEntry,
+} from "./analytics";
 import { GAMMA_OPERATIONAL_CONFIG } from "./deribit-gateway";
 import { generateDynamicScenarios } from "./scenarios";
+import { MarketDataGateway } from "./market-gateway";
 import path from "path";
+
+/** Bootstrap spot when live ticker is not yet available: dominant OI strike, else median strike (never a magic price). */
+function inferSpotFromOptionsData(data: OptionsEntry[]): number | null {
+  if (!data.length) return null;
+  let maxOi = 0;
+  let strikeAtMaxOi = 0;
+  for (const row of data) {
+    if (row.open_interest > maxOi) {
+      maxOi = row.open_interest;
+      strikeAtMaxOi = row.strike;
+    }
+  }
+  if (maxOi > 0 && strikeAtMaxOi > 0) return strikeAtMaxOi;
+  const strikes = [...new Set(data.map((d) => d.strike))]
+    .filter((s) => Number.isFinite(s) && s > 0)
+    .sort((a, b) => a - b);
+  if (!strikes.length) return null;
+  return strikes[Math.floor(strikes.length / 2)]!;
+}
 
 export interface OptionsSummaryUpdate {
   totalGex?: number | null;
@@ -52,8 +82,21 @@ export class MemStorage implements IStorage {
 
   async recomputeAll(csvPath: string) {
     const data = parseOptionsCSV(csvPath);
-    const spotPrice = 68250; 
-    
+    const tickerSpot = MarketDataGateway.getCachedTicker()?.price;
+    const spotPrice =
+      tickerSpot != null && Number.isFinite(tickerSpot) && tickerSpot > 0
+        ? tickerSpot
+        : inferSpotFromOptionsData(data);
+    if (spotPrice == null || !Number.isFinite(spotPrice) || spotPrice <= 0) {
+      console.error(
+        "[Storage][recomputeAll] aborting bootstrap: no valid spot (ticker unavailable and chain inference failed)"
+      );
+      return;
+    }
+    if (tickerSpot == null || !Number.isFinite(tickerSpot) || tickerSpot <= 0) {
+      console.warn("[Storage][recomputeAll] using inferred spot from CSV chain (OI/median), not live ticker:", spotPrice);
+    }
+
     const totalGex = calculateGEX(data, spotPrice);
     const rawFlip = findGammaFlip(data);
     const flip = Number.isFinite(rawFlip) && rawFlip > 0 ? rawFlip : null;
@@ -233,7 +276,9 @@ export class MemStorage implements IStorage {
     console.log("=========================");
   }
 
-  async getMarketState() { return this.marketState; }
+  async getMarketState() {
+    return this.marketState;
+  }
   async getDealerExposure() { return this.dealerExposure; }
   async getOptionsPositioning() { return this.optionsPositioning; }
   async getKeyLevels() { return this.keyLevels; }
@@ -244,6 +289,8 @@ export class MemStorage implements IStorage {
 
   updateFromDeribitSummary(summary: OptionsSummaryUpdate, spotPrice: number): void {
     console.log("[Storage][IncomingSummary]", {
+      totalGex: summary.totalGex,
+      gammaFlip: summary.gammaFlip,
       totalVanna: summary.totalVanna,
       totalCharm: summary.totalCharm,
     });
@@ -256,6 +303,7 @@ export class MemStorage implements IStorage {
     const putWall = summary.putWall;
 
     if (gex != null && !Number.isNaN(gex)) {
+      console.log(`[Storage][UpdatingGEX] gex=${gex} regime=${gex > 0 ? "LONG GAMMA" : "SHORT GAMMA"}`);
       this.marketState = {
         ...this.marketState,
         totalGex: gex,
@@ -263,6 +311,7 @@ export class MemStorage implements IStorage {
         timestamp: new Date()
       };
       updated = true;
+      console.log(`[Storage][UpdatedMarketState] totalGex=${this.marketState.totalGex}`);
     }
     const transitionPct = GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000;
     const flipValid = flip != null && Number.isFinite(flip) && flip > 0;

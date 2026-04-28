@@ -27,6 +27,8 @@ function Router() {
 }
 
 function App() {
+  console.log("GT_MOBILE_DEBUG: APP COMPONENT MOUNTED - MAIN WINDOW LOG", new Date().toISOString());
+  
   return (
     <QueryClientProvider client={queryClient}>
       <TerminalAuthProvider>

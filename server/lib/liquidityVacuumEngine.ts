@@ -16,6 +16,53 @@ interface HeatmapSummary {
   netPressure: number;
 }
 
+/** Lifecycle: structural thin (SETUP) → tape expansion (TRIGGERED) → clean run (ACTIVE). */
+export type VacuumLifecycleState = "NONE" | "SETUP" | "TRIGGERED" | "ACTIVE";
+
+type TapeSample = { t: number; mid: number; spread: number };
+let vacuumTapeHistory: TapeSample[] = [];
+const VACUUM_TAPE_TTL_MS = 14_000;
+const VACUUM_TAPE_MAX = 40;
+
+function pushVacuumTapeSample(mid: number, spread: number): void {
+  const t = Date.now();
+  vacuumTapeHistory.push({ t, mid, spread: Math.max(spread, 1e-12) });
+  const cutoff = t - VACUUM_TAPE_TTL_MS;
+  vacuumTapeHistory = vacuumTapeHistory.filter((s) => s.t >= cutoff).slice(-VACUUM_TAPE_MAX);
+}
+
+/** Spread widening vs rolling avg, mid velocity, or sweep/dealer impulse. */
+function computeVacuumExpansionSignal(spotPrice: number, spread: number, input: VacuumEngineInput): boolean {
+  pushVacuumTapeSample(spotPrice, spread);
+  const sweepConf = input.liquiditySweepRisk?.confidence ?? 0;
+  const sweepRisk = String(input.liquiditySweepRisk?.risk ?? "").toUpperCase();
+  const sweepImpulse =
+    sweepConf >= 0.52 ||
+    ((sweepRisk === "EXTREME" || sweepRisk === "HIGH") && sweepConf >= 0.32);
+  const dealerImpulse = (input.dealerHedgingFlow?.intensity ?? 0) >= 0.68;
+  if (vacuumTapeHistory.length < 2) {
+    return sweepImpulse || dealerImpulse;
+  }
+  const samples = vacuumTapeHistory;
+  const spreads = samples.map((s) => s.spread).filter((s) => s > 0);
+  const avgSpread = spreads.length ? spreads.reduce((a, b) => a + b, 0) / spreads.length : spread;
+  const spreadExpansion = avgSpread > 0 && spread > avgSpread * 1.1;
+  const oldest = samples[0];
+  const newest = samples[samples.length - 1];
+  const dt = newest.t - oldest.t;
+  const velocityPct =
+    dt >= 400 && oldest.mid > 0 ? Math.abs(newest.mid - oldest.mid) / oldest.mid : 0;
+  const velocityImpulse = velocityPct >= 0.00012;
+  return spreadExpansion || velocityImpulse || sweepImpulse || dealerImpulse;
+}
+
+function absorptionBlocksVacuumActive(abs?: { status: string; confidence: number }): boolean {
+  if (!abs || typeof abs.confidence !== "number") return false;
+  const s = String(abs.status || "").toUpperCase();
+  if (s === "ACTIVE" || s === "CONFIRMED") return abs.confidence >= 28;
+  return false;
+}
+
 // Configuration constants
 const PRICE_BAND_SIZE = 0.001; // 0.1% bands
 const MIN_BANDS_FOR_ANALYSIS = 20;
@@ -91,6 +138,8 @@ export interface VacuumAnalysisResult {
   nearestThinLiquidityZone: number | null;
   nearestThinLiquidityDirection: "ABOVE" | "BELOW" | "NONE";
   nearestThinLiquidityScore: number;
+  /** NONE → SETUP → TRIGGERED → ACTIVE (expansion + structural; ACTIVE excludes heavy absorption). */
+  vacuumLifecycleState: VacuumLifecycleState;
   confirmedVacuumActive: boolean;
   activeZones: VacuumZone[];
   explanation: {
@@ -118,6 +167,8 @@ export interface VacuumEngineInput {
   liquiditySweepRisk?: { risk: string; direction: string; confidence: number };
   dealerHedgingFlow?: { direction: string; intensity: number };
   volatility?: number;
+  /** When ACTIVE/CONFIRMED with confidence, vacuum stays TRIGGERED / not ACTIVE. */
+  absorption?: { status: string; confidence: number };
 }
 
 export class LiquidityVacuumEngine {
@@ -228,15 +279,26 @@ export class LiquidityVacuumEngine {
       }))
     });
     
-    // Determine if vacuum is confirmed active
-    const confirmedVacuumActive = this.isVacuumConfirmed(
-      vacuumScore, vacuumProximity, vacuumDirection, thinRegions
+    const expansionSignal = computeVacuumExpansionSignal(
+      input.spotPrice,
+      input.spread ?? Math.max((input.asks[0]?.price ?? 0) - (input.bids[0]?.price ?? 0), 0),
+      input
     );
-    DEBUG_VACUUM_ENGINE && console.log("CONFIRMED VACUUM ACTIVE:", confirmedVacuumActive);
+    const vacuumLifecycleState = this.deriveVacuumLifecycle(
+      thinRegions,
+      vacuumScore,
+      vacuumRisk,
+      vacuumProximity,
+      vacuumType,
+      finalDirection,
+      expansionSignal,
+      input
+    );
+    const confirmedVacuumActive = vacuumLifecycleState === "ACTIVE";
+    DEBUG_VACUUM_ENGINE && console.log("VACUUM LIFECYCLE:", vacuumLifecycleState, "confirmed(ACTIVE-only):", confirmedVacuumActive);
     
-    // Generate explanations
     const explanation = this.generateExplanations(
-      input, componentScores, thinRegions, finalDirection, confirmedVacuumActive, vacuumScore
+      input, componentScores, thinRegions, finalDirection, vacuumLifecycleState, vacuumScore
     );
     DEBUG_VACUUM_ENGINE && console.log("EXPLANATIONS:", explanation);
 
@@ -247,6 +309,7 @@ export class LiquidityVacuumEngine {
       vacuumType,
       vacuumDirection: finalDirection,
       vacuumProximity,
+      vacuumLifecycleState,
       confirmedVacuumActive,
       activeZones,
       componentScores,
@@ -262,6 +325,7 @@ export class LiquidityVacuumEngine {
       nearestThinLiquidityZone: nearestZone?.price || null,
       nearestThinLiquidityDirection: nearestZone?.direction || "NONE",
       nearestThinLiquidityScore: nearestZone?.score || 0,
+      vacuumLifecycleState,
       confirmedVacuumActive,
       activeZones,
       explanation
@@ -290,6 +354,7 @@ export class LiquidityVacuumEngine {
     vacuumType: string;
     vacuumDirection: string;
     vacuumProximity: string;
+    vacuumLifecycleState: VacuumLifecycleState;
     confirmedVacuumActive: boolean;
     activeZones: any[];
     componentScores: ComponentScores;
@@ -310,9 +375,8 @@ export class LiquidityVacuumEngine {
       }
     }
 
-    // confirmedVacuumActive true with FAR proximity
-    if (analysis.confirmedVacuumActive && analysis.vacuumProximity === "FAR") {
-      contradictions.push("Confirmed vacuum active with FAR proximity");
+    if (analysis.vacuumLifecycleState === "ACTIVE" && analysis.vacuumProximity === "FAR") {
+      contradictions.push("Vacuum ACTIVE lifecycle with FAR proximity");
     }
 
     // zero activeZones but non-trivial vacuumScore
@@ -628,8 +692,8 @@ export class LiquidityVacuumEngine {
     }
 
     // Volatility expansion
-    if (input.volatility && input.volatility > 0.02) { // 2%+ volatility
-      score += 20; // Fixed 20 points for high volatility
+    if (input.volatility != null && input.volatility >= 0.02) {
+      score += 20;
     }
 
     // Heatmap confluence
@@ -732,8 +796,9 @@ export class LiquidityVacuumEngine {
     if (input.liquiditySweepRisk?.direction === "UP") confluenceUp += 1;
     if (input.liquiditySweepRisk?.direction === "DOWN") confluenceDown += 1;
 
-    if (input.dealerHedgingFlow?.direction === "BUY") confluenceUp += 1;
-    if (input.dealerHedgingFlow?.direction === "SELL") confluenceDown += 1;
+    const ddir = String(input.dealerHedgingFlow?.direction ?? "");
+    if (ddir === "BUY" || ddir === "BUYING") confluenceUp += 1;
+    if (ddir === "SELL" || ddir === "SELLING") confluenceDown += 1;
 
     // Calculate directional scores
     const upScore = thinAbove * 2 + (imbalanceDirection === "UP" ? 1 : 0) + confluenceUp;
@@ -847,27 +912,29 @@ export class LiquidityVacuumEngine {
   }
 
   /**
-   * Determine if vacuum is confirmed active
+   * Derive vacuum lifecycle: structural context (SETUP), tape expansion (TRIGGERED), no absorption (ACTIVE).
    */
-  private isVacuumConfirmed(
-    score: number,
-    proximity: "FAR" | "MEDIUM" | "NEAR" | "IMMEDIATE",
-    direction: "UP" | "DOWN" | "NEUTRAL",
-    thinRegions: LiquidityBand[]
-  ): boolean {
-    // Must have sufficient score
-    if (score < 50) return false;
-    
-    // Must be near or immediate
-    if (proximity !== "NEAR" && proximity !== "IMMEDIATE") return false;
-    
-    // Must have clear direction
-    if (direction === "NEUTRAL") return false;
-    
-    // Must have thin regions
-    if (thinRegions.length === 0) return false;
-
-    return true;
+  private deriveVacuumLifecycle(
+    thinRegions: LiquidityBand[],
+    vacuumScore: number,
+    vacuumRisk: "LOW" | "MEDIUM" | "HIGH" | "EXTREME",
+    vacuumProximity: "FAR" | "MEDIUM" | "NEAR" | "IMMEDIATE",
+    vacuumType: "DIRECTIONAL" | "COMPRESSION" | "NONE",
+    finalDirection: "UP" | "DOWN" | "NEUTRAL",
+    expansionSignal: boolean,
+    input: VacuumEngineInput
+  ): VacuumLifecycleState {
+    if (thinRegions.length === 0 && vacuumScore < 22) return "NONE";
+    const structuralSetup =
+      thinRegions.length > 0 &&
+      vacuumProximity !== "FAR" &&
+      (vacuumScore >= 28 || vacuumRisk === "HIGH" || vacuumRisk === "EXTREME");
+    if (!structuralSetup) return "NONE";
+    const directionalClear = finalDirection !== "NEUTRAL" || vacuumType === "COMPRESSION";
+    if (!expansionSignal) return "SETUP";
+    if (!directionalClear) return "SETUP";
+    if (absorptionBlocksVacuumActive(input.absorption)) return "TRIGGERED";
+    return "ACTIVE";
   }
 
   /**
@@ -878,7 +945,7 @@ export class LiquidityVacuumEngine {
     scores: ComponentScores,
     thinRegions: LiquidityBand[],
     direction: "UP" | "DOWN" | "NEUTRAL",
-    confirmed: boolean,
+    lifecycle: VacuumLifecycleState,
     overallScore: number
   ): { summary: string[]; drivers: string[]; invalidation: string[] } {
     const summary: string[] = [];
@@ -908,6 +975,14 @@ export class LiquidityVacuumEngine {
       summary.push("Liquidity distribution appears balanced");
     }
 
+    if (lifecycle === "SETUP") {
+      summary.push("Vacuum SETUP: thin path present; waiting for spread/velocity or sweep impulse");
+    } else if (lifecycle === "TRIGGERED") {
+      summary.push("Vacuum TRIGGERED: expansion into thin zone while absorption likely defending");
+    } else if (lifecycle === "ACTIVE") {
+      summary.push("Vacuum ACTIVE: expansion through thin liquidity without absorption block");
+    }
+
     // Driver explanations
     if (scores.gapScore >= 60) {
       drivers.push("Large liquidity gap creates path of least resistance");
@@ -932,16 +1007,18 @@ export class LiquidityVacuumEngine {
       drivers.push("Bid side weakness and ask pressure increase downside vacuum risk");
     }
 
-    // Invalidation explanations
-    if (!confirmed && overallScore >= 50) {
-      if (scores.proximityScore < 40) {
-        invalidation.push("Vacuum zone too distant from current price");
+    if (lifecycle !== "ACTIVE" && overallScore >= 45) {
+      if (lifecycle === "SETUP") {
+        invalidation.push("No tape expansion yet — not ACTIVE until spread widens, price runs, or sweep confirms");
       }
-      if (direction === "NEUTRAL") {
-        invalidation.push("Insufficient directional bias for confirmation");
+      if (lifecycle === "TRIGGERED" && absorptionBlocksVacuumActive(input.absorption)) {
+        invalidation.push("Absorption active — vacuum run may stall or snap back");
       }
-      if (scores.accelerationScore < 30) {
-        invalidation.push("Lack of confluence support reduces confidence");
+      if (direction === "NEUTRAL" && lifecycle !== "NONE") {
+        invalidation.push("Directional bias weak unless compression two-sided");
+      }
+      if (scores.accelerationScore < 28) {
+        invalidation.push("Confluence still light — monitor sweep and dealer flow");
       }
     }
 
@@ -1063,6 +1140,7 @@ export class LiquidityVacuumEngine {
       nearestThinLiquidityZone: null,
       nearestThinLiquidityDirection: "NONE",
       nearestThinLiquidityScore: 0,
+      vacuumLifecycleState: "NONE",
       confirmedVacuumActive: false,
       activeZones: [],
       explanation: {

@@ -4,7 +4,7 @@ import { MarketDataGateway, tickerSchema } from "./market-gateway";
 import { DeribitOptionsGateway } from "./deribit-gateway";
 import { OrderBookGateway } from "./orderbook-gateway";
 import { runLiquiditySweepEngine } from "./lib/liquiditySweepEngine";
-import { computeGammaAccelerationZones } from "./lib/gammaAccelerationZones";
+import { computeGammaAccelerationZones, deriveGammaAccelLifecycle } from "./lib/gammaAccelerationZones";
 import { runAbsorptionEngine, buildInactiveAbsorptionSignal, normalizeAbsorptionSignal, type AbsorptionSignal } from "./lib/absorptionEngine";
 import { getDeribitOptionsSnapshot, enrichOptionsWithOINotional } from "./lib/deribitOptionsSnapshot";
 import { computeGravityMap } from "./lib/gravityMapEngine";
@@ -36,6 +36,24 @@ const STALE_THRESHOLD_MS = 10000; // 10 seconds
 // Suppress verbose console.log noise (do not affect functionality).
 const DEBUG_TERMINAL_STATE_ENGINE = false;
 let terminalStateLogSuppressionDepth = 0;
+
+let lastTerminalSpotSample: { price: number; t: number } | null = null;
+
+function computeSpotVelocityPctForAccel(spot: number, now: number): number {
+  if (!Number.isFinite(spot) || spot <= 0) return 0;
+  if (!lastTerminalSpotSample) {
+    lastTerminalSpotSample = { price: spot, t: now };
+    return 0;
+  }
+  const dt = now - lastTerminalSpotSample.t;
+  if (dt < 80 || dt > 120_000) {
+    lastTerminalSpotSample = { price: spot, t: now };
+    return 0;
+  }
+  const v = (spot - lastTerminalSpotSample.price) / lastTerminalSpotSample.price;
+  lastTerminalSpotSample = { price: spot, t: now };
+  return v;
+}
 const originalTerminalStateConsoleLog = console.log;
 function suppressTerminalStateConsoleLog() {
   terminalStateLogSuppressionDepth++;
@@ -55,6 +73,9 @@ export async function getTerminalState(): Promise<TerminalState> {
   if (__suppressLogs) suppressTerminalStateConsoleLog();
 
   try {
+    console.log('=== LOG 1 - TERMINAL SOURCE DEBUG ===');
+    console.log('[TERMINAL STATE] Getting raw data from storage...');
+    
     // Aggregated quantitative state from DB (fast read)
     const [market, exposure, positioning, levels, scenarios] = await Promise.all([
       storage.getMarketState(),
@@ -63,6 +84,31 @@ export async function getTerminalState(): Promise<TerminalState> {
       storage.getKeyLevels(),
       storage.getTradingScenarios()
     ]);
+    
+    console.log('[TERMINAL STATE] RAW DATA RECEIVED:', {
+      market_exists: !!market,
+      market_keys: market ? Object.keys(market) : [],
+      exposure_exists: !!exposure,
+      exposure_keys: exposure ? Object.keys(exposure) : [],
+      positioning_exists: !!positioning,
+      positioning_keys: positioning ? Object.keys(positioning) : [],
+      levels_exists: !!levels,
+      levels_keys: levels ? Object.keys(levels) : [],
+      scenarios_exists: !!scenarios,
+      scenarios_keys: scenarios ? Object.keys(scenarios) : []
+    });
+    
+    console.log('[TERMINAL STATE] CRITICAL FIELDS DEBUG:', {
+      'positioning.scenarioEngine': (positioning as any)?.scenarioEngine,
+      'positioning.scenarioEngine_exists': !!((positioning as any)?.scenarioEngine),
+      'positioning.scenarioEngine_keys': (positioning as any)?.scenarioEngine ? Object.keys((positioning as any).scenarioEngine) : [],
+      'levels.gammaMagnets': levels?.gammaMagnets,
+      'levels.shortGammaPocketStart': levels?.shortGammaPocketStart,
+      'levels.shortGammaPocketEnd': levels?.shortGammaPocketEnd,
+      'positioning.callWall': positioning?.callWall,
+      'positioning.putWall': positioning?.putWall,
+      'positioning.dealerPivot': positioning?.dealerPivot
+    });
 
     const gammaFlipValid =
       market?.gammaFlip != null &&
@@ -70,9 +116,9 @@ export async function getTerminalState(): Promise<TerminalState> {
       market.gammaFlip > 0;
     const gammaFlipForEngines = gammaFlipValid ? market.gammaFlip : null;
     const transitionZoneStartForEngines =
-      gammaFlipValid && market.transitionZoneStart > 0 ? market.transitionZoneStart : null;
+      gammaFlipValid && (market as any).transitionZoneStart > 0 ? (market as any).transitionZoneStart : null;
     const transitionZoneEndForEngines =
-      gammaFlipValid && market.transitionZoneEnd > 0 ? market.transitionZoneEnd : null;
+      gammaFlipValid && (market as any).transitionZoneEnd > 0 ? (market as any).transitionZoneEnd : null;
 
     // UI convention: when flip is missing, expose null so blocks/labels hide correctly.
     const marketForClient = market
@@ -120,17 +166,20 @@ export async function getTerminalState(): Promise<TerminalState> {
           gammaMagnets: levels?.gammaMagnets ?? [],
         };
         liveHeatmap = await OrderBookGateway.getLiquidityHeatmap(cachedTicker.price, gammaContext);
+        const spotVel = computeSpotVelocityPctForAccel(cachedTicker.price, Date.now());
         const accZones = computeGammaAccelerationZones({
           spotPrice: cachedTicker.price,
           gammaFlip: gammaFlipForEngines,
           gammaMagnets: levels?.gammaMagnets ?? [],
           liquidityHeatZones: liveHeatmap?.liquidityHeatZones ?? [],
           liquidityVacuum: liveHeatmap?.liquidityVacuum ?? null,
+          spotVelocityPct: spotVel,
         });
         DEBUG_TERMINAL_STATE_ENGINE && console.log("[GammaAccel] computed zones count=", accZones.length);
         DEBUG_TERMINAL_STATE_ENGINE && console.log("[GammaAccel] first zones=", accZones.slice(0, 3));
         if (liveHeatmap) {
           liveHeatmap.gammaAccelerationZones = accZones;
+          liveHeatmap.gammaAccelerationLifecycle = deriveGammaAccelLifecycle(accZones, spotVel);
         }
       } catch (heatErr) {
         console.warn("[TerminalState] Heatmap injection failed:", heatErr);
@@ -297,8 +346,9 @@ export async function getTerminalState(): Promise<TerminalState> {
     };
   }
 
-  if (enrichedPositioning?.liquidityHeatmap) {
-    const hm = enrichedPositioning.liquidityHeatmap as { liquidityHeatZones?: unknown[]; gammaAccelerationZones?: unknown[] };
+  const posOut = enrichedPositioning as { liquidityHeatmap?: { liquidityHeatZones?: unknown[]; gammaAccelerationZones?: unknown[] } } | null;
+  if (posOut?.liquidityHeatmap) {
+    const hm = posOut.liquidityHeatmap;
     DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState] /api/terminal/state heatmap: liquidityHeatZones count=" + (hm.liquidityHeatZones?.length ?? 0) + ", gammaAccelerationZones count=" + (hm.gammaAccelerationZones?.length ?? 0));
   }
 
@@ -368,6 +418,8 @@ export async function getTerminalState(): Promise<TerminalState> {
     callWall: positioning?.callWall ?? null,
     putWall: positioning?.putWall ?? null,
   };
+  console.log(`[TerminalState][FinalOptions] totalGex=${finalOptions.totalGex} marketForClient.totalGex=${marketForClient?.totalGex} enrichedOptionsSnapshot.totalGex=${enrichedOptionsSnapshot?.totalGex}`);
+
   console.warn("[GammaFlipTrace][TerminalState]", {
     storageMarketGammaFlip: market?.gammaFlip ?? null,
     marketForClientGammaFlip: marketForClient?.gammaFlip ?? null,

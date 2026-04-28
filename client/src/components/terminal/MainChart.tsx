@@ -45,16 +45,25 @@ import {
 } from "@/lib/levelTiming";
 import type { OperationalLevelKind, OperationalLevelSource } from "@/lib/levelTimingTypes";
 import { computeLevelTiming } from "@/lib/computeLevelTiming";
+import { renderCascadeLevels } from "./overlay/renderers/cascadeLevels";
+import { renderSqueezeLevels } from "./overlay/renderers/squeezeLevels";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
 type UTCTimestamp = number;
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
 
-export function MainChart({ activeScenario, onActiveScenarioChange }: { 
+export function MainChart({
+  activeScenario,
+  onActiveScenarioChange,
+  viewMode = "PRO",
+}: {
   activeScenario: "BASE" | "ALT" | "VOL";
   onActiveScenarioChange: (scenario: "BASE" | "ALT" | "VOL") => void;
+  /** SIMPLE: menos cromo técnico en el lienzo; PRO: comportamiento actual. */
+  viewMode?: "SIMPLE" | "PRO";
 }) {
+  const isSimpleView = viewMode === "SIMPLE";
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const drawingsLayerRef = useRef<DrawingsLayerHandle | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -767,7 +776,14 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       strength?: number,
       structural = false,
     ) => {
-      if (!allowOutsideThreshold && Math.abs(p - price) > threshold) return;
+      const distanceFromPrice = Math.abs(p - price);
+      const isWithinThreshold = allowOutsideThreshold || distanceFromPrice <= threshold;
+      
+      if (!isWithinThreshold) {
+        console.log(`[DEBUG PUSH] DESCARTADO "${label}" @ $${p}: distance=${distanceFromPrice.toFixed(2)} > threshold=${threshold.toFixed(2)}`);
+        return;
+      }
+      
       const timing = isBandFill
         ? undefined
         : computeLevelTiming(
@@ -788,7 +804,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
           : label;
       const shortWithTiming =
         !isBandFill && timing ? `${shortLabel} ${horizonTag}` : shortLabel;
-      entries.push({
+      const finalEntry = {
         price: p,
         priority,
         label: labelWithTiming,
@@ -801,8 +817,49 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
         timing,
         kind,
         source,
-      });
+        strength,
+        structural,
+      };
+      
+      console.log(`[DEBUG PUSH] AGREGANDO "${label}" @ $${p}: color=${color}, width=${lineWidthScaled}, style=${style}`);
+      entries.push(finalEntry);
     };
+
+    // LOG FINAL TOTALS Y DETECCIÓN DE COLISIONES
+    console.log(`[DEBUG FINAL] TOTAL entries procesadas: ${entries.length}`);
+    
+    // Detectar colisiones por precio exacto
+    const priceGroups = new Map<number, any[]>();
+    entries.forEach(entry => {
+      if (!priceGroups.has(entry.price)) {
+        priceGroups.set(entry.price, []);
+      }
+      priceGroups.get(entry.price)!.push(entry);
+    });
+    
+    // Loguear colisiones detectadas
+    priceGroups.forEach((entriesAtPrice, price) => {
+      if (entriesAtPrice.length > 1) {
+        console.log(`[DEBUG COLLISION] DETECTADA en precio $${price}:`, entriesAtPrice.map(e => `${e.label}(${e.priority})`));
+      }
+    });
+    
+    console.log(`[DEBUG FINAL] Entries por tipo:`, {
+      CASCADE: entries.filter(e => e.label.includes('CASCADE') || e.label.includes('LIQ')).length,
+      SQUEEZE: entries.filter(e => e.label.includes('SQ') || e.label.includes('SQUEEZE')).length,
+      LEVELS: entries.filter(e => e.label.includes('BID') || e.label.includes('ASK') || e.label.includes('CALL') || e.label.includes('PUT')).length,
+      GAMMA: entries.filter(e => e.label.includes('GAMMA') || e.label.includes('FLIP')).length,
+      HEATMAP: entries.filter(e => e.label.includes('THIN') || e.label.includes('VACUUM')).length
+    });
+    
+    // Loguear entradas por prioridad para ver si hay pisadas
+    const priorityGroups = entries.reduce((acc, entry) => {
+      if (!acc[entry.priority]) acc[entry.priority] = [];
+      acc[entry.priority].push(entry);
+      return acc;
+    }, {} as Record<number, any[]>);
+    
+    console.log(`[DEBUG PRIORITY] Entries por prioridad:`, Object.keys(priorityGroups).map(p => `Priority ${p}: ${priorityGroups[p].length} entries`));
 
     if (activePanels.has("LEVELS")) {
       const pos = positioning as { callWall?: number; putWall?: number; activeCallWall?: number; activePutWall?: number } | undefined;
@@ -850,26 +907,119 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
     }
 
     if (activePanels.has("CASCADE")) {
-      const cascade = positioning_engines?.liquidityCascadeEngine;
-      if (cascade) {
-        const triggerPrice = extractPriceFromText(cascade.cascadeTrigger);
-        if (triggerPrice) pushEntry(triggerPrice, 1, "CASCADE", "CSC", "rgba(239, 68, 68, 0.7)");
-        const pocketPrices = extractRangeFromText(cascade.liquidationPocket);
-        if (pocketPrices) {
-          pushEntry(pocketPrices.start, 3, "LIQ LO", "LL", "rgba(239, 68, 68, 0.3)", LineStyle.Dashed);
-          pushEntry(pocketPrices.end, 3, "LIQ HI", "LH", "rgba(239, 68, 68, 0.3)", LineStyle.Dashed);
+      console.log('[DEBUG CASCADE] Tab activo, procesando...');
+      console.log('[DEBUG CASCADE] positioning_engines:', positioning_engines);
+      console.log('[DEBUG CASCADE] liquidityCascadeEngine:', positioning_engines?.liquidityCascadeEngine);
+      
+      const cascadeEntries = renderCascadeLevels({
+        price,
+        threshold,
+        positioning,
+        market,
+        levels,
+        positioning_engines,
+        sweepDetector,
+        vacuumState: undefined
+      });
+      
+      console.log('[DEBUG CASCADE] Entries devueltas:', cascadeEntries.length);
+      cascadeEntries.forEach((entry, i) => {
+        console.log(`[DEBUG CASCADE] Entry ${i}:`, {
+          price: entry.price,
+          label: entry.label,
+          shortLabel: entry.shortLabel,
+          color: entry.color,
+          style: entry.style,
+          width: entry.width,
+          isBandFill: entry.isBandFill
+        });
+      });
+      
+      cascadeEntries.forEach(entry => {
+        const distanceFromPrice = Math.abs(entry.price - price);
+        const isWithinThreshold = distanceFromPrice <= threshold;
+        console.log(`[DEBUG CASCADE] Entry "${entry.label}" @ $${entry.price}: distance=${distanceFromPrice.toFixed(2)}, threshold=${threshold.toFixed(2)}, within=${isWithinThreshold}`);
+        
+        if (!isWithinThreshold) {
+          console.log(`[DEBUG CASCADE] DESCARTADO: "${entry.label}" fuera de threshold (${distanceFromPrice.toFixed(2)} > ${threshold.toFixed(2)})`);
+          return;
         }
-      }
+        
+        // FORZAR VISIBILIDAD MÁXIMA PARA DEBUG
+        pushEntry(
+          entry.price,
+          999, // PRIORIDAD MÁXIMA
+          entry.label,
+          entry.shortLabel,
+          entry.color.replace(/[\d.]+\)/, '1)'), // OPACIDAD 1 (sólido)
+          0, // STYLE SÓLIDO (LineStyle.Solid)
+          3, // WIDTH MÁXIMO
+          entry.isBandFill,
+          true,
+          "unknown",
+          "chart-overlay",
+          undefined,
+          false
+        );
+      });
     }
 
     if (activePanels.has("SQUEEZE")) {
-      const squeeze = positioning_engines?.squeezeProbabilityEngine;
-      if (squeeze) {
-        const triggerPrice = extractPriceFromText(squeeze.squeezeTrigger);
-        if (triggerPrice) pushEntry(triggerPrice, 1, "SQ TRIGGER", "SQT", "rgba(168, 85, 247, 0.7)");
-        const targetPrice = extractPriceFromText(squeeze.squeezeTarget);
-        if (targetPrice) pushEntry(targetPrice, 2, "SQ TARGET", "SQG", "rgba(168, 85, 247, 0.4)", LineStyle.Dashed);
-      }
+      console.log('[DEBUG SQUEEZE] Tab activo, procesando...');
+      console.log('[DEBUG SQUEEZE] positioning_engines:', positioning_engines);
+      console.log('[DEBUG SQUEEZE] squeezeProbabilityEngine:', positioning_engines?.squeezeProbabilityEngine);
+      
+      const squeezeEntries = renderSqueezeLevels({
+        price,
+        threshold,
+        positioning,
+        market,
+        levels,
+        positioning_engines,
+        sweepDetector,
+        vacuumState: undefined
+      });
+      
+      console.log('[DEBUG SQUEEZE] Entries devueltas:', squeezeEntries.length);
+      squeezeEntries.forEach((entry, i) => {
+        console.log(`[DEBUG SQUEEZE] Entry ${i}:`, {
+          price: entry.price,
+          label: entry.label,
+          shortLabel: entry.shortLabel,
+          color: entry.color,
+          style: entry.style,
+          width: entry.width,
+          isBandFill: entry.isBandFill
+        });
+      });
+      
+      squeezeEntries.forEach(entry => {
+        const distanceFromPrice = Math.abs(entry.price - price);
+        const isWithinThreshold = distanceFromPrice <= threshold;
+        console.log(`[DEBUG SQUEEZE] Entry "${entry.label}" @ $${entry.price}: distance=${distanceFromPrice.toFixed(2)}, threshold=${threshold.toFixed(2)}, within=${isWithinThreshold}`);
+        
+        if (!isWithinThreshold) {
+          console.log(`[DEBUG SQUEEZE] DESCARTADO: "${entry.label}" fuera de threshold (${distanceFromPrice.toFixed(2)} > ${threshold.toFixed(2)})`);
+          return;
+        }
+        
+        // FORZAR VISIBILIDAD MÁXIMA PARA DEBUG
+        pushEntry(
+          entry.price,
+          999, // PRIORIDAD MÁXIMA
+          entry.label,
+          entry.shortLabel,
+          entry.color.replace(/[\d.]+\)/, '1)'), // OPACIDAD 1 (sólido)
+          0, // STYLE SÓLIDO (LineStyle.Solid)
+          3, // WIDTH MÁXIMO
+          entry.isBandFill,
+          true,
+          "unknown",
+          "chart-overlay",
+          undefined,
+          false
+        );
+      });
     }
 
     const sweepZoneRange = sweepActive ? extractRangeFromText(sweepDetector.sweepTargetZone ?? sweepDetector.target) : null;
@@ -1897,7 +2047,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       if (o.showGamma) next.add("GAMMA");
       if (o.showHeatmap) next.add("HEATMAP");
       if (o.showSweeps) next.add("SQUEEZE");
-      if (prev.has("CASCADE")) next.add("CASCADE");
+      if (o.showCascade) next.add("CASCADE");
       return next;
     });
     setShowAbsorbZones(o.showAbsorptions);
@@ -1995,19 +2145,25 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
       setChartSettings({ overlays: { ...o, showSweeps: !o.showSweeps } });
       return;
     }
+    if (layer === "cascade") {
+      setChartSettings({ overlays: { ...o, showCascade: !o.showCascade } });
+      return;
+    }
     const mode = layerToMode[layer];
     if (mode) togglePanel(mode);
   };
 
   return (
     <div className="flex-1 w-full h-full min-w-0 min-h-0 flex flex-col relative overflow-hidden">
-      <LayerGroupControls
-        activeLayers={activeLayers}
-        onLayerToggle={handleLayerToggle}
-        onFitLevels={() => { setSelectedScenario(null); fitLevels(); }}
-        onResetChart={() => { setSelectedScenario(null); resetScale(); }}
-        dataTestId="toggle-map-mode"
-      />
+      {!isSimpleView && (
+        <LayerGroupControls
+          activeLayers={activeLayers}
+          onLayerToggle={handleLayerToggle}
+          onFitLevels={() => { setSelectedScenario(null); fitLevels(); }}
+          onResetChart={() => { setSelectedScenario(null); resetScale(); }}
+          dataTestId="toggle-map-mode"
+        />
+      )}
       <TerminalPanel className="flex-1 w-full min-w-0 min-h-0 border border-terminal-border relative overflow-hidden" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
         <div className="absolute inset-0 pointer-events-none z-10">
           <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start">
@@ -2021,29 +2177,31 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
                   <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? `Live (${ticker?.source})` : 'Live Feed Offline'}</span>
                 </div>
               </div>
-              <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
-                <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>
-                <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span><span className="text-[11px] font-bold font-mono text-white">{market?.distanceToFlip != null ? `${market.distanceToFlip.toFixed(2)}%` : "--"}</span></div>
-              </div>
-              {activePanels.has("GAMMA") && (
+              {!isSimpleView && (
+                <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
+                  <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>
+                  <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span><span className="text-[11px] font-bold font-mono text-white">{market?.distanceToFlip != null ? `${market.distanceToFlip.toFixed(2)}%` : "--"}</span></div>
+                </div>
+              )}
+              {!isSimpleView && activePanels.has("GAMMA") && (
                 <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Showing Flip, Transition Zone, and Key Gamma Cliffs</div>
               )}
-              {activePanels.has("HEATMAP") && (
+              {!isSimpleView && activePanels.has("HEATMAP") && (
                 <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Order book liquidity zones with gamma confluence</div>
               )}
-              {showAccelZones && learnMode && (
+              {!isSimpleView && showAccelZones && learnMode && (
                 <div className="mt-2 p-2 rounded border border-white/[0.06] bg-black/40 max-w-[280px]">
                   <div className="text-[9px] font-bold font-mono uppercase tracking-wider text-white/50 mb-1">ACCEL ZONES</div>
                   <p className="text-[9px] text-white/40 font-mono leading-snug">Areas where thin liquidity and gamma structure can amplify price movement. Breaks through these zones may lead to fast expansion.</p>
                 </div>
               )}
-              {showAbsorbZones && learnMode && (
+              {!isSimpleView && showAbsorbZones && learnMode && (
                 <div className="mt-2 p-2 rounded border border-white/[0.06] bg-black/40 max-w-[280px]">
                   <div className="text-[9px] font-bold font-mono uppercase tracking-wider text-white/50 mb-1">ABSORPTION</div>
                   <p className="text-[9px] text-white/40 font-mono leading-snug">Aggressive flow into resting liquidity that fails to break through. Sell absorption = buys absorbed at asks; buy absorption = sells absorbed at bids. Invalidation = clean break beyond the zone.</p>
                 </div>
               )}
-              {showGravityZones && learnMode && (
+              {!isSimpleView && showGravityZones && learnMode && (
                 <div className="mt-2 p-2 rounded border border-white/[0.06] bg-black/40 max-w-[280px]">
                   <div className="text-[9px] font-bold font-mono uppercase tracking-wider text-white/50 mb-1">GRAVITY MAP</div>
                   <p className="text-[9px] text-white/40 font-mono leading-snug">Combines open interest, gamma positioning, and nearby liquidity to estimate where price is more likely to be pulled, stalled, or rejected. OI labels show USD notional per strike.</p>
@@ -2052,7 +2210,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
             </div>
           </div>
         </div>
-        {activePanels.has("GAMMA") && (
+        {!isSimpleView && activePanels.has("GAMMA") && (
           <div className="absolute bottom-3 left-3 z-10 pointer-events-none">
             <div className="flex items-center gap-3 bg-black/50 border border-white/[0.06] rounded px-2.5 py-1.5 backdrop-blur-sm">
               <div className="flex items-center gap-1.5">
@@ -2074,7 +2232,7 @@ export function MainChart({ activeScenario, onActiveScenarioChange }: {
             </div>
           </div>
         )}
-        {activePanels.has("HEATMAP") && (
+        {!isSimpleView && activePanels.has("HEATMAP") && (
           <div className="absolute bottom-3 left-3 z-10 pointer-events-none">
             <div className="flex items-center gap-3 bg-black/50 border border-white/[0.06] rounded px-2.5 py-1.5 backdrop-blur-sm">
               <div className="flex items-center gap-1.5">

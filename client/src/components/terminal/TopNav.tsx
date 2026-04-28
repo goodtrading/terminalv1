@@ -5,8 +5,12 @@ import { useLearnMode } from "@/hooks/useLearnMode";
 import { useTerminalState } from "@/hooks/useTerminalState";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 
-export function TopNav() {
-  const [activeTab, setActiveTab] = useState("TERMINAL");
+interface TopNavProps {
+  activeTab: string;
+  onTabChange: (tab: string) => void;
+}
+
+export function TopNav({ activeTab, onTabChange }: TopNavProps) {
   const { learnMode, toggleLearnMode } = useLearnMode();
   const { data: terminalState } = useTerminalState();
   const { saasDisabled, user, logout } = useTerminalAuth();
@@ -32,7 +36,7 @@ export function TopNav() {
           {tabs.map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => onTabChange(tab)}
               className={cn(
                 "px-4 text-xs font-medium tracking-wide h-full border-b-2 transition-colors",
                 activeTab === tab 

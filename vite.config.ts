@@ -42,10 +42,29 @@ export default defineConfig({
   },
   server: {
     host: "0.0.0.0",
+    port: 5000,
     allowedHosts: true,
     fs: {
       strict: true,
       deny: ["**/.*"],
     },
+    proxy: {
+      "/api": {
+        target: "http://localhost:5002",
+        changeOrigin: true,
+        secure: false,
+        configure: (proxy, _options) => {
+          proxy.on('error', (err, _req, _res) => {
+            console.log('Vite proxy error:', err);
+          });
+          proxy.on('proxyReq', (proxyReq, req, _res) => {
+            console.log('Vite proxy request:', req.method, req.url, '->', proxyReq.getHeader('host') + proxyReq.path);
+          });
+          proxy.on('proxyRes', (proxyRes, req, _res) => {
+            console.log('Vite proxy response:', proxyRes.statusCode, req.method, req.url);
+          });
+        }
+      }
+    }
   },
 });

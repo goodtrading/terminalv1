@@ -696,5 +696,358 @@ export async function registerRoutes(
     app.post("/api/admin/users/:id/subscription/deactivate", saasNotConfigured);
   }
 
+  // --- Deribit Options Ticker Enrichment Endpoint ---
+  app.post("/api/options/deribit/tickers", async (req: Request, res: Response) => {
+    console.log("[TICKER_ENRICHMENT_FETCH] Request received");
+    
+    try {
+      // Validate body
+      const { instrumentNames } = req.body;
+      
+      if (!Array.isArray(instrumentNames)) {
+        return res.status(400).json({ error: "instrumentNames must be an array" });
+      }
+      
+      if (instrumentNames.length === 0) {
+        return res.json({ generatedAt: Date.now(), tickers: {}, errors: [] });
+      }
+      
+      if (instrumentNames.length > 60) {
+        return res.status(400).json({ error: "Maximum 60 instruments per request" });
+      }
+      
+      // Filter and validate instrument names
+      const validInstruments = [...new Set(instrumentNames)] // Remove duplicates
+        .filter(name => typeof name === 'string' && name.length > 0)
+        .filter(name => name.startsWith('BTC-') || name.startsWith('ETH-'))
+        .slice(0, 60); // Safety limit
+      
+      if (validInstruments.length === 0) {
+        return res.json({ generatedAt: Date.now(), tickers: {}, errors: [] });
+      }
+      
+      console.log(`[TICKER_ENRICHMENT_FETCH] Processing ${validInstruments.length} instruments`);
+      
+      // Simple in-memory cache
+      const CACHE_TTL_MS = 15000; // 15 seconds
+      const tickerCache = new Map<string, { data: any; ts: number }>();
+      
+      const results: Record<string, any> = {};
+      const errors: string[] = [];
+      
+      // Helper function to fetch single ticker with cache
+      const fetchTickerWithCache = async (instrumentName: string): Promise<any> => {
+        const cached = tickerCache.get(instrumentName);
+        const now = Date.now();
+        
+        if (cached && (now - cached.ts) < CACHE_TTL_MS) {
+          console.log(`[TICKER_ENRICHMENT_CACHE_HIT] ${instrumentName}`);
+          return cached.data;
+        }
+        
+        try {
+          const response = await fetch(`https://www.deribit.com/api/v2/public/ticker?instrument_name=${encodeURIComponent(instrumentName)}`);
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          
+          const data = await response.json();
+          
+          if (data.error) {
+            throw new Error(data.error.message);
+          }
+          
+          const ticker = data.result;
+          
+          // Cache the result
+          tickerCache.set(instrumentName, { data: ticker, ts: now });
+          
+          return ticker;
+        } catch (error) {
+          console.error(`[TICKER_ENRICHMENT_ERROR] ${instrumentName}:`, error);
+          throw error;
+        }
+      };
+      
+      // Helper function for defensive mapping
+      const mapTickerData = (ticker: any) => {
+        return {
+          instrumentName: ticker.instrument_name,
+          delta: ticker.greeks?.delta ?? ticker.delta ?? null,
+          gamma: ticker.greeks?.gamma ?? null,
+          vega: ticker.greeks?.vega ?? null,
+          theta: ticker.greeks?.theta ?? null,
+          bidIv: ticker.bid_iv ?? null,
+          askIv: ticker.ask_iv ?? null,
+          markIv: ticker.mark_iv ?? null,
+          bidSize: ticker.best_bid_amount ?? ticker.bid_amount ?? ticker.bid_size ?? null,
+          askSize: ticker.best_ask_amount ?? ticker.ask_amount ?? ticker.ask_size ?? null,
+          markPrice: ticker.mark_price ?? null,
+          underlyingPrice: ticker.underlying_price ?? ticker.index_price ?? null
+        };
+      };
+      
+      // Process with limited concurrency (batch of 5)
+      const concurrency = 5;
+      for (let i = 0; i < validInstruments.length; i += concurrency) {
+        const batch = validInstruments.slice(i, i + concurrency);
+        
+        await Promise.allSettled(
+          batch.map(async (instrumentName) => {
+            try {
+              const ticker = await fetchTickerWithCache(instrumentName);
+              results[instrumentName] = mapTickerData(ticker);
+            } catch (error) {
+              errors.push(`${instrumentName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+          })
+        );
+      }
+      
+      console.log(`[TICKER_ENRICHMENT_OK] ${Object.keys(results).length} successful, ${errors.length} errors`);
+      
+      res.json({
+        generatedAt: Date.now(),
+        tickers: results,
+        errors
+      });
+      
+    } catch (error) {
+      console.error('[TICKER_ENRICHMENT_ERROR] Unexpected error:', error);
+      res.status(500).json({
+        error: "Internal server error",
+        generatedAt: Date.now(),
+        tickers: {},
+        errors: ["Internal server error"]
+      });
+    }
+  });
+
+  // --- Deribit Options Book Endpoint ---
+  app.get("/api/options/deribit/book", async (req, res) => {
+    console.log("[DERIBIT_OPTIONS_BOOK_FETCH] Request received");
+    try {
+      const currency = (req.query.currency as string)?.toUpperCase() || "BTC";
+      const expiry = req.query.expiry as string | undefined;
+
+      console.log("[DERIBIT_OPTIONS_DEBUG] incoming query", { currency, expiry });
+
+      if (!["BTC", "ETH"].includes(currency)) {
+        return res.status(400).json({
+          error: "INVALID_CURRENCY",
+          details: "Currency must be BTC or ETH"
+        });
+      }
+
+      // Fetch instruments and book summary from Deribit API
+      const [instrumentsResponse, summaryResponse] = await Promise.all([
+        fetch(`https://www.deribit.com/api/v2/public/get_instruments?currency=${currency}&kind=option&expired=false`),
+        fetch(`https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=${currency}&kind=option`)
+      ]);
+
+      if (!instrumentsResponse.ok || !summaryResponse.ok) {
+        throw new Error("Failed to fetch data from Deribit API");
+      }
+
+      const [instrumentsData, summaryData] = await Promise.all([
+        instrumentsResponse.json(),
+        summaryResponse.json()
+      ]);
+
+      if (instrumentsData.error || summaryData.error) {
+        throw new Error(instrumentsData.error?.message || summaryData.error?.message || "Deribit API error");
+      }
+
+      const instruments = instrumentsData.result || [];
+      const summaries = summaryData.result || [];
+
+      console.log("[DERIBIT_OPTIONS_DEBUG] instruments count", instruments.length);
+      console.log("[DERIBIT_OPTIONS_DEBUG] summaries count", summaries.length);
+
+      // Get underlying price from Deribit index price API
+      let underlyingPrice = null;
+      try {
+        const indexName = currency === "BTC" ? "btc_usd" : "eth_usd";
+        console.log("[OPTIONS_UNDERLYING_DEBUG] fetching Deribit index price for", indexName);
+        
+        const indexResponse = await fetch(`https://www.deribit.com/api/v2/public/get_index_price?index_name=${indexName}`);
+        const indexData = await indexResponse.json();
+        
+        if (indexData?.result?.index_price && Number.isFinite(indexData.result.index_price)) {
+          underlyingPrice = indexData.result.index_price;
+          console.log("[OPTIONS_UNDERLYING_DEBUG] Deribit index price found:", underlyingPrice);
+        } else {
+          console.log("[OPTIONS_UNDERLYING_DEBUG] Deribit index price response invalid:", indexData);
+        }
+      } catch (error) {
+        console.log("[OPTIONS_UNDERLYING_DEBUG] Deribit index price API failed:", error);
+      }
+
+      // Helper function to normalize expiry formats
+      const normalizeExpiry = (input: string | undefined | null): string | null => {
+        if (!input) return null;
+        
+        // If already in Deribit format (DDMMMYY), return as-is
+        if (/^\d{2}[A-Z]{3}\d{2}$/.test(input)) {
+          return input;
+        }
+        
+        // Convert YYYYMMDD format (20260428 -> 28APR26)
+        if (/^\d{8}$/.test(input)) {
+          const year = input.slice(2, 4);
+          const monthMap: { [key: string]: string } = {
+            '01': 'JAN', '02': 'FEB', '03': 'MAR', '04': 'APR',
+            '05': 'MAY', '06': 'JUN', '07': 'JUL', '08': 'AUG',
+            '09': 'SEP', '10': 'OCT', '11': 'NOV', '12': 'DEC'
+          };
+          const month = monthMap[input.slice(4, 6)];
+          const day = input.slice(6, 8);
+          return month ? `${day}${month}${year}` : null;
+        }
+        
+        return null;
+      };
+
+      // Extract unique expiries from instruments in Deribit canonical format
+      const expirySet = new Set<string>();
+      instruments.forEach((i: any) => {
+        const timestamp = i.expiration_timestamp;
+        if (timestamp) {
+          const date = new Date(timestamp);
+          const day = date.getDate().toString().padStart(2, '0');
+          const monthNames = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+          const month = monthNames[date.getMonth()];
+          const year = date.getFullYear().toString().slice(2);
+          const expiryDeribit = `${day}${month}${year}`;
+          expirySet.add(expiryDeribit);
+        }
+      });
+      
+      const expiries = Array.from(expirySet).sort((a, b) => {
+        // Sort by actual date, not alphabetically
+        const dateA = new Date(
+          2000 + parseInt(a.slice(4)), // year
+          ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'].indexOf(a.slice(2, 5)), // month
+          parseInt(a.slice(0, 2)) // day
+        );
+        const dateB = new Date(
+          2000 + parseInt(b.slice(4)),
+          ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'].indexOf(b.slice(2, 5)),
+          parseInt(b.slice(0, 2))
+        );
+        return dateA.getTime() - dateB.getTime();
+      });
+
+      console.log("[DERIBIT_OPTIONS_DEBUG] available expiries", expiries);
+      
+      const normalizedRequestedExpiry = normalizeExpiry(expiry);
+      console.log("[DERIBIT_OPTIONS_DEBUG] normalized requested expiry", { 
+        original: expiry, 
+        normalized: normalizedRequestedExpiry 
+      });
+
+      // Filter by selected expiry or use closest active expiry
+      let selectedExpiry = normalizedRequestedExpiry;
+      if (!selectedExpiry && expiries.length > 0) {
+        selectedExpiry = expiries[0];
+      }
+      
+      console.log("[DERIBIT_OPTIONS_DEBUG] selected expiry", selectedExpiry);
+
+      // Parse instrument names and group by strike
+      const strikeMap = new Map<number, { call?: any, put?: any }>();
+      
+      instruments.forEach((instrument: any) => {
+        const match = instrument.instrument_name.match(/^(BTC|ETH)-(\d{2}[A-Z]{3}\d{2})-(\d+)-([CP])$/);
+        if (match) {
+          const [, , instrumentExpiry, strikeStr, optionType] = match;
+          const strike = parseInt(strikeStr);
+          
+          if (!strikeMap.has(strike)) {
+            strikeMap.set(strike, {});
+          }
+          
+          const summary = summaries.find((s: any) => s.instrument_name === instrument.instrument_name);
+          
+          // Filter by selected expiry
+          if (selectedExpiry && instrumentExpiry !== selectedExpiry) {
+            return;
+          }
+          
+          const optionData = {
+            instrumentName: instrument.instrument_name,
+            expiry: instrumentExpiry,
+            strike: strikeStr,
+            type: optionType,
+            matchesSelectedExpiry: instrumentExpiry === selectedExpiry,
+            openInterest: summary?.open_interest || null,
+            delta: summary?.delta || null,
+            bidIv: summary?.bid_iv || null,
+            askIv: summary?.ask_iv || null,
+            bidPrice: summary?.bid_price || null,
+            askPrice: summary?.ask_price || null,
+            bidSize: summary?.bid_amount || null,
+            askSize: summary?.ask_amount || null,
+            markPrice: summary?.mark_price || null,
+            volume24h: summary?.volume_usd || null,
+            priceChange24h: summary?.price_change_24h || null
+          };
+          
+          if (optionType === 'C') {
+            strikeMap.get(strike)!.call = optionData;
+          } else if (optionType === 'P') {
+            strikeMap.get(strike)!.put = optionData;
+          }
+        }
+      });
+
+      // Convert to sorted array
+      const rows = Array.from(strikeMap.entries())
+        .map(([strike, data]) => ({
+          strike,
+          call: data.call || null,
+          put: data.put || null
+        }))
+        .sort((a, b) => a.strike - b.strike);
+
+      console.log("[DERIBIT_OPTIONS_DEBUG] rows count", rows.length);
+      console.log("[DERIBIT_OPTIONS_DEBUG] sample rows", rows.slice(0, 3).map(row => ({
+        strike: row.strike,
+        hasCall: !!row.call,
+        hasPut: !!row.put,
+        callOI: row.call?.openInterest,
+        putOI: row.put?.openInterest
+      })));
+
+      console.log("[OPTIONS_UNDERLYING_DEBUG] final underlyingPrice:", underlyingPrice);
+
+      const response = {
+        currency: currency as "BTC" | "ETH",
+        underlyingPrice,
+        selectedExpiry: selectedExpiry || null,
+        expiries,
+        rows,
+        generatedAt: Date.now()
+      };
+
+      console.log("[DERIBIT_OPTIONS_DEBUG] response summary", {
+        currency,
+        expiryCount: expiries.length,
+        rowCount: rows.length,
+        selectedExpiry,
+        underlyingPrice
+      });
+
+      res.json(response);
+    } catch (error: any) {
+      console.error("[DERIBIT_OPTIONS_BOOK_ERROR]", error);
+      res.status(500).json({
+        error: "DERIBIT_BOOK_ERROR",
+        details: error.message
+      });
+    }
+  });
+
   return httpServer;
 }
