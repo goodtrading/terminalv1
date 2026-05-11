@@ -46,6 +46,44 @@ const FALLBACK_SNAPSHOT: DeribitOptionsSnapshot = {
   strikeCount: 0,
 };
 
+function coercePositiveNumber(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
+  if (typeof v === "string" && v.trim()) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+/** First positive finite spot from known GEX JSON keys (Deribit exports vary). */
+function coerceSpotFromParsed(parsed: Record<string, unknown>): number | null {
+  for (const k of ["spot", "spotPrice", "underlyingPrice", "indexPrice"] as const) {
+    const n = coercePositiveNumber(parsed[k]);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+/** Normalize timestamp to ISO string for downstream Date parsing, or null if missing/invalid. */
+function coerceAsOfFromParsed(parsed: Record<string, unknown>): string | null {
+  const c = parsed.asOf ?? parsed.timestamp ?? parsed.updatedAt ?? parsed.createdAt;
+  if (c == null) return null;
+  if (typeof c === "number" && Number.isFinite(c)) {
+    const d = new Date(c);
+    return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+  }
+  if (typeof c === "string" && c.trim()) return c.trim();
+  return null;
+}
+
+function coerceGammaFlipFromParsed(parsed: Record<string, unknown>): number | null {
+  for (const k of ["gammaFlip", "gammaFlipSpotGrid", "gammaFlipStrikeApprox"] as const) {
+    const n = coercePositiveNumber(parsed[k]);
+    if (n != null) return n;
+  }
+  return null;
+}
+
 export function getDeribitOptionsSnapshot(): DeribitOptionsSnapshot {
   try {
     if (!fs.existsSync(OUTPUT_FILE)) {
@@ -57,12 +95,9 @@ export function getDeribitOptionsSnapshot(): DeribitOptionsSnapshot {
       console.log("[DeribitOptions] fallback used: empty deribit_gex_output.json");
       return FALLBACK_SNAPSHOT;
     }
-    const parsed = JSON.parse(raw);
-    const asOf = typeof parsed.asOf === "string" ? parsed.asOf : null;
-    const spotFromFile =
-      typeof parsed.spot === "number" && Number.isFinite(parsed.spot) && parsed.spot > 0
-        ? parsed.spot
-        : null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const asOf = coerceAsOfFromParsed(parsed);
+    const spotFromFile = coerceSpotFromParsed(parsed);
     const totalGex =
       typeof parsed.totalGex === "number" && Number.isFinite(parsed.totalGex)
         ? parsed.totalGex
@@ -71,10 +106,7 @@ export function getDeribitOptionsSnapshot(): DeribitOptionsSnapshot {
       parsed.gammaRegime === "LONG_GAMMA" || parsed.gammaRegime === "SHORT_GAMMA"
         ? parsed.gammaRegime
         : "NEUTRAL";
-    const gammaFlip =
-      typeof parsed.gammaFlip === "number" && Number.isFinite(parsed.gammaFlip)
-        ? parsed.gammaFlip
-        : null;
+    const gammaFlip = coerceGammaFlipFromParsed(parsed);
     const rawStrikes = Array.isArray(parsed.strikes) ? parsed.strikes : [];
     const strikes: StrikeRow[] = rawStrikes
       .map((s: unknown) => {

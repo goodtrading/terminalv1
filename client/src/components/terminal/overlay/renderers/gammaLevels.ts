@@ -1,8 +1,9 @@
 import { LineStyle } from "lightweight-charts";
+import { resolveGammaOverlaySelection } from "@/lib/gammaOverlaySelection";
 import { OverlayRenderContext, OverlayEntry, OverlayRenderer } from "../types";
 
 export const renderGammaLevels: OverlayRenderer = (context: OverlayRenderContext) => {
-  const { market, positioning_engines, price, threshold } = context;
+  const { market, positioning_engines, price, threshold, options } = context;
   const entries: OverlayEntry[] = [];
 
   const pushEntry = (p: number, priority: number, label: string, shortLabel: string, color: string, style = LineStyle.Solid, width = 1, isBandFill = false) => {
@@ -10,15 +11,30 @@ export const renderGammaLevels: OverlayRenderer = (context: OverlayRenderContext
     entries.push({ price: p, priority, label, shortLabel, color, style, width, axisLabel: !isBandFill, isBandFill });
   };
 
-  // Gamma Flip (highest priority)
-  if (market?.gammaFlip) {
-    pushEntry(market.gammaFlip, 1, "GAMMA FLIP", "FLIP", "rgba(250, 240, 180, 0.85)", LineStyle.Solid, 2);
+  const sel = resolveGammaOverlaySelection(market, options);
+  if (sel.selectedFlipType === "local" && sel.localFlip != null) {
+    pushEntry(sel.localFlip, 1, "LOCAL FLIP", "LFL", "rgba(168, 250, 220, 0.88)", LineStyle.Solid, 2);
+    if (sel.localZoneStart && sel.localZoneEnd) {
+      pushEntry(sel.localZoneStart, 4, "LOCAL GAMMA ZONE (lo)", "LZL", "rgba(34, 197, 94, 0.35)", LineStyle.Dashed);
+      pushEntry(sel.localZoneEnd, 4, "LOCAL GAMMA ZONE (hi)", "LZH", "rgba(34, 197, 94, 0.35)", LineStyle.Dashed);
+    }
+  } else if (sel.selectedFlipType === "broad" && sel.broadFlip != null) {
+    pushEntry(sel.broadFlip, 1, "BROAD FLIP", "BFL", "rgba(250, 240, 180, 0.85)", LineStyle.Solid, 2);
+    if (sel.broadZoneStart && sel.broadZoneEnd) {
+      pushEntry(sel.broadZoneStart, 4, "TR LO", "TL", "rgba(234, 179, 8, 0.25)", LineStyle.Dashed);
+      pushEntry(sel.broadZoneEnd, 4, "TR HI", "TH", "rgba(234, 179, 8, 0.25)", LineStyle.Dashed);
+    }
   }
 
-  // Transition Zone (medium priority)
-  if (market?.transitionZoneStart && market?.transitionZoneEnd) {
-    pushEntry(market.transitionZoneStart, 4, "TR LO", "TL", "rgba(234, 179, 8, 0.25)", LineStyle.Dashed);
-    pushEntry(market.transitionZoneEnd, 4, "TR HI", "TH", "rgba(234, 179, 8, 0.25)", LineStyle.Dashed);
+  {
+    const op = sel.selectedFlipForChart;
+    if (sel.globalFlip != null) {
+      const dup =
+        op != null && Math.abs(sel.globalFlip - op) / Math.max(sel.globalFlip, op, 1) < 1e-5;
+      if (!dup) {
+        pushEntry(sel.globalFlip, 2, "GLOBAL FLIP", "GFG", "rgba(196, 181, 253, 0.82)", LineStyle.Solid, 2);
+      }
+    }
   }
 
   // Gamma Cliffs (lower priority)

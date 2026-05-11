@@ -310,9 +310,9 @@ export class MarketDataGateway {
   }
 
   private static readonly AGG_TRADES_PAGE = 1000;
-  /** Footprint client cap — keep paginated REST bounded to avoid Binance timeouts / 503 to the UI. */
+  /** Client cap — keep paginated REST bounded to avoid Binance timeouts / 503 to the UI. */
   private static readonly AGG_TRADES_CLIENT_CAP = 5000;
-  /** Historical backfill cap for visible-range footprint reconstruction. */
+  /** Historical backfill cap for visible-range data reconstruction. */
   private static readonly AGG_TRADES_HISTORICAL_CAP = 220_000;
   /** Safety cap for one paged walk. */
   private static readonly AGG_TRADES_PAGED_HARD_CAP = 220_000;
@@ -403,7 +403,7 @@ export class MarketDataGateway {
   }
 
   /**
-   * Recent aggregated trades (Binance aggTrades). Used for footprint / tape style features.
+   * Recent aggregated trades (Binance aggTrades). Used for market data analysis features.
    * `side` = taker: buy lifted ask, sell hit bid.
    *
    * For `BTCUSDT`, prefers the in-memory WebSocket buffer when the window lies in retention;
@@ -469,13 +469,13 @@ export class MarketDataGateway {
 
     if (sym !== "BTCUSDT") {
       const paged = await this.fetchAggTradesRestPaged(sym, startMs, endMs, effectiveLimit);
-      return paged.length <= effectiveLimit ? paged : paged.slice(0, effectiveLimit);
+      return paged.length <= effectiveLimit ? paged : paged.slice(-effectiveLimit);
     }
 
     const useBuffer = cov.size > 0 || cov.connected;
     if (!useBuffer) {
       const paged = await this.fetchAggTradesRestPaged(sym, startMs, endMs, effectiveLimit);
-      return paged.length <= effectiveLimit ? paged : paged.slice(0, effectiveLimit);
+      return paged.length <= effectiveLimit ? paged : paged.slice(-effectiveLimit);
     }
 
     const headParts: AggTrade[] = [];
@@ -503,7 +503,8 @@ export class MarketDataGateway {
     }
 
     if (merged.length <= effectiveLimit) return merged;
-    return merged.slice(0, effectiveLimit);
+    /** Preferir los trades más recientes del intervalo (cliente footprint / chart visible a la derecha). */
+    return merged.slice(-effectiveLimit);
   }
 
   private static validateAndSort(candles: Candle[]): Candle[] {

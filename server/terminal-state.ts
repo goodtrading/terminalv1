@@ -143,10 +143,42 @@ export async function getTerminalState(): Promise<TerminalState> {
   let liveHeatmap = null;
   let liveDominantExpiry: string | null = null;
   let optionsSource: string | null = null;
+  let deribitSummaryExtras: {
+    gammaFlipGlobal: number | null;
+    gammaFlipGlobalSource?: "fresh_snapshot" | "none" | "legacy_structural_live";
+    gammaFlipGlobalDebug?: {
+      staleSnapshotFlip: number | null;
+      staleSnapshotSpot: number | null;
+      legacyLiveSpotFlip: number | null;
+      legacyAtFileSpotFlip: number | null;
+      legacyCrossings?: number[];
+      gammaFlipStructuralLive?: number | null;
+      reason: string;
+    } | null;
+    gammaFlipBroad: number | null;
+    gammaFlipLocal: number | null;
+    gammaRegimeLocal: "LONG GAMMA" | "SHORT GAMMA" | null;
+    localTransitionZoneStart: number | null;
+    localTransitionZoneEnd: number | null;
+    localFlipReason: string | null;
+    gammaFlipOperationalLegacy: number | null;
+  } | null = null;
   try {
     const { options: rawOptions, source } = await DeribitOptionsGateway.ingestOptions();
     const cachedTicker = MarketDataGateway.getCachedTicker();
     const summary = await DeribitOptionsGateway.getSummary(rawOptions, cachedTicker?.price, source);
+    deribitSummaryExtras = {
+      gammaFlipGlobal: summary.gammaFlipGlobal ?? null,
+      gammaFlipGlobalSource: summary.gammaFlipGlobalSource,
+      gammaFlipGlobalDebug: summary.gammaFlipGlobalDebug ?? null,
+      gammaFlipBroad: summary.gammaFlipBroad ?? null,
+      gammaFlipLocal: summary.gammaFlipLocal ?? null,
+      gammaRegimeLocal: summary.gammaRegimeLocal ?? null,
+      localTransitionZoneStart: summary.localTransitionZoneStart ?? null,
+      localTransitionZoneEnd: summary.localTransitionZoneEnd ?? null,
+      localFlipReason: summary.localFlipReason ?? null,
+      gammaFlipOperationalLegacy: summary.gammaFlipOperationalLegacy ?? null,
+    };
     livePlaybook = summary.tradingPlaybook || null;
     liveVolExpansion = summary.volatilityExpansionDetector || null;
     liveGammaCurve = summary.gammaCurveEngine || null;
@@ -408,6 +440,16 @@ export async function getTerminalState(): Promise<TerminalState> {
     totalGex: marketForClient?.totalGex ?? enrichedOptionsSnapshot?.totalGex ?? 0,
     gammaRegime: marketForClient?.gammaRegime ?? enrichedOptionsSnapshot?.gammaRegime ?? "NEUTRAL",
     gammaFlip: marketForClient?.gammaFlip ?? null,
+    gammaFlipGlobal: deribitSummaryExtras?.gammaFlipGlobal ?? null,
+    gammaFlipGlobalSource: deribitSummaryExtras?.gammaFlipGlobalSource ?? "none",
+    gammaFlipGlobalDebug: deribitSummaryExtras?.gammaFlipGlobalDebug ?? null,
+    gammaFlipBroad: deribitSummaryExtras?.gammaFlipBroad ?? null,
+    gammaFlipLocal: deribitSummaryExtras?.gammaFlipLocal ?? null,
+    gammaRegimeLocal: deribitSummaryExtras?.gammaRegimeLocal ?? null,
+    localTransitionZoneStart: deribitSummaryExtras?.localTransitionZoneStart ?? null,
+    localTransitionZoneEnd: deribitSummaryExtras?.localTransitionZoneEnd ?? null,
+    localFlipReason: deribitSummaryExtras?.localFlipReason ?? null,
+    gammaFlipOperationalLegacy: deribitSummaryExtras?.gammaFlipOperationalLegacy ?? null,
     topMagnets: Array.isArray(enrichedOptionsSnapshot?.topMagnets) ? enrichedOptionsSnapshot.topMagnets : [],
     strikeCount: strikesArray.length,
     strikes: strikesArray,
@@ -426,6 +468,16 @@ export async function getTerminalState(): Promise<TerminalState> {
     optionsSnapshotGammaFlip: enrichedOptionsSnapshot?.gammaFlip ?? null,
     finalOptionsGammaFlip: finalOptions.gammaFlip ?? null,
     source: optionsSource ?? "unknown",
+  });
+  console.warn("[TerminalStateLocalGamma]", {
+    optionsGammaFlip: finalOptions.gammaFlip ?? null,
+    gammaFlipGlobal: finalOptions.gammaFlipGlobal ?? null,
+    gammaFlipBroad: finalOptions.gammaFlipBroad ?? null,
+    gammaFlipLocal: finalOptions.gammaFlipLocal ?? null,
+    gammaRegimeLocal: finalOptions.gammaRegimeLocal ?? null,
+    localTransitionZoneStart: finalOptions.localTransitionZoneStart ?? null,
+    localTransitionZoneEnd: finalOptions.localTransitionZoneEnd ?? null,
+    localFlipReason: finalOptions.localFlipReason ?? null,
   });
   DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState final options keys]", Object.keys(finalOptions));
   DEBUG_TERMINAL_STATE_ENGINE && console.log("[TerminalState final options sample]", {

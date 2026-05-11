@@ -336,7 +336,7 @@ export async function registerRoutes(
     }
   });
 
-  /** Aggregated trades for footprint / order flow (Binance aggTrades proxy). */
+  /** Aggregated trades for market data analysis (Binance aggTrades proxy). */
   app.get("/api/market/agg-trades", async (req, res) => {
     const rid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const symbolRaw = (req.query.symbol as string) || "BTCUSDT";
@@ -392,7 +392,7 @@ export async function registerRoutes(
     }
   });
 
-  /** Real-time aggTrades stream (SSE) for live footprint updates. */
+  /** Real-time aggTrades stream (SSE) for live market data updates. */
   app.get("/api/market/agg-trades/stream", (req, res) => {
     const symbolRaw = (req.query.symbol as string) || "BTCUSDT";
     const symbol = symbolRaw.replace(/[^A-Za-z0-9]/g, "").toUpperCase() || "BTCUSDT";

@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartContextMenu, type ChartContextMenuAction } from "./chart/ChartContextMenu";
 import { ChartSettingsModal } from "./chart/ChartSettingsModal";
 import { ChartTimeframeSelector } from "./chart/ChartTimeframeSelector";
-import { FootprintLayer } from "./chart/FootprintLayer";
 import { useChartContextMenu } from "./chart/useChartContextMenu";
 import type { ChartTimeframeId } from "@/lib/chartTimeframes";
 import { getChartTimeframeMeta } from "@/lib/chartTimeframes";
@@ -34,6 +33,7 @@ import { ScenarioOverlay } from "./overlay/ScenarioOverlay";
 import { HeatmapCanvas } from "./overlay/HeatmapCanvas";
 import { LayerGroupControls } from "./overlay/LayerGroupControls";
 import { DrawingsLayer } from "./drawings/DrawingsLayer";
+import { FootprintOverlay } from "./footprint/FootprintOverlay";
 import { drawDebug, setChartViewportVersion } from "./drawings/debug";
 import type { LayerGroup } from "./overlay/layerGroups";
 import { BTC_TICKER_REFETCH_MS, LIVE_CANDLE_CHART_DISABLED } from "@/lib/liveChartConfig";
@@ -45,13 +45,14 @@ import {
 } from "@/lib/levelTiming";
 import type { OperationalLevelKind, OperationalLevelSource } from "@/lib/levelTimingTypes";
 import { computeLevelTiming } from "@/lib/computeLevelTiming";
+import { resolveGammaOverlaySelection } from "@/lib/gammaOverlaySelection";
 import { renderCascadeLevels } from "./overlay/renderers/cascadeLevels";
 import { renderSqueezeLevels } from "./overlay/renderers/squeezeLevels";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
 type UTCTimestamp = number;
 
-type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP";
+type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP" | "FOOTPRINT";
 
 export function MainChart({
   activeScenario,
@@ -78,9 +79,7 @@ export function MainChart({
   const chartFullResyncRef = useRef(true);
   const lastChartPushRef = useRef<{ tf: ChartTimeframeId; len: number; lastTime: number } | null>(null);
   const [chartReady, setChartReady] = useState(false);
-  /** Footprint zoom mode: ghost LW candle bodies so footprint rows are visible. */
-  const [footprintVisualActive, setFootprintVisualActive] = useState(false);
-  const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
+    const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
   const [drawingsViewportVersion, setDrawingsViewportVersion] = useState(0);
   const drawingsInteractionActiveRef = useRef(false);
   const drawingsInteractionRafRef = useRef<number | null>(null);
@@ -101,7 +100,7 @@ export function MainChart({
   if (savedPanels) {
     try {
       const parsed = JSON.parse(savedPanels);
-      return new Set(parsed.filter((p: string) => ["LEVELS", "GAMMA", "CASCADE", "SQUEEZE", "HEATMAP"].includes(p)));
+      return new Set(parsed.filter((p: string) => ["LEVELS", "GAMMA", "CASCADE", "SQUEEZE", "HEATMAP", "FOOTPRINT"].includes(p)));
     } catch {
       // Fallback to default if localStorage is corrupted
       return new Set(["LEVELS" as MapMode]);
@@ -270,6 +269,11 @@ export function MainChart({
   const { data: market } = useQuery<MarketState>({ queryKey: ["/api/market-state"], refetchInterval: 5000 });
   const { data: levels } = useQuery<KeyLevels>({ queryKey: ["/api/key-levels"], refetchInterval: 5000 });
 
+  const gammaOverlaySel = useMemo(
+    () => resolveGammaOverlaySelection(market, terminalState?.options),
+    [market, terminalState?.options],
+  );
+
   // Raw order book data for Bookmap tracker
   const { data: rawOrderBook } = useQuery({
     queryKey: ["orderbook-raw"],
@@ -359,9 +363,22 @@ export function MainChart({
     const threshold = price * 0.15;
     const points: number[] = [price];
 
-    if (market?.gammaFlip) points.push(market.gammaFlip);
-    if (market?.transitionZoneStart) points.push(market.transitionZoneStart);
-    if (market?.transitionZoneEnd) points.push(market.transitionZoneEnd);
+    const gFit = resolveGammaOverlaySelection(market, terminalState?.options);
+    if (gFit.selectedFlipForChart) points.push(gFit.selectedFlipForChart);
+    if (gFit.selectedFlipType === "local" && gFit.localZoneStart && gFit.localZoneEnd) {
+      points.push(gFit.localZoneStart, gFit.localZoneEnd);
+    } else if (gFit.selectedFlipType === "broad" && gFit.broadZoneStart && gFit.broadZoneEnd) {
+      points.push(gFit.broadZoneStart, gFit.broadZoneEnd);
+    }
+    if (gFit.globalFlip != null) {
+      const op = gFit.selectedFlipForChart;
+      if (
+        op == null ||
+        Math.abs(gFit.globalFlip - op) / Math.max(gFit.globalFlip, op, 1) >= 1e-5
+      ) {
+        points.push(gFit.globalFlip);
+      }
+    }
     const pos = positioning as { callWall?: number; putWall?: number; activeCallWall?: number; activePutWall?: number } | undefined;
     const cw = (pos?.activeCallWall && pos.activeCallWall > 0) ? pos.activeCallWall : pos?.callWall;
     const pw = (pos?.activePutWall && pos.activePutWall > 0) ? pos.activePutWall : pos?.putWall;
@@ -735,6 +752,39 @@ export function MainChart({
     const callWallUsd = optionsData?.callWallUsd;
     const putWallUsd = optionsData?.putWallUsd;
 
+    if (import.meta.env.DEV) {
+      const co = terminalState?.options as {
+        gammaFlip?: number | null;
+        gammaFlipGlobal?: number | null;
+        gammaFlipBroad?: number | null;
+        gammaFlipLocal?: number | null;
+        gammaFlipOperationalLegacy?: number | null;
+        localFlipReason?: string | null;
+      } | undefined;
+      console.log("[GammaOverlaySelection]", {
+        marketGammaFlip: market?.gammaFlip ?? null,
+        optionsGammaFlip: co?.gammaFlip ?? null,
+        gammaFlipGlobal: co?.gammaFlipGlobal ?? null,
+        gammaFlipBroad: co?.gammaFlipBroad ?? null,
+        gammaFlipLocal: co?.gammaFlipLocal ?? null,
+        globalFlipResolved: gammaOverlaySel.globalFlip,
+        selectedFlipForChart: gammaOverlaySel.selectedFlipForChart,
+        selectedFlipType: gammaOverlaySel.selectedFlipType,
+        localTransitionZoneStart: gammaOverlaySel.localZoneStart,
+        localTransitionZoneEnd: gammaOverlaySel.localZoneEnd,
+        legacyFlipIgnored: co?.gammaFlipOperationalLegacy ?? null,
+      });
+      console.log("[GammaFlipModelSelection]", {
+        gammaFlipGlobal: co?.gammaFlipGlobal ?? null,
+        gammaFlipBroad: co?.gammaFlipBroad ?? null,
+        gammaFlipLocal: co?.gammaFlipLocal ?? null,
+        gammaFlipOperationalLegacy: co?.gammaFlipOperationalLegacy ?? null,
+        selectedOperationalFlip: gammaOverlaySel.selectedFlipForChart,
+        selectedContextFlip: gammaOverlaySel.globalFlip,
+        localFlipReason: co?.localFlipReason ?? null,
+      });
+    }
+
     const sweepDetector = positioning_engines?.liquiditySweepDetector;
     const sweepActive = sweepDetector && (sweepDetector.sweepRisk === "HIGH" || sweepDetector.sweepRisk === "EXTREME") && sweepDetector.sweepDirection !== "NONE";
     const sweepDirColor = sweepDetector?.sweepDirection === "UP" ? "34, 197, 94" : sweepDetector?.sweepDirection === "DOWN" ? "239, 68, 68" : "168, 85, 247";
@@ -880,10 +930,87 @@ export function MainChart({
     }
 
     if (activePanels.has("GAMMA")) {
-      if (market?.gammaFlip) pushEntry(market.gammaFlip, 1, "GAMMA FLIP", "FLIP", `rgba(250, 240, 180, ${dim(0.85, 0.7)})`, LineStyle.Solid, 2, false, false, "gamma_flip", "gamma", 0.92, true);
-      if (market?.transitionZoneStart && market?.transitionZoneEnd) {
-        pushEntry(market.transitionZoneStart, 4, "TR LO", "TL", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
-        pushEntry(market.transitionZoneEnd, 4, "TR HI", "TH", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
+      if (gammaOverlaySel.selectedFlipType === "local" && gammaOverlaySel.localFlip != null) {
+        pushEntry(
+          gammaOverlaySel.localFlip,
+          1,
+          "LOCAL FLIP",
+          "LFL",
+          `rgba(168, 250, 220, ${dim(0.88, 0.7)})`,
+          LineStyle.Solid,
+          2,
+          false,
+          false,
+          "gamma_flip",
+          "gamma",
+          0.92,
+          true,
+        );
+        if (gammaOverlaySel.localZoneStart && gammaOverlaySel.localZoneEnd) {
+          pushEntry(
+            gammaOverlaySel.localZoneStart,
+            4,
+            "LOCAL GAMMA ZONE (lo)",
+            "LZL",
+            `rgba(34, 197, 94, ${dim(0.35, 0.6)})`,
+            LineStyle.Dashed,
+          );
+          pushEntry(
+            gammaOverlaySel.localZoneEnd,
+            4,
+            "LOCAL GAMMA ZONE (hi)",
+            "LZH",
+            `rgba(34, 197, 94, ${dim(0.35, 0.6)})`,
+            LineStyle.Dashed,
+          );
+        }
+      } else if (gammaOverlaySel.selectedFlipType === "broad" && gammaOverlaySel.broadFlip != null) {
+        pushEntry(
+          gammaOverlaySel.broadFlip,
+          1,
+          "BROAD FLIP",
+          "BFL",
+          `rgba(250, 240, 180, ${dim(0.85, 0.7)})`,
+          LineStyle.Solid,
+          2,
+          false,
+          false,
+          "gamma_flip",
+          "gamma",
+          0.92,
+          true,
+        );
+        if (gammaOverlaySel.broadZoneStart && gammaOverlaySel.broadZoneEnd) {
+          pushEntry(gammaOverlaySel.broadZoneStart, 4, "TR LO", "TL", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
+          pushEntry(gammaOverlaySel.broadZoneEnd, 4, "TR HI", "TH", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
+        }
+      }
+      {
+        const gGlob = gammaOverlaySel.globalFlip;
+        if (gGlob != null) {
+          const op = gammaOverlaySel.selectedFlipForChart;
+          const dup =
+            op != null &&
+            typeof op === "number" &&
+            Math.abs(gGlob - op) / Math.max(gGlob, op, 1) < 1e-5;
+          if (!dup) {
+            pushEntry(
+              gGlob,
+              2,
+              "GLOBAL FLIP",
+              "GFG",
+              `rgba(196, 181, 253, ${dim(0.82, 0.7)})`,
+              LineStyle.Solid,
+              2,
+              false,
+              false,
+              "gamma_flip",
+              "gamma",
+              0.75,
+              true,
+            );
+          }
+        }
       }
       const gammaCliffs = positioning_engines?.gammaCurveEngine?.gammaCliffs;
       if (gammaCliffs && Array.isArray(gammaCliffs)) {
@@ -1876,20 +2003,20 @@ export function MainChart({
       });
       if (line) priceLinesRef.current.push(line);
     }
-  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines, rawOrderBook, showAccelZones, showAbsorbZones, showGravityZones, terminalState?.gravityMap, terminalState?.options, chartTimeframe]);
+  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines, rawOrderBook, showAccelZones, showAbsorbZones, showGravityZones, terminalState?.gravityMap, terminalState?.options, chartTimeframe, gammaOverlaySel]);
 
   const probeInstitutionalOverlay = useCallback(
     (ctx: ChartMenuContext): ChartMenuContext => {
       if (ctx.kind !== "empty" || ctx.price == null) return ctx;
       const price = ctx.price;
-      const flip = market?.gammaFlip;
+      const flip = gammaOverlaySel.selectedFlipForChart;
       if (activePanels.has("GAMMA") && typeof flip === "number" && price > 0) {
         const rel = Math.abs(price - flip) / price;
         if (rel < 0.004) return { kind: "overlay", overlayKind: "gamma" };
       }
       return ctx;
     },
-    [market?.gammaFlip, activePanels]
+    [gammaOverlaySel.selectedFlipForChart, activePanels]
   );
 
   const resolveFallbackMenuContext = useCallback((clientX: number, clientY: number): ChartMenuContext => {
@@ -2080,13 +2207,13 @@ export function MainChart({
     });
     chart.priceScale("right").applyOptions({ autoScale: s.autoScale });
     series.applyOptions({
-      upColor: footprintVisualActive ? "rgba(0,0,0,0)" : a.candleUpColor,
-      downColor: footprintVisualActive ? "rgba(0,0,0,0)" : a.candleDownColor,
-      wickUpColor: footprintVisualActive ? "rgba(148, 163, 184, 0.55)" : a.candleUpColor,
-      wickDownColor: footprintVisualActive ? "rgba(148, 163, 184, 0.55)" : a.candleDownColor,
+      upColor: a.candleUpColor,
+      downColor: a.candleDownColor,
+      wickUpColor: a.candleUpColor,
+      wickDownColor: a.candleDownColor,
       priceFormat: { type: "price", precision: s.pricePrecision, minMove: 10 ** -s.pricePrecision },
     });
-  }, [chartSettings, chartReady, footprintVisualActive]);
+  }, [chartSettings, chartReady]);
 
   if (baseError) {
     return (
@@ -2103,13 +2230,14 @@ export function MainChart({
   }
 
   const isLive = !!ticker && !tickerError;
-  const layerToMode: Record<Exclude<LayerGroup, "accel" | "absorb" | "gravity">, MapMode> = { levels: "LEVELS", gamma: "GAMMA", cascade: "CASCADE", squeeze: "SQUEEZE", heatmap: "HEATMAP" };
+  const layerToMode: Record<Exclude<LayerGroup, "accel" | "absorb" | "gravity">, MapMode> = { levels: "LEVELS", gamma: "GAMMA", cascade: "CASCADE", squeeze: "SQUEEZE", heatmap: "HEATMAP", footprint: "FOOTPRINT" };
   const activeLayers = {
     levels: activePanels.has("LEVELS"),
     gamma: activePanels.has("GAMMA"),
     cascade: activePanels.has("CASCADE"),
     squeeze: activePanels.has("SQUEEZE"),
     heatmap: activePanels.has("HEATMAP"),
+    footprint: activePanels.has("FOOTPRINT"),
     accel: showAccelZones,
     absorb: showAbsorbZones,
     gravity: showGravityZones,
@@ -2153,6 +2281,17 @@ export function MainChart({
     if (mode) togglePanel(mode);
   };
 
+  const chartOptsRegime = terminalState?.options as { gammaRegimeLocal?: string | null } | undefined;
+  const chartRegimeDisplay =
+    gammaOverlaySel.selectedFlipType === "local" && chartOptsRegime?.gammaRegimeLocal
+      ? `${chartOptsRegime.gammaRegimeLocal} LOCAL`
+      : market?.gammaRegime || "NEUTRAL";
+  const chartRegimeIsLong = chartRegimeDisplay.includes("LONG GAMMA");
+  const chartFlipDistPct =
+    gammaOverlaySel.selectedFlipForChart != null && (lastCandle?.close ?? 0) > 0
+      ? (Math.abs(lastCandle.close - gammaOverlaySel.selectedFlipForChart) / lastCandle.close) * 100
+      : null;
+
   return (
     <div className="flex-1 w-full h-full min-w-0 min-h-0 flex flex-col relative overflow-hidden">
       {!isSimpleView && (
@@ -2179,12 +2318,12 @@ export function MainChart({
               </div>
               {!isSimpleView && (
                 <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
-                  <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${market?.gammaRegime === 'LONG GAMMA' ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{market?.gammaRegime || "NEUTRAL"}</span></div>
-                  <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span><span className="text-[11px] font-bold font-mono text-white">{market?.distanceToFlip != null ? `${market.distanceToFlip.toFixed(2)}%` : "--"}</span></div>
+                  <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${chartRegimeIsLong ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{chartRegimeDisplay}</span></div>
+                  <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span><span className="text-[11px] font-bold font-mono text-white">{chartFlipDistPct != null ? `${chartFlipDistPct.toFixed(2)}%` : "--"}</span></div>
                 </div>
               )}
               {!isSimpleView && activePanels.has("GAMMA") && (
-                <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Showing Flip, Transition Zone, and Key Gamma Cliffs</div>
+                <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Local / broad gamma flip and zones when available; gamma cliffs unchanged</div>
               )}
               {!isSimpleView && activePanels.has("HEATMAP") && (
                 <div className="mt-2 text-[9px] text-white/25 font-mono tracking-wide">Order book liquidity zones with gamma confluence</div>
@@ -2212,14 +2351,26 @@ export function MainChart({
         </div>
         {!isSimpleView && activePanels.has("GAMMA") && (
           <div className="absolute bottom-3 left-3 z-10 pointer-events-none">
-            <div className="flex items-center gap-3 bg-black/50 border border-white/[0.06] rounded px-2.5 py-1.5 backdrop-blur-sm">
+            <div className="flex flex-wrap items-center gap-3 bg-black/50 border border-white/[0.06] rounded px-2.5 py-1.5 backdrop-blur-sm max-w-[min(100%,420px)]">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(168, 250, 220, 0.88)" }} />
+                <span className="text-[9px] font-mono text-white/50">Local flip</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(196, 181, 253, 0.82)" }} />
+                <span className="text-[9px] font-mono text-white/50">Global</span>
+              </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(250, 240, 180, 0.85)" }} />
-                <span className="text-[9px] font-mono text-white/50">Flip</span>
+                <span className="text-[9px] font-mono text-white/50">Broad flip</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(34, 197, 94, 0.45)" }} />
+                <span className="text-[9px] font-mono text-white/50">Local zone</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(234, 179, 8, 0.5)" }} />
-                <span className="text-[9px] font-mono text-white/50">Transition</span>
+                <span className="text-[9px] font-mono text-white/50">Broad zone</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(249, 115, 22, 0.7)" }} />
@@ -2284,20 +2435,28 @@ export function MainChart({
         <div ref={chartContainerRef} className="absolute inset-0" />
         {LIVE_CANDLE_CHART_DISABLED && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
-        {chartReady && chartSize && (
-          <FootprintLayer
+        {chartReady && chartSize && (() => {
+          console.debug("[MainChart Footprint]", {
+            footprintEnabled: activeLayers.footprint,
+            hasChart: !!chartRef.current,
+            hasSeries: !!candleSeriesRef.current,
+            symbol: "BTCUSDT",
+            timeframe: chartTimeframe,
+            chartSize: chartSize
+          });
+          return (
+          <FootprintOverlay
             chartRef={chartRef}
             candleSeriesRef={candleSeriesRef}
-            chartReady={chartReady}
-            viewportVersion={drawingsViewportVersion}
-            barSec={getChartTimeframeMeta(chartTimeframe).barSec}
+            active={activeLayers.footprint}
+            timeframe={chartTimeframe}
+            symbol="BTCUSDT"
             width={chartSize.w}
             height={chartSize.h}
-            symbol="BTCUSDT"
-            onFootprintVisualActiveChange={setFootprintVisualActive}
           />
-        )}
-        {chartReady && chartContainerRef.current && chartSize && (() => {
+          );
+        })()}
+                {chartReady && chartContainerRef.current && chartSize && (() => {
           const tsWidth = chartRef.current?.timeScale().width();
           const timeScaleWidth = (tsWidth != null && tsWidth > 0) ? tsWidth : chartSize.w;
           return (
@@ -2489,7 +2648,7 @@ export function MainChart({
             chartWidth={chartContainerRef.current.clientWidth}
             chartHeight={chartContainerRef.current.clientHeight}
             currentPrice={lastCandle?.close || 0}
-            gammaContext={market != null || levels?.gammaMagnets?.length ? { gammaFlip: market?.gammaFlip ?? null, gammaMagnets: levels?.gammaMagnets ?? [] } : null}
+            gammaContext={market != null || levels?.gammaMagnets?.length ? { gammaFlip: gammaOverlaySel.selectedFlipForChart ?? null, gammaMagnets: levels?.gammaMagnets ?? [] } : null}
             priceToCoordinate={(price: number) => {
               if (!chartRef.current || !chartContainerRef.current) return null;
               try {

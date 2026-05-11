@@ -1,7 +1,14 @@
 import { useMemo, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel, TerminalValue } from "./TerminalPanel";
-import { MarketState, DealerExposure, OptionsPositioning, KeyLevels, DealerHedgingFlow } from "@shared/schema";
+import {
+  MarketState,
+  DealerExposure,
+  OptionsPositioning,
+  KeyLevels,
+  DealerHedgingFlow,
+  type TerminalStateOptionsGammaExtras,
+} from "@shared/schema";
 import { cn } from "@/lib/utils";
 
 interface Alert {
@@ -60,6 +67,12 @@ export function LeftSidebar() {
     queryKey: ["/api/key-levels"],
     refetchInterval: 5000 
   });
+
+  const { data: terminalState } = useQuery<{ options?: TerminalStateOptionsGammaExtras & { gammaFlip?: number | null } }>({
+    queryKey: ["/api/terminal/state"],
+    refetchInterval: 5000,
+  });
+  const opts = terminalState?.options;
 
   // Derived alerts logic
   const alerts = useMemo(() => {
@@ -169,6 +182,39 @@ export function LeftSidebar() {
     });
   }, [market?.gammaFlip, market?.distanceToFlip, market?.transitionZoneStart, market?.transitionZoneEnd]);
 
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    console.log("[LeftSidebarLocalGamma]", {
+      marketGammaFlip: market?.gammaFlip ?? null,
+      optionsGammaFlipLocal: opts?.gammaFlipLocal ?? null,
+      optionsGammaRegimeLocal: opts?.gammaRegimeLocal ?? null,
+      optionsLocalFlipReason: opts?.localFlipReason ?? null,
+    });
+  }, [market?.gammaFlip, opts?.gammaFlipLocal, opts?.gammaRegimeLocal, opts?.localFlipReason]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    console.warn("[LeftSidebarGammaFlipOrder]", {
+      global: terminalState?.options?.gammaFlipGlobal,
+      local: terminalState?.options?.gammaFlipLocal,
+      localZoneStart: terminalState?.options?.localTransitionZoneStart,
+      localZoneEnd: terminalState?.options?.localTransitionZoneEnd,
+      localRegime: terminalState?.options?.gammaRegimeLocal,
+      broad: terminalState?.options?.gammaFlipBroad,
+      marketGammaFlip: market?.gammaFlip,
+      localReason: terminalState?.options?.localFlipReason,
+    });
+  }, [
+    terminalState?.options?.gammaFlipGlobal,
+    terminalState?.options?.gammaFlipLocal,
+    terminalState?.options?.localTransitionZoneStart,
+    terminalState?.options?.localTransitionZoneEnd,
+    terminalState?.options?.gammaRegimeLocal,
+    terminalState?.options?.gammaFlipBroad,
+    market?.gammaFlip,
+    terminalState?.options?.localFlipReason,
+  ]);
+
   return (
     <div className="h-full flex flex-col gap-1 overflow-y-auto p-1 border-r border-terminal-border bg-terminal-bg shrink-0 min-w-0 w-[280px] max-[1400px]:w-[240px] max-[1000px]:hidden">
       
@@ -210,9 +256,54 @@ export function LeftSidebar() {
         <TerminalValue label="Gamma Regime" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge tooltip="Gamma Regime" />
         <TerminalValue label="Total GEX" value={market ? `${(market.totalGex / 1e9).toFixed(2)}B` : "--"} trend={market && market.totalGex > 0 ? "positive" : "negative"} />
         <TerminalValue
-          label="Gamma Flip"
-          value={market?.gammaFlip != null && market.gammaFlip > 0 ? market.gammaFlip : "--"}
-          tooltip="Gamma Flip"
+          label="GLOBAL FLIP"
+          value={(() => {
+            const g = opts?.gammaFlipGlobal ?? null;
+            return g != null && g > 0 ? Math.round(g).toLocaleString() : "--";
+          })()}
+          tooltip={
+            opts?.gammaFlipGlobal != null && opts.gammaFlipGlobal > 0
+              ? `Fuente: ${opts?.gammaFlipGlobalSource ?? "?"}. Snapshot GEX fresco o cruce estructural live (legacy grid, sin snapshot viejo).`
+              : `Sin valor global (${opts?.gammaFlipGlobalSource ?? "none"}): sin snapshot fresco ni cruce estructural válido. Detalle en gammaFlipGlobalDebug (API).`
+          }
+        />
+        <TerminalValue
+          label="LOCAL FLIP"
+          value={
+            opts?.gammaFlipLocal != null && opts.gammaFlipLocal > 0
+              ? Math.round(opts.gammaFlipLocal).toLocaleString()
+              : "N/A"
+          }
+          tooltip="Local Gamma Flip (narrow strike band)"
+        />
+        {opts?.localFlipReason && opts.localFlipReason !== "LOCAL_CROSS" ? (
+          <div className="text-[8px] font-mono text-white/45 -mt-2 mb-0.5 pl-0.5 leading-tight">{opts.localFlipReason}</div>
+        ) : null}
+        <TerminalValue
+          label="LOCAL ZONE"
+          value={
+            opts?.localTransitionZoneStart != null &&
+            opts?.localTransitionZoneEnd != null &&
+            opts.localTransitionZoneStart > 0 &&
+            opts.localTransitionZoneEnd > 0
+              ? `${Math.round(opts.localTransitionZoneStart).toLocaleString()} - ${Math.round(opts.localTransitionZoneEnd).toLocaleString()}`
+              : "--"
+          }
+          tooltip="Local transition zone"
+        />
+        <TerminalValue
+          label="LOCAL REGIME"
+          value={opts?.gammaRegimeLocal ?? "--"}
+          trend={opts?.gammaRegimeLocal === "LONG GAMMA" ? "positive" : opts?.gammaRegimeLocal === "SHORT GAMMA" ? "negative" : "neutral"}
+          tooltip="Regime from net GEX at spot (local universe)"
+        />
+        <TerminalValue
+          label="BROAD FLIP"
+          value={(() => {
+            const broad = opts?.gammaFlipBroad ?? market?.gammaFlip ?? null;
+            return broad != null && broad > 0 ? Math.round(broad).toLocaleString() : "--";
+          })()}
+          tooltip="Broad tactical flip (fixed universe tactical scan; null if no crossing)"
         />
         <TerminalValue
           label="Dist. to Flip"

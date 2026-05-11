@@ -154,3 +154,25 @@ export type User = typeof users.$inferSelect;
 export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
 export type Subscription = typeof subscriptions.$inferSelect;
 export type Payment = typeof payments.$inferSelect;
+
+/** Optional Deribit summary fields surfaced on `GET /api/terminal/state` → `options`. */
+export type TerminalStateOptionsGammaExtras = {
+  gammaFlipGlobal?: number | null;
+  gammaFlipGlobalSource?: "fresh_snapshot" | "none" | "legacy_structural_live";
+  gammaFlipGlobalDebug?: {
+    staleSnapshotFlip: number | null;
+    staleSnapshotSpot: number | null;
+    legacyLiveSpotFlip: number | null;
+    legacyAtFileSpotFlip: number | null;
+    legacyCrossings?: number[];
+    gammaFlipStructuralLive?: number | null;
+    reason: string;
+  } | null;
+  gammaFlipBroad?: number | null;
+  gammaFlipLocal?: number | null;
+  gammaRegimeLocal?: "LONG GAMMA" | "SHORT GAMMA" | null;
+  localTransitionZoneStart?: number | null;
+  localTransitionZoneEnd?: number | null;
+  localFlipReason?: string | null;
+  gammaFlipOperationalLegacy?: number | null;
+};

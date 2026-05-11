@@ -23,6 +23,8 @@ export interface OverlayRenderContext {
   market?: any;
   levels?: any;
   positioning_engines?: any;
+  /** Terminal `options` (gammaFlipLocal / gammaFlipBroad, etc.) */
+  options?: any;
   sweepDetector?: any;
   vacuumState?: any;
 }

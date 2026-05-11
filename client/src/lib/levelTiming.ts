@@ -1,4 +1,5 @@
 import { computeLevelTiming } from "@/lib/computeLevelTiming";
+import { resolveGammaOverlaySelection } from "@/lib/gammaOverlaySelection";
 import type {
   LevelTimingContext,
   LevelTimingMeta,
@@ -20,14 +21,19 @@ export function buildLevelTimingContextFromState(
   const levels = state?.levels ?? {};
   const market = state?.market ?? {};
   const engines = state?.positioning_engines ?? {};
+  const gammaSel = resolveGammaOverlaySelection(market, state?.options);
+  const zoneStart =
+    gammaSel.selectedFlipType === "local" ? gammaSel.localZoneStart : gammaSel.broadZoneStart;
+  const zoneEnd =
+    gammaSel.selectedFlipType === "local" ? gammaSel.localZoneEnd : gammaSel.broadZoneEnd;
   return {
     nowTs: Date.now(),
     currentPrice,
     timeframeSec,
     gammaRegime: market?.gammaRegime ?? positioning?.marketModeEngine?.marketMode,
-    gammaFlip: finiteNum(market?.gammaFlip),
-    transitionZoneStart: finiteNum(market?.transitionZoneStart),
-    transitionZoneEnd: finiteNum(market?.transitionZoneEnd),
+    gammaFlip: finiteNum(gammaSel.selectedFlipForChart),
+    transitionZoneStart: finiteNum(zoneStart),
+    transitionZoneEnd: finiteNum(zoneEnd),
     sweepRisk: engines?.liquiditySweepDetector?.sweepRisk,
     sweepDirection: engines?.liquiditySweepDetector?.sweepDirection,
     absorptionStatus: positioning?.absorption?.status,
@@ -83,11 +89,12 @@ export function collectOperationalLevelsFromState(state: any, currentPrice: numb
   const market = state?.market ?? {};
   const engines = state?.positioning_engines ?? {};
   const out: OperationalLevel[] = [];
+  const gammaSel = resolveGammaOverlaySelection(market, state?.options);
 
   pushIfFinite(out, positioning?.activeCallWall ?? positioning?.callWall, "call_wall", "CALL WALL", "options", 0.86, true);
   pushIfFinite(out, positioning?.activePutWall ?? positioning?.putWall, "put_wall", "PUT WALL", "options", 0.86, true);
   pushIfFinite(out, positioning?.dealerPivot, "dealer_pivot", "PIVOT", "options", 0.62, false);
-  pushIfFinite(out, market?.gammaFlip, "gamma_flip", "GAMMA FLIP", "gamma", 0.9, true);
+  pushIfFinite(out, gammaSel.selectedFlipForChart, "gamma_flip", "GAMMA FLIP", "gamma", 0.9, true);
 
   if (Array.isArray(levels?.gammaMagnets)) {
     for (const m of levels.gammaMagnets.slice(0, 8)) {

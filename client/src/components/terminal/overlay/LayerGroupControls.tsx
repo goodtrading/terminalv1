@@ -50,6 +50,7 @@ export function useLayerGroupState(initialState: Partial<LayerGroupState> = {}) 
     accel: true,
     absorb: true,
     gravity: false,
+    footprint: false,
     ...initialState
   };
 

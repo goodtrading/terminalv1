@@ -7,6 +7,7 @@ export interface LayerGroupState {
   accel: boolean;
   absorb: boolean;
   gravity: boolean;
+  footprint: boolean;
 }
 
 export const LAYER_GROUP_NAMES = {
@@ -18,6 +19,7 @@ export const LAYER_GROUP_NAMES = {
   accel: 'ACCEL',
   absorb: 'ABSORB',
   gravity: 'GRAVITY',
+  footprint: 'FOOTPRINT',
 } as const;
 
 export type LayerGroup = keyof LayerGroupState;
@@ -32,4 +34,5 @@ export const LAYER_GROUP_OVERLAYS = {
   accel: ['accelZones'],
   absorb: ['absorptionZones'],
   gravity: ['gravityZones', 'oiLabels'],
+  footprint: ['footprint'],
 } as const;

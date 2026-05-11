@@ -1,6 +1,81 @@
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
+import { getDeribitOptionsSnapshot } from "./lib/deribitOptionsSnapshot";
+
+/** Snapshot global flip only if asOf + snapshot spot present, fresh, spot within 3% of live, flip valid. */
+function getFreshSnapshotGlobalFlip(
+  snapshot: unknown,
+  spotPrice: number | undefined | null,
+  nowMs: number
+): {
+  flip: number | null;
+  usedSnapshot: boolean;
+  selectionLog: {
+    snapshotFlip: number | null;
+    snapshotSpot: number | null;
+    snapshotAsOf: string | number | null;
+    ageMs: number;
+    spotDriftPct: number;
+    isFlipValid: boolean;
+    isFresh: boolean;
+    isSpotClose: boolean;
+    usedSnapshot: boolean;
+  };
+} {
+  const s = (snapshot ?? {}) as Record<string, unknown>;
+  const flip = Number(s.gammaFlip);
+  const firstSpot = s.spot ?? s.spotPrice ?? s.underlyingPrice ?? s.indexPrice;
+  const snapshotSpot = firstSpot != null && firstSpot !== "" ? Number(firstSpot) : NaN;
+  const asOfRaw = s.asOf ?? s.timestamp ?? s.updatedAt ?? s.createdAt;
+
+  const snapshotAsOfMissing =
+    asOfRaw == null || (typeof asOfRaw === "string" && !asOfRaw.trim());
+  const snapshotSpotMissing =
+    firstSpot == null ||
+    firstSpot === "" ||
+    (typeof firstSpot === "string" && !firstSpot.trim());
+
+  let asOfMs = NaN;
+  if (!snapshotAsOfMissing && asOfRaw != null) {
+    if (typeof asOfRaw === "number" && Number.isFinite(asOfRaw)) asOfMs = asOfRaw;
+    else if (typeof asOfRaw === "string" && asOfRaw.trim()) asOfMs = Date.parse(asOfRaw.trim());
+  }
+
+  const isFlipValid = Number.isFinite(flip) && flip > 0;
+  const isAsOfValid = !snapshotAsOfMissing && Number.isFinite(asOfMs);
+  const ageMs = isAsOfValid ? nowMs - asOfMs : Number.POSITIVE_INFINITY;
+  const isFresh = isAsOfValid && ageMs >= 0 && ageMs <= 5 * 60 * 1000;
+
+  const spotP = Number(spotPrice);
+  const isSpotValid =
+    !snapshotSpotMissing &&
+    Number.isFinite(snapshotSpot) &&
+    snapshotSpot > 0 &&
+    Number.isFinite(spotP) &&
+    spotP > 0;
+
+  const spotDriftPct = isSpotValid ? Math.abs(snapshotSpot - spotP) / spotP : Number.POSITIVE_INFINITY;
+  const isSpotClose = spotDriftPct <= 0.03;
+  const usedSnapshot =
+    isFlipValid && isFresh && isSpotClose && !snapshotAsOfMissing && !snapshotSpotMissing;
+
+  return {
+    flip: usedSnapshot ? flip : null,
+    usedSnapshot,
+    selectionLog: {
+      snapshotFlip: Number.isFinite(flip) ? flip : null,
+      snapshotSpot: Number.isFinite(snapshotSpot) ? snapshotSpot : null,
+      snapshotAsOf: snapshotAsOfMissing ? null : (asOfRaw as string | number),
+      ageMs,
+      spotDriftPct,
+      isFlipValid,
+      isFresh,
+      isSpotClose,
+      usedSnapshot,
+    },
+  };
+}
 
 // Simple CSV parser to avoid external dependency issues
 function parseCsv(content: string): any[] {
@@ -142,6 +217,149 @@ function signedNetGexForOptionAtSpot(
   return opt.optionType === "call" ? gex : -gex;
 }
 
+type NormalizedOptionRow = z.infer<typeof normalizedOptionSchema>;
+
+/**
+ * Options eligible for tactical GEX / flip: same expiry + strike band rules as
+ * signedNetGexForOptionAtSpot at referenceSpot (ticker), but without evaluating at a grid S.
+ * Used so the flip scan does not re-filter strikes per grid point.
+ */
+function filterTacticalOptionsUniverseForFlip(
+  options: NormalizedOptionRow[],
+  referenceSpot: number,
+  nowMs: number,
+  maxExpiryMs: number,
+  strikeBandPct: number
+): NormalizedOptionRow[] {
+  if (!Number.isFinite(referenceSpot) || referenceSpot <= 0) return [];
+  const out: NormalizedOptionRow[] = [];
+  for (const opt of options) {
+    if (!opt.openInterest || opt.openInterest <= 0) continue;
+    const expiryMs = parseDeribitExpiryDate(opt.expiry)?.getTime() ?? null;
+    const hasExpiry = expiryMs != null && Number.isFinite(expiryMs);
+    const expiryInRange = hasExpiry ? (expiryMs - nowMs) > 0 && (expiryMs - nowMs) <= maxExpiryMs : false;
+    if (!expiryInRange) continue;
+    if (Math.abs(opt.strike - referenceSpot) / referenceSpot > strikeBandPct) continue;
+
+    const ivBidOk = opt.ivBid != null && Number.isFinite(opt.ivBid) && opt.ivBid > 0;
+    const ivAskOk = opt.ivAsk != null && Number.isFinite(opt.ivAsk) && opt.ivAsk > 0;
+    const ivAvg =
+      ivBidOk && ivAskOk
+        ? (opt.ivBid! + opt.ivAsk!) / 2
+        : opt.ivMark != null && Number.isFinite(opt.ivMark) && opt.ivMark > 0
+          ? opt.ivMark
+          : null;
+    if (ivAvg == null) continue;
+
+    out.push(opt);
+  }
+  return out;
+}
+
+/**
+ * GEX contribution for an option already in the tactical universe: BS gamma at evaluationSpotS,
+ * calls + / puts −. No strike-distance filter (universe is fixed vs ticker).
+ */
+function tacticalGexContributionAtEvaluationSpot(
+  opt: NormalizedOptionRow,
+  evaluationSpotS: number,
+  nowMs: number,
+  maxExpiryMs: number,
+  contractSize: number
+): number | null {
+  const expiryMs = parseDeribitExpiryDate(opt.expiry)?.getTime() ?? null;
+  const hasExpiry = expiryMs != null && Number.isFinite(expiryMs);
+  const expiryInRange = hasExpiry ? (expiryMs - nowMs) > 0 && (expiryMs - nowMs) <= maxExpiryMs : false;
+  if (!expiryInRange || !Number.isFinite(evaluationSpotS) || evaluationSpotS <= 0) return null;
+
+  const ivBidOk = opt.ivBid != null && Number.isFinite(opt.ivBid) && opt.ivBid > 0;
+  const ivAskOk = opt.ivAsk != null && Number.isFinite(opt.ivAsk) && opt.ivAsk > 0;
+  const ivAvg =
+    ivBidOk && ivAskOk
+      ? (opt.ivBid! + opt.ivAsk!) / 2
+      : opt.ivMark != null && Number.isFinite(opt.ivMark) && opt.ivMark > 0
+        ? opt.ivMark
+        : null;
+  if (ivAvg == null) return null;
+
+  const T = (expiryMs! - nowMs) / (365 * 24 * 60 * 60 * 1000);
+  const sigma = ivAvg;
+  if (T <= 0 || sigma <= 0) return null;
+
+  const S = evaluationSpotS;
+  const K = opt.strike;
+  const moneyness = Math.log(S / K);
+  const sqrtT = Math.sqrt(T);
+  const d1 = (moneyness + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
+  const nd1 = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+  const gamma = nd1 / (S * sigma * sqrtT);
+  const gex = gamma * opt.openInterest * contractSize * S;
+  return opt.optionType === "call" ? gex : -gex;
+}
+
+const MS_PER_DAY = 86400000;
+/** Mínimo de filas en universo local antes de aceptar un intento (salvo última banda 10%). */
+const LOCAL_FLIP_MIN_UNIVERSE = 6;
+
+/**
+ * Universo para Local Gamma Flip: anclado a referenceSpot (ticker), sin re-filtrar por S en el scan.
+ * - onlyExpiry: si no es null, solo ese expiry Deribit.
+ * - maxExpiryDays: si onlyExpiry es null, TTE ∈ (0, maxExpiryDays]; ignorado cuando onlyExpiry está fijado.
+ */
+function filterLocalOptionsUniverse(
+  options: NormalizedOptionRow[],
+  referenceSpot: number,
+  nowMs: number,
+  strikeBandPct: number,
+  onlyExpiry: string | null,
+  maxExpiryDays: number
+): NormalizedOptionRow[] {
+  if (!Number.isFinite(referenceSpot) || referenceSpot <= 0) return [];
+  const out: NormalizedOptionRow[] = [];
+  for (const opt of options) {
+    if (!opt.openInterest || opt.openInterest <= 0) continue;
+    const expiryMs = parseDeribitExpiryDate(opt.expiry)?.getTime() ?? null;
+    if (expiryMs == null || !Number.isFinite(expiryMs) || expiryMs <= nowMs) continue;
+
+    if (onlyExpiry != null) {
+      if (opt.expiry !== onlyExpiry) continue;
+    } else {
+      const tte = expiryMs - nowMs;
+      if (tte <= 0 || tte > maxExpiryDays * MS_PER_DAY) continue;
+    }
+
+    if (Math.abs(opt.strike - referenceSpot) / referenceSpot > strikeBandPct) continue;
+
+    const ivBidOk = opt.ivBid != null && Number.isFinite(opt.ivBid) && opt.ivBid > 0;
+    const ivAskOk = opt.ivAsk != null && Number.isFinite(opt.ivAsk) && opt.ivAsk > 0;
+    const ivAvg =
+      ivBidOk && ivAskOk
+        ? (opt.ivBid! + opt.ivAsk!) / 2
+        : opt.ivMark != null && Number.isFinite(opt.ivMark) && opt.ivMark > 0
+          ? opt.ivMark
+          : null;
+    if (ivAvg == null) continue;
+
+    out.push(opt);
+  }
+  return out;
+}
+
+function sumTacticalGexAtSpot(
+  universe: NormalizedOptionRow[],
+  spotS: number,
+  nowMs: number,
+  maxExpiryMs: number,
+  contractSize: number
+): number {
+  let net = 0;
+  for (const o of universe) {
+    const part = tacticalGexContributionAtEvaluationSpot(o, spotS, nowMs, maxExpiryMs, contractSize);
+    if (part != null) net += part;
+  }
+  return net;
+}
+
 function buildOperationalFlipGrid(spot: number, rangePct: number, stepUsd: number, maxPoints: number): number[] {
   const lo = Math.max(1, spot * (1 - rangePct));
   const hi = spot * (1 + rangePct);
@@ -211,10 +429,64 @@ function findOperationalGammaFlipFromGrid(
   };
 }
 
+/**
+ * Elige un cruce legacy “global” sin anclar al snapshot viejo: preferir bajo spot (p. ej. ~73k vs ~115k con spot ~80k).
+ */
+function selectGlobalStructuralFlip(crossings: number[], spotPrice: number): number | null {
+  const valid = crossings
+    .filter(x => Number.isFinite(x) && x > 0)
+    .sort((a, b) => a - b);
+
+  if (!valid.length || !Number.isFinite(spotPrice) || spotPrice <= 0) return null;
+
+  const belowSpot = valid.filter(x => x <= spotPrice);
+  if (belowSpot.length) {
+    return belowSpot.reduce((best, x) =>
+      Math.abs(x - spotPrice) < Math.abs(best - spotPrice) ? x : best
+    );
+  }
+
+  const notTooFarAbove = valid.filter(x => x <= spotPrice * 1.25);
+  if (notTooFarAbove.length) {
+    return notTooFarAbove.reduce((best, x) =>
+      Math.abs(x - spotPrice) < Math.abs(best - spotPrice) ? x : best
+    );
+  }
+
+  return null;
+}
+
 export const optionsSummarySchema = z.object({
   totalGex: z.number().nullable(),
   gammaState: z.enum(["LONG GAMMA", "SHORT GAMMA"]).nullable(),
   gammaFlip: z.number().nullable(),
+  /** Mismo valor que gammaFlip (broad ±15% / 60d); explícito para API. */
+  gammaFlipBroad: z.number().nullable().optional(),
+  /**
+   * Snapshot GEX fresco validado, o cruce estructural live (legacy grid, regla `selectGlobalStructuralFlip`).
+   */
+  gammaFlipGlobal: z.number().nullable().optional(),
+  gammaFlipGlobalSource: z.enum(["fresh_snapshot", "none", "legacy_structural_live"]).optional(),
+  gammaFlipGlobalDebug: z
+    .object({
+      staleSnapshotFlip: z.number().nullable(),
+      staleSnapshotSpot: z.number().nullable(),
+      legacyLiveSpotFlip: z.number().nullable(),
+      legacyAtFileSpotFlip: z.number().nullable(),
+      legacyCrossings: z.array(z.number()).optional(),
+      gammaFlipStructuralLive: z.number().nullable().optional(),
+      reason: z.string(),
+    })
+    .nullable()
+    .optional(),
+  /** Flip intradía con universo estrecho (ver Local Gamma Flip). */
+  gammaFlipLocal: z.number().nullable().optional(),
+  gammaRegimeLocal: z.enum(["LONG GAMMA", "SHORT GAMMA"]).nullable().optional(),
+  localTransitionZoneStart: z.number().nullable().optional(),
+  localTransitionZoneEnd: z.number().nullable().optional(),
+  localFlipReason: z.string().optional(),
+  /** Flip from grid scan with per-S strike filter (legacy / debug only; no es `gammaFlipGlobal`). */
+  gammaFlipOperationalLegacy: z.number().nullable().optional(),
   callWall: z.number().nullable(),
   putWall: z.number().nullable(),
   gammaByStrike: z.array(z.object({ strike: z.number(), gex: z.number() })).optional(),
@@ -711,7 +983,19 @@ export class DeribitOptionsGateway {
           regimeShiftTrigger: "Options data ingestion required"
         };
         return {
-          totalGex: null, gammaState: null, gammaFlip: null,
+          totalGex: null,
+          gammaState: null,
+          gammaFlip: null,
+          gammaFlipBroad: null,
+          gammaFlipGlobal: null,
+          gammaFlipGlobalSource: "none",
+          gammaFlipGlobalDebug: null,
+          gammaFlipLocal: null,
+          gammaRegimeLocal: null,
+          localTransitionZoneStart: null,
+          localTransitionZoneEnd: null,
+          localFlipReason: "NO_OPTIONS",
+          gammaFlipOperationalLegacy: null,
           callWall: null, putWall: null, magnets: null,
           shortGammaPockets: null, vannaBias: null, charmBias: null,
           gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
@@ -781,6 +1065,30 @@ export class DeribitOptionsGateway {
       let totalGex = 0, totalCallGex = 0, totalPutGex = 0;
       let callWall = 0, putWall = 0, maxCallOi = 0, maxPutOi = 0;
       let totalVanna = 0, totalCharm = 0;
+      let gammaFlip: number | null = null;
+      let gammaFlipGlobal: number | null = null;
+      let gammaFlipGlobalSource: "fresh_snapshot" | "none" | "legacy_structural_live" = "none";
+      let gammaFlipGlobalDebug: {
+        staleSnapshotFlip: number | null;
+        staleSnapshotSpot: number | null;
+        legacyLiveSpotFlip: number | null;
+        legacyAtFileSpotFlip: number | null;
+        legacyCrossings?: number[];
+        gammaFlipStructuralLive?: number | null;
+        reason: string;
+      } | null = null;
+      let gammaFlipOperationalLegacy: number | null = null;
+      let gammaFlipLocal: number | null = null;
+      let gammaRegimeLocal: "LONG GAMMA" | "SHORT GAMMA" | null = null;
+      let localTransitionZoneStart: number | null = null;
+      let localTransitionZoneEnd: number | null = null;
+      let localFlipReason = "SKIP_NO_SPOT_OR_OPTIONS";
+      let localBandPctLog = 0;
+      let localMaxExpiryDaysLog = 0;
+      /** Legacy net-GEX grid (solo debug, p. ej. legacyAtFileSpotFlip en snapshot debug). */
+      let legacyFlipGrid: Array<{ spot: number; netGex: number }> | null = null;
+      let legacyCrossings: number[] = [];
+      let gammaFlipStructuralLive: number | null = null;
       const strikeMap = new Map<number, { gex: number, oi: number }>();
       const expiryOiMap = new Map<string, number>();
 
@@ -813,7 +1121,7 @@ export class DeribitOptionsGateway {
             putWall = opt.strike;
           }
 
-          // Total GEX: identical BS + filters to `signedNetGexForOptionAtSpot` (flip scan uses same helper at each grid S).
+          // Total GEX: signedNetGexForOptionAtSpot at ticker spot (same membership as tactical flip universe).
           if (spotPrice) {
             const gexSigned = signedNetGexForOptionAtSpot(
               opt,
@@ -897,8 +1205,7 @@ export class DeribitOptionsGateway {
         return { strike: s.strike, cumulativeGamma: runningTotal };
       });
 
-      // 2. Gamma Flip (operational): net GEX(S) = sum signedNetGexForOptionAtSpot at S (same filters as totalGex, strikes vs S).
-      let gammaFlip: number | null = null;
+      // 2. Gamma Flip — legacy (per-S strike filter) vs tactical (fixed universe vs ticker, S only rescales gamma/GEX).
       if (spotPrice != null && Number.isFinite(spotPrice) && spotPrice > 0 && options.length > 0) {
         const spotGrid = buildOperationalFlipGrid(
           spotPrice,
@@ -906,7 +1213,10 @@ export class DeribitOptionsGateway {
           GAMMA_OPERATIONAL_CONFIG.flipGridStepUsd,
           GAMMA_OPERATIONAL_CONFIG.flipGridMaxPoints
         );
-        const grid = spotGrid.map(s => {
+        const lo = spotGrid[0] ?? 0;
+        const hi = spotGrid[spotGrid.length - 1] ?? 0;
+
+        const gridLegacy = spotGrid.map(s => {
           let net = 0;
           for (const o of options) {
             const part = signedNetGexForOptionAtSpot(o, s, nowMs, maxExpiryMs, activeRangePct, contractSize);
@@ -914,22 +1224,284 @@ export class DeribitOptionsGateway {
           }
           return { spot: s, netGex: net };
         });
-        const flipScan = findOperationalGammaFlipFromGrid(grid, spotPrice);
-        gammaFlip = flipScan.flip;
-        const lo = spotGrid[0] ?? 0;
-        const hi = spotGrid[spotGrid.length - 1] ?? 0;
+        const flipScanLegacy = findOperationalGammaFlipFromGrid(gridLegacy, spotPrice);
+        gammaFlipOperationalLegacy = flipScanLegacy.flip;
+        legacyFlipGrid = gridLegacy;
+        legacyCrossings = [...flipScanLegacy.crossings];
+        gammaFlipStructuralLive = selectGlobalStructuralFlip(legacyCrossings, spotPrice);
+        console.warn("[GlobalLegacyCrossings]", {
+          spotPrice,
+          legacyCrossings,
+          gammaFlipOperationalLegacy,
+          selectedForGlobal: gammaFlipStructuralLive,
+        });
+
+        const tacticalUniverse = filterTacticalOptionsUniverseForFlip(
+          options,
+          spotPrice,
+          nowMs,
+          maxExpiryMs,
+          activeRangePct
+        );
+        let netGexAtSpotTactical = 0;
+        for (const o of tacticalUniverse) {
+          const part = tacticalGexContributionAtEvaluationSpot(o, spotPrice, nowMs, maxExpiryMs, contractSize);
+          if (part != null) netGexAtSpotTactical += part;
+        }
+        const gridTactical = spotGrid.map(s => {
+          let net = 0;
+          for (const o of tacticalUniverse) {
+            const part = tacticalGexContributionAtEvaluationSpot(o, s, nowMs, maxExpiryMs, contractSize);
+            if (part != null) net += part;
+          }
+          return { spot: s, netGex: net };
+        });
+        const flipScanTactical = findOperationalGammaFlipFromGrid(gridTactical, spotPrice);
+        gammaFlip = flipScanTactical.flip;
+
+        const strikesInUniverse = tacticalUniverse.map(o => o.strike).filter(Number.isFinite);
+        const minStrike = strikesInUniverse.length ? Math.min(...strikesInUniverse) : null;
+        const maxStrike = strikesInUniverse.length ? Math.max(...strikesInUniverse) : null;
+        let totalCallOI = 0;
+        let totalPutOI = 0;
+        for (const o of tacticalUniverse) {
+          if (o.optionType === "call") totalCallOI += o.openInterest;
+          else totalPutOI += o.openInterest;
+        }
+        const tzHalf = GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000;
+        const transitionZoneStart = gammaFlip != null ? gammaFlip * (1 - tzHalf) : null;
+        const transitionZoneEnd = gammaFlip != null ? gammaFlip * (1 + tzHalf) : null;
         const flipDistPct =
           gammaFlip != null && spotPrice > 0 ? (Math.abs(spotPrice - gammaFlip) / spotPrice) * 100 : null;
-        const tzHalf = GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000;
+
+        console.log("[GammaFlipFixedUniverse]", {
+          spotActual: spotPrice,
+          universeSize: tacticalUniverse.length,
+          minStrike,
+          maxStrike,
+          totalCallOI,
+          totalPutOI,
+          netGexAtSpot: Number(netGexAtSpotTactical.toFixed(4)),
+          netGexAtSpotEngineTotalGex: Number(totalGex.toFixed(4)),
+          oldGammaFlip: gammaFlipOperationalLegacy,
+          newGammaFlipTactical: gammaFlip,
+          gammaFlipOperationalLegacy,
+          gridMin: lo,
+          gridMax: hi,
+          crossings: flipScanTactical.crossings,
+          legacyCrossings: flipScanLegacy.crossings,
+          transitionZoneStart,
+          transitionZoneEnd,
+        });
         console.log(
-          `[GammaFlipTrace][Solver] spot=${spotPrice.toFixed(2)} grid=${lo.toFixed(0)}..${hi.toFixed(0)} n=${
-            spotGrid.length
-          } stepUsd≈${spotGrid.length > 1 ? ((hi - lo) / (spotGrid.length - 1)).toFixed(0) : "n/a"} netAtSpot=${totalGex.toFixed(
-            2
-          )} crossings=${flipScan.crossings.map(c => c.toFixed(0)).join("|") || "none"} flip=${gammaFlip?.toFixed(2) ?? "null"} reason=${
-            flipScan.chosenReason
-          } distToFlipPct=${flipDistPct?.toFixed(3) ?? "n/a"} transitionZone=${gammaFlip != null ? `${(gammaFlip * (1 - tzHalf)).toFixed(0)}..${(gammaFlip * (1 + tzHalf)).toFixed(0)}` : "null"}`
+          `[GammaFlipTrace][Solver][legacy] spot=${spotPrice.toFixed(2)} flip=${gammaFlipOperationalLegacy?.toFixed(2) ?? "null"} crossings=${flipScanLegacy.crossings.length}`
         );
+        console.log(
+          `[GammaFlipTrace][Solver][tactical] spot=${spotPrice.toFixed(2)} flip=${gammaFlip?.toFixed(2) ?? "null"} reason=${flipScanTactical.chosenReason} distToFlipPct=${flipDistPct?.toFixed(3) ?? "n/a"} transitionZone=${gammaFlip != null ? `${transitionZoneStart?.toFixed(0)}..${transitionZoneEnd?.toFixed(0)}` : "null"}`
+        );
+
+        // --- Local Gamma Flip: universo estrecho (≤10% strike), expiries preferida → ≤7d → ≤14d; grid alineado a cada banda.
+        localFlipReason = "NO_LOCAL_CROSS";
+        const preferredExp = pickOperationalExpiry(options, nowMs);
+        const localBands = [0.05, 0.07, 0.1] as const;
+        type LocalExpiryPass = { only: string | null; maxDays: number; tag: string };
+        const expiryPasses: LocalExpiryPass[] = [];
+        if (preferredExp) expiryPasses.push({ only: preferredExp, maxDays: 0, tag: "preferred" });
+        expiryPasses.push({ only: null, maxDays: 7, tag: "lte7" });
+        expiryPasses.push({ only: null, maxDays: 14, tag: "lte14" });
+
+        let localUniverseForLog: NormalizedOptionRow[] = [];
+        let netGexAtSpotLocal = 0;
+        let localCrossingsLog: number[] = [];
+        let foundLocalCross = false;
+
+        outerLocal: for (const ep of expiryPasses) {
+          for (const band of localBands) {
+            const uni = filterLocalOptionsUniverse(
+              options,
+              spotPrice,
+              nowMs,
+              band,
+              ep.only,
+              ep.maxDays
+            );
+            if (uni.length < LOCAL_FLIP_MIN_UNIVERSE && band < 0.1) continue;
+            if (uni.length === 0) continue;
+
+            const spotGridLocal = buildOperationalFlipGrid(
+              spotPrice,
+              band,
+              GAMMA_OPERATIONAL_CONFIG.flipGridStepUsd,
+              GAMMA_OPERATIONAL_CONFIG.flipGridMaxPoints
+            );
+            const gridLoc = spotGridLocal.map(s => {
+              let net = 0;
+              for (const o of uni) {
+                const part = tacticalGexContributionAtEvaluationSpot(o, s, nowMs, maxExpiryMs, contractSize);
+                if (part != null) net += part;
+              }
+              return { spot: s, netGex: net };
+            });
+            const scanLoc = findOperationalGammaFlipFromGrid(gridLoc, spotPrice);
+            const netAtSpotLoc = sumTacticalGexAtSpot(uni, spotPrice, nowMs, maxExpiryMs, contractSize);
+
+            localUniverseForLog = uni;
+            localBandPctLog = band;
+            localMaxExpiryDaysLog = ep.only != null ? 0 : ep.maxDays;
+            netGexAtSpotLocal = netAtSpotLoc;
+            gammaRegimeLocal = netAtSpotLoc >= 0 ? "LONG GAMMA" : "SHORT GAMMA";
+            localCrossingsLog = scanLoc.crossings;
+
+            if (scanLoc.flip != null) {
+              gammaFlipLocal = scanLoc.flip;
+              localFlipReason = "LOCAL_CROSS";
+              const tzLoc = GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000;
+              localTransitionZoneStart = gammaFlipLocal * (1 - tzLoc);
+              localTransitionZoneEnd = gammaFlipLocal * (1 + tzLoc);
+              foundLocalCross = true;
+              break outerLocal;
+            }
+          }
+        }
+
+        if (!foundLocalCross) {
+          const uniWide = filterLocalOptionsUniverse(options, spotPrice, nowMs, 0.1, null, 14);
+          localUniverseForLog = uniWide;
+          localBandPctLog = 0.1;
+          localMaxExpiryDaysLog = 14;
+          netGexAtSpotLocal = sumTacticalGexAtSpot(uniWide, spotPrice, nowMs, maxExpiryMs, contractSize);
+          gammaRegimeLocal = netGexAtSpotLocal >= 0 ? "LONG GAMMA" : "SHORT GAMMA";
+          gammaFlipLocal = null;
+          localFlipReason = "NO_LOCAL_CROSS";
+          localTransitionZoneStart = null;
+          localTransitionZoneEnd = null;
+          localCrossingsLog = [];
+        }
+
+        const strikesLoc = localUniverseForLog.map(o => o.strike).filter(Number.isFinite);
+        const minStrikeLoc = strikesLoc.length ? Math.min(...strikesLoc) : null;
+        const maxStrikeLoc = strikesLoc.length ? Math.max(...strikesLoc) : null;
+        let totalCallOILoc = 0;
+        let totalPutOILoc = 0;
+        for (const o of localUniverseForLog) {
+          if (o.optionType === "call") totalCallOILoc += o.openInterest;
+          else totalPutOILoc += o.openInterest;
+        }
+
+        console.log("[LocalGammaFlip]", {
+          spotPrice,
+          localBandPct: localBandPctLog,
+          localMaxExpiryDays: localMaxExpiryDaysLog,
+          universeSize: localUniverseForLog.length,
+          minStrike: minStrikeLoc,
+          maxStrike: maxStrikeLoc,
+          totalCallOI: totalCallOILoc,
+          totalPutOI: totalPutOILoc,
+          netGexAtSpotLocal: Number(netGexAtSpotLocal.toFixed(4)),
+          gammaRegimeLocal,
+          gammaFlipLocal,
+          localCrossings: localCrossingsLog,
+          localTransitionZoneStart,
+          localTransitionZoneEnd,
+          localFlipReason,
+          broadGammaFlip: gammaFlip,
+          legacyGammaFlip: gammaFlipOperationalLegacy,
+        });
+      }
+
+      try {
+        const snapshot = getDeribitOptionsSnapshot();
+        console.warn("[GammaFlipSnapshotRaw]", {
+          snapshotGammaFlip: snapshot?.gammaFlip ?? null,
+          snapshotSpot: snapshot?.spot ?? null,
+          snapshotAsOf: snapshot?.asOf ?? null,
+          nowIso: new Date(nowMs).toISOString(),
+        });
+        const freshSnapshot = getFreshSnapshotGlobalFlip(snapshot, spotPrice, nowMs);
+        const usedSnapshot = freshSnapshot.usedSnapshot;
+        const L = freshSnapshot.selectionLog;
+        const fileSpot =
+          snapshot?.spot != null && Number.isFinite(snapshot.spot) && snapshot.spot > 0
+            ? snapshot.spot
+            : null;
+        let legacyAtFileSpotFlip: number | null = null;
+        if (legacyFlipGrid != null && fileSpot != null && legacyFlipGrid.length >= 2) {
+          const anchored = findOperationalGammaFlipFromGrid(legacyFlipGrid, fileSpot);
+          legacyAtFileSpotFlip =
+            anchored.flip != null && Number.isFinite(anchored.flip) && anchored.flip > 0
+              ? anchored.flip
+              : null;
+        }
+        const freshGlobal =
+          freshSnapshot.flip != null &&
+          Number.isFinite(freshSnapshot.flip) &&
+          freshSnapshot.flip > 0
+            ? freshSnapshot.flip
+            : null;
+        const structuralGlobal =
+          gammaFlipStructuralLive != null &&
+          Number.isFinite(gammaFlipStructuralLive) &&
+          gammaFlipStructuralLive > 0
+            ? gammaFlipStructuralLive
+            : null;
+        gammaFlipGlobal = freshGlobal ?? structuralGlobal ?? null;
+        gammaFlipGlobalSource =
+          freshGlobal != null
+            ? "fresh_snapshot"
+            : structuralGlobal != null
+              ? "legacy_structural_live"
+              : "none";
+        gammaFlipGlobalDebug = {
+          staleSnapshotFlip: L.snapshotFlip,
+          staleSnapshotSpot: snapshot?.spot ?? null,
+          legacyLiveSpotFlip: gammaFlipOperationalLegacy ?? null,
+          legacyAtFileSpotFlip,
+          legacyCrossings: [...legacyCrossings],
+          gammaFlipStructuralLive: structuralGlobal,
+          reason: usedSnapshot
+            ? "fresh_snapshot_gate_passed"
+            : structuralGlobal != null
+              ? "legacy_structural_live_used_snapshot_stale_or_rejected"
+              : "not_used_because_no_fresh_snapshot_and_no_valid_structural_crossing",
+        };
+        console.warn("[GammaFlipGlobalSelection]", {
+          spotPrice,
+          gammaFlipGlobal,
+          gammaFlipGlobalSource,
+          freshSnapshotUsed: freshGlobal != null,
+          snapshotDebug: freshSnapshot.selectionLog,
+          legacyCrossings,
+          gammaFlipOperationalLegacy,
+          gammaFlipStructuralLive: structuralGlobal,
+        });
+      } catch {
+        const structuralGlobal =
+          gammaFlipStructuralLive != null &&
+          Number.isFinite(gammaFlipStructuralLive) &&
+          gammaFlipStructuralLive > 0
+            ? gammaFlipStructuralLive
+            : null;
+        gammaFlipGlobal = structuralGlobal;
+        gammaFlipGlobalSource = structuralGlobal != null ? "legacy_structural_live" : "none";
+        gammaFlipGlobalDebug = {
+          staleSnapshotFlip: null,
+          staleSnapshotSpot: null,
+          legacyLiveSpotFlip: gammaFlipOperationalLegacy ?? null,
+          legacyAtFileSpotFlip: null,
+          legacyCrossings: [...legacyCrossings],
+          gammaFlipStructuralLive: structuralGlobal,
+          reason: "snapshot_read_error",
+        };
+        console.warn("[GammaFlipGlobalSelection]", {
+          spotPrice,
+          gammaFlipGlobal,
+          gammaFlipGlobalSource,
+          freshSnapshotUsed: false,
+          snapshotDebug: null,
+          legacyCrossings,
+          gammaFlipOperationalLegacy,
+          gammaFlipStructuralLive: structuralGlobal,
+        });
       }
 
       // 3. Gamma Magnets (Top 3 highest positive gamma)
@@ -2306,10 +2878,30 @@ export class DeribitOptionsGateway {
         }
       }
 
+      console.warn("[GammaFlipGlobalFinalReturn]", {
+        spotPrice,
+        gammaFlipGlobal,
+        gammaFlipGlobalSource,
+        gammaFlipGlobalDebug,
+        gammaFlipBroad: gammaFlip,
+        gammaFlipLocal,
+        gammaFlipOperationalLegacy,
+      });
+
       return {
         totalGex: totalGex || 0,
         gammaState: totalGex >= 0 ? "LONG GAMMA" : "SHORT GAMMA",
         gammaFlip: gammaFlip ?? null,
+        gammaFlipBroad: gammaFlip ?? null,
+        gammaFlipGlobal,
+        gammaFlipGlobalSource,
+        gammaFlipGlobalDebug,
+        gammaFlipLocal,
+        gammaRegimeLocal,
+        localTransitionZoneStart,
+        localTransitionZoneEnd,
+        localFlipReason,
+        gammaFlipOperationalLegacy: gammaFlipOperationalLegacy ?? null,
         callWall: callWall || 0, 
         putWall: putWall || 0,
         activeCallWall: activeCallWall > 0 ? activeCallWall : null,
@@ -2358,7 +2950,19 @@ export class DeribitOptionsGateway {
     } catch (e) {
       console.error("[DeribitGateway] Summary error:", e);
       return {
-        totalGex: 0, gammaState: "LONG GAMMA", gammaFlip: null,
+        totalGex: 0,
+        gammaState: "LONG GAMMA",
+        gammaFlip: null,
+        gammaFlipBroad: null,
+        gammaFlipGlobal: null,
+        gammaFlipGlobalSource: "none",
+        gammaFlipGlobalDebug: null,
+        gammaFlipLocal: null,
+        gammaRegimeLocal: null,
+        localTransitionZoneStart: null,
+        localTransitionZoneEnd: null,
+        localFlipReason: "SUMMARY_ERROR",
+        gammaFlipOperationalLegacy: null,
         callWall: 0, putWall: 0, magnets: [],
         shortGammaPockets: [], vannaBias: "NEUTRAL", charmBias: "NEUTRAL",
         gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
