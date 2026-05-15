@@ -1,10 +1,12 @@
 import type { MarketCandle } from "@/lib/marketCandleTypes";
+import { buildMarketCandlesUrl } from "@shared/candleLimits";
+
 export type BtcMarketBasePack = {
   base: MarketCandle[];
   baseBarSec: number;
-  /** When base is 1m-only, server-aggregated 15s (client cannot derive sub-minute) */
+  /** Server-built 15s series (limit ~200); preferred over client aggregation from 1s when longer. */
   seed15s?: MarketCandle[];
-  /** Native 15m from GET /api/market/candles?interval=15m (not client-aggregated from 1s). */
+  /** Native 15m from GET ?interval=15m (not client-aggregated from 1s). */
   native15m?: MarketCandle[];
 };
 
@@ -53,40 +55,29 @@ async function fetchNormalized(url: string): Promise<MarketCandle[]> {
 
 const MIN_BASE_BARS = 8;
 
-const url15m = `/api/market/candles?symbol=BTCUSDT&interval=${encodeURIComponent("15m")}&limit=500`;
-
 /**
- * Prefer 1s as base (client can derive 15s / 1m / 5m).
- * 15m always loaded from native interval=15m (parallel to base fetch).
- * Fallback: 1m base + optional server 15s seed (see LIMITATIONS in marketEngineStore).
+ * Prefer 1s as base (client derives 1m / 5m).
+ * Always load native 15s seed (~200 bars) + native 15m in parallel.
+ * Fallback: 1m base + same 15s seed when 1s is unavailable.
  */
 export async function fetchBtcMarketBasePack(): Promise<BtcMarketBasePack> {
-  const [oneS, native15mRaw] = await Promise.all([
-    fetchNormalized(
-      `/api/market/candles?symbol=BTCUSDT&interval=${encodeURIComponent("1s")}&limit=1000`,
-    ),
-    fetchNormalized(url15m).catch(() => [] as MarketCandle[]),
+  const [oneS, native15mRaw, seed15sRaw] = await Promise.all([
+    fetchNormalized(buildMarketCandlesUrl("BTCUSDT", "1s")),
+    fetchNormalized(buildMarketCandlesUrl("BTCUSDT", "15m")).catch(() => [] as MarketCandle[]),
+    fetchNormalized(buildMarketCandlesUrl("BTCUSDT", "15s")).catch(() => [] as MarketCandle[]),
   ]);
   const native15m = native15mRaw.length ? native15mRaw : undefined;
-
-  if (oneS.length >= MIN_BASE_BARS) {
-    return { base: oneS, baseBarSec: 1, native15m };
-  }
-
-  const [oneM, seed15sRaw] = await Promise.all([
-    fetchNormalized(
-      `/api/market/candles?symbol=BTCUSDT&interval=${encodeURIComponent("1m")}&limit=500`,
-    ),
-    fetchNormalized(
-      `/api/market/candles?symbol=BTCUSDT&interval=${encodeURIComponent("15s")}&limit=200`,
-    ).catch(() => [] as MarketCandle[]),
-  ]);
   const seed15s = seed15sRaw.length ? seed15sRaw : undefined;
 
+  if (oneS.length >= MIN_BASE_BARS) {
+    return { base: oneS, baseBarSec: 1, native15m, seed15s };
+  }
+
+  const oneM = await fetchNormalized(buildMarketCandlesUrl("BTCUSDT", "1m"));
   return {
     base: oneM,
     baseBarSec: 60,
     seed15s,
-    native15m: native15m ?? undefined,
+    native15m,
   };
 }

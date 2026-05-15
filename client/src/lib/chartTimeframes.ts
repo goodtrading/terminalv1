@@ -35,3 +35,5 @@ export function getChartTimeframeMeta(id: ChartTimeframeId): ChartTimeframeMeta 
 export function isChartTimeframeId(v: string): v is ChartTimeframeId {
   return v === "15s" || v === "1m" || v === "5m" || v === "15m";
 }
+
+export { getCandleLimitForTimeframe, buildMarketCandlesUrl } from "@shared/candleLimits";

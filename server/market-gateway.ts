@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getKrakenTicker, getKrakenCandles } from "./kraken-gateway";
 import { aggregateOhlcvCandles } from "./lib/candleAggregation";
+import { clampCandleLimit, getCandleLimitForTimeframe } from "@shared/candleLimits";
 import {
   getBufferCoverage,
   queryBufferedAggTrades,
@@ -134,16 +135,37 @@ export class MarketDataGateway {
   }
 
   /**
-   * 15s bars from Binance 1s klines (max 1000 → ~66 fifteen-second bars). No other provider in this path.
+   * 15s bars from Binance 1s klines. Paginates 1s REST (1000 cap/request) so limits up to 500
+   * fifteen-second bars are feasible (~limit×15 one-second samples).
    */
   private static async getCandles15sFrom1s(symbol: string, limit: number): Promise<Candle[]> {
     const BINANCE_1S_MAX = 1000;
-    const out = await this.fetchBinance(
-      `/api/v3/klines?symbol=${symbol}&interval=1s&limit=${BINANCE_1S_MAX}`,
-    );
-    const oneSec = this.validateAndSort(this.normalizeBinance(out.data));
-    if (oneSec.length === 0) return [];
-    const asAgg = oneSec.map((c) => ({
+    const target15s = clampCandleLimit(limit, getCandleLimitForTimeframe("15s"));
+    const oneSecNeeded = target15s * 15;
+    const maxPages = 6;
+
+    let allOneSec: Candle[] = [];
+    let endTimeMs: number | undefined;
+
+    for (let page = 0; page < maxPages && allOneSec.length < oneSecNeeded; page++) {
+      let path = `/api/v3/klines?symbol=${symbol}&interval=1s&limit=${BINANCE_1S_MAX}`;
+      if (endTimeMs != null) {
+        path += `&endTime=${endTimeMs}`;
+      }
+      const out = await this.fetchBinance(path);
+      const batch = this.validateAndSort(this.normalizeBinance(out.data));
+      if (!batch.length) break;
+
+      const oldestSec = batch[0]!.time;
+      const merged = page === 0 ? batch : [...batch, ...allOneSec];
+      allOneSec = this.validateAndSort(merged);
+
+      if (batch.length < BINANCE_1S_MAX) break;
+      endTimeMs = oldestSec * 1000 - 1;
+    }
+
+    if (allOneSec.length === 0) return [];
+    const asAgg = allOneSec.map((c) => ({
       time: c.time,
       open: c.open,
       high: c.high,
@@ -152,14 +174,15 @@ export class MarketDataGateway {
       volume: c.volume,
     }));
     const fifteen = aggregateOhlcvCandles(asAgg, 15);
-    return fifteen.slice(-limit);
+    return fifteen.slice(-target15s);
   }
 
   static async getCandles(symbol: string, interval: string = "15m", limit: number = 500, preferredSource?: string): Promise<Candle[]> {
     const iv = interval.trim().toLowerCase();
+    const safeLimit = clampCandleLimit(limit, getCandleLimitForTimeframe(iv));
     if (iv === "15s") {
       try {
-        return await this.getCandles15sFrom1s(symbol, limit);
+        return await this.getCandles15sFrom1s(symbol, safeLimit);
       } catch (e: any) {
         console.warn("[Gateway] 15s via 1s failed:", e?.message ?? e);
         throw e;
@@ -169,18 +192,18 @@ export class MarketDataGateway {
     const krakenProvider = {
       name: 'Kraken',
       fetch: async (): Promise<{ data: Candle[]; provider: string; latency: number }> => {
-        const candles = await getKrakenCandles(symbol, iv, limit);
+        const candles = await getKrakenCandles(symbol, iv, safeLimit);
         return { data: candles, provider: 'Kraken', latency: 0 };
       },
       normalize: (d: Candle[]) => d
     };
     const baseProviders = [
-      { name: 'Binance', fetch: () => this.fetchBinance(`/api/v3/klines?symbol=${symbol}&interval=${iv}&limit=${limit}`), normalize: (d: any) => this.normalizeBinance(d) },
+      { name: 'Binance', fetch: () => this.fetchBinance(`/api/v3/klines?symbol=${symbol}&interval=${iv}&limit=${safeLimit}`), normalize: (d: any) => this.normalizeBinance(d) },
       {
         name: 'Bybit',
         fetch: () =>
           this.fetchBybit(
-            `/v5/market/kline?category=spot&symbol=${symbol}&interval=${bybitIntervalFromApi(iv)}&limit=${limit}`,
+            `/v5/market/kline?category=spot&symbol=${symbol}&interval=${bybitIntervalFromApi(iv)}&limit=${safeLimit}`,
           ),
         normalize: (d: any) => this.normalizeBybit(d),
       },
@@ -201,7 +224,7 @@ export class MarketDataGateway {
     for (const provider of providers) {
       try {
         const out = await provider.fetch();
-        const candles = provider.normalize(out.data).slice(0, limit);
+        const candles = provider.normalize(out.data).slice(0, safeLimit);
         const validated = this.validateAndSort(candles);
         if (MarketDataGateway.DEBUG_GATEWAY) {
           console.log(`[Gateway] Provider: ${out.provider} | Latency: ${out.latency}ms | Count: ${validated.length}`);

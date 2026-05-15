@@ -2,8 +2,8 @@
  * Client Market Engine — single in-memory source of truth for BTC OHLC:
  * base series + derived timeframes + live tail updates.
  *
- * LIMITATIONS (see user-facing list in task / README if added):
- * - Binance 1s history capped (~1000) → short lookback for 15s derived bars.
+ * LIMITATIONS:
+ * - 15s chart uses server-native 15s seed (~200 bars via paginated 1s on gateway); client 1s→15s derive is fallback only.
  * - If 1s is unavailable, 1m base cannot reproduce true 15s history; 15s uses server seed + live bucket merge only.
  * - 15m is loaded from native GET ?interval=15m (not aggregated from 1s).
  * - No pagination / streaming yet; periodic refetch refreshes bulk state.

@@ -16,6 +16,7 @@ import { liquidityVacuumEngine, VacuumEngineInput } from "./lib/liquidityVacuumE
 import { VacuumValidationTests } from "./lib/vacuumValidationTests";
 import { scenarioEngine, TerminalSignals } from "./lib/scenarioEngine";
 import { testScenarioEngine } from "./lib/scenarioEngineTest";
+import { resolveCandleLimit } from "@shared/candleLimits";
 
 // Debug flags to prevent event-loop blocking from log spam.
 // Keep these false by default; enable locally when diagnosing.
@@ -306,7 +307,7 @@ export async function registerRoutes(
   app.get("/api/market/candles", async (req, res) => {
     const symbol = (req.query.symbol as string) || "BTCUSDT";
     const interval = (req.query.interval as string) || "15m";
-    const limit = parseInt(req.query.limit as string) || 500;
+    const limit = resolveCandleLimit(interval, req.query.limit);
     const source = req.query.source as string | undefined;
 
     try {
@@ -446,7 +447,7 @@ export async function registerRoutes(
   app.get("/api/chart/history", async (req, res) => {
     const symbol = (req.query.symbol as string) || "BTCUSDT";
     const interval = (req.query.interval as string) || "15m";
-    const limit = parseInt(req.query.limit as string) || 500;
+    const limit = resolveCandleLimit(interval, req.query.limit);
     const source = req.query.source as string | undefined;
 
     try {
