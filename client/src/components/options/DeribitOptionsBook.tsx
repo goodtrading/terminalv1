@@ -2,6 +2,21 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import type { DeribitOptionsBookResponse, DeribitOptionBookRow, DeribitOptionSide } from "@shared/types/deribit-options";
+import {
+  buildOptionsZoneContext,
+  getOptionZoneTags,
+  getZoneRowClassName,
+  getZoneTagBadgeKind,
+  getZoneTagLabel,
+  getZoneBadgeClassName,
+  sortZoneTagsForDisplay,
+  formatStrikeCompact,
+  formatStrikeList,
+  type OptionZoneTag,
+  type OptionsZoneSummaryInput,
+} from "./optionsZoneUtils";
+
+type OptionsViewMode = "PRO" | "GT" | "BASIC";
 
 // Debug flags
 const OPTIONS_DERIVED_DEBUG = false;
@@ -43,7 +58,21 @@ type OptionsIntel = {
 // Badge types for structural indicators
 type Badge = {
   label: string;
-  kind: "atm" | "callWall" | "putWall" | "maxVol" | "callDom" | "putDom" | "highOi" | "support" | "resistance" | "active";
+  kind:
+    | "atm"
+    | "callWall"
+    | "putWall"
+    | "maxVol"
+    | "maxOi"
+    | "magnet"
+    | "flip"
+    | "transition"
+    | "callDom"
+    | "putDom"
+    | "highOi"
+    | "support"
+    | "resistance"
+    | "active";
   value?: string;
   priority: number; // 1 = highest priority
 };
@@ -67,7 +96,13 @@ const BadgePill = ({ badge }: { badge: Badge }) => {
       case "putWall":
         return "bg-red-500/20 text-red-300 border border-red-500/30";
       case "maxVol":
-        return "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30";
+      case "maxOi":
+        return "bg-violet-500/20 text-violet-300 border border-violet-500/30";
+      case "magnet":
+        return "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30";
+      case "flip":
+      case "transition":
+        return "bg-amber-500/20 text-amber-300 border border-amber-500/30";
       case "callDom":
         return "bg-green-600/20 text-green-400 border border-green-600/30";
       case "putDom":
@@ -101,6 +136,34 @@ const BadgePill = ({ badge }: { badge: Badge }) => {
   );
 };
 
+const ZoneTagPill = ({ tag }: { tag: OptionZoneTag }) => {
+  const kind = getZoneTagBadgeKind(tag);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium whitespace-nowrap leading-none",
+        getZoneBadgeClassName(kind)
+      )}
+    >
+      {getZoneTagLabel(tag)}
+    </span>
+  );
+};
+
+const ZoneTagsCell = ({ tags }: { tags: OptionZoneTag[] }) => {
+  const sorted = sortZoneTagsForDisplay(tags);
+  if (!sorted.length) {
+    return <span className="text-terminal-muted/50 text-[10px]">—</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-0.5 justify-center max-w-[140px] mx-auto">
+      {sorted.map((tag) => (
+        <ZoneTagPill key={tag} tag={tag} />
+      ))}
+    </div>
+  );
+};
+
 
 // Normalized view models for consistent data structure
 type OptionSideViewModel = {
@@ -124,6 +187,7 @@ type OptionRowViewModel = {
   isCallWall: boolean
   isPutWall: boolean
   isMaxVolume: boolean
+  zoneTags: OptionZoneTag[]
   call: OptionSideViewModel | null
   put: OptionSideViewModel | null
 }
@@ -526,6 +590,38 @@ const viewMode: OptionsViewMode = "PRO";
     return rowsWithDerived;
   }, [bookData]);
 
+  const zoneSummaryInput = useMemo((): OptionsZoneSummaryInput | undefined => {
+    const raw = bookData as DeribitOptionsBookResponse & OptionsZoneSummaryInput;
+    if (!raw) return undefined;
+    const hasExternal =
+      raw.gammaFlip != null ||
+      raw.flipZone != null ||
+      raw.transitionZoneStart != null ||
+      raw.transitionZoneEnd != null;
+    if (!hasExternal) return undefined;
+    return {
+      gammaFlip: raw.gammaFlip,
+      flipZone: raw.flipZone,
+      transitionZoneStart: raw.transitionZoneStart,
+      transitionZoneEnd: raw.transitionZoneEnd,
+    };
+  }, [bookData]);
+
+  const zoneContext = useMemo(() => {
+    const zoneRows = derivedRows.map((row) => ({
+      strike: row.strike,
+      callOi: row.derived.callOi,
+      putOi: row.derived.putOi,
+      totalOi: row.derived.totalOi,
+      totalVolume: row.derived.totalVolume,
+    }));
+    return buildOptionsZoneContext(
+      zoneRows,
+      bookData?.underlyingPrice ?? null,
+      zoneSummaryInput
+    );
+  }, [derivedRows, bookData?.underlyingPrice, zoneSummaryInput]);
+
   // Get visible instrument names for enrichment
   const visibleInstrumentNames = useMemo(() => {
     if (!derivedRows.length) return [];
@@ -734,6 +830,7 @@ const viewMode: OptionsViewMode = "PRO";
         isCallWall: row.strike === institutionalData.callWall,
         isPutWall: row.strike === institutionalData.putWall,
         isMaxVolume: row.strike === institutionalData.maxVolumeStrike && row.strike !== institutionalData.atmStrike,
+        zoneTags: getOptionZoneTags(row.strike, zoneContext),
         call,
         put
       };
@@ -765,7 +862,7 @@ const viewMode: OptionsViewMode = "PRO";
 
       return viewRow;
     });
-  }, [enrichedRows, institutionalData, isAtmStrike]);
+  }, [enrichedRows, institutionalData, isAtmStrike, zoneContext]);
 
   // Column definitions for each mode
   const getSimpleColumns = (): ColumnDef[] => {
@@ -991,17 +1088,35 @@ const viewMode: OptionsViewMode = "PRO";
     columns.push({
       id: 'strike',
       header: 'Ejecución',
-      width: 120,
+      width: 100,
       align: 'center',
       visible: true,
       renderCell: (row) => (
         <div className="px-2 py-1.5 text-center border-r border-terminal-border/20">
           <div className={cn(
             "text-sm font-bold font-mono",
-            row.isATM ? "text-blue-400" : "text-white/90"
+            row.zoneTags.includes("ATM") ? "text-blue-400" : "text-white/90"
           )}>
             {row.strikeLabel}
           </div>
+          {row.distancePct != null && (
+            <div className="text-[9px] text-terminal-muted/80 font-mono mt-0.5">
+              {formatDistance(row.distancePct)}
+            </div>
+          )}
+        </div>
+      )
+    });
+
+    columns.push({
+      id: 'zones',
+      header: 'Zones',
+      width: 130,
+      align: 'center',
+      visible: true,
+      renderCell: (row) => (
+        <div className="px-1.5 py-1.5 text-center border-r border-terminal-border/20">
+          <ZoneTagsCell tags={row.zoneTags} />
         </div>
       )
     });
@@ -1486,6 +1601,26 @@ const viewMode: OptionsViewMode = "PRO";
     return derivedRows;
   }, [derivedRows, bookData, filter, institutionalData.atmStrike]);
 
+  const visibleViewRows = useMemo(() => {
+    if (!filteredRows.length) return [];
+    const visibleStrikes = new Set(filteredRows.map((r) => r.strike));
+    return viewRows.filter((r) => visibleStrikes.has(r.strike));
+  }, [viewRows, filteredRows]);
+
+  const transitionZoneSummary = useMemo(() => {
+    if (zoneContext.transitionStrikes.length >= 2) {
+      const sorted = [...zoneContext.transitionStrikes].sort((a, b) => a - b);
+      return `${formatPrice(sorted[0])} – ${formatPrice(sorted[sorted.length - 1])}`;
+    }
+    if (zoneContext.flipStrikes.length > 0) {
+      return formatStrikeList(zoneContext.flipStrikes, formatPrice, 2);
+    }
+    if (optionsIntel.transitionZone !== "NO DATA") {
+      return optionsIntel.transitionZone;
+    }
+    return null;
+  }, [zoneContext, optionsIntel.transitionZone]);
+
   // Auto-scroll to ATM when filter is ATM and data loads
   useEffect(() => {
     if (filter === "ATM" && derivedRows.length && institutionalData.atmStrike) {
@@ -1612,6 +1747,40 @@ const viewMode: OptionsViewMode = "PRO";
                 <div className="text-[10px] text-terminal-muted/70">Vol {institutionalData.maxVolume}</div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {bookData && (
+        <div className="px-3 py-1.5 border-b border-terminal-border/60 shrink-0 bg-terminal-panel/20">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono">
+            <span className="text-terminal-muted uppercase tracking-wider text-[9px]">Relevant Zones</span>
+            <span className="text-blue-300/90">
+              ATM <span className="text-white/80">{formatStrikeCompact(zoneContext.atmStrike, formatPrice)}</span>
+            </span>
+            <span className="text-green-300/90">
+              Call Wall <span className="text-white/80">{formatStrikeCompact(zoneContext.callWallStrike, formatPrice)}</span>
+            </span>
+            <span className="text-red-300/90">
+              Put Wall <span className="text-white/80">{formatStrikeCompact(zoneContext.putWallStrike, formatPrice)}</span>
+            </span>
+            <span className="text-violet-300/90">
+              Max OI <span className="text-white/80">{formatStrikeCompact(zoneContext.maxOiStrike, formatPrice)}</span>
+            </span>
+            <span className="text-violet-300/80">
+              Max Vol <span className="text-white/80">{formatStrikeCompact(zoneContext.maxVolumeStrike, formatPrice)}</span>
+            </span>
+            <span className="text-cyan-300/80">
+              Support <span className="text-white/70">{formatStrikeList(zoneContext.supportStrikes, formatPrice)}</span>
+            </span>
+            <span className="text-orange-300/80">
+              Resistance <span className="text-white/70">{formatStrikeList(zoneContext.resistanceStrikes, formatPrice)}</span>
+            </span>
+            {transitionZoneSummary && (
+              <span className="text-amber-300/80">
+                Transition <span className="text-white/70">{transitionZoneSummary}</span>
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -1793,15 +1962,14 @@ const viewMode: OptionsViewMode = "PRO";
 
               {/* Table Body */}
               <tbody className="divide-y divide-terminal-border/20">
-                {viewRows.map((row, index) => (
+                {visibleViewRows.map((row, index) => (
                   <tr
                     key={row.strike}
                     data-strike={row.strike}
                     className={cn(
                       "hover:bg-terminal-panel/10 transition-colors group",
                       index % 2 === 0 ? "bg-terminal-bg" : "bg-terminal-panel/5",
-                      row.isATM && "bg-blue-500/5",
-                      (row.isCallWall || row.isPutWall) && "bg-terminal-panel/10"
+                      getZoneRowClassName(row.zoneTags)
                     )}
                   >
                     {/* Render cells using ColumnDef */}
