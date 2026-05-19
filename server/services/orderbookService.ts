@@ -4,6 +4,7 @@
  */
 
 import WebSocket from "ws";
+import { feedBinanceOrderBook } from "./bookmapEngine";
 
 export interface OrderBookLevel {
   price: number;
@@ -44,6 +45,15 @@ function parseLevels(arr: [string, string][]): OrderBookLevel[] {
   return levels;
 }
 
+/** Includes zero-size levels so the Bookmap engine can process explicit removals. */
+function parseLevelsWithRemovals(arr: [string, string][]): OrderBookLevel[] {
+  if (!Array.isArray(arr)) return [];
+  return arr.map(([price, qty]) => ({
+    price: parseFloat(price),
+    size: parseFloat(qty || "0"),
+  }));
+}
+
 function normalizePayload(parsed: any): { bids: [string, string][], asks: [string, string][] } {
   // Handle wrapped payload { stream: "...", data: {...} }
   const payload = parsed.data || parsed;
@@ -72,6 +82,11 @@ export async function initializeFullDepth(): Promise<void> {
       timestamp: data.lastUpdateId || Date.now()
     };
     
+    feedBinanceOrderBook(
+      { bids: snapshot.bids, asks: snapshot.asks, timestamp: snapshot.timestamp },
+      "snapshot",
+    );
+
     if (DEBUG_ENABLED) {
       console.debug("[OrderBookService] Full depth initialized:", {
         bidCount: snapshot.bids.length,
@@ -114,8 +129,12 @@ function connect(): void {
       
       const deltaBids = parseLevels(normalized.bids);
       const deltaAsks = parseLevels(normalized.asks);
-      
-      if (deltaBids.length === 0 && deltaAsks.length === 0) return;
+      const bookmapBids = parseLevelsWithRemovals(normalized.bids);
+      const bookmapAsks = parseLevelsWithRemovals(normalized.asks);
+
+      if (deltaBids.length === 0 && deltaAsks.length === 0 && bookmapBids.length === 0 && bookmapAsks.length === 0) {
+        return;
+      }
 
       // Binance @depth sends PARTIAL updates (5–20 levels). Merge into snapshot instead of replacing
       // so we preserve full depth from initializeFullDepth.
@@ -138,6 +157,13 @@ function connect(): void {
           asks: deltaAsks.sort((a, b) => a.price - b.price),
           timestamp: ts,
         };
+      }
+
+      if (bookmapBids.length > 0 || bookmapAsks.length > 0) {
+        feedBinanceOrderBook(
+          { bids: bookmapBids, asks: bookmapAsks, timestamp: ts },
+          "delta",
+        );
       }
     } catch (e) {
       console.warn("[OrderBookService] Parse error:", e, "Raw data length:", raw.length);

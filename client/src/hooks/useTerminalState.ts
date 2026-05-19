@@ -1,5 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { OptionsPositioning, MarketState, KeyLevels, DealerExposure, TradingScenario } from "@shared/schema";
+import {
+  OptionsPositioning,
+  MarketState,
+  KeyLevels,
+  DealerExposure,
+  TradingScenario,
+  TerminalStateOptionsGammaExtras,
+} from "@shared/schema";
 
 export interface TerminalState {
   market: MarketState;
@@ -15,6 +22,7 @@ export interface TerminalState {
   } | null;
   tickerStatus: "fresh" | "stale" | "unavailable";
   timestamp: number;
+  options?: TerminalStateOptionsGammaExtras & Record<string, unknown>;
 }
 
 export function useTerminalState() {

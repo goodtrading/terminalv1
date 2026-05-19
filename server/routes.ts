@@ -11,6 +11,7 @@ import { generateAIResponse } from "./lib/openaiClient";
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
 import { getOrderBook, initializeFullDepth } from "./services/orderbookService";
+import { getBookmapEngine } from "./services/bookmapEngine";
 import { getKrakenOrderBook } from "./kraken-gateway";
 import { liquidityVacuumEngine, VacuumEngineInput } from "./lib/liquidityVacuumEngine";
 import { VacuumValidationTests } from "./lib/vacuumValidationTests";
@@ -95,6 +96,66 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("[API] Order book fetch error:", error?.message ?? error);
       res.status(500).json({ error: "Failed to fetch order book" });
+    }
+  });
+
+  app.get("/api/bookmap/state", async (req: Request, res: Response) => {
+    const symbol = ((req.query.symbol as string) || "BTCUSDT").toUpperCase();
+    const exchange = ((req.query.exchange as string) || "binance").toLowerCase();
+    const priceRangePct = req.query.priceRangePct
+      ? Number(req.query.priceRangePct)
+      : undefined;
+    const bucketMs = req.query.bucketMs ? Number(req.query.bucketMs) : undefined;
+    const minWallSize = req.query.minWallSize ? Number(req.query.minWallSize) : undefined;
+    const includeStale = req.query.includeStale === "true" || req.query.includeStale === "1";
+    const priceMin = req.query.priceMin != null ? Number(req.query.priceMin) : undefined;
+    const priceMax = req.query.priceMax != null ? Number(req.query.priceMax) : undefined;
+
+    try {
+      const engine = getBookmapEngine(symbol, exchange);
+
+      if (bucketMs != null && Number.isFinite(bucketMs) && bucketMs > 0) {
+        engine.setBucketMs(bucketMs);
+      }
+
+      if (!engine.hasData()) {
+        if (exchange === "kraken") {
+          const ob = await getKrakenOrderBook(symbol, 500);
+          engine.applySnapshot({
+            bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
+            asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
+            timestamp: ob.timestamp,
+          });
+        } else {
+          const orderBook = getOrderBook();
+          if (orderBook.bids.length > 0 || orderBook.asks.length > 0) {
+            engine.applySnapshot({
+              bids: orderBook.bids,
+              asks: orderBook.asks,
+              timestamp: orderBook.timestamp ?? Date.now(),
+            });
+          }
+        }
+      }
+
+      const state = engine.getCurrentState({
+        priceRangePct,
+        priceMin:
+          priceMin != null && Number.isFinite(priceMin) ? priceMin : undefined,
+        priceMax:
+          priceMax != null && Number.isFinite(priceMax) ? priceMax : undefined,
+        minWallSize,
+        includeStale,
+      });
+
+      res.json({
+        symbol,
+        exchange,
+        ...state,
+      });
+    } catch (error: any) {
+      console.error("[API] /api/bookmap/state error:", error?.message ?? error);
+      res.status(500).json({ error: "Failed to fetch bookmap state" });
     }
   });
 

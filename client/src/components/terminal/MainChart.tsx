@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartContextMenu, type ChartContextMenuAction } from "./chart/ChartContextMenu";
 import { ChartSettingsModal } from "./chart/ChartSettingsModal";
 import { ChartTimeframeSelector } from "./chart/ChartTimeframeSelector";
@@ -38,6 +38,10 @@ import { drawDebug, setChartViewportVersion } from "./drawings/debug";
 import type { LayerGroup } from "./overlay/layerGroups";
 import { BTC_TICKER_REFETCH_MS, LIVE_CANDLE_CHART_DISABLED } from "@/lib/liveChartConfig";
 import {
+  extractMajorWallsFromOrderBook,
+  logHeatmapMajorWallsOnly,
+} from "@/lib/heatmapWallConfig";
+import {
   buildLevelTimingContextFromState,
   horizonShort,
   timingTitleSuffix,
@@ -48,6 +52,9 @@ import { computeLevelTiming } from "@/lib/computeLevelTiming";
 import { resolveGammaOverlaySelection } from "@/lib/gammaOverlaySelection";
 import { renderCascadeLevels } from "./overlay/renderers/cascadeLevels";
 import { renderSqueezeLevels } from "./overlay/renderers/squeezeLevels";
+import { buildChartCoordinateHelpers } from "./chart/buildChartCoordinateHelpers";
+import { MeasurementOverlay } from "./measurement/MeasurementOverlay";
+import { useChartMeasurement } from "./measurement/useChartMeasurement";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
 type UTCTimestamp = number;
@@ -61,7 +68,7 @@ export function MainChart({
 }: {
   activeScenario: "BASE" | "ALT" | "VOL";
   onActiveScenarioChange: (scenario: "BASE" | "ALT" | "VOL") => void;
-  /** SIMPLE: menos cromo técnico en el lienzo; PRO: comportamiento actual. */
+  /** SIMPLE: menos cromo tÃ©cnico en el lienzo; PRO: comportamiento actual. */
   viewMode?: "SIMPLE" | "PRO";
 }) {
   const isSimpleView = viewMode === "SIMPLE";
@@ -81,6 +88,7 @@ export function MainChart({
   const [chartReady, setChartReady] = useState(false);
     const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
   const [drawingsViewportVersion, setDrawingsViewportVersion] = useState(0);
+  const [chartCandleTimes, setChartCandleTimes] = useState<{ time: number }[]>([]);
   const drawingsInteractionActiveRef = useRef(false);
   const drawingsInteractionRafRef = useRef<number | null>(null);
   const drawingsWheelStopTimeoutRef = useRef<number | null>(null);
@@ -174,7 +182,7 @@ export function MainChart({
       },
       filtering: {
         minSize: 0.01,           // Track levels as small as 0.01 BTC
-        maxLevels: 500           // Store max 500 levels per side
+        maxLevels: 1000          // Match Binance full depth; majors kept via selectOrderBookLevelsForHeatmap
       }
     })
   );
@@ -630,6 +638,8 @@ export function MainChart({
       const lastLc = getLastCandleForTimeframe(tf);
       if (lastLc) setLastCandle(lastLc);
 
+      setChartCandleTimes(candlesForChart.map((c) => ({ time: Number(c.time) })));
+
       if (LIVE_CANDLE_CHART_DISABLED) {
         if (chartFullResyncRef.current) {
           series.setData(candlesForChart);
@@ -875,7 +885,7 @@ export function MainChart({
       entries.push(finalEntry);
     };
 
-    // LOG FINAL TOTALS Y DETECCIÓN DE COLISIONES
+    // LOG FINAL TOTALS Y DETECCIÃ“N DE COLISIONES
     console.log(`[DEBUG FINAL] TOTAL entries procesadas: ${entries.length}`);
     
     // Detectar colisiones por precio exacto
@@ -1072,15 +1082,15 @@ export function MainChart({
           return;
         }
         
-        // FORZAR VISIBILIDAD MÁXIMA PARA DEBUG
+        // FORZAR VISIBILIDAD MÃXIMA PARA DEBUG
         pushEntry(
           entry.price,
-          999, // PRIORIDAD MÁXIMA
+          999, // PRIORIDAD MÃXIMA
           entry.label,
           entry.shortLabel,
-          entry.color.replace(/[\d.]+\)/, '1)'), // OPACIDAD 1 (sólido)
-          0, // STYLE SÓLIDO (LineStyle.Solid)
-          3, // WIDTH MÁXIMO
+          entry.color.replace(/[\d.]+\)/, '1)'), // OPACIDAD 1 (sÃ³lido)
+          0, // STYLE SÃ“LIDO (LineStyle.Solid)
+          3, // WIDTH MÃXIMO
           entry.isBandFill,
           true,
           "unknown",
@@ -1130,15 +1140,15 @@ export function MainChart({
           return;
         }
         
-        // FORZAR VISIBILIDAD MÁXIMA PARA DEBUG
+        // FORZAR VISIBILIDAD MÃXIMA PARA DEBUG
         pushEntry(
           entry.price,
-          999, // PRIORIDAD MÁXIMA
+          999, // PRIORIDAD MÃXIMA
           entry.label,
           entry.shortLabel,
-          entry.color.replace(/[\d.]+\)/, '1)'), // OPACIDAD 1 (sólido)
-          0, // STYLE SÓLIDO (LineStyle.Solid)
-          3, // WIDTH MÁXIMO
+          entry.color.replace(/[\d.]+\)/, '1)'), // OPACIDAD 1 (sÃ³lido)
+          0, // STYLE SÃ“LIDO (LineStyle.Solid)
+          3, // WIDTH MÃXIMO
           entry.isBandFill,
           true,
           "unknown",
@@ -1151,7 +1161,7 @@ export function MainChart({
 
     const sweepZoneRange = sweepActive ? extractRangeFromText(sweepDetector.sweepTargetZone ?? sweepDetector.target) : null;
     const sweptZoneRange = sweepActive && sweepDetector?.sweptZone && sweepDetector.sweptZone !== "--" ? extractRangeFromText(sweepDetector.sweptZone) : null;
-    const sweepDirArrow = sweepDetector?.sweepDirection === "UP" ? "↑" : sweepDetector?.sweepDirection === "DOWN" ? "↓" : "↕";
+    const sweepDirArrow = sweepDetector?.sweepDirection === "UP" ? "↑" : sweepDetector?.sweepDirection === "DOWN" ? "↓" : "↔";
     const sweepType = sweepDetector?.type;
     const typeShortLabel = sweepType === "CONTINUATION" ? "CONT" : sweepType === "FAILED" ? "FAIL" : sweepType === "ABSORPTION" ? "ABS" : sweepType === "EXHAUSTION" ? "EXH" : sweepType === "SETUP_TWO_SIDED" ? "2S" : "";
 
@@ -1212,578 +1222,37 @@ export function MainChart({
       }
     }
 
-    const heatmapLineWidthCap = sweepActive ? 2 : 4;
+    if (activePanels.has("HEATMAP") && lastCandle && rawOrderBook) {
+      const receivedLevels =
+        (rawOrderBook.bids?.length ?? 0) + (rawOrderBook.asks?.length ?? 0);
+      const majorWalls = extractMajorWallsFromOrderBook(
+        rawOrderBook.bids,
+        rawOrderBook.asks,
+        price,
+      );
+      logHeatmapMajorWallsOnly(receivedLevels, majorWalls);
 
-    if (activePanels.has("HEATMAP")) {
-      // Bookmap-style heatmap rendering with faithful order book levels
-      if (lastCandle && rawOrderBook) {
-        const tracker = bookmapTrackerRef.current;
-        
-        // Feed tracker with exact Binance order book data (no bridge)
-        tracker.updateSnapshot(
-          rawOrderBook.bids,
-          rawOrderBook.asks,
-          rawOrderBook.timestamp
+      for (const wall of majorWalls) {
+        const isBid = wall.side === "bid";
+        const label = `${isBid ? "BID" : "ASK"} WALL ${Math.round(wall.sizeBtc)} BTC`;
+        pushEntry(
+          wall.price,
+          0,
+          label,
+          isBid ? "BID" : "ASK",
+          isBid ? "rgba(34, 197, 94, 0.85)" : "rgba(239, 68, 68, 0.85)",
+          LineStyle.Solid,
+          2,
+          false,
+          true,
+          "oi_wall",
+          "liquidity",
+          wall.sizeBtc,
+          true,
         );
-        
-        // Get tracker output for rendering
-        const trackerOutput = tracker.getTrackerOutput();
-        lastTrackerOutputRef.current = trackerOutput;
-        
-        if (DEBUG_ENABLED && false) { // Explicitly disabled Bookmap analysis debug logs
-          console.debug('[Bookmap Heatmap] Direct Binance order book analysis:', {
-            rawBidLevels: trackerOutput.rawLevels.bids.length,
-            rawAskLevels: trackerOutput.rawLevels.asks.length,
-            persistentBidLevels: trackerOutput.persistentLevels.bids.length,
-            persistentAskLevels: trackerOutput.persistentLevels.asks.length,
-            totalBidSize: trackerOutput.stats.totalBidSize.toFixed(1),
-            totalAskSize: trackerOutput.stats.totalAskSize.toFixed(1),
-            sampleBid: trackerOutput.rawLevels.bids[0] ? `${trackerOutput.rawLevels.bids[0].price}@${trackerOutput.rawLevels.bids[0].size}` : 'none',
-            sampleAsk: trackerOutput.rawLevels.asks[0] ? `${trackerOutput.rawLevels.asks[0].price}@${trackerOutput.rawLevels.asks[0].size}` : 'none'
-          });
-        }
-        
-        // Step 2.3: Dual-layer liquidity system - Local + Structural + Global Walls
-        // Priority: 1) Really large walls (main global 100+), 2) Global 80+, 3) Local near spot (5%), 4) Structural intermediate (5–12%, 15+ BTC), 5) Small clusters filtered out.
-        // Structural tier ensures BID walls 5–12% below spot (e.g. 67k–66k when spot 70k) get labels instead of only “near spot” + “main far”.
-
-        // Clustering configuration
-        const clusterWidth = 10; // 10 USD price buckets
-        const minClusterLiquidity = 5; // Minimum 5 BTC to show as cluster
-        const maxLocalLabelsPerSide = 6; // Local levels max per side (was 4; more bids/asks near spot)
-        const localLabelRangePct = 0.05; // 5% from spot for "local" (was 3%; include more structural near price)
-        const structuralRangeMinPct = 0.05; // Structural tier: 5%–12% from spot (intermediate walls)
-        const structuralRangeMaxPct = 0.12;
-        const structuralMinSizeBtc = 15; // Min 15 BTC for structural label (below global 80)
-        const maxStructuralLabelsPerSide = 3; // Structural intermediate walls per side
-
-        // Global wall configuration
-        const globalWallThreshold = 80; // Minimum 80 BTC for global wall entry
-        const globalWallExitThreshold = 60; // Exit threshold for hysteresis (60 BTC)
-        const maxGlobalLabelsPerSide = 5; // Show more global walls (was 4)
-        const globalClusterWidth = 20; // Wider buckets for global detection
-
-        // MAIN GLOBAL WALL configuration
-        const mainGlobalWallThreshold = 100; // Minimum 100 BTC for MAIN GLOBAL WALLS
-        const mainGlobalWallExitThreshold = 70; // Remove only below 70 BTC for sustained checks
-        const maxMainGlobalLabelsPerSide = 3; // MAIN GLOBAL WALLS max per side (was 2; show 3rd big wall)
-        
-        // Wall visual hierarchy configuration
-        const majorWallThreshold = 150; // TIER 1: Major walls (>= 150 BTC)
-        const secondaryWallThreshold = 80; // TIER 2: Secondary walls (>= 80 BTC)
-        const minWallThreshold = 30; // TIER 3: Minor walls (>= 30 BTC)
-        
-        // Helper function to cluster liquidity levels
-        const clusterLiquidityLevels = (levels: OrderBookLevel[], width: number) => {
-          if (levels.length === 0) return [];
-          
-          // Group levels into price buckets
-          const clusters = new Map<number, {
-            totalSize: number;
-            largestLevel: OrderBookLevel; // Track largest level for label price
-            levels: OrderBookLevel[];
-            persistence: number;
-            bucketAnchor: number; // Add bucket anchor for stable cache identity
-          }>();
-          
-          levels.forEach(level => {
-            // Skip zero-size levels (removed liquidity)
-            if (level.size === 0) return;
-            
-            // Calculate cluster bucket based on price
-            const bucketKey = Math.floor(level.price / width) * width;
-            
-            if (!clusters.has(bucketKey)) {
-              clusters.set(bucketKey, {
-                totalSize: 0,
-                largestLevel: level,
-                levels: [],
-                persistence: 0,
-                bucketAnchor: bucketKey // Store bucket anchor for stable identity
-              });
-            }
-            
-            const cluster = clusters.get(bucketKey)!;
-            cluster.totalSize += level.size;
-            cluster.levels.push(level);
-            cluster.persistence = Math.max(cluster.persistence, level.persistence);
-            
-            // Track the largest level for label price selection
-            if (level.size > cluster.largestLevel.size) {
-              cluster.largestLevel = level;
-            }
-          });
-          
-          // Convert clusters to array
-          const clusteredLevels = Array.from(clusters.values())
-            .map(cluster => ({
-              price: cluster.largestLevel.price, // Use exact price of largest level
-              size: cluster.totalSize, // Total clustered liquidity
-              side: cluster.largestLevel.side,
-              persistence: cluster.persistence,
-              originalLevels: cluster.levels,
-              largestLevel: cluster.largestLevel,
-              bucketAnchor: cluster.bucketAnchor // Include bucket anchor for stable cache identity
-            }));
-          
-          // Sort by size (largest first) for label selection
-          return clusteredLevels.sort((a, b) => b.size - a.size);
-        };
-
-        // Helper function to detect MAIN GLOBAL WALLS (persistent 100+ BTC walls)
-        const detectMainGlobalWalls = (levels: OrderBookLevel[], side: 'BID' | 'ASK') => {
-          const currentTime = Date.now();
-          
-          // Use separate thresholds for BID vs ASK
-          const askEntryThreshold = side === 'ASK' ? 80 : 100;
-          const askExitThreshold = side === 'ASK' ? 60 : 70;
-          
-          // Cluster full book with wider buckets for main global detection
-          const globalClusters = clusterLiquidityLevels(levels, globalClusterWidth);
-          
-          // Filter by MAIN threshold (separate for BID/ASK) and take top walls
-          const detectedMainWalls = globalClusters
-            .filter(cluster => cluster.size >= askEntryThreshold)
-            .slice(0, maxMainGlobalLabelsPerSide);
-          
-          // Update main global walls cache with stable keys
-          detectedMainWalls.forEach(wall => {
-            const stableKey = `${wall.side}_${wall.bucketAnchor}`;
-            
-            if (!mainGlobalWalls.current.has(stableKey)) {
-              // New main global wall - add to persistent cache
-              mainGlobalWalls.current.set(stableKey, {
-                side: wall.side,
-                price: wall.price,
-                size: wall.size,
-                label: `MAIN ${wall.side} ${wall.price.toFixed(0)} · ${wall.size.toFixed(1)} BTC`,
-                detectedAt: currentTime,
-                lastSeen: currentTime,
-                strikes: 0 // Reset strikes for new walls
-              });
-            } else {
-              // Existing main global wall - update tracking
-              const cached = mainGlobalWalls.current.get(stableKey)!;
-              cached.lastSeen = currentTime;
-              
-              // Strike logic: reset strikes if strong, increment if weak
-              if (wall.size >= askExitThreshold) {
-                cached.strikes = 0; // Reset strikes on strong detection
-              } else {
-                cached.strikes = (cached.strikes || 0) + 1; // Add strike on weak detection
-              }
-              
-              // Not seen cycle tracking
-              const wallAge = currentTime - wall.lastSeen;
-              if (wallAge > 5000) {
-                cached.strikes = (cached.strikes || 0) + 1; // Add strike if not seen for >5s
-              }
-            }
-          });
-          
-          // Build final render array for main global walls
-          const finalMainGlobalWallsToRender = new Map<string, any>();
-          
-          // Insert all CURRENT main global walls
-          detectedMainWalls.forEach(wall => {
-            const stableKey = `${wall.side}_${wall.bucketAnchor}`;
-            finalMainGlobalWallsToRender.set(stableKey, wall);
-          });
-          
-          // Insert CACHED main global walls only if not already present
-          mainGlobalWalls.current.forEach((cachedWall, stableKey) => {
-            if (cachedWall.side !== side) return;
-            if (!finalMainGlobalWallsToRender.has(stableKey)) {
-              finalMainGlobalWallsToRender.set(stableKey, cachedWall);
-            }
-          });
-          
-          // Return only final merged main global walls
-          return Array.from(finalMainGlobalWallsToRender.values());
-        };
-        const detectGlobalWalls = (levels: OrderBookLevel[], side: 'BID' | 'ASK') => {
-          const currentTime = Date.now();
-          
-          // Cluster full book with wider buckets for global detection
-          const globalClusters = clusterLiquidityLevels(levels, globalClusterWidth);
-          
-          // Filter by strong threshold and take top walls
-          const detectedWalls = globalClusters
-            .filter(cluster => cluster.size >= globalWallThreshold)
-            .slice(0, maxGlobalLabelsPerSide);
-          
-          // Update active global walls cache with stable keys
-          detectedWalls.forEach(wall => {
-            const stableKey = `${wall.side}_${wall.bucketAnchor}`;
-            
-            if (!activeGlobalWalls.current.has(stableKey)) {
-              // New wall - add to cache with full TTL
-              activeGlobalWalls.current.set(stableKey, {
-                side: wall.side,
-                price: wall.price,
-                size: wall.size,
-                label: `GLOBAL ${wall.side} ${wall.price.toFixed(0)} · ${wall.size.toFixed(1)} BTC`,
-                lastSeen: currentTime,
-                expiresAt: currentTime + GLOBAL_WALL_HOLD_DURATION
-              });
-            } else {
-              // Existing wall - refresh TTL
-              const cached = activeGlobalWalls.current.get(stableKey)!;
-              cached.lastSeen = currentTime;
-              cached.expiresAt = currentTime + GLOBAL_WALL_HOLD_DURATION;
-            }
-          });
-          
-          // Build FINAL render array: current detected walls + cached walls (only if not in current)
-          const finalGlobalWallsToRender = new Map<string, any>();
-          
-          // First, insert all CURRENT detected global walls
-          detectedWalls.forEach(wall => {
-            const stableKey = `${wall.side}_${wall.bucketAnchor}`;
-            finalGlobalWallsToRender.set(stableKey, wall);
-          });
-          
-          // Then, insert CACHED global walls only if stableKey is NOT already present AND side matches
-          activeGlobalWalls.current.forEach((cachedWall, stableKey) => {
-            if (cachedWall.side !== side) return;
-            if (!finalGlobalWallsToRender.has(stableKey)) {
-              finalGlobalWallsToRender.set(stableKey, cachedWall);
-            }
-          });
-          
-          // Return ONLY the final merged array
-          return Array.from(finalGlobalWallsToRender.values());
-        };
-        
-        // Cluster bid and ask levels separately
-        const clusteredBids = clusterLiquidityLevels(trackerOutput.persistentLevels.bids, clusterWidth);
-        const clusteredAsks = clusterLiquidityLevels(trackerOutput.persistentLevels.asks, clusterWidth);
-        
-        // Detect global walls from full order book
-        const globalBidWalls = detectGlobalWalls(trackerOutput.rawLevels.bids, 'BID');
-        const globalAskWalls = detectGlobalWalls(trackerOutput.rawLevels.asks, 'ASK');
-        
-        // Detect MAIN GLOBAL WALLS (persistent 100+ BTC walls)
-        const mainBidWalls = detectMainGlobalWalls(trackerOutput.rawLevels.bids, 'BID');
-        const mainAskWalls = detectMainGlobalWalls(trackerOutput.rawLevels.asks, 'ASK');
-        
-        // A. Background liquidity bands from rawLevels (enhanced visibility)
-        const maxBandOpacity = 0.7; // Increased max opacity for better visibility
-        const minBandOpacity = 0.1; // Increased min opacity for better visibility
-        
-        // Render bid background bands
-        trackerOutput.rawLevels.bids.forEach((level) => {
-          if (Math.abs(level.price - price) > threshold) return;
-          
-          // Intensity based on real BTC size (logarithmic scale for better visibility)
-          const sizeIntensity = Math.log10(Math.max(level.size, 0.01)) / Math.log10(100); // Normalize 0.01-100 BTC range
-          const opacity = minBandOpacity + (sizeIntensity * (maxBandOpacity - minBandOpacity));
-          
-          pushEntry(
-            level.price,
-            8, // Low priority for background bands
-            '', // No label for background bands
-            '', 
-            `rgba(34, 197, 94, ${Math.min(opacity, maxBandOpacity).toFixed(3)})`, // Green for bids
-            LineStyle.Solid,
-            1,
-            true // isBandFill for background rendering
-          );
-        });
-        
-        // Render ask background bands  
-        trackerOutput.rawLevels.asks.forEach((level) => {
-          if (Math.abs(level.price - price) > threshold) return;
-          
-          // Intensity based on real BTC size (logarithmic scale)
-          const sizeIntensity = Math.log10(Math.max(level.size, 0.01)) / Math.log10(100);
-          const opacity = minBandOpacity + (sizeIntensity * (maxBandOpacity - minBandOpacity));
-          
-          pushEntry(
-            level.price,
-            8, // Low priority for background bands
-            '', // No label for background bands
-            '',
-            `rgba(239, 68, 68, ${Math.min(opacity, maxBandOpacity).toFixed(3)})`, // Red for asks
-            LineStyle.Solid,
-            1,
-            true // isBandFill for background rendering
-          );
-        });
-        
-        // B. LOCAL MAIN LEVELS (near current price, within 5%)
-        const renderClusteredLevels = (clusters: any[], side: 'BID' | 'ASK') => {
-          const labelRange = price * localLabelRangePct;
-          const clustersInRange = clusters.filter(cluster =>
-            Math.abs(cluster.price - price) <= labelRange
-          );
-          const meaningfulClusters = clustersInRange.filter(cluster => cluster.size >= 3);
-          const topClusters = meaningfulClusters.slice(0, maxLocalLabelsPerSide);
-
-          topClusters.forEach((cluster) => {
-            const label = `${side} ${cluster.price.toFixed(1)} · ${cluster.size.toFixed(1)} BTC`;
-            const persistenceOpacity = 0.4 + (cluster.persistence * 0.6);
-            const lineWidth = cluster.size >= 20 ? 3 : cluster.size >= 10 ? 2.5 : 2;
-            const baseColor = side === 'BID' ? '34, 197, 94' : '239, 68, 68';
-            pushEntry(
-              cluster.price,
-              2,
-              label,
-              side,
-              `rgba(${baseColor}, ${persistenceOpacity.toFixed(2)})`,
-              LineStyle.Solid,
-              lineWidth
-            );
-          });
-        };
-
-        // B2. STRUCTURAL LEVELS (5%–12% from spot, 15+ BTC; intermediate walls so bids below don’t disappear)
-        const renderStructuralLevels = (clusters: any[], side: 'BID' | 'ASK') => {
-          const minDist = price * structuralRangeMinPct;
-          const maxDist = price * structuralRangeMaxPct;
-          const inStructuralBand = clusters.filter(cluster => {
-            const dist = Math.abs(cluster.price - price);
-            return dist > minDist && dist <= maxDist && cluster.size >= structuralMinSizeBtc && cluster.size < globalWallThreshold;
-          });
-          const topStructural = inStructuralBand.slice(0, maxStructuralLabelsPerSide);
-
-          topStructural.forEach((cluster) => {
-            const label = `${side} ${cluster.price.toFixed(0)} · ${cluster.size.toFixed(1)} BTC`;
-            const opacity = 0.5 + (cluster.persistence * 0.35);
-            const lineWidth = cluster.size >= 30 ? 2.5 : 2;
-            const baseColor = side === 'BID' ? '34, 197, 94' : '239, 68, 68';
-            pushEntry(
-              cluster.price,
-              2,
-              label,
-              side,
-              `rgba(${baseColor}, ${opacity.toFixed(2)})`,
-              LineStyle.Solid,
-              lineWidth
-            );
-          });
-        };
-        
-        // C. GLOBAL MAIN WALLS (exceptional liquidity anywhere in book)
-        const renderGlobalWalls = (globalWalls: any[], side: 'BID' | 'ASK') => {
-          const currentTime = Date.now();
-          
-          globalWalls.forEach((wall) => {
-            // Check if wall should still be displayed (within hold duration)
-            const shouldDisplay = (currentTime - wall.lastSeen) <= GLOBAL_WALL_HOLD_DURATION;
-            
-            if (shouldDisplay) {
-              // Visual properties - make walls stand out clearly
-              const wallOpacity = 0.9; // High opacity for visibility
-              const wallWidth = 4; // Thicker lines for global walls
-              const wallColor = side === 'BID' ? '16, 185, 129' : '220, 38, 127'; // Distinct colors for global walls
-              
-              pushEntry(
-                wall.price,                      // Exact price of largest level in wall
-                1,                                 // High priority for global walls
-                wall.label,                        // Use cached label
-                side,
-                `rgba(${wallColor}, ${wallOpacity})`,  // Distinct colors from local levels
-                LineStyle.Solid,
-                wallWidth
-              );
-              
-              if (DEBUG_ENABLED && false) { // Disabled by default
-                const holdRemaining = Math.max(0, (GLOBAL_WALL_HOLD_DURATION - (currentTime - wall.lastSeen)) / 1000);
-                console.debug(`[Bookmap Global] ${wall.label} - Hold: ${holdRemaining.toFixed(1)}s - Expires: ${((wall.expiresAt - currentTime) / 1000).toFixed(1)}s`);
-              }
-            }
-          });
-        };
-        
-        // D. MAIN GLOBAL WALLS (persistent 100+ BTC walls) with visual hierarchy
-        const renderMainGlobalWalls = (mainGlobalWalls: any[], side: 'BID' | 'ASK') => {
-          mainGlobalWalls.forEach((wall) => {
-            // Determine visual tier based on wall size
-            let lineWidth: number;
-            let opacity: number;
-            let showLabel: boolean;
-            
-            if (wall.size >= majorWallThreshold) {
-              // TIER 1: MAJOR WALLS - keep current opacity (unchanged)
-              lineWidth = 3;
-              opacity = 1.0;
-              showLabel = true;
-            } else if (wall.size >= secondaryWallThreshold) {
-              // TIER 2: SECONDARY WALLS - reduced opacity
-              lineWidth = 2;
-              opacity = 0.7 * 0.65; // Current opacity * 0.65
-              showLabel = Math.abs(wall.price - price) <= price * 0.03; // Show label if near price (<3%)
-            } else if (wall.size >= minWallThreshold) {
-              // TIER 3: MINOR WALLS - heavily reduced opacity
-              lineWidth = 1;
-              opacity = 0.35 * 0.35; // Current opacity * 0.35
-              showLabel = false;
-            } else {
-              return; // Skip walls below minimum threshold
-            }
-            
-            // Apply distance fade for walls farther than 6% from current price
-            const distanceFromPrice = Math.abs(wall.price - price) / price;
-            if (distanceFromPrice > 0.06) {
-              opacity *= 0.6; // Fade distant walls
-            }
-            
-            // EXCEPTION RULE: Always show very large walls (>=250 BTC) with labels
-            if (wall.size >= 250) {
-              showLabel = true; // Force label visibility for very large walls
-              opacity = Math.max(opacity, 0.8); // Ensure minimum visibility
-            }
-            
-            // Additional fade when GAMMA + HEATMAP are both active
-            const gammaAndHeatmapActive = toggles.gamma && toggles.bookmap;
-            if (gammaAndHeatmapActive && wall.size < majorWallThreshold) {
-              if (wall.size >= secondaryWallThreshold) {
-                opacity *= 0.85; // Secondary walls extra fade
-              } else {
-                opacity *= 0.7; // Minor walls extra fade
-              }
-            }
-            
-            const wallColor = side === 'BID' ? '59, 130, 246' : '239, 68, 68';
-            
-            pushEntry(
-              wall.price,
-              0, // Highest priority for main global walls
-              showLabel ? wall.label : '', // Only show label for allowed tiers
-              side,
-              `rgba(${wallColor}, ${opacity})`,
-              LineStyle.Solid,
-              lineWidth
-            );
-          });
-        };
-        
-        // Render clustered bid and ask levels (local near spot)
-        renderClusteredLevels(clusteredBids, 'BID');
-        renderClusteredLevels(clusteredAsks, 'ASK');
-        // Render structural intermediate levels (5%–12% from spot, 15+ BTC)
-        renderStructuralLevels(clusteredBids, 'BID');
-        renderStructuralLevels(clusteredAsks, 'ASK');
-
-        // Render MAIN GLOBAL WALLS (persistent 100+ BTC walls)
-        renderMainGlobalWalls(mainBidWalls, 'BID');
-        renderMainGlobalWalls(mainAskWalls, 'ASK');
-        
-        // Cleanup expired global walls
-        const currentTime = Date.now();
-        const expiredWalls: string[] = [];
-        activeGlobalWalls.current.forEach((wall, key) => {
-          if (currentTime > wall.expiresAt) {
-            expiredWalls.push(key);
-            activeGlobalWalls.current.delete(key);
-          }
-        });
-        
-        // Cleanup expired main global walls (strike-based removal)
-        const expiredMainWalls: string[] = [];
-        mainGlobalWalls.current.forEach((wall, key) => {
-          const wallAge = currentTime - wall.lastSeen;
-          const notSeenCycle = wallAge > 5000; // Consider not seen if > 5s
-          
-          // Strike-based removal logic
-          const shouldRemove = (
-            (wall.strikes >= 5) || // Remove after 5 consecutive weak detections
-            (notSeenCycle && wall.size < mainGlobalWallExitThreshold) // Remove if not seen and weak
-          );
-          
-          if (shouldRemove) {
-            expiredMainWalls.push(key);
-            mainGlobalWalls.current.delete(key);
-          }
-        });
-        
-        if (DEBUG_ENABLED && false) { // Disabled by default
-          if (expiredMainWalls.length > 0) {
-            console.debug(`[Bookmap Main] Cleanup: Removed ${expiredMainWalls.length} main walls (5+ strikes or not seen + weak)`);
-          }
-        }
-      }
-      
-      // Feed order book data to HeatmapCanvas
-      if (rawOrderBook && (window as any).heatmapCanvas && activePanels.has("HEATMAP")) {
-        const heatmapCanvas = (window as any).heatmapCanvas;
-        heatmapCanvas.addFrame(
-          rawOrderBook.timestamp,
-          rawOrderBook.bids,
-          rawOrderBook.asks
-        );
-      }
-      
-      // Legacy background heatmap zones (preserved for non-Bookmap systems)
-      const heatmap = positioning_engines?.liquidityHeatmap;
-      if (heatmap && lastCandle) {
-        console.log("[GammaAccel] liquidityHeatmap payload", {
-          hasLiquidityHeatZones: !!heatmap.liquidityHeatZones,
-          heatZonesCount: heatmap.liquidityHeatZones?.length ?? 0,
-          hasGammaAccelerationZones: !!heatmap.gammaAccelerationZones,
-          gammaAccelZonesCount: heatmap.gammaAccelerationZones?.length ?? 0,
-        });
-        const sampleWithGamma = (heatmap.liquidityHeatZones || []).filter((z: any) => z.gammaWeightedLiquidity != null).slice(0, 3);
-        if (sampleWithGamma.length) {
-          console.log("[GammaHeat] sample liquidityHeatZones with gammaWeightedLiquidity", sampleWithGamma.map((z: any) => ({ priceStart: z.priceStart, priceEnd: z.priceEnd, side: z.side, totalQuantity: z.totalQuantity, gammaWeightedLiquidity: z.gammaWeightedLiquidity })));
-        }
-
-        // Background heatmap zones (preserving existing logic)
-        const confluenceSet = new Set<number>();
-        const binSize = price > 50000 ? 250 : price > 10000 ? 100 : 50;
-        const markConfluence = (lv: number) => { for (let p = lv - binSize; p <= lv + binSize; p += binSize) confluenceSet.add(Math.round(Math.floor(p / binSize) * binSize)); };
-        const MAX_HEATMAP_LEVELS = 6;
-        let heatmapLevelCount = 0;
-
-        const allHeatZones: any[] = heatmap.liquidityHeatZones || [];
-        const bidZones = allHeatZones.filter((z: any) => z.side === "BID" && z.intensity >= 0.1).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 4);
-        const askZones = allHeatZones.filter((z: any) => z.side === "ASK" && z.intensity >= 0.1).sort((a: any, b: any) => b.intensity - a.intensity).slice(0, 4);
-
-        const maxGammaWeighted = allHeatZones.reduce((m: number, z: any) => {
-          const g = z.gammaWeightedLiquidity;
-          return g != null && g > m ? g : m;
-        }, 0);
-
-        const nearThreshold = price * 0.005;
-        const intensityToWidth = (int: number, near: boolean) => Math.min(near ? 2 : (int >= 0.7 ? 2 : 1), heatmapLineWidthCap);
-        const intensityToOpacity = (int: number, near: boolean, zone?: any) => {
-          const base = Math.min(0.5, 0.08 + int * 0.4);
-          let raw = near ? Math.min(0.6, base + 0.1) : base;
-          if (maxGammaWeighted > 0 && zone?.gammaWeightedLiquidity != null) {
-            const gammaBoost = 0.5 + 0.5 * (zone.gammaWeightedLiquidity / maxGammaWeighted);
-            raw = Math.min(0.85, raw * gammaBoost);
-          }
-          return (sweepActive && activePanels.has("SQUEEZE")) ? raw * 0.6 : raw;
-        };
-        const intensityToStyle = (int: number, near: boolean) => (int >= 0.5 || near) ? LineStyle.Solid : LineStyle.Dotted;
-
-        const isInConfluence = (zone: any) => {
-          const bs = price > 50000 ? 250 : price > 10000 ? 100 : 50;
-          const start = Math.round(Math.floor(zone.priceStart / bs) * bs);
-          const mid = Math.round(Math.floor(((zone.priceStart + zone.priceEnd) / 2) / bs) * bs);
-          return confluenceSet.has(start) || confluenceSet.has(mid);
-        };
-
-        bidZones.forEach((zone: any) => {
-          const mid = (zone.priceStart + zone.priceEnd) / 2;
-          if (isInConfluence(zone)) return;
-          const near = Math.abs(mid - price) <= nearThreshold;
-          const opacity = intensityToOpacity(zone.intensity, near, zone);
-          const width = intensityToWidth(zone.intensity, near);
-          pushEntry(mid, 8, `BID ${fmtK(mid)}`, "B", `rgba(34, 197, 94, ${opacity.toFixed(2)})`, intensityToStyle(zone.intensity, near), width);
-        });
-
-        askZones.forEach((zone: any) => {
-          const mid = (zone.priceStart + zone.priceEnd) / 2;
-          if (isInConfluence(zone)) return;
-          const near = Math.abs(mid - price) <= nearThreshold;
-          const opacity = intensityToOpacity(zone.intensity, near, zone);
-          const width = intensityToWidth(zone.intensity, near);
-          pushEntry(mid, 8, `ASK ${fmtK(mid)}`, "A", `rgba(239, 68, 68, ${opacity.toFixed(2)})`, intensityToStyle(zone.intensity, near), width);
-        });
       }
     }
+
 
     const vacuumState = positioning_engines?.liquidityHeatmap?.liquidityVacuum;
 
@@ -1966,7 +1435,7 @@ export function MainChart({
         .sort((a: any, b: any) => (b.oiUsd ?? 0) - (a.oiUsd ?? 0))
         .slice(0, topOiCount);
       for (const s of withUsd) {
-        pushEntry(s.strike, 4, `${fmtK(s.strike)} · ${fmtNotional(s.oiUsd)}`, fmtNotional(s.oiUsd), "rgba(148, 163, 184, 0.5)", LineStyle.Dotted, 1, false, true);
+        pushEntry(s.strike, 4, `${fmtK(s.strike)} Â· ${fmtNotional(s.oiUsd)}`, fmtNotional(s.oiUsd), "rgba(148, 163, 184, 0.5)", LineStyle.Dotted, 1, false, true);
       }
     }
 
@@ -2102,7 +1571,7 @@ export function MainChart({
           void navigator.clipboard?.writeText(String(action.price));
           break;
         case "add_alert":
-          console.info("[Chart] Añadir alerta (stub)", action);
+          console.info("[Chart] AÃ±adir alerta (stub)", action);
           break;
         case "add_drawing":
           window.dispatchEvent(new CustomEvent("gt-set-drawing-tool", { detail: { tool: "horizontalLine" } }));
@@ -2214,6 +1683,25 @@ export function MainChart({
       priceFormat: { type: "price", precision: s.pricePrecision, minMove: 10 ** -s.pricePrecision },
     });
   }, [chartSettings, chartReady]);
+
+  const chartCoordinates = useMemo(
+    () =>
+      buildChartCoordinateHelpers(
+        chartRef,
+        candleSeriesRef,
+        drawingsTimeProjectionRef,
+        chartSize,
+        drawingsViewportVersion
+      ),
+    [chartSize, drawingsViewportVersion]
+  );
+
+  const { measurement, metrics, isDragging: measurementDragging } = useChartMeasurement(
+    chartContainerRef,
+    chartCoordinates,
+    chartCandleTimes,
+    { viewportVersion: drawingsViewportVersion, enabled: chartReady }
+  );
 
   if (baseError) {
     return (
@@ -2413,14 +1901,14 @@ export function MainChart({
               {showUp && (
                 <div className="absolute left-1/2 -translate-x-1/2 z-[5] pointer-events-none flex flex-col items-center gap-0.5" style={{ top: "40%" }}>
                   {[0, 1].map(i => (
-                    <span key={`up-${i}`} className={cn("text-[9px] font-mono leading-none select-none", arrowColor)} style={{ opacity: 0.12 + i * 0.06 }}>▲</span>
+                    <span key={`up-${i}`} className={cn("text-[9px] font-mono leading-none select-none", arrowColor)} style={{ opacity: 0.12 + i * 0.06 }}>â–²</span>
                   ))}
                 </div>
               )}
               {showDown && (
                 <div className="absolute left-1/2 -translate-x-1/2 z-[5] pointer-events-none flex flex-col items-center gap-0.5" style={{ bottom: "30%" }}>
                   {[0, 1].map(i => (
-                    <span key={`dn-${i}`} className={cn("text-[9px] font-mono leading-none select-none", arrowColor)} style={{ opacity: 0.12 + i * 0.06 }}>▼</span>
+                    <span key={`dn-${i}`} className={cn("text-[9px] font-mono leading-none select-none", arrowColor)} style={{ opacity: 0.12 + i * 0.06 }}>â–¼</span>
                   ))}
                 </div>
               )}
@@ -2432,7 +1920,11 @@ export function MainChart({
           style={{ pointerEvents: "auto" }}
           onContextMenu={handleChartContextMenu}
         >
-        <div ref={chartContainerRef} className="absolute inset-0" />
+        <div
+          ref={chartContainerRef}
+          className="absolute inset-0"
+          style={{ cursor: measurementDragging ? "crosshair" : undefined }}
+        />
         {LIVE_CANDLE_CHART_DISABLED && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
         {chartReady && chartSize && (() => {
@@ -2460,222 +1952,29 @@ export function MainChart({
           const tsWidth = chartRef.current?.timeScale().width();
           const timeScaleWidth = (tsWidth != null && tsWidth > 0) ? tsWidth : chartSize.w;
           return (
-          <DrawingsLayer
-            ref={drawingsLayerRef}
-            chartWidth={timeScaleWidth}
-            chartHeight={chartSize.h}
-            symbol="BTCUSDT"
-            timeframe={chartTimeframe}
-            viewportVersion={drawingsViewportVersion}
-            coordinates={{
-              priceToCoordinate: (price: number) => {
-                const series = candleSeriesRef.current;
-                if (!series) return null;
-                try {
-                  const y = series.priceToCoordinate(price);
-                  return typeof y === "number" ? y : null;
-                } catch {
-                  return null;
-                }
-              },
-              timeToCoordinate: (time: number) => {
-                const chart = chartRef.current;
-                if (!chart) return null;
-                try {
-                  const scale = chart.timeScale();
-                  const x = scale.timeToCoordinate(time as UTCTimestamp);
-                  if (typeof x === "number") return x;
-
-                  // Future-space support: map future time to logical index then to x.
-                  const toLogical = (scale as any).timeToLogical as ((t: UTCTimestamp) => number | null) | undefined;
-                  const logicalToCoord = (scale as any).logicalToCoordinate as ((l: number) => number | null) | undefined;
-                  const anchor = drawingsTimeProjectionRef.current;
-                  if (!toLogical || !logicalToCoord || anchor.lastTimeSec == null || !Number.isFinite(time)) {
-                    drawDebug("PROJECT_TIME_TO_X", {
-                      source: "MainChart.timeToCoordinate:null",
-                      viewportVersion: drawingsViewportVersion,
-                      time,
-                    });
-                    return null;
-                  }
-                  const lastLogical = toLogical(anchor.lastTimeSec as UTCTimestamp);
-                  if (typeof lastLogical !== "number") return null;
-                  const dtSec = time - anchor.lastTimeSec;
-                  const logical = lastLogical + dtSec / anchor.barSec;
-                  const projected = logicalToCoord(logical);
-                  if (typeof projected !== "number") return null;
-                  drawDebug("PROJECT_TIME_TO_X", {
-                    source: "MainChart.timeToCoordinate:futureLogical",
-                    viewportVersion: drawingsViewportVersion,
-                    time,
-                    projected,
-                    barSec: anchor.barSec,
-                  });
-                  return projected;
-                } catch {
-                  drawDebug("PROJECT_TIME_TO_X", {
-                    source: "MainChart.timeToCoordinate:error",
-                    viewportVersion: drawingsViewportVersion,
-                    time,
-                  });
-                  return null;
-                }
-              },
-              coordinateToPrice: (y: number) => {
-                const series = candleSeriesRef.current;
-                if (!series) return null;
-                try {
-                  const price = series.coordinateToPrice(y);
-                  return typeof price === "number" ? price : null;
-                } catch {
-                  return null;
-                }
-              },
-              coordinateToTime: (x: number) => {
-                const chart = chartRef.current;
-                if (!chart) return null;
-                try {
-                  const scale = chart.timeScale();
-                  const t = scale.coordinateToTime(x);
-                  if (typeof t === "number") return t;
-
-                  // Future-space support: if no candle at x, recover logical coordinate and project to time.
-                  const toLogical = (scale as any).coordinateToLogical as ((c: number) => number | null) | undefined;
-                  const timeToLogical = (scale as any).timeToLogical as ((tt: UTCTimestamp) => number | null) | undefined;
-                  const anchor = drawingsTimeProjectionRef.current;
-                  const visible = scale.getVisibleLogicalRange();
-                  const lastLogicalFromData = anchor.lastTimeSec != null && timeToLogical
-                    ? timeToLogical(anchor.lastTimeSec as UTCTimestamp)
-                    : null;
-                  if (!toLogical || !timeToLogical || anchor.lastTimeSec == null) {
-                    drawDebug("PROJECT_X_TO_TIME", {
-                      source: "MainChart.coordinateToTime:reject_missing_helpers",
-                      viewportVersion: drawingsViewportVersion,
-                      x,
-                      coordinateToTime: t,
-                      coordinateToLogical: toLogical ? toLogical(x) : null,
-                      visibleLogicalTo: visible?.to ?? null,
-                      lastLogicalFromData,
-                      reason: !toLogical ? "coordinateToLogical missing" : !timeToLogical ? "timeToLogical missing" : "lastTimeSec missing",
-                    });
-                    return null;
-                  }
-                  let logical = toLogical(x);
-                  const lastLogical = timeToLogical(anchor.lastTimeSec as UTCTimestamp);
-                  if (typeof logical !== "number" && visible && chartSize?.w) {
-                    // Fallback only for future input when helper returns null at right edge.
-                    logical = visible.from + (x / chartSize.w) * (visible.to - visible.from);
-                  }
-                  if (typeof logical !== "number" || typeof lastLogical !== "number") {
-                    drawDebug("PROJECT_X_TO_TIME", {
-                      source: "MainChart.coordinateToTime:reject_invalid_logical",
-                      viewportVersion: drawingsViewportVersion,
-                      x,
-                      coordinateToTime: t,
-                      coordinateToLogical: toLogical(x),
-                      visibleLogicalTo: visible?.to ?? null,
-                      lastLogicalFromData,
-                      reason: "logical or lastLogical is null",
-                    });
-                    return null;
-                  }
-                  const dtSec = (logical - lastLogical) * anchor.barSec;
-                  const projected = Math.round(anchor.lastTimeSec + dtSec);
-                  drawDebug("PROJECT_X_TO_TIME", {
-                    source: "MainChart.coordinateToTime:futureLogical",
-                    viewportVersion: drawingsViewportVersion,
-                    x,
-                    coordinateToTime: t,
-                    coordinateToLogical: logical,
-                    visibleLogicalTo: visible?.to ?? null,
-                    lastLogicalFromData,
-                    projected,
-                    barSec: anchor.barSec,
-                    accepted: true,
-                  });
-                  return projected;
-                } catch {
-                  drawDebug("PROJECT_X_TO_TIME", {
-                    source: "MainChart.coordinateToTime:error",
-                    viewportVersion: drawingsViewportVersion,
-                    x,
-                  });
-                  return null;
-                }
-              },
-              coordinateToLogical: (x: number) => {
-                const chart = chartRef.current;
-                if (!chart) return null;
-                try {
-                  const logical = (chart.timeScale() as any).coordinateToLogical?.(x);
-                  return typeof logical === "number" ? logical : null;
-                } catch {
-                  return null;
-                }
-              },
-              getVisibleLogicalRange: () => {
-                const chart = chartRef.current;
-                if (!chart) return null;
-                try {
-                  const r = chart.timeScale().getVisibleLogicalRange();
-                  if (!r) return null;
-                  return { from: r.from, to: r.to };
-                } catch {
-                  return null;
-                }
-              },
-              getLastDataLogical: () => {
-                const chart = chartRef.current;
-                const anchor = drawingsTimeProjectionRef.current;
-                if (!chart || anchor.lastTimeSec == null) return null;
-                try {
-                  const logical = (chart.timeScale() as any).timeToLogical?.(anchor.lastTimeSec as UTCTimestamp);
-                  return typeof logical === "number" ? logical : null;
-                } catch {
-                  return null;
-                }
-              },
-              getLastTimeSec: () => drawingsTimeProjectionRef.current.lastTimeSec,
-              getBarSec: () => drawingsTimeProjectionRef.current.barSec,
-            }}
-          />
+            <>
+              <MeasurementOverlay
+                measurement={measurement}
+                metrics={metrics}
+                chartWidth={timeScaleWidth}
+                chartHeight={chartSize.h}
+                isDragging={measurementDragging}
+              />
+              <DrawingsLayer
+                ref={drawingsLayerRef}
+                chartWidth={timeScaleWidth}
+                chartHeight={chartSize.h}
+                symbol="BTCUSDT"
+                timeframe={chartTimeframe}
+                viewportVersion={drawingsViewportVersion}
+                coordinates={chartCoordinates}
+              />
+            </>
           );
         })()}
         </div>
-        {activePanels.has("HEATMAP") && chartContainerRef.current && (
-          <HeatmapCanvas
-            isActive={activePanels.has("HEATMAP")}
-            chartWidth={chartContainerRef.current.clientWidth}
-            chartHeight={chartContainerRef.current.clientHeight}
-            currentPrice={lastCandle?.close || 0}
-            gammaContext={market != null || levels?.gammaMagnets?.length ? { gammaFlip: gammaOverlaySel.selectedFlipForChart ?? null, gammaMagnets: levels?.gammaMagnets ?? [] } : null}
-            priceToCoordinate={(price: number) => {
-              if (!chartRef.current || !chartContainerRef.current) return null;
-              try {
-                const chart = chartRef.current;
-                const container = chartContainerRef.current;
-                const priceScale = chart.priceScale("right");
-                if (!priceScale) return null;
-                
-                // Get the visible price range
-                const visibleRange = priceScale.getVisibleRange();
-                if (!visibleRange) return null;
-                
-                const { from, to } = visibleRange;
-                const priceRange = to - from;
-                const containerHeight = container.clientHeight;
-                
-                // Calculate y coordinate (inverted because canvas y=0 is top)
-                const priceRatio = (price - from) / priceRange;
-                const y = containerHeight - (priceRatio * containerHeight);
-                
-                return y;
-              } catch (error) {
-                console.warn('Price to coordinate conversion failed:', error);
-                return null;
-              }
-            }}
-          />
+        {activePanels.has("HEATMAP") && (
+          <HeatmapCanvas isActive />
         )}
         <ChartContextMenu
           open={chartContextMenu.open}

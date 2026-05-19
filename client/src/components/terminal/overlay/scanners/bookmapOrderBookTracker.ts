@@ -3,6 +3,7 @@
  * Faithful to real Binance order book levels with persistence tracking
  */
 
+import { selectOrderBookLevelsForHeatmap } from "@/lib/heatmapWallConfig";
 import { 
   OrderBookLevel, 
   OrderBookSnapshot, 
@@ -36,10 +37,10 @@ export class BookmapOrderBookTracker {
     // Update level history and persistence
     this.updateLevelHistory(bids, asks, now);
 
-    // Create current snapshot
+    // Keep all major walls (any depth) + near-touch minors up to maxLevels
     this.lastSnapshot = {
-      bids: bids.slice(0, this.config.filtering.maxLevels),
-      asks: asks.slice(0, this.config.filtering.maxLevels),
+      bids: selectOrderBookLevelsForHeatmap(bids, this.config.filtering.maxLevels),
+      asks: selectOrderBookLevelsForHeatmap(asks, this.config.filtering.maxLevels),
       timestamp: now,
       sequenceId: this.sequenceCounter
     };

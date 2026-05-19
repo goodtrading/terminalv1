@@ -211,7 +211,7 @@ export default function DeribitOptionsBook() {
 const viewMode: OptionsViewMode = "PRO";
 
   // Main data fetching
-  const { data: bookData, isLoading, error } = useQuery<DeribitOptionsBookResponse>({
+  const { data: bookData, isLoading, error, refetch } = useQuery<DeribitOptionsBookResponse>({
     queryKey: ["deribit-options-book", currency, selectedExpiry],
     queryFn: async () => {
       const params = new URLSearchParams({ currency });
@@ -228,6 +228,7 @@ const viewMode: OptionsViewMode = "PRO";
     },
     refetchInterval: CACHE_TTL_MS,
     staleTime: CACHE_TTL_MS,
+    retry: false,
   });
 
   // Get visible instrument names for enrichment (will be added after derivedRows is defined)

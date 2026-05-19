@@ -1,4 +1,4 @@
-import type { PlaybookState } from "./playbookStateMachine";
+﻿import type { PlaybookState } from "./playbookStateMachine";
 import { buildPlaybookStateMachineContext } from "./playbookStateMachine";
 
 export interface Playbook {
@@ -58,9 +58,9 @@ export interface SessionPlaybookContext {
   volSessionLabel: string;
 }
 
-/** ~4.5% — tight session relevance */
+/** ~4.5% ÔÇö tight session relevance */
 const SESSION_TIGHT_PCT = 0.045;
-/** ~8% — extended intraday band */
+/** ~8% ÔÇö extended intraday band */
 const SESSION_EXTENDED_PCT = 0.08;
 /** Gamma flip mention only if within this of spot */
 const FLIP_RELEVANT_PCT = 0.06;
@@ -190,7 +190,7 @@ export function buildStructuralContext(state: any, spot?: number): StructuralPla
   const gammaState =
     (typeof market?.gammaRegime === "string" ? market.gammaRegime : undefined) ??
     (typeof options?.gammaRegime === "string" ? options.gammaRegime : undefined) ??
-    "—";
+    "ÔÇö";
   const gammaFlip =
     (isFiniteNumber(market?.gammaFlip) ? market.gammaFlip : undefined) ??
     (isFiniteNumber(options?.gammaFlip) ? options.gammaFlip : undefined);
@@ -201,8 +201,8 @@ export function buildStructuralContext(state: any, spot?: number): StructuralPla
     gammaState,
     gammaFlip,
     flipSessionRelevant,
-    vannaBias: exposure?.vannaBias ?? "—",
-    charmBias: exposure?.charmBias ?? "—",
+    vannaBias: exposure?.vannaBias ?? "ÔÇö",
+    charmBias: exposure?.charmBias ?? "ÔÇö",
     structuralCallWall: positioning?.callWall ?? options?.callWall,
     structuralPutWall: positioning?.putWall ?? options?.putWall,
   };
@@ -329,7 +329,7 @@ export function buildSessionWaitConditions(sess: SessionPlaybookContext, struct:
   }
 
   if (sess.absorptionZoneLow != null && sess.absorptionZoneHigh != null) {
-    out.push(`Loss of absorption zone ${fmtK(sess.absorptionZoneLow)}–${fmtK(sess.absorptionZoneHigh)}`);
+    out.push(`Loss of absorption zone ${fmtK(sess.absorptionZoneLow)}ÔÇô${fmtK(sess.absorptionZoneHigh)}`);
   } else if (isFiniteNumber(sess.absorptionRef)) {
     out.push(`Loss of hold near absorption ${fmtK(sess.absorptionRef!)}`);
   }
@@ -412,7 +412,7 @@ function sessionTargetLine(sess: SessionPlaybookContext, direction: "UP" | "DOWN
   if (direction === "UP" && isFiniteNumber(sess.sessionPutBelow)) parts.push(`Opposite: put ${fmtK(sess.sessionPutBelow!)}`);
   if (direction === "DOWN" && isFiniteNumber(sess.sessionCallAbove)) parts.push(`Opposite: call ${fmtK(sess.sessionCallAbove!)}`);
   const uniq = [...new Set(parts)];
-  return uniq.slice(0, 4).join(" · ");
+  return uniq.slice(0, 4).join(" ┬À ");
 }
 
 function structuralDeskNote(struct: StructuralPlaybookContext, sess: SessionPlaybookContext): string {
@@ -420,7 +420,7 @@ function structuralDeskNote(struct: StructuralPlaybookContext, sess: SessionPlay
     struct.flipSessionRelevant && isFiniteNumber(struct.gammaFlip)
       ? `Flip ~${fmtK(struct.gammaFlip!)}. `
       : "";
-  return `${flip}${struct.gammaState} · Vanna ${struct.vannaBias} / Charm ${struct.charmBias} · ${sess.volSessionLabel}`.trim();
+  return `${flip}${struct.gammaState} ┬À Vanna ${struct.vannaBias} / Charm ${struct.charmBias} ┬À ${sess.volSessionLabel}`.trim();
 }
 
 function fmtPreZone(label: string, level?: number): string {
@@ -653,13 +653,13 @@ const SESSION_WAIT_LOADING = [
   "Avoid distant structural strikes until price is there",
 ];
 
-/** Always valid — used when terminal state is missing or no setup matches. */
+/** Always valid ÔÇö used when terminal state is missing or no setup matches. */
 export function createDefaultNoTradePlaybook(seed?: number): Playbook {
   return {
     setup: "NO_TRADE",
     confidence: noTradeConfidence(seed),
     bias: "UNCLEAR / TRANSITION",
-    entry: "Wait — session context loading.",
+    entry: "Wait ÔÇö session context loading.",
     target: "N/A",
     invalidation: "Wait for structure",
     whyNoTrade: "Terminal snapshot not yet available.",
@@ -681,12 +681,12 @@ export function createNoTradePlaybookFromContext(state: any): Playbook {
     setup: "NO_TRADE",
     confidence: noTradeConfidence(ts),
     bias: "UNCLEAR / TRANSITION",
-    entry: "No clear entry — wait for session trigger.",
+    entry: "No clear entry ÔÇö wait for session trigger.",
     target: "N/A",
     invalidation: "Wait for confirmed break / reclaim (see wait conditions)",
     whyNoTrade: why,
-    horizon: "This session · next few hours",
-    notes: `${struct.gammaState} · Vanna ${struct.vannaBias} / Charm ${struct.charmBias} · ${sess.volSessionLabel}.${flipNote}`.trim(),
+    horizon: "This session ┬À next few hours",
+    notes: `${struct.gammaState} ┬À Vanna ${struct.vannaBias} / Charm ${struct.charmBias} ┬À ${sess.volSessionLabel}.${flipNote}`.trim(),
     waitFor,
   };
 }
@@ -709,7 +709,7 @@ export function createWaitForBreakPlaybook(state: any): Playbook {
     setup: "WAIT_FOR_BREAK",
     confidence: clamp(40 + (seed != null && Number.isFinite(seed) ? Math.abs(Math.floor(seed)) % 11 : 5), 0, 100),
     bias: "TRANSITION",
-    entry: "Wait — vol expanding; need directional acceptance.",
+    entry: "Wait ÔÇö vol expanding; need directional acceptance.",
     target: "N/A",
     invalidation: "Do not fade until a session level breaks with hold",
     whyNoTrade: "Volatility up but session direction not clean.",
@@ -764,7 +764,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
   const prevOutsideSession =
     prevHadBox && isFiniteNumber(prevSpot) ? prevSpot! > prevHi! || prevSpot! < prevLo! : false;
 
-  const horizon = "This session · next few hours";
+  const horizon = "This session ┬À next few hours";
 
   // If a higher-level state machine says what to do, render that state directly
   // (so the ACTIVE TRADING PLAN switches deterministically).
@@ -837,7 +837,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
         target,
         invalidation,
         horizon,
-        notes: `${structuralDeskNote(struct, sess)} · Fade extremes inside today's band toward pivot/magnet.${flipBrief}`.trim(),
+        notes: `${structuralDeskNote(struct, sess)} ┬À Fade extremes inside today's band toward pivot/magnet.${flipBrief}`.trim(),
       };
     }
 
@@ -856,7 +856,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
         target: sessionTargetLine(sess, "UP"),
         invalidation: `Wrong: close back below ${fmtK(callRef)}`,
         horizon,
-        notes: `${structuralDeskNote(struct, sess)} · Session breakout acceptance; trail to pivot/magnet.${flipBrief}`.trim(),
+        notes: `${structuralDeskNote(struct, sess)} ┬À Session breakout acceptance; trail to pivot/magnet.${flipBrief}`.trim(),
       };
     }
 
@@ -875,7 +875,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
         target: sessionTargetLine(sess, "DOWN"),
         invalidation: `Wrong: close back above ${fmtK(putRef)}`,
         horizon,
-        notes: `${structuralDeskNote(struct, sess)} · Session breakdown acceptance; trail to pivot/magnet.${flipBrief}`.trim(),
+        notes: `${structuralDeskNote(struct, sess)} ┬À Session breakdown acceptance; trail to pivot/magnet.${flipBrief}`.trim(),
       };
     }
 
@@ -889,7 +889,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
 
       const absorptionLevel = getAbsorptionLevel(absorption);
       const entry = isFiniteNumber(absorptionLevel)
-        ? `${isBuy ? "Buy" : "Sell"} near ${fmtK(absorptionLevel)} (absorption · session reversal)`
+        ? `${isBuy ? "Buy" : "Sell"} near ${fmtK(absorptionLevel)} (absorption ┬À session reversal)`
         : `${isBuy ? "Buy" : "Sell"} near active absorption`;
 
       const invalidation = isFiniteNumber(absorptionLevel)
@@ -908,7 +908,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
         target: sessionTargetLine(sess, isBuy ? "UP" : "DOWN"),
         invalidation,
         horizon,
-        notes: `${structuralDeskNote(struct, sess)} · Absorption reversal (rejection ${absorption.rejectionScore ?? "--"}).${flipBrief}`.trim(),
+        notes: `${structuralDeskNote(struct, sess)} ┬À Absorption reversal (rejection ${absorption.rejectionScore ?? "--"}).${flipBrief}`.trim(),
       };
     }
 
@@ -932,7 +932,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
         target: sessionTargetLine(sess, dir),
         invalidation: dir === "UP" ? `Wrong if reclaim fails back below ${fmtK(effHi!)}` : `Wrong if reclaim fails back above ${fmtK(effLo!)}`,
         horizon,
-        notes: `${structuralDeskNote(struct, sess)} · Acceleration risk ${accelHigh ? "HIGH" : "elevated"}; prioritize follow-through over next hours.${flipBrief}`.trim(),
+        notes: `${structuralDeskNote(struct, sess)} ┬À Acceleration risk ${accelHigh ? "HIGH" : "elevated"}; prioritize follow-through over next hours.${flipBrief}`.trim(),
       };
     }
   }
@@ -958,7 +958,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
     }
     const entryWall = isBuy ? sessionLo : sessionHi;
     const entry = isFiniteNumber(entryLevel)
-      ? `${isBuy ? "Buy" : "Sell"} near ${fmtK(entryLevel)} (absorption · session)`
+      ? `${isBuy ? "Buy" : "Sell"} near ${fmtK(entryLevel)} (absorption ┬À session)`
       : `${isBuy ? "Buy" : "Sell"} near active absorption`;
 
     const wrongSideInvalidation = isFiniteNumber(absorptionLevel)
@@ -982,7 +982,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
       target: sessionTargetLine(sess, isBuy ? "UP" : "DOWN"),
       invalidation: wrongSideInvalidation,
       horizon,
-      notes: `${structuralDeskNote(struct, sess)} · Absorption score ${absorption.rejectionScore ?? "—"}.`,
+      notes: `${structuralDeskNote(struct, sess)} ┬À Absorption score ${absorption.rejectionScore ?? "ÔÇö"}.`,
     };
   }
 
@@ -996,8 +996,8 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
     const refHi = sessionHi!;
     const refLo = sessionLo!;
     const entry = attemptedUp
-      ? `Fade / sell toward pivot — failed hold above session call ${fmtK(refHi)}`
-      : `Fade / buy toward pivot — failed hold below session put ${fmtK(refLo)}`;
+      ? `Fade / sell toward pivot ÔÇö failed hold above session call ${fmtK(refHi)}`
+      : `Fade / buy toward pivot ÔÇö failed hold below session put ${fmtK(refLo)}`;
 
     const invalidation = attemptedUp
       ? `Wrong: reclaim above ${fmtK(refHi)} with hold`
@@ -1019,7 +1019,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
       target: sessionTargetLine(sess, attemptedUp ? "DOWN" : "UP"),
       invalidation,
       horizon,
-      notes: `${structuralDeskNote(struct, sess)} · Rejected session break; work back toward range mid.`,
+      notes: `${structuralDeskNote(struct, sess)} ┬À Rejected session break; work back toward range mid.`,
     };
   }
 
@@ -1049,7 +1049,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
       target: sessionTargetLine(sess, "UP"),
       invalidation: `Wrong: close back below ${refK}`,
       horizon,
-      notes: `${structuralDeskNote(struct, sess)} · Next few hours: trail toward session call / magnet.`,
+      notes: `${structuralDeskNote(struct, sess)} ┬À Next few hours: trail toward session call / magnet.`,
     };
   }
 
@@ -1073,7 +1073,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
       target: sessionTargetLine(sess, "DOWN"),
       invalidation: `Wrong: close back above ${refK}`,
       horizon,
-      notes: `${structuralDeskNote(struct, sess)} · Next few hours: trail toward session put / magnet.`,
+      notes: `${structuralDeskNote(struct, sess)} ┬À Next few hours: trail toward session put / magnet.`,
     };
   }
 
@@ -1089,8 +1089,8 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
     isFiniteNumber(spot)
   ) {
     const directionBias = nearSessionLo ? "BULLISH" : "BEARISH";
-    const loBand = `${fmtK(sessionLo! * 0.997)}–${fmtK(sessionLo! * 1.003)}`;
-    const hiBand = `${fmtK(sessionHi! * 0.997)}–${fmtK(sessionHi! * 1.003)}`;
+    const loBand = `${fmtK(sessionLo! * 0.997)}ÔÇô${fmtK(sessionLo! * 1.003)}`;
+    const hiBand = `${fmtK(sessionHi! * 0.997)}ÔÇô${fmtK(sessionHi! * 1.003)}`;
     const buyZone = absorptionNearSession && isFiniteNumber(absorptionLevel) ? fmtK(absorptionLevel) : loBand;
     const entry = nearSessionLo
       ? `Buy / wait: ${buyZone} (session put)\nSell / wait: ${hiBand} (session call)`
@@ -1111,7 +1111,7 @@ export function computePlaybook(currentState: any, prevState?: any, forcedState?
       target: sessionTargetLine(sess, directionBias === "BULLISH" ? "UP" : "DOWN"),
       invalidation: `Wrong: session range breaks (${fmtK(sessionLo!)} / ${fmtK(sessionHi!)}) with acceptance.`,
       horizon,
-      notes: `${structuralDeskNote(struct, sess)} · Fade toward pivot/magnet inside today’s band.`,
+      notes: `${structuralDeskNote(struct, sess)} ┬À Fade toward pivot/magnet inside todayÔÇÖs band.`,
     };
   }
 

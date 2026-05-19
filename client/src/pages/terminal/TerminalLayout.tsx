@@ -8,6 +8,8 @@ import { MarketStructureBar } from "@/components/terminal/MarketStructureBar";
 import { BottomPanel } from "@/components/terminal/BottomPanel";
 import { useEffect, useState } from "react";
 import DeribitOptionsBook from "@/components/options/DeribitOptionsBook";
+import { FlowsPanel } from "@/components/flows/FlowsPanel";
+import { VolatilityEnginePanel } from "@/components/terminal/VolatilityEnginePanel";
 
 export default function TerminalLayout() {
   const [activeScenario, setActiveScenario] = useState<"BASE" | "ALT" | "VOL">("BASE");
@@ -94,14 +96,14 @@ const viewMode: "PRO" = "PRO";
         )}
 
         {activeTab === "FLOWS" && (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-terminal-muted text-sm">Flows panel coming soon...</div>
+          <div className="flex-1 min-h-0 min-w-0 w-full h-full overflow-hidden">
+            <FlowsPanel />
           </div>
         )}
 
         {activeTab === "VOLATILITY" && (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-terminal-muted text-sm">Volatility panel coming soon...</div>
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+            <VolatilityEnginePanel />
           </div>
         )}
 

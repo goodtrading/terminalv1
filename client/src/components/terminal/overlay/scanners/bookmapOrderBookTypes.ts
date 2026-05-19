@@ -77,6 +77,6 @@ export const DEFAULT_BOOKMAP_CONFIG: BookmapConfig = {
   },
   filtering: {
     minSize: 0.01,           // Track levels as small as 0.01 BTC
-    maxLevels: 500           // Store max 500 levels per side
+    maxLevels: 1000          // Match Binance depth; major walls preserved separately
   }
 };
