@@ -1,14 +1,13 @@
 import { cn } from "@/lib/utils";
 
 const PLACEHOLDER_INDICATORS = [
-  "CVD",
-  "Delta",
+  "Gamma Levels",
   "VWAP",
+  "Liquidations",
+  "Open Interest",
+  "Funding",
   "Absorption",
   "Sweeps",
-  "Gamma Levels",
-  "Session VWAP",
-  "Volume Profile",
 ] as const;
 
 export interface IndicatorsPanelProps {
@@ -23,9 +22,14 @@ export function IndicatorsPanel({ onClose }: IndicatorsPanelProps) {
       aria-label="Indicators"
     >
       <div className="sticky top-0 flex items-center justify-between border-b border-cyan-500/20 bg-[#07111c] px-3 py-2">
-        <span className="text-[11px] font-mono font-semibold tracking-wide text-cyan-300/95 uppercase">
-          Indicators
-        </span>
+        <div>
+          <span className="text-[11px] font-mono font-semibold tracking-wide text-cyan-300/95 uppercase block">
+            Indicators
+          </span>
+          <span className="text-[8px] font-mono text-slate-600 uppercase tracking-wider">
+            Bookmap · order flow
+          </span>
+        </div>
         <button
           type="button"
           onClick={onClose}
@@ -35,10 +39,10 @@ export function IndicatorsPanel({ onClose }: IndicatorsPanelProps) {
           ×
         </button>
       </div>
-      <div className="px-3 py-2.5 space-y-2">
-        <p className="text-[9px] font-mono text-slate-500 leading-relaxed">
-          Next phase: indicator engine will connect CVD, delta, absorption and gamma
-          overlays.
+      <div className="px-3 py-3 space-y-3">
+        <p className="text-[9px] font-mono text-slate-500 leading-relaxed border border-slate-800/60 rounded px-2 py-1.5 bg-[#0a121c]/80">
+          Future overlay indicators for Bookmap / order flow context. Coming in a later
+          release.
         </p>
         <ul className="space-y-1">
           {PLACEHOLDER_INDICATORS.map((name) => (

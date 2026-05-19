@@ -10,8 +10,10 @@ import { buildLiveMarketContext } from "./ai/buildLiveMarketContext";
 import { generateAIResponse } from "./lib/openaiClient";
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
-import { getOrderBook, initializeFullDepth } from "./services/orderbookService";
-import { getBookmapEngine } from "./services/bookmapEngine";
+import { initializeFullDepth } from "./services/orderbookService";
+import { initializePerpFullDepth } from "./services/orderbookServicePerp";
+import { getBookmapEngine, logBookmapMarketStateDiagnostics } from "./services/bookmapEngine";
+import { getOrderBookForMarket, parseBookmapMarket } from "./services/orderbookMarketRegistry";
 import { getKrakenOrderBook } from "./kraken-gateway";
 import { liquidityVacuumEngine, VacuumEngineInput } from "./lib/liquidityVacuumEngine";
 import { VacuumValidationTests } from "./lib/vacuumValidationTests";
@@ -35,14 +37,16 @@ const VACUUM_CACHE_TTL_MS = 1500;
 const SCENARIOS_CACHE_TTL_MS = 1500;
 const TERMINAL_STATE_CACHE_TTL_MS = 1500;
 
-// Initialize full depth on server start
+// Initialize full depth on server start (spot = legacy default; perp = futures leg)
 initializeFullDepth().catch(console.error);
+initializePerpFullDepth().catch(console.error);
 
 // NOTE: Tests removed from auto-execution to prevent startup blocking
 // Use /api/vacuum/test and /api/scenarios/test endpoints for manual testing
 
-// Import the service to start the WebSocket connection
+// Start spot + perp depth WebSocket feeds
 import "./services/orderbookService";
+import "./services/orderbookServicePerp";
 import {
   queryBufferedAggTrades,
   subscribeAggTradeBuffer,
@@ -62,6 +66,7 @@ export async function registerRoutes(
   app.get("/api/orderbook/raw", async (req: Request, res: Response) => {
     const source = (req.query.source as string)?.toLowerCase();
     const symbol = (req.query.symbol as string) || "BTCUSDT";
+    const market = parseBookmapMarket(req.query.market);
     try {
       if (source === "kraken") {
         const ob = await getKrakenOrderBook(symbol, 500);
@@ -73,9 +78,9 @@ export async function registerRoutes(
         });
         return;
       }
-      let orderBook = getOrderBook();
-      let exchange = "binance";
-      if (orderBook.bids.length === 0 && orderBook.asks.length === 0) {
+      let orderBook = getOrderBookForMarket(market);
+      let exchange = market === "perp" ? "binance-perp" : "binance";
+      if (orderBook.bids.length === 0 && orderBook.asks.length === 0 && market !== "perp") {
         const ob = await getKrakenOrderBook(symbol, 500);
         orderBook = {
           bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
@@ -89,6 +94,7 @@ export async function registerRoutes(
       }
       res.json({
         exchange,
+        market,
         bids: orderBook.bids.map((level) => [level.price.toString(), level.size.toString()]),
         asks: orderBook.asks.map((level) => [level.price.toString(), level.size.toString()]),
         timestamp: orderBook.timestamp || Date.now(),
@@ -102,6 +108,7 @@ export async function registerRoutes(
   app.get("/api/bookmap/state", async (req: Request, res: Response) => {
     const symbol = ((req.query.symbol as string) || "BTCUSDT").toUpperCase();
     const exchange = ((req.query.exchange as string) || "binance").toLowerCase();
+    const market = parseBookmapMarket(req.query.market);
     const priceRangePct = req.query.priceRangePct
       ? Number(req.query.priceRangePct)
       : undefined;
@@ -112,7 +119,7 @@ export async function registerRoutes(
     const priceMax = req.query.priceMax != null ? Number(req.query.priceMax) : undefined;
 
     try {
-      const engine = getBookmapEngine(symbol, exchange);
+      const engine = getBookmapEngine(symbol, exchange, market);
 
       if (bucketMs != null && Number.isFinite(bucketMs) && bucketMs > 0) {
         engine.setBucketMs(bucketMs);
@@ -126,8 +133,8 @@ export async function registerRoutes(
             asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
             timestamp: ob.timestamp,
           });
-        } else {
-          const orderBook = getOrderBook();
+        } else if (exchange === "binance" || exchange.startsWith("binance")) {
+          const orderBook = getOrderBookForMarket(market);
           if (orderBook.bids.length > 0 || orderBook.asks.length > 0) {
             engine.applySnapshot({
               bids: orderBook.bids,
@@ -148,9 +155,12 @@ export async function registerRoutes(
         includeStale,
       });
 
+      logBookmapMarketStateDiagnostics(symbol, exchange, market);
+
       res.json({
         symbol,
         exchange,
+        market,
         ...state,
       });
     } catch (error: any) {
@@ -458,6 +468,7 @@ export async function registerRoutes(
   app.get("/api/market/agg-trades/stream", (req, res) => {
     const symbolRaw = (req.query.symbol as string) || "BTCUSDT";
     const symbol = symbolRaw.replace(/[^A-Za-z0-9]/g, "").toUpperCase() || "BTCUSDT";
+    const market = parseBookmapMarket(req.query.market);
     const sinceRaw = req.query.since != null ? Number(req.query.since) : NaN;
     const since = Number.isFinite(sinceRaw) ? Math.floor(sinceRaw) : Date.now() - 2_000;
 
@@ -472,12 +483,16 @@ export async function registerRoutes(
     };
     res.write(`event: ready\ndata: {"ok":true}\n\n`);
 
-    const seed = queryBufferedAggTrades(symbol, since, Date.now());
+    const seed = queryBufferedAggTrades(symbol, since, Date.now(), market);
     for (const t of seed) send(t);
 
-    const unsubscribe = subscribeAggTradeBuffer(symbol, (trade) => {
-      send(trade);
-    });
+    const unsubscribe = subscribeAggTradeBuffer(
+      symbol,
+      (trade) => {
+        send(trade);
+      },
+      market,
+    );
 
     const hb = setInterval(() => {
       res.write(`event: ping\ndata: {}\n\n`);

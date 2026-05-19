@@ -1,6 +1,8 @@
 /**
- * Binance WebSocket order book service.
- * Maintains full depth snapshot for Bookmap-style order book tracking.
+ * Binance **spot** WebSocket order book service (legacy default Bookmap feed).
+ * - WS: wss://stream.binance.com:9443/ws/btcusdt@depth
+ * - REST: https://api.binance.com/api/v3/depth
+ * Perpetual feed: `orderbookServicePerp.ts` → `feedBinanceOrderBook(..., "perp")`.
  */
 
 import WebSocket from "ws";
@@ -85,6 +87,7 @@ export async function initializeFullDepth(): Promise<void> {
     feedBinanceOrderBook(
       { bids: snapshot.bids, asks: snapshot.asks, timestamp: snapshot.timestamp },
       "snapshot",
+      "spot",
     );
 
     if (DEBUG_ENABLED) {
@@ -163,6 +166,7 @@ function connect(): void {
         feedBinanceOrderBook(
           { bids: bookmapBids, asks: bookmapAsks, timestamp: ts },
           "delta",
+          "spot",
         );
       }
     } catch (e) {

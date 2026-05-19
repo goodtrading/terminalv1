@@ -23,9 +23,12 @@ export interface HeatmapCell {
   lastUpdateTs: number;
 }
 
+import type { BookmapMarketSource } from "@shared/bookmapMarket";
+
 export interface BookmapState {
   symbol: string;
   exchange: string;
+  market?: BookmapMarketSource;
   bids: BookLevel[];
   asks: BookLevel[];
   heatmapCells: HeatmapCell[];

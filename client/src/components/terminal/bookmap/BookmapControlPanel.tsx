@@ -6,12 +6,15 @@ import {
   type DotScaleMode,
   type HeatmapIntensityMode,
 } from "./bookmapSettings";
+import type { BookmapOperationalConfig } from "./bookmapOperationalConfig";
+import { BookmapOperationalSections } from "./BookmapOperationalSections";
 
 export interface BookmapControlPanelProps {
   settings: BookmapVisualSettings;
   onChange: (next: BookmapVisualSettings) => void;
   onClose: () => void;
   onReset: () => void;
+  operational: BookmapOperationalConfig;
 }
 
 function Section({
@@ -119,6 +122,7 @@ export function BookmapControlPanel({
   onChange,
   onClose,
   onReset,
+  operational,
 }: BookmapControlPanelProps) {
   const set = (patch: Partial<BookmapVisualSettings>) =>
     onChange(patchSettings(settings, patch));
@@ -147,6 +151,8 @@ export function BookmapControlPanel({
       </div>
 
       <div className="px-3 py-2.5">
+        <BookmapOperationalSections op={operational} />
+
         <Section title="Trades / Dots">
           <Row label="Trades enabled">
             <Toggle

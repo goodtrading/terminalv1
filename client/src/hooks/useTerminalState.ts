@@ -23,6 +23,11 @@ export interface TerminalState {
   tickerStatus: "fresh" | "stale" | "unavailable";
   timestamp: number;
   options?: TerminalStateOptionsGammaExtras & Record<string, unknown>;
+  gravityMap?: {
+    status?: string;
+    primaryMagnet?: { price?: number; label?: string; strength?: string } | number | null;
+    summary?: string;
+  } | null;
 }
 
 export function useTerminalState() {

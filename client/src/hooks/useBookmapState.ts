@@ -6,10 +6,15 @@ import {
   BOOKMAP_ENGINE_REFETCH_MS,
 } from "@/lib/bookmapEngineConfig";
 import type { BookmapState } from "@/types/bookmapState";
+import {
+  DEFAULT_BOOKMAP_MARKET,
+  type BookmapMarketSource,
+} from "@shared/bookmapMarket";
 
 export type UseBookmapStateOptions = {
   symbol?: string;
   exchange?: "binance" | "kraken" | string;
+  market?: BookmapMarketSource;
   priceRangePct?: number;
   /** Visible viewport min — requests book depth for DOM across wide ranges. */
   priceMin?: number;
@@ -23,9 +28,11 @@ export type UseBookmapStateOptions = {
 function buildBookmapStateUrl(options: UseBookmapStateOptions): string {
   const symbol = (options.symbol ?? "BTCUSDT").toUpperCase();
   const exchange = (options.exchange ?? "binance").toLowerCase();
+  const market = options.market ?? DEFAULT_BOOKMAP_MARKET;
   const params = new URLSearchParams({
     symbol,
     exchange,
+    market,
     priceRangePct: String(options.priceRangePct ?? BOOKMAP_ENGINE_PRICE_RANGE_PCT),
     bucketMs: String(options.bucketMs ?? BOOKMAP_ENGINE_BUCKET_MS),
     includeStale: options.includeStale !== false ? "true" : "false",
@@ -46,6 +53,7 @@ export function useBookmapState(options: UseBookmapStateOptions = {}) {
   const {
     symbol = "BTCUSDT",
     exchange = "binance",
+    market = DEFAULT_BOOKMAP_MARKET,
     priceRangePct = BOOKMAP_ENGINE_PRICE_RANGE_PCT,
     bucketMs = BOOKMAP_ENGINE_BUCKET_MS,
     minWallSize,
@@ -61,6 +69,7 @@ export function useBookmapState(options: UseBookmapStateOptions = {}) {
         "/api/bookmap/state",
         symbol,
         exchange,
+        market,
         priceRangePct,
         priceMin ?? null,
         priceMax ?? null,
@@ -68,7 +77,7 @@ export function useBookmapState(options: UseBookmapStateOptions = {}) {
         minWallSize ?? null,
         includeStale,
       ] as const,
-    [symbol, exchange, priceRangePct, priceMin, priceMax, bucketMs, minWallSize, includeStale],
+    [symbol, exchange, market, priceRangePct, priceMin, priceMax, bucketMs, minWallSize, includeStale],
   );
 
   const query = useQuery<BookmapState>({
@@ -77,6 +86,7 @@ export function useBookmapState(options: UseBookmapStateOptions = {}) {
       const url = buildBookmapStateUrl({
         symbol,
         exchange,
+        market,
         priceRangePct,
         bucketMs,
         minWallSize,
@@ -104,6 +114,7 @@ export function useBookmapState(options: UseBookmapStateOptions = {}) {
 
   return {
     data: query.data,
+    market,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
     error: query.error,

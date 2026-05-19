@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import DeribitOptionsBook from "@/components/options/DeribitOptionsBook";
 import { FlowsPanel } from "@/components/flows/FlowsPanel";
 import { VolatilityEnginePanel } from "@/components/terminal/VolatilityEnginePanel";
+import { ReportsPanel } from "@/components/reports/ReportsPanel";
 
 export default function TerminalLayout() {
   const [activeScenario, setActiveScenario] = useState<"BASE" | "ALT" | "VOL">("BASE");
@@ -108,9 +109,9 @@ const viewMode: "PRO" = "PRO";
         )}
 
         {activeTab === "REPORTS" && (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-terminal-muted text-sm">Reports panel coming soon...</div>
-          </div>
+          <section className="flex-1 min-h-0 min-w-0 overflow-hidden">
+            <ReportsPanel />
+          </section>
         )}
       </div>
 

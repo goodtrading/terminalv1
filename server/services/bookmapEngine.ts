@@ -1,7 +1,12 @@
 /**
  * Event-sourced order book engine for Bookmap-style heatmap reconstruction.
  * Maintains current depth, time-bucketed liquidity cells, and persistent wall registries.
+ *
+ * Live Binance depth today is wired via `orderbookService` (spot) and `orderbookServicePerp` (perp).
+ * Engines are keyed by exchange + symbol + market so spot and perp never overwrite each other.
  */
+import type { BookmapMarketSource } from "@shared/bookmapMarket";
+import { DEFAULT_BOOKMAP_MARKET } from "@shared/bookmapMarket";
 
 export type BookSide = "bid" | "ask";
 
@@ -121,6 +126,7 @@ export function isPreservedBookLevel(level: BookLevel): boolean {
 export class BookmapEngine {
   readonly symbol: string;
   readonly exchange: string;
+  readonly market: BookmapMarketSource;
 
   private readonly levels = new Map<string, BookLevel>();
   private readonly heatmapCells = new Map<string, HeatmapCell>();
@@ -128,9 +134,10 @@ export class BookmapEngine {
   private lastTimestamp = 0;
   private lastLogAt = 0;
 
-  constructor(symbol: string, exchange: string) {
+  constructor(symbol: string, exchange: string, market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET) {
     this.symbol = symbol.toUpperCase();
     this.exchange = exchange.toLowerCase();
+    this.market = market;
   }
 
   setBucketMs(ms: number): void {
@@ -481,29 +488,56 @@ export class BookmapEngine {
 
 const engines = new Map<string, BookmapEngine>();
 
-function engineKey(symbol: string, exchange: string): string {
-  return `${exchange.toLowerCase()}:${symbol.toUpperCase()}`;
+function engineKey(symbol: string, exchange: string, market: BookmapMarketSource): string {
+  return `${exchange.toLowerCase()}:${symbol.toUpperCase()}:${market}`;
 }
 
-export function getBookmapEngine(symbol: string, exchange: string): BookmapEngine {
-  const key = engineKey(symbol, exchange);
+export function getBookmapEngine(
+  symbol: string,
+  exchange: string,
+  market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
+): BookmapEngine {
+  const key = engineKey(symbol, exchange, market);
   let engine = engines.get(key);
   if (!engine) {
-    engine = new BookmapEngine(symbol, exchange);
+    engine = new BookmapEngine(symbol, exchange, market);
     engines.set(key, engine);
   }
   return engine;
 }
 
-/** Feed Binance order book service updates into the default BTCUSDT engine. */
+/** Feed Binance order book updates into the engine for the given market (spot | perp). */
 export function feedBinanceOrderBook(
   update: BookmapDepthUpdateInput,
   mode: "snapshot" | "delta" = "delta",
+  market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
 ): void {
-  const engine = getBookmapEngine("BTCUSDT", "binance");
+  const engine = getBookmapEngine("BTCUSDT", "binance", market);
   if (mode === "snapshot") {
     engine.applySnapshot(update);
   } else {
     engine.applyDepthUpdate(update);
   }
+}
+
+export function logBookmapMarketStateDiagnostics(
+  symbol: string,
+  exchange: string,
+  market: BookmapMarketSource,
+): void {
+  const engine = getBookmapEngine(symbol, exchange, market);
+  const state = engine.getCurrentState({ includeStale: true });
+  if (process.env.NODE_ENV === "production") return;
+  console.debug("[BOOKMAP_MARKET_STATE]", {
+    market,
+    symbol: engine.symbol,
+    exchange: engine.exchange,
+    bids: state.bids.length,
+    asks: state.asks.length,
+    heatmapCells: state.heatmapCells.length,
+    importantWalls: state.importantWalls.length,
+    structuralWalls: state.structuralWalls.length,
+    majorWalls: state.majorWalls.length,
+    timestamp: state.timestamp,
+  });
 }

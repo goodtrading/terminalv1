@@ -32,7 +32,7 @@ const MAX_BASE_CANDLES = 1200;
 const TF_ORDER: ChartTimeframeId[] = CHART_TIMEFRAMES.map((t) => t.id);
 
 /** Timeframes whose series comes from REST native interval, not client aggregation over `baseCandles`. */
-const NATIVE_REST_SERIES: ChartTimeframeId[] = ["15m"];
+const NATIVE_REST_SERIES: ChartTimeframeId[] = ["1m", "5m", "15m"];
 
 function emptyByTf(): Record<ChartTimeframeId, MarketCandle[]> {
   return Object.fromEntries(CHART_TIMEFRAMES.map((t) => [t.id, []])) as Record<
@@ -113,8 +113,14 @@ export function canDeriveTimeframeFromBase(targetBarSec: number, baseSec: number
 
 function rebuildAllDerived(): void {
   const saved15m = candlesByTimeframe["15m"];
+  const saved1m = candlesByTimeframe["1m"];
+  const saved5m = candlesByTimeframe["5m"];
+  const saved15s = candlesByTimeframe["15s"];
   candlesByTimeframe = emptyByTf();
   candlesByTimeframe["15m"] = saved15m;
+  candlesByTimeframe["1m"] = saved1m;
+  candlesByTimeframe["5m"] = saved5m;
+  candlesByTimeframe["15s"] = saved15s;
   for (const tf of TF_ORDER) {
     if (NATIVE_REST_SERIES.includes(tf)) continue;
     const sec = getChartTimeframeMeta(tf).barSec;
@@ -139,6 +145,14 @@ function applyNative15m(seed: MarketCandle[] | undefined): void {
 /**
  * Replace engine state from REST pack (called after successful React Query fetch).
  */
+/** Apply native GET /api/market/candles series for 1m / 5m / 15m (chart history). */
+export function applyNativeChartCandles(tf: ChartTimeframeId, candles: MarketCandle[]): void {
+  if (!NATIVE_REST_SERIES.includes(tf) || !candles.length) return;
+  candlesByTimeframe[tf] = sortAndDedupeCandlesByTime(candles);
+  lastUpdateTs = Date.now();
+  emitData();
+}
+
 export function hydrateMarketEngine(pack: BtcMarketBasePack): void {
   lastPack = pack;
   baseCandles = sortAndDedupeCandlesByTime(pack.base);

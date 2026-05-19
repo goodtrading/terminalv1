@@ -8,15 +8,18 @@ export type BookmapPriceLadderProps = {
   scale: BookmapPriceScale;
   spot: number | null;
   showPlotBoundsDebug?: boolean;
+  onPriceInteractionStart?: () => void;
 };
 
 export function BookmapPriceLadder({
   scale,
   spot,
   showPlotBoundsDebug = false,
+  onPriceInteractionStart,
 }: BookmapPriceLadderProps) {
   const plotRef = useRef<HTMLDivElement>(null);
   const [plotHeight, setPlotHeight] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
   const dragRef = useRef<{ startY: number } | null>(null);
 
   useEffect(() => {
@@ -40,11 +43,12 @@ export function BookmapPriceLadder({
     (e: WheelEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      onPriceInteractionStart?.();
       const rect = plotRef.current?.getBoundingClientRect();
       if (!rect) return;
       scale.handleWheelZoom(e.clientY, rect.top, e.deltaY);
     },
-    [scale],
+    [scale, onPriceInteractionStart],
   );
 
   useEffect(() => {
@@ -57,14 +61,12 @@ export function BookmapPriceLadder({
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.button !== 0) return;
-      const rect = plotRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const anchor = scale.yToPrice(e.clientY - rect.top);
-      scale.beginScaleDrag(anchor);
+      onPriceInteractionStart?.();
       dragRef.current = { startY: e.clientY };
+      setIsDragging(true);
       e.preventDefault();
     },
-    [scale],
+    [onPriceInteractionStart],
   );
 
   useEffect(() => {
@@ -72,13 +74,13 @@ export function BookmapPriceLadder({
       if (!dragRef.current) return;
       const deltaY = e.clientY - dragRef.current.startY;
       dragRef.current.startY = e.clientY;
-      scale.handleScaleDrag(deltaY);
+      scale.panByPixels(deltaY);
     };
 
     const onUp = () => {
       if (!dragRef.current) return;
       dragRef.current = null;
-      scale.endScaleDrag();
+      setIsDragging(false);
     };
 
     window.addEventListener("mousemove", onMove);
@@ -93,9 +95,10 @@ export function BookmapPriceLadder({
     <div
       ref={plotRef}
       className={cn(
-        "relative min-h-0 h-full shrink-0 overflow-hidden cursor-ns-resize",
-        "bg-[#0c121a]",
+        "relative min-h-0 h-full shrink-0 overflow-hidden bg-[#0c121a]",
+        isDragging ? "cursor-grabbing" : "cursor-grab",
       )}
+      title="Wheel: price zoom · Drag: price pan (optional)"
       onMouseDown={onMouseDown}
     >
       <div className="pointer-events-none absolute top-0 left-0 right-0 z-20 border-b border-slate-700/40 bg-[#0c121a]/98">

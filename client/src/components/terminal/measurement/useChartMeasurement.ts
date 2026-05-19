@@ -10,15 +10,6 @@ import type {
   MeasurementState,
 } from "./measurementTypes";
 
-const DRAG_THRESHOLD_PX = 5;
-
-type PendingDrag = {
-  pointerId: number;
-  startClientX: number;
-  startClientY: number;
-  start: MeasurementPoint;
-};
-
 function projectPoint(
   point: Pick<MeasurementPoint, "price" | "time">,
   coords: ChartMeasurementCoords
@@ -44,14 +35,25 @@ export function useChartMeasurement(
   chartCanvasContainerRef: RefObject<HTMLElement | null>,
   coords: ChartMeasurementCoords,
   candles: readonly { time: number }[],
-  options?: { pipSize?: number; enabled?: boolean; viewportVersion?: number }
+  options?: {
+    pipSize?: number;
+    enabled?: boolean;
+    viewportVersion?: number;
+    timeframeKey?: string;
+  }
 ) {
   const pipSize = options?.pipSize ?? BTCUSDT_PIP_SIZE;
   const enabled = options?.enabled ?? true;
 
   const [measurement, setMeasurement] = useState<MeasurementState | null>(null);
   const measurementRef = useRef<MeasurementState | null>(null);
-  const pendingDragRef = useRef<PendingDrag | null>(null);
+  const isMeasuringRef = useRef(false);
+  const isMeasurementMouseDownRef = useRef(false);
+  const measurementStartRef = useRef<MeasurementPoint | null>(null);
+  const measurementEndRef = useRef<MeasurementPoint | null>(null);
+  const measurementStartedAtRef = useRef(0);
+  const activePointerIdRef = useRef<number | null>(null);
+  const globalListenersAttachedRef = useRef(false);
   const coordsRef = useRef(coords);
   const candlesRef = useRef(candles);
 
@@ -67,9 +69,37 @@ export function useChartMeasurement(
     measurementRef.current = measurement;
   }, [measurement]);
 
-  const clearMeasurement = useCallback(() => {
-    pendingDragRef.current = null;
+  const syncMeasurement = useCallback((start: MeasurementPoint, end: MeasurementPoint) => {
+    measurementStartRef.current = start;
+    measurementEndRef.current = end;
+    const next: MeasurementState = {
+      start,
+      end,
+      isDragging: true,
+      isVisible: true,
+    };
+    measurementRef.current = next;
+    setMeasurement(next);
+  }, []);
+
+  const clearMeasurementOverlay = useCallback((reason?: string) => {
+    const hadMeasurement =
+      isMeasuringRef.current ||
+      isMeasurementMouseDownRef.current ||
+      measurementRef.current != null;
+
+    isMeasuringRef.current = false;
+    isMeasurementMouseDownRef.current = false;
+    activePointerIdRef.current = null;
+    measurementStartRef.current = null;
+    measurementEndRef.current = null;
+    measurementStartedAtRef.current = 0;
+    measurementRef.current = null;
     setMeasurement(null);
+
+    if (import.meta.env.DEV && reason && hadMeasurement) {
+      console.debug("[Measurement] cleared", reason);
+    }
   }, []);
 
   const reprojectMeasurement = useCallback((state: MeasurementState): MeasurementState | null => {
@@ -105,22 +135,81 @@ export function useChartMeasurement(
     const container = chartCanvasContainerRef.current;
     if (!container) return;
 
-    const tryActivateDrag = (e: PointerEvent, pending: PendingDrag): boolean => {
-      const dx = e.clientX - pending.startClientX;
-      const dy = e.clientY - pending.startClientY;
-      if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return false;
+    const detachGlobalMeasurementListeners = () => {
+      if (!globalListenersAttachedRef.current) return;
+      globalListenersAttachedRef.current = false;
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("mouseup", onGlobalMouseUp);
+    };
+
+    const finishMeasurement = (reason: string) => {
+      if (!isMeasuringRef.current || !isMeasurementMouseDownRef.current) return;
+
+      const pointerId = activePointerIdRef.current;
+      if (pointerId != null) {
+        try {
+          container.releasePointerCapture(pointerId);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      isMeasurementMouseDownRef.current = false;
+      clearMeasurementOverlay(reason);
+      detachGlobalMeasurementListeners();
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isMeasuringRef.current || !isMeasurementMouseDownRef.current) return;
+
+      const pointerId = activePointerIdRef.current;
+      if (pointerId != null && e.pointerId !== pointerId) return;
+
+      if ((e.buttons & 1) === 0) {
+        finishMeasurement("pointermove-button-released");
+        return;
+      }
+
+      const start = measurementStartRef.current;
+      if (!start) return;
 
       const { x, y } = getLocalCoords(e.clientX, e.clientY, container);
       const end = resolvePoint(x, y, coordsRef.current);
-      if (!end) return false;
+      if (!end) return;
 
-      setMeasurement({
-        start: pending.start,
-        end,
-        isDragging: true,
-        isVisible: true,
-      });
-      return true;
+      e.preventDefault();
+      syncMeasurement(start, end);
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (!isMeasuringRef.current || !isMeasurementMouseDownRef.current) return;
+
+      const pointerId = activePointerIdRef.current;
+      if (pointerId != null && e.pointerId !== pointerId) return;
+
+      e.preventDefault();
+      finishMeasurement("pointer-up");
+    };
+
+    const onGlobalMouseUp = (e: MouseEvent) => {
+      if (!isMeasuringRef.current || !isMeasurementMouseDownRef.current) return;
+      if (e.button !== 0) return;
+
+      const elapsed = performance.now() - measurementStartedAtRef.current;
+      if (elapsed < 40) return;
+
+      finishMeasurement("global-pointer-up");
+    };
+
+    const attachGlobalMeasurementListeners = () => {
+      if (globalListenersAttachedRef.current) return;
+      globalListenersAttachedRef.current = true;
+      window.addEventListener("pointermove", onPointerMove, { passive: false });
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+      window.addEventListener("mouseup", onGlobalMouseUp);
     };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -128,105 +217,85 @@ export function useChartMeasurement(
       if (!isChartCanvasTarget(e.target)) return;
 
       e.preventDefault();
-
-      if (measurementRef.current?.isVisible) {
-        setMeasurement(null);
-        measurementRef.current = null;
-      }
+      e.stopPropagation();
 
       const { x, y } = getLocalCoords(e.clientX, e.clientY, container);
       const start = resolvePoint(x, y, coordsRef.current);
       if (!start) return;
 
-      pendingDragRef.current = {
-        pointerId: e.pointerId,
-        startClientX: e.clientX,
-        startClientY: e.clientY,
-        start,
-      };
-    };
+      isMeasuringRef.current = true;
+      isMeasurementMouseDownRef.current = true;
+      measurementStartedAtRef.current = performance.now();
+      activePointerIdRef.current = e.pointerId;
 
-    const onPointerMove = (e: PointerEvent) => {
-      const pending = pendingDragRef.current;
+      syncMeasurement(start, start);
 
-      if (!measurementRef.current?.isDragging) {
-        if (!pending || e.pointerId !== pending.pointerId) return;
-        if (!tryActivateDrag(e, pending)) return;
-        e.preventDefault();
-        return;
+      try {
+        container.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
       }
 
-      if (pending && e.pointerId !== pending.pointerId) return;
-
-      e.preventDefault();
-
-      const { x, y } = getLocalCoords(e.clientX, e.clientY, container);
-      const end = resolvePoint(x, y, coordsRef.current);
-      if (!end || !measurementRef.current) return;
-
-      setMeasurement({
-        start: measurementRef.current.start,
-        end,
-        isDragging: true,
-        isVisible: true,
-      });
-    };
-
-    const onPointerUp = (e: PointerEvent) => {
-      const pending = pendingDragRef.current;
-      if (pending && e.pointerId === pending.pointerId) {
-        pendingDragRef.current = null;
-      }
-
-      if (!measurementRef.current?.isDragging) return;
-
-      e.preventDefault();
-
-      const { x, y } = getLocalCoords(e.clientX, e.clientY, container);
-      const end = resolvePoint(x, y, coordsRef.current);
-      if (end && measurementRef.current) {
-        setMeasurement({
-          start: measurementRef.current.start,
-          end,
-          isDragging: false,
-          isVisible: true,
-        });
-      } else {
-        setMeasurement((prev) => (prev ? { ...prev, isDragging: false } : null));
-      }
+      attachGlobalMeasurementListeners();
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") clearMeasurement();
+      if (e.key === "Escape") {
+        detachGlobalMeasurementListeners();
+        clearMeasurementOverlay("escape");
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key !== "Shift") return;
+      if (!isMeasuringRef.current) return;
+      isMeasurementMouseDownRef.current = false;
+      detachGlobalMeasurementListeners();
+      clearMeasurementOverlay("shift-keyup");
+    };
+
+    const onWindowBlur = () => {
+      if (!isMeasuringRef.current) return;
+      detachGlobalMeasurementListeners();
+      clearMeasurementOverlay("window-blur");
     };
 
     container.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("pointermove", onPointerMove, { passive: false });
-    window.addEventListener("pointerup", onPointerUp);
-    window.addEventListener("pointercancel", onPointerUp);
     window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onWindowBlur);
 
     return () => {
       container.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
+      detachGlobalMeasurementListeners();
       window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onWindowBlur);
     };
   }, [
     enabled,
     chartCanvasContainerRef,
     isChartCanvasTarget,
     getLocalCoords,
-    clearMeasurement,
+    clearMeasurementOverlay,
+    syncMeasurement,
   ]);
 
   useEffect(() => {
+    clearMeasurementOverlay("timeframe-change");
+  }, [options?.timeframeKey, clearMeasurementOverlay]);
+
+  useEffect(() => {
     if (options?.viewportVersion == null) return;
-    const current = measurementRef.current;
-    if (!current?.isVisible) return;
-    const projected = reprojectMeasurement(current);
-    if (projected) setMeasurement(projected);
+    if (!isMeasuringRef.current || !measurementRef.current?.isVisible) return;
+
+    const projected = reprojectMeasurement(measurementRef.current);
+    if (projected) {
+      measurementStartRef.current = projected.start;
+      measurementEndRef.current = projected.end;
+      measurementRef.current = projected;
+      setMeasurement(projected);
+    }
   }, [options?.viewportVersion, reprojectMeasurement]);
 
   const metrics =
@@ -241,15 +310,14 @@ export function useChartMeasurement(
         )
       : null;
 
-  const displayMeasurement =
-    measurement?.isVisible
-      ? reprojectMeasurement(measurement) ?? measurement
-      : null;
+  const displayMeasurement = measurement?.isVisible
+    ? reprojectMeasurement(measurement) ?? measurement
+    : null;
 
   return {
     measurement: displayMeasurement,
-    metrics,
+    metrics: displayMeasurement ? metrics : null,
     isDragging: measurement?.isDragging ?? false,
-    clearMeasurement,
+    clearMeasurement: clearMeasurementOverlay,
   };
 }

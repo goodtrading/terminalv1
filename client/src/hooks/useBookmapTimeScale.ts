@@ -158,6 +158,45 @@ export function useBookmapTimeScale({
     [enabled, plotWidth, viewport.visibleEndTime, viewport.visibleStartTime, panTime],
   );
 
+  const zoomTimeAt = useCallback(
+    (plotX: number, factor: number) => {
+      if (!enabled || !Number.isFinite(factor) || factor <= 0) return;
+      const innerW = Math.max(
+        1,
+        plotWidth - HEATMAP_PAD.left - HEATMAP_PAD.right,
+      );
+      const plotLeft = HEATMAP_PAD.left;
+      const clampedFactor = Math.max(0.35, Math.min(3, factor));
+
+      setFollowLive(false);
+      setManualWindow((prev) => {
+        const base = prev ?? liveWindow;
+        const span = Math.max(1, base.visibleEndTime - base.visibleStartTime);
+        const dataSpan = Math.max(1, dataEndTime - dataStartTime);
+        const minSpan = 60_000;
+        const maxSpan = Math.max(minSpan, dataSpan * 4);
+        const newSpan = Math.max(
+          minSpan,
+          Math.min(maxSpan, span * clampedFactor),
+        );
+
+        const clampedX = Math.max(plotLeft, Math.min(plotLeft + innerW, plotX));
+        const anchorFrac = (clampedX - plotLeft) / innerW;
+        const anchorTime = base.visibleStartTime + anchorFrac * span;
+        const anchorRatio = (anchorTime - base.visibleStartTime) / span;
+        const newStart = anchorTime - anchorRatio * newSpan;
+        const newEnd = newStart + newSpan;
+
+        return {
+          visibleStartTime: newStart,
+          visibleEndTime: newEnd,
+          liveEdgeTime: newEnd,
+        };
+      });
+    },
+    [enabled, plotWidth, liveWindow, dataStartTime, dataEndTime],
+  );
+
   const resetTimeView = useCallback(() => {
     setManualWindow(null);
     setFollowLive(true);
@@ -181,6 +220,7 @@ export function useBookmapTimeScale({
     xToTime: timeMappers.xToTime,
     panTime,
     panByPixels,
+    zoomTimeAt,
     resetTimeView,
     setFollowLiveEnabled,
   };

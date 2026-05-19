@@ -14,6 +14,10 @@ import {
   TRADE_BUFFER_MS,
   TRADE_INGEST_FLOOR_BTC,
 } from "@/components/flows/tradeBubbleUtils";
+import {
+  DEFAULT_BOOKMAP_MARKET,
+  type BookmapMarketSource,
+} from "@shared/bookmapMarket";
 
 type RawBookResponse = {
   bids: unknown[];
@@ -51,7 +55,11 @@ function ingestTrade(
   onUpdate(tradesRef.current.length, receivedRef.count);
 }
 
-export function useLiquidityHeatmapFeed(symbol = "BTCUSDT", enabled = true) {
+export function useLiquidityHeatmapFeed(
+  symbol = "BTCUSDT",
+  enabled = true,
+  market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
+) {
   const snapshotsRef = useRef<LiquiditySnapshot[]>([]);
   const [snapshotCount, setSnapshotCount] = useState(0);
   const [feedStatus, setFeedStatus] = useState<
@@ -113,7 +121,7 @@ export function useLiquidityHeatmapFeed(symbol = "BTCUSDT", enabled = true) {
     if (!enabled) return;
 
     let cancelled = false;
-    const endpoint = `/api/orderbook/raw?symbol=${encodeURIComponent(symbol)}`;
+    const endpoint = `/api/orderbook/raw?symbol=${encodeURIComponent(symbol)}&market=${market}`;
 
     const poll = async () => {
       try {
@@ -185,7 +193,7 @@ export function useLiquidityHeatmapFeed(symbol = "BTCUSDT", enabled = true) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [enabled, symbol, pushSnapshot]);
+  }, [enabled, symbol, market, pushSnapshot]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -212,6 +220,7 @@ export function useLiquidityHeatmapFeed(symbol = "BTCUSDT", enabled = true) {
       try {
         const params = new URLSearchParams({
           symbol,
+          market,
           startTime: String(startMs),
           endTime: String(endMs),
           limit: "2000",
@@ -243,6 +252,7 @@ export function useLiquidityHeatmapFeed(symbol = "BTCUSDT", enabled = true) {
 
       const params = new URLSearchParams({
         symbol,
+        market,
         since: String(Date.now() - 5_000),
       });
       es = new EventSource(`/api/market/agg-trades/stream?${params}`);
@@ -280,7 +290,7 @@ export function useLiquidityHeatmapFeed(symbol = "BTCUSDT", enabled = true) {
       es?.close();
       setTradesStreamConnected(false);
     };
-  }, [enabled, symbol, bumpTradeStats]);
+  }, [enabled, symbol, market, bumpTradeStats]);
 
   const getRecentTrades = useCallback(() => tradesRef.current, []);
 
@@ -296,5 +306,6 @@ export function useLiquidityHeatmapFeed(symbol = "BTCUSDT", enabled = true) {
     tradeBufferCount,
     receivedTradeCount,
     tradesStreamConnected,
+    market,
   };
 }

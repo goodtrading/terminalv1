@@ -45,6 +45,14 @@ function normalizeCandle(input: unknown): MarketCandle | null {
   return { time, open, high, low, close, volume };
 }
 
+export async function fetchMarketCandles(
+  symbol: string,
+  interval: string,
+  limit?: number,
+): Promise<MarketCandle[]> {
+  return fetchNormalized(buildMarketCandlesUrl(symbol, interval, limit));
+}
+
 async function fetchNormalized(url: string): Promise<MarketCandle[]> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Candles fetch failed: ${res.status}`);

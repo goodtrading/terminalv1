@@ -5,8 +5,11 @@ import { ChartTimeframeSelector } from "./chart/ChartTimeframeSelector";
 import { useChartContextMenu } from "./chart/useChartContextMenu";
 import type { ChartTimeframeId } from "@/lib/chartTimeframes";
 import { getChartTimeframeMeta } from "@/lib/chartTimeframes";
+import { getCandleLimitForTimeframe } from "@shared/candleLimits";
+import { fetchMarketCandles } from "@/lib/btcMarketBaseFetch";
 import {
   applyMarketTicker,
+  applyNativeChartCandles,
   fetchAndShapeBtcBasePack,
   getCandlesSliceForTimeframe,
   getChartTimeframe,
@@ -222,6 +225,12 @@ export function MainChart({
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const chartContextMenu = useChartContextMenu({ closeDeps: [] });
 
+  const chartTfMeta = getChartTimeframeMeta(chartTimeframe);
+  const chartApiInterval = chartTfMeta.apiInterval;
+  const chartCandleLimit = getCandleLimitForTimeframe(chartApiInterval);
+  const usesNativeChartHistory =
+    chartTimeframe === "1m" || chartTimeframe === "5m";
+
   const {
     data: basePack,
     error: baseError,
@@ -233,11 +242,25 @@ export function MainChart({
     staleTime: 45_000,
   });
 
+  const { data: nativeChartCandles } = useQuery({
+    queryKey: ["market-candles", "BTCUSDT", chartApiInterval, chartCandleLimit],
+    queryFn: () => fetchMarketCandles("BTCUSDT", chartApiInterval, chartCandleLimit),
+    enabled: usesNativeChartHistory,
+    refetchInterval: 60_000,
+    staleTime: 45_000,
+  });
+
   useEffect(() => {
     if (!basePack?.base?.length) return;
     chartFullResyncRef.current = true;
     hydrateMarketEngine(basePack);
   }, [basePack]);
+
+  useEffect(() => {
+    if (!usesNativeChartHistory || !nativeChartCandles?.length) return;
+    chartFullResyncRef.current = true;
+    applyNativeChartCandles(chartTimeframe, nativeChartCandles);
+  }, [nativeChartCandles, chartTimeframe, usesNativeChartHistory]);
 
   const { data: ticker, error: tickerError } = useQuery({
     queryKey: ["btc-ticker"],
@@ -1700,7 +1723,11 @@ export function MainChart({
     chartContainerRef,
     chartCoordinates,
     chartCandleTimes,
-    { viewportVersion: drawingsViewportVersion, enabled: chartReady }
+    {
+      viewportVersion: drawingsViewportVersion,
+      timeframeKey: chartTimeframe,
+      enabled: chartReady,
+    }
   );
 
   if (baseError) {

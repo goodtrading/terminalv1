@@ -8,9 +8,9 @@ export function getCandleLimitForTimeframe(tf: string): number {
     case "15s":
       return 200;
     case "1m":
-      return 180;
+      return 200;
     case "5m":
-      return 160;
+      return 200;
     case "15m":
       return 140;
     case "1s":

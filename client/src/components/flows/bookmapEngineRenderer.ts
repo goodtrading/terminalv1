@@ -11,6 +11,7 @@ import {
   getWallLabelColor,
   getWallLabelText,
 } from "@/lib/bookmapBandColors";
+import { getBookmapPerpOverlayFill } from "@/lib/bookmapPerpOverlayColors";
 import {
   HEATMAP_PAD,
   renderCrosshair,
@@ -45,6 +46,9 @@ export type BookmapEngineFrameParams = {
   tradeDotVerticalMode?: VerticalCompressionMode;
   tradeDotVisual?: TradeDotVisualContext;
   visualSettings?: BookmapVisualSettings;
+  /** Perp ghost layer in Both mode (drawn after primary bands). */
+  overlayEngine?: PreparedEngineRenderData;
+  overlayOpacity?: number;
 };
 
 type EnginePlotMetrics = {
@@ -164,6 +168,8 @@ function renderHeatmapBands(
   dataEndTime: number,
   projectionEndTime: number,
   visualSettings?: BookmapVisualSettings,
+  mode: "primary" | "perp-overlay" = "primary",
+  overlayOpacityMul = 1,
 ) {
   const { priceToY, timeToX, priceStep } = metrics;
 
@@ -171,13 +177,15 @@ function renderHeatmapBands(
     (a, b) => (a.visualIntensity ?? a.intensity) - (b.visualIntensity ?? b.intensity),
   );
 
-  const heatmapOpacity = visualSettings?.heatmap.opacity ?? 1;
-  const heatmapContrast = visualSettings?.heatmap.contrast ?? 1;
+  const heatmapOpacity =
+    mode === "perp-overlay" ? 1 : (visualSettings?.heatmap.opacity ?? 1);
+  const heatmapContrast = mode === "perp-overlay" ? 1 : (visualSettings?.heatmap.contrast ?? 1);
+  const viFloor = mode === "perp-overlay" ? 0.02 : 0.04;
 
   for (const band of sorted) {
     let vi = band.visualIntensity ?? band.intensity;
     vi = Math.max(0, Math.min(1, (vi - 0.5) * heatmapContrast + 0.5));
-    if (vi < 0.04) continue;
+    if (vi < viFloor) continue;
 
     const endTime = resolveBandEndTime(band, dataEndTime, projectionEndTime);
     const x0 = timeToX(band.startTime);
@@ -189,14 +197,19 @@ function renderHeatmapBands(
     if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
 
     const drawBand = { ...band, visualIntensity: vi, intensity: vi };
-    ctx.fillStyle = getBookmapBandFill(drawBand, heatmapOpacity);
+    ctx.fillStyle =
+      mode === "perp-overlay"
+        ? getBookmapPerpOverlayFill(drawBand, overlayOpacityMul)
+        : getBookmapBandFill(drawBand, heatmapOpacity);
     ctx.fillRect(x0, yTop, w, height);
 
-    const stroke = getBookmapBandStroke(drawBand);
-    if (stroke && w > 3 && vi >= 0.55) {
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = vi >= 0.85 ? 1.1 : 0.65;
-      ctx.strokeRect(x0, yTop, w, height);
+    if (mode === "primary") {
+      const stroke = getBookmapBandStroke(drawBand);
+      if (stroke && w > 3 && vi >= 0.55) {
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = vi >= 0.85 ? 1.1 : 0.65;
+        ctx.strokeRect(x0, yTop, w, height);
+      }
     }
   }
 }
@@ -313,7 +326,20 @@ export function paintBookmapEngineHeatmapFrame(
       timeViewport.dataEndTime,
       timeViewport.liveEdgeTime,
       params.visualSettings,
+      "primary",
     );
+    if (params.overlayEngine && params.overlayEngine.bands.length > 0) {
+      renderHeatmapBands(
+        ctx,
+        metrics,
+        params.overlayEngine.bands,
+        timeViewport.dataEndTime,
+        timeViewport.liveEdgeTime,
+        params.visualSettings,
+        "perp-overlay",
+        params.overlayOpacity ?? 0.35,
+      );
+    }
     renderWallLabels(ctx, metrics, engine.bands);
   }
 

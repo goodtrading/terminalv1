@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { useBookmapState } from "@/hooks/useBookmapState";
+import { useBookmapCanvasInteraction } from "@/hooks/useBookmapCanvasInteraction";
+import { useBookmapCompositeState } from "@/hooks/useBookmapCompositeState";
 import { useBookmapPriceScale } from "@/hooks/useBookmapPriceScale";
 import { useBookmapTimeScale } from "@/hooks/useBookmapTimeScale";
+import { formatBookmapTimeSpanMs } from "@/lib/bookmapInteractionUtils";
 import { useLiquidityHeatmapFeed } from "@/hooks/useLiquidityHeatmapFeed";
 import {
   BOOKMAP_ENGINE_PRICE_RANGE_PCT,
@@ -21,6 +23,8 @@ import {
   prepareEngineRenderData,
 } from "./bookmapEnginePrepare";
 import type { BookmapState } from "@/types/bookmapState";
+import type { BookmapMarketSource } from "@shared/bookmapMarket";
+import { PERP_OVERLAY_OPACITY_OPTIONS } from "@shared/bookmapSourceMode";
 import { paintBookmapHeatmapFrame } from "./bookmapHeatmapRenderer";
 import { BookmapDomPanel } from "./BookmapDomPanel";
 import { bookLevelsToDomWallEntries } from "./domLadderUtils";
@@ -29,7 +33,6 @@ import { BookmapCvdGauge } from "./BookmapCvdGauge";
 import { DeltaVolumeMatrixPanel } from "./DeltaVolumeMatrixPanel";
 import { formatBtcCompact } from "./bookmapTradeAggregation";
 import {
-  LOCAL_RANGE_USD_OPTIONS,
   RIGHT_SPACE_PCT_OPTIONS,
   type LocalRangeUsd,
   type RightSpacePct,
@@ -70,7 +73,14 @@ import {
   prepareTradeBubblesForRender,
 } from "./tradeBubbleUtils";
 import { BookmapControlPanel } from "@/components/terminal/bookmap/BookmapControlPanel";
+import type { BookmapOperationalConfig } from "@/components/terminal/bookmap/bookmapOperationalConfig";
 import { IndicatorsPanel } from "@/components/terminal/bookmap/IndicatorsPanel";
+import {
+  BookmapSegmentGroup,
+  BookmapToggleButton,
+  BookmapToolbarDivider,
+  bookmapToolbarBtnClass,
+} from "@/components/terminal/bookmap/BookmapToolbarSegments";
 import { useBookmapVisualSettings } from "@/components/terminal/bookmap/useBookmapVisualSettings";
 import { mergeBookmapVisualSettings } from "@/components/terminal/bookmap/bookmapSettings";
 import type { TradeDotVisualContext } from "./bookmapEngineTradeDots";
@@ -118,7 +128,6 @@ export function LiquidityHeatmapPanel({
   const [crosshair, setCrosshair] = useState<{ x: number; y: number; price: number } | null>(
     null,
   );
-  const [isPanning, setIsPanning] = useState(false);
   const [heatmapPlotHeight, setHeatmapPlotHeight] = useState(0);
   const [heatmapPlotWidth, setHeatmapPlotWidth] = useState(0);
 
@@ -126,17 +135,52 @@ export function LiquidityHeatmapPanel({
   const heatmapContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [bookmapBodyWidth, setBookmapBodyWidth] = useState(0);
-  const panRef = useRef<{
-    startY: number;
-    startX?: number;
-    mode: "price" | "time";
-  } | null>(null);
   const domResizeRef = useRef<{ startX: number; startW: number } | null>(null);
   const volResizeRef = useRef<{ startY: number; startH: number } | null>(null);
   const wallsTrackerRef = useRef(new PersistentWallsTracker());
   const [wallRevision, setWallRevision] = useState(0);
   const tradeRxSampleRef = useRef({ atMs: Date.now(), received: 0 });
   const [tradeRxPerSec, setTradeRxPerSec] = useState<number | null>(null);
+
+  const [engineFetchBounds, setEngineFetchBounds] = useState<{
+    priceMin?: number;
+    priceMax?: number;
+    priceRangePct: number;
+  }>({ priceRangePct: BOOKMAP_ENGINE_PRICE_RANGE_PCT });
+
+  const composite = useBookmapCompositeState({
+    symbol,
+    exchange: "binance",
+    enabled: USE_BOOKMAP_ENGINE,
+    includeStale: true,
+    priceRangePct: engineFetchBounds.priceRangePct,
+    priceMin: engineFetchBounds.priceMin,
+    priceMax: engineFetchBounds.priceMax,
+  });
+
+  const {
+    sourceMode,
+    setSourceMode,
+    domSource,
+    setDomSource,
+    tradeSource,
+    setTradeSource,
+    perpOverlayOpacityPct,
+    setPerpOverlayOpacityPct,
+    perpOverlayOpacity,
+    activeDomMarket,
+    activeTradeMarket,
+    effectiveSpot,
+    effectivePerp,
+    primaryHeatmapState,
+    overlayHeatmapState,
+    effectiveDomState,
+    waitingMarkets,
+    hasRenderableHeatmap,
+    usingCachedPrimary,
+    primaryQuery,
+    everLoadedByMarket,
+  } = composite;
 
   const {
     getSnapshots,
@@ -150,76 +194,32 @@ export function LiquidityHeatmapPanel({
     tradeBufferCount,
     receivedTradeCount,
     tradesStreamConnected,
-  } = useLiquidityHeatmapFeed(symbol, true);
+  } = useLiquidityHeatmapFeed(symbol, true, activeTradeMarket);
 
-  const [engineFetchBounds, setEngineFetchBounds] = useState<{
-    priceMin?: number;
-    priceMax?: number;
-    priceRangePct: number;
-  }>({ priceRangePct: BOOKMAP_ENGINE_PRICE_RANGE_PCT });
+  const bookmapEngineLoading = primaryQuery.isLoading;
+  const bookmapEngineFetching = primaryQuery.isFetching;
+  const bookmapEngineError = primaryQuery.error;
+  const bookmapAgeMs = primaryQuery.ageMs;
+  const bookmapDataUpdatedAt = primaryQuery.dataUpdatedAt;
 
-  const lastGoodBookmapStateRef = useRef<BookmapState | null>(null);
-  const engineEverLoadedRef = useRef(false);
+  const useEngineRenderer = Boolean(USE_BOOKMAP_ENGINE && hasRenderableHeatmap);
 
-  const {
-    data: bookmapEngineState,
-    isLoading: bookmapEngineLoading,
-    isFetching: bookmapEngineFetching,
-    error: bookmapEngineError,
-    ageMs: bookmapAgeMs,
-    dataUpdatedAt: bookmapDataUpdatedAt,
-  } = useBookmapState({
-    symbol,
-    exchange: "binance",
-    enabled: USE_BOOKMAP_ENGINE,
-    includeStale: true,
-    priceRangePct: engineFetchBounds.priceRangePct,
-    priceMin: engineFetchBounds.priceMin,
-    priceMax: engineFetchBounds.priceMax,
-  });
-
-  const effectiveBookmapState = useMemo(() => {
-    if (bookmapEngineState && bookmapEngineState.heatmapCells.length > 0) {
-      lastGoodBookmapStateRef.current = bookmapEngineState;
-      engineEverLoadedRef.current = true;
-      return bookmapEngineState;
-    }
-    return lastGoodBookmapStateRef.current;
-  }, [bookmapEngineState]);
-
-  const useEngineRenderer = Boolean(
-    USE_BOOKMAP_ENGINE &&
-      effectiveBookmapState != null &&
-      effectiveBookmapState.heatmapCells.length > 0,
-  );
-
-  const usingCachedBookmapState = Boolean(
-    useEngineRenderer &&
-      effectiveBookmapState &&
-      bookmapEngineState !== effectiveBookmapState,
-  );
+  const usingCachedBookmapState = usingCachedPrimary;
 
   const exchange = useEngineRenderer
-    ? effectiveBookmapState!.exchange
+    ? primaryHeatmapState?.exchange ?? feedExchange
     : feedExchange;
 
   useEffect(() => {
-    if (!import.meta.env.DEV || !bookmapEngineState) return;
-    const bids = bookmapEngineState.bids;
-    const asks = bookmapEngineState.asks;
+    if (!import.meta.env.DEV || !primaryHeatmapState) return;
     console.debug("[BOOKMAP_STATE_LEVELS]", {
-      bids: bids.length,
-      asks: asks.length,
-      staleBids: bids.filter((x) => x.stale).length,
-      staleAsks: asks.filter((x) => x.stale).length,
-      maxSeenBids: bids.filter((x) => x.maxSeenSize > 0).length,
-      maxSeenAsks: asks.filter((x) => x.maxSeenSize > 0).length,
-      importantWalls: bookmapEngineState.importantWalls.length,
-      structuralWalls: bookmapEngineState.structuralWalls.length,
-      majorWalls: bookmapEngineState.majorWalls.length,
-      heatmapCells: bookmapEngineState.heatmapCells.length,
+      sourceMode,
+      spotCells: effectiveSpot?.heatmapCells.length ?? 0,
+      perpCells: effectivePerp?.heatmapCells.length ?? 0,
+      domSource: activeDomMarket,
+      tradeSource: activeTradeMarket,
     });
-  }, [bookmapEngineState]);
+  }, [sourceMode, primaryHeatmapState, effectiveSpot, effectivePerp, activeDomMarket, activeTradeMarket]);
 
   const tickerSpot = spotProp ?? spotFeed ?? null;
   /** Ticker last; UI/debug may use `priceReference` when ticker is late. */
@@ -229,13 +229,13 @@ export function LiquidityHeatmapPanel({
   const latestLegacy = snapshots[snapshots.length - 1];
 
   const latest = useMemo(() => {
-    if (!useEngineRenderer || !effectiveBookmapState) return latestLegacy;
+    if (!useEngineRenderer || !effectiveDomState) return latestLegacy;
     return bookLevelsToDomSnapshot(
-      effectiveBookmapState.bids,
-      effectiveBookmapState.asks,
-      effectiveBookmapState.timestamp,
+      effectiveDomState.bids,
+      effectiveDomState.asks,
+      effectiveDomState.timestamp,
     );
-  }, [useEngineRenderer, effectiveBookmapState, latestLegacy]);
+  }, [useEngineRenderer, effectiveDomState, latestLegacy]);
 
   const trades = getRecentTrades();
 
@@ -268,18 +268,18 @@ export function LiquidityHeatmapPanel({
   }, [tickerSpot, bookMid]);
 
   const engineWalls = useMemo(() => {
-    if (!effectiveBookmapState) return [];
+    if (!effectiveDomState) return [];
     return [
-      ...effectiveBookmapState.importantWalls,
-      ...effectiveBookmapState.structuralWalls,
-      ...effectiveBookmapState.majorWalls,
+      ...effectiveDomState.importantWalls,
+      ...effectiveDomState.structuralWalls,
+      ...effectiveDomState.majorWalls,
     ];
-  }, [effectiveBookmapState]);
+  }, [effectiveDomState]);
 
   const engineBookLevels = useMemo(() => {
-    if (!effectiveBookmapState) return [];
-    return [...effectiveBookmapState.bids, ...effectiveBookmapState.asks];
-  }, [effectiveBookmapState]);
+    if (!effectiveDomState) return [];
+    return [...effectiveDomState.bids, ...effectiveDomState.asks];
+  }, [effectiveDomState]);
 
   const priceScale = useBookmapPriceScale({
     spot: priceReference,
@@ -341,16 +341,16 @@ export function LiquidityHeatmapPanel({
   );
 
   const engineBookForDom = useMemo(() => {
-    if (!useEngineRenderer || !effectiveBookmapState) return undefined;
+    if (!useEngineRenderer || !effectiveDomState) return undefined;
     return {
-      bids: effectiveBookmapState.bids,
-      asks: effectiveBookmapState.asks,
-      importantWalls: effectiveBookmapState.importantWalls,
-      structuralWalls: effectiveBookmapState.structuralWalls,
-      majorWalls: effectiveBookmapState.majorWalls,
-      heatmapCells: effectiveBookmapState.heatmapCells,
+      bids: effectiveDomState.bids,
+      asks: effectiveDomState.asks,
+      importantWalls: effectiveDomState.importantWalls,
+      structuralWalls: effectiveDomState.structuralWalls,
+      majorWalls: effectiveDomState.majorWalls,
+      heatmapCells: effectiveDomState.heatmapCells,
     };
-  }, [useEngineRenderer, effectiveBookmapState]);
+  }, [useEngineRenderer, effectiveDomState]);
 
   useEffect(() => {
     if (!import.meta.env.DEV || !engineBookForDom) return;
@@ -404,32 +404,43 @@ export function LiquidityHeatmapPanel({
     });
   }, [visualSettings, updatePrefs]);
 
-  const engineRenderBase = useMemo(() => {
-    if (!useEngineRenderer || !effectiveBookmapState) return null;
-    return prepareEngineRenderData(
-      effectiveBookmapState,
+  const prepareBands = useCallback(
+    (state: BookmapState | null) => {
+      if (!state || !state.heatmapCells.length) return null;
+      return prepareEngineRenderData(
+        state,
+        priceRange.minPrice,
+        priceRange.maxPrice,
+        priceScale.heatmapBucketSize,
+        priceScale.domBucketSize,
+        undefined,
+        priceScale.labelStep,
+        priceScale.domBucketSize,
+        priceReference ?? tickerSpot,
+        priceScale.verticalMode,
+      );
+    },
+    [
       priceRange.minPrice,
       priceRange.maxPrice,
       priceScale.heatmapBucketSize,
       priceScale.domBucketSize,
-      undefined,
       priceScale.labelStep,
-      priceScale.domBucketSize,
-      priceReference ?? tickerSpot,
       priceScale.verticalMode,
-    );
-  }, [
-    useEngineRenderer,
-    effectiveBookmapState,
-    priceRange.minPrice,
-    priceRange.maxPrice,
-    priceScale.heatmapBucketSize,
-    priceScale.domBucketSize,
-    priceScale.labelStep,
-    priceScale.verticalMode,
-    priceReference,
-    tickerSpot,
-  ]);
+      priceReference,
+      tickerSpot,
+    ],
+  );
+
+  const engineRenderBase = useMemo(() => {
+    if (!useEngineRenderer || !primaryHeatmapState) return null;
+    return prepareBands(primaryHeatmapState);
+  }, [useEngineRenderer, primaryHeatmapState, prepareBands]);
+
+  const engineOverlayBase = useMemo(() => {
+    if (!useEngineRenderer || sourceMode !== "both" || !overlayHeatmapState) return null;
+    return prepareBands(overlayHeatmapState);
+  }, [useEngineRenderer, sourceMode, overlayHeatmapState, prepareBands]);
 
   const effectiveRightSpacePct = visualSettings.layout.rightSpacePct;
 
@@ -441,34 +452,46 @@ export function LiquidityHeatmapPanel({
     enabled: Boolean(useEngineRenderer && engineRenderBase),
   });
 
-  const engineRenderData = useMemo(() => {
-    if (!engineRenderBase) return null;
-    const microContext =
-      priceScale.verticalMode === "micro" ||
-      priceRange.maxPrice - priceRange.minPrice <= 1_500 ||
-      priceScale.labelStep <= 50 ||
-      priceScale.heatmapBucketSize <= 25;
-    if (!microContext) return engineRenderBase;
-    return applyEngineViewportBandNormalization(engineRenderBase, {
-      minPrice: priceRange.minPrice,
-      maxPrice: priceRange.maxPrice,
-      visibleStartTime: timeScale.viewport.visibleStartTime,
-      visibleEndTime: timeScale.viewport.visibleEndTime,
-      verticalCompressionMode: priceScale.verticalMode,
-      spotPrice: priceReference ?? tickerSpot,
-    });
-  }, [
-    engineRenderBase,
-    priceRange.minPrice,
-    priceRange.maxPrice,
-    priceScale.verticalMode,
-    priceScale.labelStep,
-    priceScale.heatmapBucketSize,
-    timeScale.viewport.visibleStartTime,
-    timeScale.viewport.visibleEndTime,
-    priceReference,
-    tickerSpot,
-  ]);
+  const normalizeBands = useCallback(
+    (base: ReturnType<typeof prepareEngineRenderData>) => {
+      if (!base) return null;
+      const microContext =
+        priceScale.verticalMode === "micro" ||
+        priceRange.maxPrice - priceRange.minPrice <= 1_500 ||
+        priceScale.labelStep <= 50 ||
+        priceScale.heatmapBucketSize <= 25;
+      if (!microContext) return base;
+      return applyEngineViewportBandNormalization(base, {
+        minPrice: priceRange.minPrice,
+        maxPrice: priceRange.maxPrice,
+        visibleStartTime: timeScale.viewport.visibleStartTime,
+        visibleEndTime: timeScale.viewport.visibleEndTime,
+        verticalCompressionMode: priceScale.verticalMode,
+        spotPrice: priceReference ?? tickerSpot,
+      });
+    },
+    [
+      priceRange.minPrice,
+      priceRange.maxPrice,
+      priceScale.verticalMode,
+      priceScale.labelStep,
+      priceScale.heatmapBucketSize,
+      timeScale.viewport.visibleStartTime,
+      timeScale.viewport.visibleEndTime,
+      priceReference,
+      tickerSpot,
+    ],
+  );
+
+  const engineRenderData = useMemo(
+    () => normalizeBands(engineRenderBase),
+    [engineRenderBase, normalizeBands],
+  );
+
+  const engineOverlayRenderData = useMemo(
+    () => normalizeBands(engineOverlayBase),
+    [engineOverlayBase, normalizeBands],
+  );
 
   const engineTradeDots = useMemo(() => {
     if (!tradeDotsEnabled) {
@@ -526,13 +549,13 @@ export function LiquidityHeatmapPanel({
   const farWallMarkers = useMemo(() => {
     if (!showImportantFarLevels) return undefined;
 
-    if (useEngineRenderer && effectiveBookmapState) {
+    if (useEngineRenderer && primaryHeatmapState) {
       const markerSource = majorWallsOnly
-        ? effectiveBookmapState.majorWalls
+        ? primaryHeatmapState.majorWalls
         : [
-            ...effectiveBookmapState.majorWalls,
-            ...effectiveBookmapState.structuralWalls,
-            ...effectiveBookmapState.importantWalls,
+            ...primaryHeatmapState.majorWalls,
+            ...primaryHeatmapState.structuralWalls,
+            ...primaryHeatmapState.importantWalls,
           ];
       const above = markerSource
         .filter((l) => l.side === "ask" && l.price > priceRange.maxPrice)
@@ -577,7 +600,7 @@ export function LiquidityHeatmapPanel({
     priceRange,
     majorWallsOnly,
     useEngineRenderer,
-    effectiveBookmapState,
+    primaryHeatmapState,
   ]);
 
   const farDepthMarkers = useMemo(() => {
@@ -782,6 +805,20 @@ export function LiquidityHeatmapPanel({
     if (useEngineRenderer) timeScale.resetTimeView();
   }, [updatePrefs, priceScale, useEngineRenderer, timeScale]);
 
+  const onPriceInteractionStart = useCallback(() => {
+    if (ladderAutoCenter) {
+      updatePrefs({ ladderAutoCenter: false });
+    }
+  }, [ladderAutoCenter, updatePrefs]);
+
+  const canvasInteraction = useBookmapCanvasInteraction({
+    containerRef: heatmapContainerRef,
+    useEngineRenderer,
+    timeScale,
+    priceScale,
+    onPriceInteractionStart,
+  });
+
   const drawHeatmap = useCallback(() => {
     const canvas = canvasRef.current;
     const container = heatmapContainerRef.current;
@@ -812,6 +849,11 @@ export function LiquidityHeatmapPanel({
         heatmapBucketSize: priceScale.heatmapBucketSize,
         crosshair,
         engine: engineRenderData,
+        overlayEngine:
+          sourceMode === "both" && engineOverlayRenderData
+            ? engineOverlayRenderData
+            : undefined,
+        overlayOpacity: sourceMode === "both" ? perpOverlayOpacity : undefined,
         timeViewport: timeScale.viewport,
         showFarWallMarkers: showImportantFarLevels,
         tradeDots: tradeDotsEnabled ? engineTradeDots.dots : undefined,
@@ -843,6 +885,9 @@ export function LiquidityHeatmapPanel({
   }, [
     useEngineRenderer,
     engineRenderData,
+    engineOverlayRenderData,
+    sourceMode,
+    perpOverlayOpacity,
     timeScale.viewport,
     getSnapshots,
     priceRange,
@@ -903,54 +948,6 @@ export function LiquidityHeatmapPanel({
     syncWidth();
     return () => ro.disconnect();
   }, []);
-
-  const handleCanvasMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.button !== 0 && e.button !== 1) return;
-      const timePan = useEngineRenderer && (e.shiftKey || e.button === 1);
-      panRef.current = timePan
-        ? { startX: e.clientX, startY: e.clientY, mode: "time" }
-        : { startY: e.clientY, mode: "price" };
-      setIsPanning(true);
-      if (!timePan && ladderAutoCenter) {
-        updatePrefs({ ladderAutoCenter: false });
-      }
-      if (timePan && timeScale.followLive) {
-        timeScale.setFollowLiveEnabled(false);
-      }
-    },
-    [ladderAutoCenter, updatePrefs, useEngineRenderer, timeScale],
-  );
-
-  useEffect(() => {
-    if (!isPanning) return;
-
-    const onMove = (e: MouseEvent) => {
-      const pan = panRef.current;
-      if (!pan) return;
-      if (pan.mode === "time" && pan.startX != null) {
-        const deltaX = e.clientX - pan.startX;
-        panRef.current = { ...pan, startX: e.clientX };
-        timeScale.panByPixels(deltaX);
-        return;
-      }
-      const deltaY = e.clientY - pan.startY;
-      panRef.current = { startY: e.clientY, mode: "price" };
-      priceScale.panByPixels(deltaY);
-    };
-
-    const onUp = () => {
-      panRef.current = null;
-      setIsPanning(false);
-    };
-
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-  }, [isPanning, priceScale, timeScale]);
 
   const handleCanvasMouseMove = useCallback(
     (e: React.MouseEvent) => {
@@ -1024,14 +1021,17 @@ export function LiquidityHeatmapPanel({
     snapshotCount === 0 &&
     (feedStatus === "empty" || feedStatus === "offline" || feedStatus === "error");
 
+  const primaryMarket: BookmapMarketSource =
+    sourceMode === "perp" ? "perp" : "spot";
+
   const engineEverLoaded = Boolean(
-    engineEverLoadedRef.current ||
-      (effectiveBookmapState != null && effectiveBookmapState.heatmapCells.length > 0),
+    everLoadedByMarket[primaryMarket] ||
+      (primaryHeatmapState != null && primaryHeatmapState.heatmapCells.length > 0),
   );
 
   const engineDebugLine = useMemo(() => {
     if (!USE_BOOKMAP_ENGINE) return null;
-    if (!engineEverLoaded && bookmapEngineLoading && !effectiveBookmapState) {
+    if (!engineEverLoaded && bookmapEngineLoading && !primaryHeatmapState) {
       return "engine BOOKMAP · loading…";
     }
     if (!useEngineRenderer) {
@@ -1050,10 +1050,7 @@ export function LiquidityHeatmapPanel({
     const age =
       bookmapAgeMs != null ? `${Math.round(bookmapAgeMs)}ms` : "—";
     const st = engineRenderData?.stats;
-    const book = effectiveBookmapState!;
-    const i = book.importantWalls.length;
-    const s = book.structuralWalls.length;
-    const m = book.majorWalls.length;
+    const domBook = effectiveDomState;
     const visMode = st?.visualMode ?? "—";
     const pLo = st?.pLow != null ? st.pLow.toFixed(2) : "—";
     const pHi = st?.pHigh != null ? st.pHigh.toFixed(2) : "—";
@@ -1084,15 +1081,33 @@ export function LiquidityHeatmapPanel({
     }
     const tradeDbg = tradeDbgParts.length ? ` · ${tradeDbgParts.join(" · ")}` : "";
     const offsetSec = Math.round(timeScale.horizontalOffsetMs / 1000);
+    const tspanMs =
+      timeScale.viewport.visibleEndTime - timeScale.viewport.visibleStartTime;
+    const interactionTag = `follow ${timeScale.followLive ? "ON" : "OFF"} · offset ${offsetSec}s · tspan ${formatBookmapTimeSpanMs(tspanMs)} · right ${rightSpacePct}%`;
     const wv = priceScale.visibleWallCounts;
+    const sourceTag =
+      sourceMode === "both"
+        ? `source both · spot cells ${effectiveSpot?.heatmapCells.length ?? 0} · perp cells ${effectivePerp?.heatmapCells.length ?? 0} · dom ${activeDomMarket} · trade ${activeTradeMarket} · perpOpacity ${perpOverlayOpacityPct}%`
+        : `source ${sourceMode}`;
+    const domWalls =
+      domBook != null
+        ? `${domBook.importantWalls.length}/${domBook.structuralWalls.length}/${domBook.majorWalls.length}`
+        : "—/—/—";
     return (
-      `BOOKMAP · ${statusTag} · visualMode ${visMode} · verticalMode ${priceScale.verticalMode} · pLow ${pLo} · pHigh ${pHi} · minI ${minI} · dotMode ${TRADE_DOT_COLOR_MODE} · depth ${depthPresetLabel(depthRangePreset, localRangeUsd)} · range ${formatBookmapRangeShort(priceScale.visibleMinPrice)}–${formatBookmapRangeShort(priceScale.visibleMaxPrice)} · rightSpace ${rightSpacePct}% · followLive ${timeScale.followLive ? "ON" : "OFF"} · timeOffset ${offsetSec}s · bucket ${priceScale.heatmapBucketSize} · visibleWalls ${wv.important}/${wv.structural}/${wv.major} · bands ${st?.visibleBandCount ?? 0} · rendered ${st?.renderedBandCount ?? 0} · age ${age}ms${tradeDbg}`
+      `BOOKMAP · ${sourceTag} · ${interactionTag} · ${statusTag} · verticalMode ${priceScale.verticalMode} · depth ${depthPresetLabel(depthRangePreset, localRangeUsd)} · range ${formatBookmapRangeShort(priceScale.visibleMinPrice)}–${formatBookmapRangeShort(priceScale.visibleMaxPrice)} · domWalls ${domWalls} · bands ${st?.visibleBandCount ?? 0}/${st?.renderedBandCount ?? 0} · age ${age}ms${tradeDbg}`
     );
   }, [
+    sourceMode,
+    effectiveSpot,
+    effectivePerp,
+    activeDomMarket,
+    activeTradeMarket,
+    perpOverlayOpacityPct,
     engineEverLoaded,
     bookmapEngineLoading,
     bookmapEngineFetching,
-    effectiveBookmapState,
+    primaryHeatmapState,
+    effectiveDomState,
     bookmapEngineError,
     useEngineRenderer,
     usingCachedBookmapState,
@@ -1110,13 +1125,96 @@ export function LiquidityHeatmapPanel({
     bookmapTradeAgg.summary,
   ]);
 
-  const btnClass =
-    "px-2 py-0.5 text-[10px] font-mono border rounded border-terminal-border text-terminal-muted hover:text-white transition-colors";
+  const btnClass = bookmapToolbarBtnClass;
 
   const panelBtnClass = cn(
     btnClass,
     "border-cyan-500/30 text-cyan-200/90 hover:border-cyan-400/50",
   );
+
+  const showToolbarPerpOpacity = sourceMode === "both" || sourceMode === "perp";
+
+  const bookmapOperational = useMemo((): BookmapOperationalConfig => {
+    return {
+      sourceMode,
+      onSourceModeChange: setSourceMode,
+      domSource,
+      onDomSourceChange: setDomSource,
+      tradeSource,
+      onTradeSourceChange: setTradeSource,
+      perpOverlayOpacityPct,
+      onPerpOverlayOpacityChange: setPerpOverlayOpacityPct,
+      depthRangePreset,
+      onDepthPresetChange: applyDepthPreset,
+      localRangeUsd,
+      onLocalRangeUsdChange: (v) => {
+        updatePrefs({ localRangeUsd: v });
+        if (priceScale.mode === "auto") {
+          priceScale.applyDepthRange("local");
+        }
+      },
+      depthPresetLabel: (p) =>
+        depthPresetLabel(p, p === "local" ? localRangeUsd : undefined),
+      ladderAutoCenter,
+      onLadderAutoCenterChange: (on) => updatePrefs({ ladderAutoCenter: on }),
+      followLive: timeScale.followLive,
+      onFollowLiveChange: (on) => timeScale.setFollowLiveEnabled(on),
+      followLiveDisabled: !useEngineRenderer,
+      rightSpacePct: effectiveRightSpacePct,
+      onRightSpacePctChange: (snapped) => {
+        updatePrefs({ rightSpacePct: snapped });
+        setVisualSettings(
+          mergeBookmapVisualSettings(visualSettings, {
+            layout: { rightSpacePct: snapped },
+          }),
+        );
+      },
+      rightSpaceDisabled: !useEngineRenderer,
+      onFitWalls: () => {
+        updatePrefs({ ladderAutoCenter: false });
+        priceScale.fitToWalls();
+      },
+      onFitMajorWalls: () => {
+        updatePrefs({ ladderAutoCenter: false });
+        applyDepthPreset("majorWalls");
+        priceScale.fitToMajorWalls();
+      },
+      onResetSpot: resetView,
+      onZoomIn: priceScale.zoomIn,
+      onZoomOut: priceScale.zoomOut,
+      minVisibleBtc,
+      minSizeOptions: MIN_SIZE_OPTIONS,
+      onMinVisibleBtcChange: (btc) => updatePrefs({ minVisibleBtc: btc }),
+      minSizeDisabled: majorWallsOnly,
+      majorWallsOnly,
+      onMajorWallsOnlyChange: (on) => updatePrefs({ majorWallsOnly: on }),
+      showImportantFarLevels,
+      onShowImportantFarLevelsChange: (on) =>
+        updatePrefs({ showImportantFarLevels: on }),
+      majorWallsPresetActive: depthRangePreset === "majorWalls",
+    };
+  }, [
+    sourceMode,
+    domSource,
+    tradeSource,
+    perpOverlayOpacityPct,
+    depthRangePreset,
+    localRangeUsd,
+    ladderAutoCenter,
+    timeScale.followLive,
+    timeScale.setFollowLiveEnabled,
+    useEngineRenderer,
+    effectiveRightSpacePct,
+    visualSettings,
+    minVisibleBtc,
+    majorWallsOnly,
+    showImportantFarLevels,
+    applyDepthPreset,
+    updatePrefs,
+    priceScale,
+    resetView,
+    setVisualSettings,
+  ]);
 
   const spotDisplay = priceReference ?? tickerSpot;
 
@@ -1129,7 +1227,15 @@ export function LiquidityHeatmapPanel({
         {visualSettings.layout.showTopMetrics && (
           <>
             <span className="text-[10px] font-mono text-slate-300 shrink-0">{symbol}</span>
-            <span className="text-[10px] font-mono text-terminal-muted shrink-0">{exchange}</span>
+            <span className="text-[10px] font-mono text-terminal-muted shrink-0">
+              {exchange} · {sourceMode}
+              {sourceMode === "both" ? ` · dom ${activeDomMarket}` : ""}
+            </span>
+            {waitingMarkets.length > 0 && (
+              <span className="text-[10px] font-mono text-amber-400/80 shrink-0">
+                waiting {waitingMarkets.join(", ")}
+              </span>
+            )}
             <span className="text-[10px] font-mono text-cyan-400/80 shrink-0">
               {useEngineRenderer ? "Live Bookmap" : statusLabel}
             </span>
@@ -1184,7 +1290,57 @@ export function LiquidityHeatmapPanel({
           </details>
         )}
 
-        <div className="flex flex-wrap items-center gap-1 ml-auto">
+        <div className="flex flex-wrap items-center gap-1 ml-auto shrink-0 justify-end">
+          <BookmapSegmentGroup
+            label="Source"
+            value={sourceMode}
+            options={[
+              { value: "spot", label: "Spot" },
+              { value: "perp", label: "Perp" },
+              { value: "both", label: "Both" },
+            ]}
+            onChange={setSourceMode}
+          />
+          <BookmapToolbarDivider />
+          <BookmapSegmentGroup
+            label="DOM"
+            value={domSource}
+            options={[
+              { value: "spot", label: "Spot" },
+              { value: "perp", label: "Perp" },
+            ]}
+            onChange={setDomSource}
+          />
+          <BookmapSegmentGroup
+            label="Trades"
+            value={tradeSource}
+            options={[
+              { value: "spot", label: "Spot" },
+              { value: "perp", label: "Perp" },
+            ]}
+            onChange={setTradeSource}
+          />
+          {showToolbarPerpOpacity && (
+            <label className="flex items-center gap-1 text-[10px] font-mono text-terminal-muted shrink-0">
+              Perp
+              <select
+                value={perpOverlayOpacityPct}
+                onChange={(e) =>
+                  setPerpOverlayOpacityPct(
+                    Number(e.target.value) as (typeof PERP_OVERLAY_OPACITY_OPTIONS)[number],
+                  )
+                }
+                className="bg-[#0c111c] border border-terminal-border rounded px-1 py-0.5 text-[10px] text-slate-300 max-w-[52px]"
+              >
+                {PERP_OVERLAY_OPACITY_OPTIONS.map((pct) => (
+                  <option key={pct} value={pct}>
+                    {pct}%
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <BookmapToolbarDivider />
           <button
             type="button"
             onClick={() => {
@@ -1205,7 +1361,8 @@ export function LiquidityHeatmapPanel({
           >
             Indicators
           </button>
-          <label className="flex items-center gap-1 text-[10px] font-mono text-terminal-muted">
+          <BookmapToolbarDivider />
+          <label className="flex items-center gap-1 text-[10px] font-mono text-terminal-muted shrink-0">
             Depth
             <select
               value={depthRangePreset}
@@ -1221,142 +1378,29 @@ export function LiquidityHeatmapPanel({
               ))}
             </select>
           </label>
-          {depthRangePreset === "local" && (
-            <label className="flex items-center gap-1 text-[10px] font-mono text-terminal-muted">
-              Local ±
-              <select
-                value={localRangeUsd}
-                onChange={(e) => {
-                  const v = Number(e.target.value) as LocalRangeUsd;
-                  updatePrefs({ localRangeUsd: v });
-                  if (priceScale.mode === "auto") {
-                    priceScale.applyDepthRange("local");
-                  }
-                }}
-                className="bg-terminal-bg border border-terminal-border rounded px-1 py-0.5 text-white text-[10px]"
-              >
-                {LOCAL_RANGE_USD_OPTIONS.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              updatePrefs({ ladderAutoCenter: false });
-              applyDepthPreset("majorWalls");
-              priceScale.fitToMajorWalls();
-            }}
-            className={cn(
-              btnClass,
-              depthRangePreset === "majorWalls" &&
-                "border-amber-500/40 text-amber-300",
-            )}
-          >
-            Major Walls
-          </button>
-          <label className="flex items-center gap-1 text-[10px] font-mono text-terminal-muted">
-            Min
-            <select
-              value={minVisibleBtc}
-              onChange={(e) => updatePrefs({ minVisibleBtc: Number(e.target.value) })}
-              disabled={majorWallsOnly}
-              className="bg-terminal-bg border border-terminal-border rounded px-1 py-0.5 text-white text-[10px]"
-            >
-              {MIN_SIZE_OPTIONS.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={() => updatePrefs({ majorWallsOnly: !majorWallsOnly })}
-            className={cn(
-              btnClass,
-              majorWallsOnly && "border-terminal-accent bg-terminal-accent/15 text-terminal-accent",
-            )}
-          >
-            Major only
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              updatePrefs({ showImportantFarLevels: !showImportantFarLevels })
-            }
-            className={cn(
-              btnClass,
-              showImportantFarLevels &&
-                "border-cyan-500/40 text-cyan-300",
-            )}
-          >
-            Important {showImportantFarLevels ? "ON" : "OFF"}
-          </button>
-          <button
-            type="button"
-            onClick={() => updatePrefs({ ladderAutoCenter: !ladderAutoCenter })}
-            className={cn(
-              btnClass,
-              ladderAutoCenter &&
-                "border-terminal-accent bg-terminal-accent/15 text-terminal-accent",
-            )}
-          >
-            Auto center {ladderAutoCenter ? "ON" : "OFF"}
-          </button>
-          <button type="button" onClick={priceScale.zoomIn} className={btnClass}>
-            Zoom In
-          </button>
-          <button type="button" onClick={priceScale.zoomOut} className={btnClass}>
-            Zoom Out
-          </button>
-          <button type="button" onClick={resetView} className={btnClass}>
-            Reset Spot
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              updatePrefs({ ladderAutoCenter: false });
-              priceScale.fitToWalls();
-            }}
-            className={btnClass}
-          >
-            Fit Walls
-          </button>
-          <button
-            type="button"
+          <BookmapToolbarDivider />
+          <BookmapToggleButton
+            label={`Follow ${timeScale.followLive ? "ON" : "OFF"}`}
+            active={timeScale.followLive}
             onClick={() => timeScale.setFollowLiveEnabled(!timeScale.followLive)}
-            className={cn(
-              btnClass,
-              timeScale.followLive &&
-                "border-cyan-500/40 text-cyan-300",
-            )}
             disabled={!useEngineRenderer}
-          >
-            Follow Live {timeScale.followLive ? "ON" : "OFF"}
-          </button>
-          <label className="flex items-center gap-1 text-[10px] font-mono text-terminal-muted">
-            Right space
+            activeClassName="border-cyan-500/40 text-cyan-300"
+          />
+          <label className="flex items-center gap-1 text-[10px] font-mono text-terminal-muted shrink-0">
+            Right
             <select
               value={effectiveRightSpacePct}
               onChange={(e) => {
                 const v = Number(e.target.value);
-                const snapped = RIGHT_SPACE_PCT_OPTIONS.includes(v as RightSpacePct)
-                  ? (v as RightSpacePct)
-                  : RIGHT_SPACE_PCT_OPTIONS.reduce((best, o) =>
-                      Math.abs(o - v) < Math.abs(best - v) ? o : best,
-                    );
-                updatePrefs({ rightSpacePct: snapped });
-                setVisualSettings(
-                  mergeBookmapVisualSettings(visualSettings, {
-                    layout: { rightSpacePct: v },
-                  }),
+                bookmapOperational.onRightSpacePctChange(
+                  RIGHT_SPACE_PCT_OPTIONS.includes(v as RightSpacePct)
+                    ? (v as RightSpacePct)
+                    : RIGHT_SPACE_PCT_OPTIONS.reduce((best, o) =>
+                        Math.abs(o - v) < Math.abs(best - v) ? o : best,
+                      ),
                 );
               }}
-              className="bg-terminal-bg border border-terminal-border rounded px-1 py-0.5 text-white text-[10px]"
+              className="bg-terminal-bg border border-terminal-border rounded px-1 py-0.5 text-white text-[10px] max-w-[56px]"
               disabled={!useEngineRenderer}
             >
               {RIGHT_SPACE_PCT_OPTIONS.map((v) => (
@@ -1366,13 +1410,10 @@ export function LiquidityHeatmapPanel({
               ))}
             </select>
           </label>
-          {useEngineRenderer && (
-            <span className="text-[9px] font-mono text-slate-600" title="Pan time horizontally">
-              Shift+drag · MMB time pan
-            </span>
-          )}
-          <button
-            type="button"
+          <BookmapToolbarDivider />
+          <BookmapToggleButton
+            label={`Trades ${showTrades && visualSettings.trades.enabled ? "ON" : "OFF"}`}
+            active={showTrades && visualSettings.trades.enabled}
             onClick={() => {
               const next = !showTrades;
               updatePrefs({ showTrades: next });
@@ -1382,15 +1423,11 @@ export function LiquidityHeatmapPanel({
                 }),
               );
             }}
-            className={cn(
-              btnClass,
-              showTrades && visualSettings.trades.enabled && "border-emerald-500/40 text-emerald-400",
-            )}
-          >
-            Trades {showTrades && visualSettings.trades.enabled ? "ON" : "OFF"}
-          </button>
-          <button
-            type="button"
+            activeClassName="border-emerald-500/40 text-emerald-400"
+          />
+          <BookmapToggleButton
+            label={`Persist ${showPersistentWalls ? "ON" : "OFF"}`}
+            active={showPersistentWalls}
             onClick={() => {
               const next = !showPersistentWalls;
               updatePrefs({ showPersistentWalls: next });
@@ -1400,16 +1437,8 @@ export function LiquidityHeatmapPanel({
                 }),
               );
             }}
-            className={cn(
-              btnClass,
-              showPersistentWalls && "border-violet-500/40 text-violet-300",
-            )}
-          >
-            Persistent {showPersistentWalls ? "ON" : "OFF"}
-          </button>
-          <span className="text-[9px] font-mono text-slate-600 px-1">
-            DOM {safeDomWidth}px · ${Math.round(priceScale.dollarsPerPixel)}/px
-          </span>
+            activeClassName="border-violet-500/40 text-violet-300"
+          />
         </div>
       </header>
 
@@ -1422,14 +1451,10 @@ export function LiquidityHeatmapPanel({
             ref={heatmapContainerRef}
             className={cn(
               "relative flex-1 min-w-0 min-h-0 overflow-hidden bg-[#0b1220]",
-              isPanning ? "cursor-grabbing" : "cursor-crosshair",
+              canvasInteraction.cursorClass,
             )}
-            title={
-              useEngineRenderer
-                ? "Drag: price pan · Shift+drag or middle-click: time pan"
-                : undefined
-            }
-            onMouseDown={handleCanvasMouseDown}
+            title={canvasInteraction.interactionTitle}
+            onMouseDown={canvasInteraction.handleMouseDown}
             onMouseMove={handleCanvasMouseMove}
             onMouseLeave={handleCanvasMouseLeave}
           >
@@ -1461,6 +1486,7 @@ export function LiquidityHeatmapPanel({
             {configOpen && (
               <BookmapControlPanel
                 settings={visualSettings}
+                operational={bookmapOperational}
                 onChange={(next) =>
                   setVisualSettings(mergeBookmapVisualSettings(next, {}))
                 }
@@ -1541,6 +1567,7 @@ export function LiquidityHeatmapPanel({
             <BookmapPriceLadder
               scale={priceScale}
               spot={priceReference ?? tickerSpot}
+              onPriceInteractionStart={onPriceInteractionStart}
             />
           </div>
           <div

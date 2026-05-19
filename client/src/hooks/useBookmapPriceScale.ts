@@ -337,6 +337,8 @@ export function useBookmapPriceScale({
     setCenterPrice,
     applyDepthRange,
     zoomAtPrice,
+    /** Alias for chart interaction API. */
+    zoomPriceAt: zoomAtPrice,
     panPrice,
     panByPixels,
     resetToSpot,
