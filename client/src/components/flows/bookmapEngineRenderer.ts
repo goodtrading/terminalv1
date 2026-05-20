@@ -28,6 +28,14 @@ import {
   type BookmapBbo,
   type BidAskLineOpacity,
 } from "./bookmapBboGuideLines";
+import {
+  getBboPathPlotBounds,
+  renderHistoricalBboPath,
+  type BboPathRenderStats,
+} from "./bookmapBboHistoryPath";
+import type { BookmapBboPoint } from "@shared/bookmapBboHistory";
+import { renderDivergenceMarkers } from "./bookmapDivergenceMarkers";
+import type { SpotPerpDivergenceSignal } from "./bookmapDivergenceEngine";
 import { renderEngineExecutionRails } from "./bookmapExecutionRails";
 import {
   renderEngineTradeDots,
@@ -77,7 +85,19 @@ export type BookmapEngineFrameParams = {
   confluenceVisualOpacity?: ConfluenceVisualOpacity;
   confluenceRenderMode?: ConfluenceRenderMode;
   confluenceMinDisplayTier?: ConfluenceMinDisplayTier;
+  /** Historical bid/ask paths (time series). */
+  bboHistoryPoints?: BookmapBboPoint[];
+  showHistoricalBboPath?: boolean;
+  bboPathOpacity?: BidAskLineOpacity;
+  /** Live-edge BBO guide (not full-history). */
+  bboGuide?: BookmapBbo | null;
+  showBidAskLines?: boolean;
+  bidAskLineOpacity?: BidAskLineOpacity;
+  divergenceMarkers?: SpotPerpDivergenceSignal[];
+  showDivergenceMarkers?: boolean;
 };
+
+export type { BboPathRenderStats };
 
 type EnginePlotMetrics = {
   plotW: number;
@@ -418,6 +438,45 @@ export function paintBookmapEngineHeatmapFrame(
       renderConfluenceLabels(ctx, confLabels);
     }
     renderWallLabelPlacements(ctx, plotRight, wallPlacements);
+  }
+
+  if (
+    params.showHistoricalBboPath !== false &&
+    params.bboHistoryPoints &&
+    params.bboHistoryPoints.length >= 2
+  ) {
+    const bounds = getBboPathPlotBounds(w, h);
+    renderHistoricalBboPath(ctx, {
+      points: params.bboHistoryPoints,
+      plotW: bounds.plotW,
+      plotH: bounds.plotH,
+      plotLeft: bounds.plotLeft,
+      plotTop: bounds.plotTop,
+      plotBottom: bounds.plotBottom,
+      minPrice,
+      maxPrice,
+      timeToX: metrics.timeToX,
+      priceToY: params.priceToY,
+      timeViewport,
+      verticalMode: params.tradeDotVerticalMode ?? "intraday",
+      opacity: params.bboPathOpacity ?? "normal",
+    });
+  }
+
+  if (
+    params.showDivergenceMarkers !== false &&
+    params.divergenceMarkers &&
+    params.divergenceMarkers.length > 0
+  ) {
+    renderDivergenceMarkers(ctx, params.divergenceMarkers, {
+      plotW: metrics.plotW,
+      plotH: metrics.plotH,
+      priceToY: params.priceToY,
+      timeToX: metrics.timeToX,
+      timeViewport,
+      minPrice,
+      maxPrice,
+    });
   }
 
   if (

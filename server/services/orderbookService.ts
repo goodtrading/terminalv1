@@ -7,6 +7,7 @@
 
 import WebSocket from "ws";
 import { feedBinanceOrderBook } from "./bookmapEngine";
+import { recordBboFromOrderBook } from "./bboHistoryRegistry";
 
 export interface OrderBookLevel {
   price: number;
@@ -89,6 +90,13 @@ export async function initializeFullDepth(): Promise<void> {
       "snapshot",
       "spot",
     );
+    recordBboFromOrderBook(
+      "spot",
+      "BTCUSDT",
+      snapshot.bids,
+      snapshot.asks,
+      snapshot.timestamp,
+    );
 
     if (DEBUG_ENABLED) {
       console.debug("[OrderBookService] Full depth initialized:", {
@@ -169,6 +177,7 @@ function connect(): void {
           "spot",
         );
       }
+      recordBboFromOrderBook("spot", "BTCUSDT", snapshot.bids, snapshot.asks, ts);
     } catch (e) {
       console.warn("[OrderBookService] Parse error:", e, "Raw data length:", raw.length);
     }

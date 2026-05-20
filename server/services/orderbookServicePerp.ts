@@ -7,6 +7,7 @@
 
 import WebSocket from "ws";
 import { feedBinanceOrderBook } from "./bookmapEngine";
+import { recordBboFromOrderBook } from "./bboHistoryRegistry";
 import type { OrderBookLevel, OrderBookSnapshot } from "./orderbookService";
 
 const WS_URL = "wss://fstream.binance.com/ws/btcusdt@depth";
@@ -174,6 +175,7 @@ export async function initializePerpFullDepth(): Promise<void> {
     "snapshot",
     "perp",
   );
+  recordBboFromOrderBook("perp", "BTCUSDT", snapshot.bids, snapshot.asks, ts);
 
   if (DEBUG_ENABLED) {
     console.debug("[OrderBookServicePerp] Full depth initialized:", {
@@ -281,6 +283,7 @@ function connect(): void {
           "perp",
         );
       }
+      recordBboFromOrderBook("perp", "BTCUSDT", snapshot.bids, snapshot.asks, ts);
 
       if (!isPerpBboValid()) {
         void resyncPerpOrderBook("crossed-bbo-live");

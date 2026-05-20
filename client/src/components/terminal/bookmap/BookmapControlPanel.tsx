@@ -14,6 +14,7 @@ import {
   BookmapConfluenceSections,
   type BookmapConfluenceControls,
 } from "./BookmapConfluenceSections";
+import { BookmapDivergenceSections } from "./BookmapDivergenceSections";
 
 export interface BookmapControlPanelProps {
   settings: BookmapVisualSettings;
@@ -53,18 +54,22 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
 function Toggle({
   checked,
   onChange,
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
-      onClick={() => onChange(!checked)}
+      disabled={disabled}
+      onClick={() => !disabled && onChange(!checked)}
       className={cn(
         "relative w-8 h-4 rounded-full border transition-colors shrink-0",
+        disabled && "opacity-40 cursor-not-allowed",
         checked
           ? "bg-cyan-600/40 border-cyan-500/50"
           : "bg-slate-900 border-slate-700",
@@ -121,6 +126,7 @@ function patchSettings(
     heatmap: { ...settings.heatmap, ...patch.heatmap },
     dom: { ...settings.dom, ...patch.dom },
     layout: { ...settings.layout, ...patch.layout },
+    divergence: { ...settings.divergence, ...patch.divergence },
   };
 }
 
@@ -167,6 +173,17 @@ export function BookmapControlPanel({
             onChange={confluence.onChange}
           />
         )}
+
+        <Section title="Divergence">
+          <BookmapDivergenceSections
+            settings={settings}
+            bothMode={confluence?.bothMode ?? false}
+            onChange={onChange}
+            Toggle={Toggle}
+            Row={Row}
+            inputClass={inputClass}
+          />
+        </Section>
 
         <Section title="Trades / Dots">
           <Row label="Trades enabled">
@@ -433,7 +450,33 @@ export function BookmapControlPanel({
         </Section>
 
         <Section title="Display">
-          <Row label="Bid/ask lines">
+          <Row label="Historical BBO path">
+            <Toggle
+              checked={settings.layout.showHistoricalBboPath}
+              onChange={(showHistoricalBboPath) =>
+                set({ layout: { showHistoricalBboPath } })
+              }
+            />
+          </Row>
+          <Row label="BBO path opacity">
+            <select
+              value={settings.layout.bboPathOpacity}
+              disabled={!settings.layout.showHistoricalBboPath}
+              onChange={(e) =>
+                set({
+                  layout: {
+                    bboPathOpacity: e.target.value as BidAskLineOpacity,
+                  },
+                })
+              }
+              className={inputClass}
+            >
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+            </select>
+          </Row>
+          <Row label="Current BBO lines">
             <Toggle
               checked={settings.layout.showBidAskLines}
               onChange={(showBidAskLines) => set({ layout: { showBidAskLines } })}
@@ -457,6 +500,9 @@ export function BookmapControlPanel({
               <option value="high">High</option>
             </select>
           </Row>
+          <p className="text-[8px] font-mono text-slate-600">
+            BBO path uses selected DOM Source in Both mode.
+          </p>
         </Section>
 
         <Section title="Layout">

@@ -14,6 +14,7 @@ import { initializeFullDepth } from "./services/orderbookService";
 import { initializePerpFullDepth } from "./services/orderbookServicePerp";
 import { getBookmapEngine, logBookmapMarketStateDiagnostics } from "./services/bookmapEngine";
 import { getOrderBookForMarket, parseBookmapMarket } from "./services/orderbookMarketRegistry";
+import { queryBboHistory } from "./services/bboHistoryRegistry";
 import { getKrakenOrderBook } from "./kraken-gateway";
 import { liquidityVacuumEngine, VacuumEngineInput } from "./lib/liquidityVacuumEngine";
 import { VacuumValidationTests } from "./lib/vacuumValidationTests";
@@ -103,6 +104,34 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("[API] Order book fetch error:", error?.message ?? error);
       res.status(500).json({ error: "Failed to fetch order book" });
+    }
+  });
+
+  app.get("/api/bookmap/bbo-history", (req: Request, res: Response) => {
+    const symbol = ((req.query.symbol as string) || "BTCUSDT").toUpperCase();
+    const market = parseBookmapMarket(req.query.market);
+    const startMs =
+      req.query.startTime != null ? Number(req.query.startTime) : undefined;
+    const endMs = req.query.endTime != null ? Number(req.query.endTime) : undefined;
+
+    try {
+      const raw = queryBboHistory(symbol, market, {
+        startMs: Number.isFinite(startMs) ? startMs : undefined,
+        endMs: Number.isFinite(endMs) ? endMs : undefined,
+      });
+      res.json({
+        symbol,
+        market,
+        points: raw.map((p) => ({
+          timestamp: p.timestamp,
+          bestBid: p.bestBid,
+          bestAsk: p.bestAsk,
+        })),
+        serverTime: Date.now(),
+      });
+    } catch (error: unknown) {
+      console.error("[API] /api/bookmap/bbo-history error:", error);
+      res.status(500).json({ error: "Failed to fetch BBO history" });
     }
   });
 

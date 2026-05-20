@@ -3,6 +3,7 @@ export type AggressorColorMode = "classic" | "bookmap" | "orangeAsk" | "custom";
 export type HeatmapIntensityMode = "classic" | "adaptive" | "microstructure";
 export type ExecutionRailLength = "short" | "normal" | "long";
 export type BidAskLineOpacity = "low" | "normal" | "high";
+export type DivergenceMinSeverity = "medium" | "high";
 
 export interface BookmapVisualSettings {
   trades: {
@@ -42,13 +43,22 @@ export interface BookmapVisualSettings {
     showCob: boolean;
     showBidAskBars: boolean;
   };
+  divergence: {
+    enabled: boolean;
+    minSeverity: DivergenceMinSeverity;
+    showPanel: boolean;
+    showChartMarkers: boolean;
+  };
   layout: {
     rightSpacePct: number;
     showDebug: boolean;
     showTopMetrics: boolean;
-    /** Live best bid/ask horizontal guide lines on heatmap. */
+    /** Historical best bid/ask paths over the heatmap. */
+    showHistoricalBboPath: boolean;
+    /** Live best bid/ask horizontal guide lines near the live edge. */
     showBidAskLines: boolean;
     bidAskLineOpacity: BidAskLineOpacity;
+    bboPathOpacity: BidAskLineOpacity;
   };
 }
 
@@ -88,12 +98,20 @@ export const DEFAULT_BOOKMAP_VISUAL_SETTINGS: BookmapVisualSettings = {
     showCob: true,
     showBidAskBars: true,
   },
+  divergence: {
+    enabled: true,
+    minSeverity: "medium",
+    showPanel: true,
+    showChartMarkers: false,
+  },
   layout: {
     rightSpacePct: 20,
     showDebug: false,
     showTopMetrics: true,
+    showHistoricalBboPath: true,
     showBidAskLines: true,
     bidAskLineOpacity: "normal",
+    bboPathOpacity: "normal",
   },
 };
 
@@ -135,6 +153,15 @@ export function mergeBookmapVisualSettings(
 ): BookmapVisualSettings {
   if (!patch) return structuredClone(base);
 
+  const divergence = {
+    ...DEFAULT_BOOKMAP_VISUAL_SETTINGS.divergence,
+    ...base.divergence,
+    ...patch.divergence,
+  };
+  if (patch.divergence?.minSeverity === "high") {
+    divergence.minSeverity = "high";
+  }
+
   return {
     trades: mergeTrades(base.trades, patch.trades),
     liquidity: { ...base.liquidity, ...patch.liquidity },
@@ -145,6 +172,7 @@ export function mergeBookmapVisualSettings(
       contrast: clamp(patch.heatmap?.contrast ?? base.heatmap.contrast, 0.5, 2),
     },
     dom: { ...base.dom, ...patch.dom },
+    divergence,
     layout: {
       ...base.layout,
       ...patch.layout,
@@ -153,6 +181,10 @@ export function mergeBookmapVisualSettings(
         10,
         35,
       ),
+      showHistoricalBboPath:
+        patch.layout?.showHistoricalBboPath ??
+        base.layout.showHistoricalBboPath ??
+        true,
       showBidAskLines:
         patch.layout?.showBidAskLines ?? base.layout.showBidAskLines ?? true,
       bidAskLineOpacity:
@@ -160,6 +192,10 @@ export function mergeBookmapVisualSettings(
         patch.layout?.bidAskLineOpacity === "high"
           ? patch.layout.bidAskLineOpacity
           : (base.layout.bidAskLineOpacity ?? "normal"),
+      bboPathOpacity:
+        patch.layout?.bboPathOpacity === "low" || patch.layout?.bboPathOpacity === "high"
+          ? patch.layout.bboPathOpacity
+          : (base.layout.bboPathOpacity ?? "normal"),
     },
   };
 }
