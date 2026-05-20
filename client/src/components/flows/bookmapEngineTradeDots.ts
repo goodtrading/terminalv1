@@ -132,9 +132,9 @@ export function tradeDotClusterParams(
   }
 }
 
-type SizeTier = "small" | "medium" | "large" | "huge";
+export type TradeDotSizeTier = "small" | "medium" | "large" | "huge";
 
-function sizeTierFromRadius(radius: number): SizeTier {
+export function sizeTierFromRadius(radius: number): TradeDotSizeTier {
   if (radius >= 22) return "huge";
   if (radius >= 14) return "large";
   if (radius >= 8) return "medium";
@@ -163,7 +163,7 @@ export function tradeDotRadius(
   return Math.min(max, Math.max(min, r));
 }
 
-function clusterDisplaySizeBtc(dot: EngineTradeDot): number {
+export function clusterDisplaySizeBtc(dot: EngineTradeDot): number {
   if (dot.tradeCount <= 1) return dot.sizeBtc;
   return dot.sizeBtc * (1 + Math.min(0.22, Math.log1p(dot.tradeCount - 1) * 0.08));
 }
@@ -437,7 +437,7 @@ export function tradeDotPaintStyle(
   return bookmapDotLayerStyle(side, radius, false, colorMode);
 }
 
-function deterministicDotJitter(
+export function deterministicDotJitter(
   jitterKey: number,
   radius: number,
 ): { dx: number; dy: number } {
@@ -528,7 +528,6 @@ export function renderEngineTradeDots(
       radius,
       dot.mixedDominance,
       TRADE_DOT_COLOR_MODE,
-      visual?.settings.trades,
     );
 
     drawBookmapLayeredDot(ctx, x, y, radius, style);

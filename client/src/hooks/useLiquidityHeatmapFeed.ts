@@ -16,8 +16,10 @@ import {
 } from "@/components/flows/tradeBubbleUtils";
 import {
   DEFAULT_BOOKMAP_MARKET,
+  parseBookmapMarket,
   type BookmapMarketSource,
 } from "@shared/bookmapMarket";
+import { BOOKMAP_OB_STALE_MS } from "@shared/bookmapFreshness";
 
 type RawBookResponse = {
   bids: unknown[];
@@ -44,22 +46,52 @@ const EMPTY_STATS: HeatmapPipelineStats = {
   nonZeroAskBuckets: 0,
 };
 
-function ingestTrade(
-  tradesRef: { current: HeatmapTrade[] },
-  trade: HeatmapTrade,
-  onUpdate: (buffered: number, received: number) => void,
-  receivedRef: { count: number },
-): void {
-  receivedRef.count += 1;
-  tradesRef.current = appendTradeToBuffer(tradesRef.current, trade);
-  onUpdate(tradesRef.current.length, receivedRef.count);
+/** Perp prints are often smaller than spot; keep ingest permissive, dots filter visually. */
+const PERP_TRADE_INGEST_FLOOR_BTC = 0.0001;
+
+type MarketTradeCache = {
+  trades: HeatmapTrade[];
+  received: number;
+  latestTs: number | null;
+  version: number;
+};
+
+function tradeBufferKey(symbol: string, market: BookmapMarketSource): string {
+  const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
+  return `binance:${sym}:${market}`;
+}
+
+function tradeIngestFloor(market: BookmapMarketSource): number {
+  return market === "perp" ? PERP_TRADE_INGEST_FLOOR_BTC : TRADE_INGEST_FLOOR_BTC;
+}
+
+export type LiquidityHeatmapFeedMarkets = {
+  tradeMarket?: BookmapMarketSource;
+  orderbookMarket?: BookmapMarketSource;
+};
+
+function resolveFeedMarkets(
+  markets: BookmapMarketSource | LiquidityHeatmapFeedMarkets,
+): { tradeMarket: BookmapMarketSource; orderbookMarket: BookmapMarketSource } {
+  if (typeof markets === "string") {
+    const m = parseBookmapMarket(markets);
+    return { tradeMarket: m, orderbookMarket: m };
+  }
+  const tradeMarket = parseBookmapMarket(markets.tradeMarket);
+  return {
+    tradeMarket,
+    orderbookMarket: parseBookmapMarket(markets.orderbookMarket ?? markets.tradeMarket),
+  };
 }
 
 export function useLiquidityHeatmapFeed(
   symbol = "BTCUSDT",
   enabled = true,
-  market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
+  markets: BookmapMarketSource | LiquidityHeatmapFeedMarkets = DEFAULT_BOOKMAP_MARKET,
 ) {
+  const { tradeMarket: marketForTrades, orderbookMarket: marketForOrderbook } =
+    resolveFeedMarkets(markets);
+
   const snapshotsRef = useRef<LiquiditySnapshot[]>([]);
   const [snapshotCount, setSnapshotCount] = useState(0);
   const [feedStatus, setFeedStatus] = useState<
@@ -68,11 +100,25 @@ export function useLiquidityHeatmapFeed(
   const [exchange, setExchange] = useState("Binance");
   const [pipelineStats, setPipelineStats] = useState<HeatmapPipelineStats>(EMPTY_STATS);
   const tradesRef = useRef<HeatmapTrade[]>([]);
+  const marketCachesRef = useRef<Record<BookmapMarketSource, MarketTradeCache>>({
+    spot: { trades: [], received: 0, latestTs: null, version: 0 },
+    perp: { trades: [], received: 0, latestTs: null, version: 0 },
+  });
   const [tradeTick, setTradeTick] = useState(0);
+  const [tradeVersion, setTradeVersion] = useState(0);
   const [tradeBufferCount, setTradeBufferCount] = useState(0);
   const [receivedTradeCount, setReceivedTradeCount] = useState(0);
   const [tradesStreamConnected, setTradesStreamConnected] = useState(false);
+  const [latestTradeTs, setLatestTradeTs] = useState<number | null>(null);
+  const [lastMessageTs, setLastMessageTs] = useState<number | null>(null);
+  const [sseUrl, setSseUrl] = useState<string | null>(null);
+  const [orderbookReceivedAt, setOrderbookReceivedAt] = useState<number | null>(null);
   const receivedRef = useRef(0);
+  const latestTsRef = useRef<number | null>(null);
+  const lastMessageRef = useRef<number | null>(null);
+  const tradeVersionRef = useRef(0);
+  const flushScheduledRef = useRef(false);
+  const reconnectTradesRef = useRef<(() => void) | null>(null);
   const spotRef = useRef<number | null>(null);
 
   const { data: ticker } = useQuery({
@@ -109,19 +155,73 @@ export function useLiquidityHeatmapFeed(
 
   const getSnapshots = useCallback(() => snapshotsRef.current, []);
 
-  const bumpTradeStats = useCallback((buffered: number, received: number) => {
-    const safeBuffered = Number.isFinite(buffered) ? Math.max(0, Math.floor(buffered)) : 0;
-    const safeReceived = Number.isFinite(received) ? Math.max(0, Math.floor(received)) : 0;
-    setTradeBufferCount(safeBuffered);
-    setReceivedTradeCount(safeReceived);
+  const persistMarketCache = useCallback((market: BookmapMarketSource) => {
+    marketCachesRef.current[market] = {
+      trades: tradesRef.current,
+      received: receivedRef.current,
+      latestTs: latestTsRef.current,
+      version: tradeVersionRef.current,
+    };
+  }, []);
+
+  const restoreMarketCache = useCallback((market: BookmapMarketSource) => {
+    const cached = marketCachesRef.current[market];
+    tradesRef.current = cached.trades.length > 0 ? [...cached.trades] : [];
+    receivedRef.current = cached.received;
+    latestTsRef.current = cached.latestTs;
+    tradeVersionRef.current = cached.version;
+    setTradeBufferCount(tradesRef.current.length);
+    setReceivedTradeCount(cached.received);
+    setLatestTradeTs(cached.latestTs);
+    setLastMessageTs(lastMessageRef.current);
+    setTradeVersion(cached.version);
     setTradeTick((n) => n + 1);
   }, []);
+
+  const flushTradeStats = useCallback(() => {
+    flushScheduledRef.current = false;
+    const buffered = tradesRef.current.length;
+    const received = receivedRef.current;
+    const latestTs = latestTsRef.current;
+    tradeVersionRef.current += 1;
+    setTradeBufferCount(buffered);
+    setReceivedTradeCount(received);
+    setLatestTradeTs(latestTs);
+    setLastMessageTs(lastMessageRef.current);
+    setTradeVersion(tradeVersionRef.current);
+    setTradeTick((n) => n + 1);
+  }, []);
+
+  const scheduleTradeFlush = useCallback(() => {
+    if (flushScheduledRef.current) return;
+    flushScheduledRef.current = true;
+    requestAnimationFrame(() => {
+      flushTradeStats();
+    });
+  }, [flushTradeStats]);
+
+  const ingestTrade = useCallback(
+    (trade: HeatmapTrade) => {
+      receivedRef.current += 1;
+      latestTsRef.current = trade.ts;
+      lastMessageRef.current = Date.now();
+      tradesRef.current = appendTradeToBuffer(tradesRef.current, trade);
+      scheduleTradeFlush();
+    },
+    [scheduleTradeFlush],
+  );
+
+  useEffect(() => {
+    snapshotsRef.current = [];
+    setSnapshotCount(0);
+    setOrderbookReceivedAt(null);
+  }, [marketForOrderbook]);
 
   useEffect(() => {
     if (!enabled) return;
 
     let cancelled = false;
-    const endpoint = `/api/orderbook/raw?symbol=${encodeURIComponent(symbol)}&market=${market}`;
+    const endpoint = `/api/orderbook/raw?symbol=${encodeURIComponent(symbol)}&market=${marketForOrderbook}`;
 
     const poll = async () => {
       try {
@@ -149,6 +249,11 @@ export function useLiquidityHeatmapFeed(
         if (raw.exchange) {
           setExchange(raw.exchange === "kraken" ? "Kraken" : "Binance");
         }
+
+        const obTs = Number(raw.timestamp);
+        setOrderbookReceivedAt(
+          Number.isFinite(obTs) && obTs > 0 ? obTs : Date.now(),
+        );
 
         setPipelineStats({
           rawBids: raw.bids?.length ?? 0,
@@ -193,25 +298,26 @@ export function useLiquidityHeatmapFeed(
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [enabled, symbol, market, pushSnapshot]);
+  }, [enabled, symbol, marketForOrderbook, pushSnapshot]);
 
   useEffect(() => {
     if (!enabled) return;
 
-    tradesRef.current = [];
-    receivedRef.current = 0;
-    setTradeBufferCount(0);
-    setReceivedTradeCount(0);
+    restoreMarketCache(marketForTrades);
+    lastMessageRef.current = null;
     setTradesStreamConnected(false);
 
     let cancelled = false;
     let es: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempt = 0;
+    let hadStreamConnected = false;
+    const ingestFloor = tradeIngestFloor(marketForTrades);
 
     const handleWireTrade = (raw: unknown) => {
-      const trade = parseRawTradeEvent(raw);
-      if (!trade || trade.sizeBtc < TRADE_INGEST_FLOOR_BTC) return;
-      ingestTrade(tradesRef, trade, bumpTradeStats, receivedRef);
+      const trade = parseRawTradeEvent(raw, marketForTrades);
+      if (!trade || trade.sizeBtc < ingestFloor) return;
+      ingestTrade(trade);
     };
 
     const seedFromRest = async () => {
@@ -220,7 +326,7 @@ export function useLiquidityHeatmapFeed(
       try {
         const params = new URLSearchParams({
           symbol,
-          market,
+          market: marketForTrades,
           startTime: String(startMs),
           endTime: String(endMs),
           limit: "2000",
@@ -235,13 +341,14 @@ export function useLiquidityHeatmapFeed(
         if (import.meta.env?.DEV) {
           console.debug("[BOOKMAP_TRADES] REST seed", {
             symbol,
+            market: marketForTrades,
             rows: rows.length,
             bufferedTrades: tradesRef.current.length,
           });
         }
       } catch (e) {
         if (import.meta.env?.DEV) {
-          console.warn("[BOOKMAP_TRADES] REST seed failed", e);
+          console.warn("[BOOKMAP_TRADES] REST seed failed", { market: marketForTrades, e });
         }
       }
     };
@@ -252,13 +359,22 @@ export function useLiquidityHeatmapFeed(
 
       const params = new URLSearchParams({
         symbol,
-        market,
-        since: String(Date.now() - 5_000),
+        market: marketForTrades,
+        since: String(Date.now() - TRADE_BUFFER_MS),
       });
-      es = new EventSource(`/api/market/agg-trades/stream?${params}`);
+      const url = `/api/market/agg-trades/stream?${params}`;
+      setSseUrl(url);
+      es = new EventSource(url);
 
       es.addEventListener("open", () => {
+        const isReconnect = hadStreamConnected;
+        hadStreamConnected = true;
+        reconnectAttempt = 0;
         setTradesStreamConnected(true);
+        void seedFromRest();
+        if (isReconnect && import.meta.env?.DEV) {
+          console.debug("[BOOKMAP_TRADES] SSE reconnect", { market: marketForTrades });
+        }
       });
 
       es.onmessage = (event) => {
@@ -276,9 +392,17 @@ export function useLiquidityHeatmapFeed(
         es?.close();
         es = null;
         if (!cancelled) {
-          reconnectTimer = setTimeout(connect, 2_500);
+          const delay = Math.min(30_000, 1_500 + reconnectAttempt * 1_500);
+          reconnectAttempt++;
+          reconnectTimer = setTimeout(connect, delay);
         }
       };
+    };
+
+    reconnectTradesRef.current = () => {
+      if (cancelled) return;
+      void seedFromRest();
+      connect();
     };
 
     void seedFromRest();
@@ -286,11 +410,52 @@ export function useLiquidityHeatmapFeed(
 
     return () => {
       cancelled = true;
+      persistMarketCache(marketForTrades);
       if (reconnectTimer != null) clearTimeout(reconnectTimer);
       es?.close();
+      reconnectTradesRef.current = null;
       setTradesStreamConnected(false);
+      setSseUrl(null);
     };
-  }, [enabled, symbol, market, bumpTradeStats]);
+  }, [
+    enabled,
+    symbol,
+    marketForTrades,
+    ingestTrade,
+    restoreMarketCache,
+    persistMarketCache,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || marketForTrades !== "perp") return;
+
+    const logHealth = () => {
+      if (!import.meta.env.DEV) return;
+      const latestAgeMs =
+        latestTsRef.current != null ? Math.max(0, Date.now() - latestTsRef.current) : null;
+      console.debug("[PERP_TRADES_HEALTH]", {
+        connected: tradesStreamConnected,
+        lastMessageTs: lastMessageRef.current,
+        latestTradeTs: latestTsRef.current,
+        latestAgeMs,
+        tradesInBuffer: tradesRef.current.length,
+        bufferKey: tradeBufferKey(symbol, "perp"),
+        tradeVersion: tradeVersionRef.current,
+        sseUrl,
+      });
+    };
+
+    const id = window.setInterval(() => {
+      logHealth();
+      const latestAgeMs =
+        latestTsRef.current != null ? Date.now() - latestTsRef.current : Infinity;
+      if (latestAgeMs > BOOKMAP_OB_STALE_MS) {
+        reconnectTradesRef.current?.();
+      }
+    }, 2_000);
+
+    return () => window.clearInterval(id);
+  }, [enabled, marketForTrades, symbol, tradesStreamConnected, sseUrl]);
 
   const getRecentTrades = useCallback(() => tradesRef.current, []);
 
@@ -303,9 +468,20 @@ export function useLiquidityHeatmapFeed(
     getRecentTrades,
     pipelineStats,
     tradeTick,
+    tradeVersion,
     tradeBufferCount,
     receivedTradeCount,
     tradesStreamConnected,
-    market,
+    market: marketForTrades,
+    orderbookMarket: marketForOrderbook,
+    latestTradeTs,
+    lastMessageTs,
+    sseUrl,
+    bufferKey: tradeBufferKey(symbol, marketForTrades),
+    orderbookReceivedAt,
+    orderbookAgeMs:
+      orderbookReceivedAt != null
+        ? Math.max(0, Date.now() - orderbookReceivedAt)
+        : null,
   };
 }

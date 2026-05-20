@@ -33,6 +33,7 @@ const EMPTY_SUMMARY: BookmapTradeAggregation["summary"] = {
 export function useBookmapTrades(
   rawTrades: HeatmapTrade[],
   tradeTick: number,
+  tradeVersion = 0,
   options: UseBookmapTradesOptions = {},
 ): BookmapTradeAggregation & { enabled: boolean } {
   const {
@@ -61,7 +62,7 @@ export function useBookmapTrades(
       visibleTimeMin,
       visibleTimeMax,
     });
-  }, [enabled, rawTrades, tradeTick, scope, visibleTimeMin, visibleTimeMax]);
+  }, [enabled, rawTrades, tradeTick, tradeVersion, scope, visibleTimeMin, visibleTimeMax]);
 
   const chartBuckets = useMemo(() => {
     if (!enabled || aggregation.buckets.length === 0) return [];

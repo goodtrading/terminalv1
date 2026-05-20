@@ -1,3 +1,4 @@
+import type { BookmapMarketSource } from "@shared/bookmapMarket";
 import type { HeatmapTrade } from "./liquidityHeatmapUtils";
 
 /** Server SSE / gateway normalized aggTrade row. */
@@ -22,7 +23,10 @@ type BinanceAggTradeWire = {
  * Parse SSE/REST trade payloads into HeatmapTrade.
  * Supports normalized buffer rows and raw Binance aggTrade.
  */
-export function parseRawTradeEvent(raw: unknown): HeatmapTrade | null {
+export function parseRawTradeEvent(
+  raw: unknown,
+  market?: BookmapMarketSource,
+): HeatmapTrade | null {
   if (!raw || typeof raw !== "object") return null;
   const row = raw as BufferedAggTradeWire & BinanceAggTradeWire;
 
@@ -45,6 +49,7 @@ export function parseRawTradeEvent(raw: unknown): HeatmapTrade | null {
       sizeBtc: qty,
       side,
       ts,
+      market,
     };
   }
 
@@ -60,6 +65,7 @@ export function parseRawTradeEvent(raw: unknown): HeatmapTrade | null {
       sizeBtc: qty,
       side: row.m === true ? "sell" : "buy",
       ts,
+      market,
     };
   }
 

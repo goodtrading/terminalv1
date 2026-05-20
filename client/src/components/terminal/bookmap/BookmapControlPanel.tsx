@@ -4,10 +4,16 @@ import {
   DEFAULT_BOOKMAP_VISUAL_SETTINGS,
   type BookmapVisualSettings,
   type DotScaleMode,
+  type BidAskLineOpacity,
+  type ExecutionRailLength,
   type HeatmapIntensityMode,
 } from "./bookmapSettings";
 import type { BookmapOperationalConfig } from "./bookmapOperationalConfig";
 import { BookmapOperationalSections } from "./BookmapOperationalSections";
+import {
+  BookmapConfluenceSections,
+  type BookmapConfluenceControls,
+} from "./BookmapConfluenceSections";
 
 export interface BookmapControlPanelProps {
   settings: BookmapVisualSettings;
@@ -15,6 +21,7 @@ export interface BookmapControlPanelProps {
   onClose: () => void;
   onReset: () => void;
   operational: BookmapOperationalConfig;
+  confluence?: BookmapConfluenceControls;
 }
 
 function Section({
@@ -123,6 +130,7 @@ export function BookmapControlPanel({
   onClose,
   onReset,
   operational,
+  confluence,
 }: BookmapControlPanelProps) {
   const set = (patch: Partial<BookmapVisualSettings>) =>
     onChange(patchSettings(settings, patch));
@@ -152,6 +160,13 @@ export function BookmapControlPanel({
 
       <div className="px-3 py-2.5">
         <BookmapOperationalSections op={operational} />
+        {confluence && (
+          <BookmapConfluenceSections
+            bothMode={confluence.bothMode}
+            prefs={confluence.prefs}
+            onChange={confluence.onChange}
+          />
+        )}
 
         <Section title="Trades / Dots">
           <Row label="Trades enabled">
@@ -231,6 +246,32 @@ export function BookmapControlPanel({
               checked={settings.trades.clusterTrades}
               onChange={(clusterTrades) => set({ trades: { clusterTrades } })}
             />
+          </Row>
+          <Row label="Execution rails">
+            <Toggle
+              checked={settings.trades.executionRailsEnabled}
+              onChange={(executionRailsEnabled) =>
+                set({ trades: { executionRailsEnabled } })
+              }
+            />
+          </Row>
+          <Row label="Rail length">
+            <select
+              value={settings.trades.executionRailLength}
+              disabled={!settings.trades.executionRailsEnabled}
+              onChange={(e) =>
+                set({
+                  trades: {
+                    executionRailLength: e.target.value as ExecutionRailLength,
+                  },
+                })
+              }
+              className={inputClass}
+            >
+              <option value="short">Short</option>
+              <option value="normal">Normal</option>
+              <option value="long">Long</option>
+            </select>
           </Row>
           <Row label="Hide small">
             <Toggle
@@ -389,6 +430,33 @@ export function BookmapControlPanel({
           <p className="text-[8px] font-mono text-slate-600">
             COB / compact DOM styling — next DOM panel pass.
           </p>
+        </Section>
+
+        <Section title="Display">
+          <Row label="Bid/ask lines">
+            <Toggle
+              checked={settings.layout.showBidAskLines}
+              onChange={(showBidAskLines) => set({ layout: { showBidAskLines } })}
+            />
+          </Row>
+          <Row label="B/A line opacity">
+            <select
+              value={settings.layout.bidAskLineOpacity}
+              disabled={!settings.layout.showBidAskLines}
+              onChange={(e) =>
+                set({
+                  layout: {
+                    bidAskLineOpacity: e.target.value as BidAskLineOpacity,
+                  },
+                })
+              }
+              className={inputClass}
+            >
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+            </select>
+          </Row>
         </Section>
 
         <Section title="Layout">

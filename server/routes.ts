@@ -50,6 +50,7 @@ import "./services/orderbookServicePerp";
 import {
   queryBufferedAggTrades,
   subscribeAggTradeBuffer,
+  trackAggTradeSseClient,
 } from "./services/aggTradeBufferService";
 import { startOptionsRefreshInterval } from "./options-engine";
 
@@ -448,11 +449,13 @@ export async function registerRoutes(
 
       console.log(`${logCtx()} → gateway`);
 
+      const market = parseBookmapMarket(req.query.market);
       const trades = await MarketDataGateway.getAggTrades(symbol, {
         startTimeMs: startTime != null && Number.isFinite(startTime) ? startTime : undefined,
         endTimeMs: endTime != null && Number.isFinite(endTime) ? endTime : undefined,
         limit,
         fullRange,
+        market,
       });
 
       console.log(`${logCtx()} ← count=${Array.isArray(trades) ? trades.length : "not-array"}`);
@@ -486,6 +489,8 @@ export async function registerRoutes(
     const seed = queryBufferedAggTrades(symbol, since, Date.now(), market);
     for (const t of seed) send(t);
 
+    trackAggTradeSseClient(market, 1);
+
     const unsubscribe = subscribeAggTradeBuffer(
       symbol,
       (trade) => {
@@ -501,6 +506,7 @@ export async function registerRoutes(
     req.on("close", () => {
       clearInterval(hb);
       unsubscribe();
+      trackAggTradeSseClient(market, -1);
     });
   });
 

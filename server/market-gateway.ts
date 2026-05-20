@@ -2,11 +2,12 @@ import { z } from "zod";
 import { getKrakenTicker, getKrakenCandles } from "./kraken-gateway";
 import { aggregateOhlcvCandles } from "./lib/candleAggregation";
 import { clampCandleLimit, getCandleLimitForTimeframe } from "@shared/candleLimits";
+import { parseBookmapMarket, type BookmapMarketSource } from "@shared/bookmapMarket";
 import {
   getBufferCoverage,
   queryBufferedAggTrades,
   type BufferedAggTrade,
-} from "./services/aggTradeBufferService";
+} from "./services/aggTradeBufferRegistry";
 
 /** Bybit spot kline `interval` param (minutes or D/W/M). */
 function bybitIntervalFromApi(iv: string): string {
@@ -340,9 +341,16 @@ export class MarketDataGateway {
   /** Safety cap for one paged walk. */
   private static readonly AGG_TRADES_PAGED_HARD_CAP = 220_000;
 
-  /** Binance REST aggTrades (max 1000 rows per request). */
+  private static aggTradesRestUrl(market: BookmapMarketSource): string {
+    return market === "perp"
+      ? "https://fapi.binance.com/fapi/v1/aggTrades"
+      : "https://api.binance.com/api/v3/aggTrades";
+  }
+
+  /** Binance REST aggTrades — spot v3 or USDT-M futures fapi v1. */
   private static async fetchAggTradesRest(
     symbol: string,
+    market: BookmapMarketSource,
     opts: { startTimeMs?: number; endTimeMs?: number; limit?: number },
   ): Promise<AggTrade[]> {
     const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
@@ -350,20 +358,34 @@ export class MarketDataGateway {
     const params = new URLSearchParams({ symbol: sym, limit: String(limit) });
     if (opts.startTimeMs != null) params.set("startTime", String(Math.floor(opts.startTimeMs)));
     if (opts.endTimeMs != null) params.set("endTime", String(Math.floor(opts.endTimeMs)));
-    const { data } = await this.fetchBinance(`/api/v3/aggTrades?${params.toString()}`);
+
+    let data: unknown;
+    if (market === "perp") {
+      const res = await this.fetchWithTimeout(
+        `${this.aggTradesRestUrl("perp")}?${params.toString()}`,
+      );
+      if (!res.ok) {
+        throw new Error(`Futures aggTrades status ${res.status}`);
+      }
+      data = await res.json();
+    } else {
+      const out = await this.fetchBinance(`/api/v3/aggTrades?${params.toString()}`);
+      data = out.data;
+    }
+
     if (!Array.isArray(data)) return [];
-    const out: AggTrade[] = [];
+    const rows: AggTrade[] = [];
     for (const row of data) {
       try {
         const t = this.normalizeAggTradeRow(row);
         if (Number.isFinite(t.price) && Number.isFinite(t.qty) && Number.isFinite(t.time) && t.qty > 0) {
-          out.push(t);
+          rows.push(t);
         }
       } catch {
         /* skip malformed row */
       }
     }
-    return out;
+    return rows;
   }
 
   /**
@@ -372,6 +394,7 @@ export class MarketDataGateway {
    */
   private static async fetchAggTradesRestPaged(
     symbol: string,
+    market: BookmapMarketSource,
     startMs: number,
     endMs: number,
     maxRows: number,
@@ -388,7 +411,7 @@ export class MarketDataGateway {
       pages++;
       let batch: AggTrade[];
       try {
-        batch = await this.fetchAggTradesRest(sym, {
+        batch = await this.fetchAggTradesRest(sym, market, {
           startTimeMs: cursor,
           endTimeMs: endMs,
           limit: this.AGG_TRADES_PAGE,
@@ -436,7 +459,13 @@ export class MarketDataGateway {
    */
   static async getAggTrades(
     symbol: string,
-    opts: { startTimeMs?: number; endTimeMs?: number; limit?: number; fullRange?: boolean } = {},
+    opts: {
+      startTimeMs?: number;
+      endTimeMs?: number;
+      limit?: number;
+      fullRange?: boolean;
+      market?: BookmapMarketSource;
+    } = {},
   ): Promise<AggTrade[]> {
     try {
       return await this.getAggTradesImpl(symbol, opts);
@@ -448,9 +477,16 @@ export class MarketDataGateway {
 
   private static async getAggTradesImpl(
     symbol: string,
-    opts: { startTimeMs?: number; endTimeMs?: number; limit?: number; fullRange?: boolean },
+    opts: {
+      startTimeMs?: number;
+      endTimeMs?: number;
+      limit?: number;
+      fullRange?: boolean;
+      market?: BookmapMarketSource;
+    },
   ): Promise<AggTrade[]> {
     const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
+    const market = parseBookmapMarket(opts.market);
     const clientLimit = Math.min(this.AGG_TRADES_CLIENT_CAP, Math.max(1, opts.limit ?? this.AGG_TRADES_CLIENT_CAP));
     const effectiveLimit = opts.fullRange ? this.AGG_TRADES_HISTORICAL_CAP : clientLimit;
     const startRaw = opts.startTimeMs;
@@ -459,7 +495,7 @@ export class MarketDataGateway {
 
     if (!hasWindow) {
       try {
-        return await this.fetchAggTradesRest(sym, { limit: Math.min(1000, clientLimit) });
+        return await this.fetchAggTradesRest(sym, market, { limit: Math.min(1000, clientLimit) });
       } catch (e: any) {
         console.error("[getAggTradesImpl] no-window fetch failed:", e?.message ?? e);
         return [];
@@ -476,28 +512,28 @@ export class MarketDataGateway {
       startMs = endMs - MAX_SPAN_MS;
     }
 
-    const cov = getBufferCoverage(sym);
+    const cov = getBufferCoverage(sym, market);
     console.log(
       "[getAggTrades]",
-      `sym=${sym} startMs=${startMs} endMs=${endMs} limit=${effectiveLimit} fullRange=${opts.fullRange ? 1 : 0} buf={connected:${cov.connected} size:${cov.size} oldest:${cov.oldestMs ?? "null"} newest:${cov.newestMs ?? "null"}}`,
+      `market=${market} sym=${sym} startMs=${startMs} endMs=${endMs} limit=${effectiveLimit} fullRange=${opts.fullRange ? 1 : 0} buf={connected:${cov.connected} size:${cov.size} oldest:${cov.oldestMs ?? "null"} newest:${cov.newestMs ?? "null"}}`,
     );
 
     let buf: AggTrade[] = [];
     try {
-      const bufRaw = queryBufferedAggTrades(sym, startMs, endMs);
+      const bufRaw = queryBufferedAggTrades(sym, startMs, endMs, market);
       buf = this.bufferedToAgg(bufRaw);
     } catch (e: any) {
       console.error("[getAggTrades] buffer query failed:", e?.message ?? e);
     }
 
     if (sym !== "BTCUSDT") {
-      const paged = await this.fetchAggTradesRestPaged(sym, startMs, endMs, effectiveLimit);
+      const paged = await this.fetchAggTradesRestPaged(sym, market, startMs, endMs, effectiveLimit);
       return paged.length <= effectiveLimit ? paged : paged.slice(-effectiveLimit);
     }
 
     const useBuffer = cov.size > 0 || cov.connected;
     if (!useBuffer) {
-      const paged = await this.fetchAggTradesRestPaged(sym, startMs, endMs, effectiveLimit);
+      const paged = await this.fetchAggTradesRestPaged(sym, market, startMs, endMs, effectiveLimit);
       return paged.length <= effectiveLimit ? paged : paged.slice(-effectiveLimit);
     }
 
@@ -507,7 +543,9 @@ export class MarketDataGateway {
     if (cov.oldestMs != null && startMs < cov.oldestMs) {
       const headEnd = Math.min(endMs, cov.oldestMs - 1);
       if (startMs <= headEnd) {
-        headParts.push(...(await this.fetchAggTradesRestPaged(sym, startMs, headEnd, effectiveLimit)));
+        headParts.push(
+          ...(await this.fetchAggTradesRestPaged(sym, market, startMs, headEnd, effectiveLimit)),
+        );
       }
     }
 
@@ -515,14 +553,16 @@ export class MarketDataGateway {
     if (cov.newestMs != null && endMs > cov.newestMs + TAIL_STALE_MS) {
       const tailStart = Math.max(startMs, cov.newestMs - 1);
       if (tailStart <= endMs) {
-        tailParts.push(...(await this.fetchAggTradesRestPaged(sym, tailStart, endMs, effectiveLimit)));
+        tailParts.push(
+          ...(await this.fetchAggTradesRestPaged(sym, market, tailStart, endMs, effectiveLimit)),
+        );
       }
     }
 
     let merged = this.mergeAggTradesById([headParts, buf, tailParts]);
 
     if (merged.length === 0) {
-      merged = await this.fetchAggTradesRestPaged(sym, startMs, endMs, effectiveLimit);
+      merged = await this.fetchAggTradesRestPaged(sym, market, startMs, endMs, effectiveLimit);
     }
 
     if (merged.length <= effectiveLimit) return merged;

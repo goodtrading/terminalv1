@@ -36,6 +36,8 @@ export type HeatmapTrade = {
   side: "buy" | "sell";
   /** Unix ms */
   ts: number;
+  /** Source market when known (spot | perp). */
+  market?: "spot" | "perp";
 };
 
 export type HeatmapPipelineStats = {

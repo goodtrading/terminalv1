@@ -9,6 +9,7 @@ import {
   type PerpOverlayOpacityPct,
   resolveActiveMarket,
 } from "@shared/bookmapSourceMode";
+import { isOrderbookDead, isOrderbookStale } from "@shared/bookmapFreshness";
 
 export type UseBookmapCompositeStateOptions = Omit<UseBookmapStateOptions, "market"> & {
   enabled?: boolean;
@@ -17,17 +18,26 @@ export type UseBookmapCompositeStateOptions = Omit<UseBookmapStateOptions, "mark
 function useCachedMarketState(
   data: BookmapState | undefined,
   market: BookmapMarketSource,
+  ageMs: number | null,
   cacheRef: MutableRefObject<Record<BookmapMarketSource, BookmapState | null>>,
   loadedRef: MutableRefObject<Record<BookmapMarketSource, boolean>>,
 ) {
   return useMemo(() => {
     if (data && data.heatmapCells.length > 0) {
-      cacheRef.current[market] = data;
-      loadedRef.current[market] = true;
+      if (!isOrderbookDead(ageMs)) {
+        cacheRef.current[market] = data;
+        loadedRef.current[market] = true;
+      }
       return data;
     }
-    return cacheRef.current[market];
-  }, [data, market, cacheRef, loadedRef]);
+    const cached = cacheRef.current[market];
+    if (cached) {
+      const cacheAge =
+        cached.timestamp != null ? Math.max(0, Date.now() - cached.timestamp) : null;
+      if (!isOrderbookDead(cacheAge)) return cached;
+    }
+    return null;
+  }, [data, market, ageMs, cacheRef, loadedRef]);
 }
 
 export function useBookmapCompositeState(options: UseBookmapCompositeStateOptions = {}) {
@@ -64,12 +74,14 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
   const effectiveSpot = useCachedMarketState(
     spotQuery.data,
     "spot",
+    spotQuery.ageMs,
     lastGoodByMarketRef,
     everLoadedByMarketRef,
   );
   const effectivePerp = useCachedMarketState(
     perpQuery.data,
     "perp",
+    perpQuery.ageMs,
     lastGoodByMarketRef,
     everLoadedByMarketRef,
   );
@@ -130,6 +142,14 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
   const primaryQuery =
     sourceMode === "perp" ? perpQuery : spotQuery;
 
+  const activeDomAgeMs =
+    activeDomMarket === "perp" ? perpQuery.ageMs : spotQuery.ageMs;
+  const activeTradeAgeMs =
+    activeTradeMarket === "perp" ? perpQuery.ageMs : spotQuery.ageMs;
+
+  const perpBookmapStale = isOrderbookStale(perpQuery.ageMs);
+  const perpBookmapDead = isOrderbookDead(perpQuery.ageMs);
+
   return {
     sourceMode,
     setSourceMode,
@@ -153,6 +173,12 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
     primaryQuery,
     spotQuery,
     perpQuery,
+    spotAgeMs: spotQuery.ageMs,
+    perpAgeMs: perpQuery.ageMs,
+    activeDomAgeMs,
+    activeTradeAgeMs,
+    perpBookmapStale,
+    perpBookmapDead,
     everLoadedByMarket: everLoadedByMarketRef.current,
   };
 }

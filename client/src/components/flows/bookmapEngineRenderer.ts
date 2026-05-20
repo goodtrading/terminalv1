@@ -3,7 +3,7 @@ import type { BookmapTimeViewport } from "@/hooks/useBookmapTimeScale";
 import type { VerticalCompressionMode } from "@/lib/bookmapDepthRange";
 import { formatHeatmapPrice } from "./liquidityHeatmapUtils";
 import type { PreparedEngineRenderData } from "./bookmapEnginePrepare";
-import { pickWallLabels } from "./bookmapBandPrepare";
+import { pickWallLabels, type WallLabelPlacement } from "./bookmapBandPrepare";
 import type { HeatmapBand } from "./bookmapBandTypes";
 import {
   getBookmapBandFill,
@@ -24,10 +24,28 @@ import {
 import type { BookmapPlotMetrics } from "./bookmapHeatmapRenderer";
 import type { BookmapVisualSettings } from "@/components/terminal/bookmap/bookmapSettings";
 import {
+  renderBookmapBidAskGuideLines,
+  type BookmapBbo,
+  type BidAskLineOpacity,
+} from "./bookmapBboGuideLines";
+import { renderEngineExecutionRails } from "./bookmapExecutionRails";
+import {
   renderEngineTradeDots,
   type EngineTradeDot,
   type TradeDotVisualContext,
 } from "./bookmapEngineTradeDots";
+import type { ExecutionRailLength } from "@/components/terminal/bookmap/bookmapSettings";
+import type { PassiveConfluenceLevel } from "./bookmapConfluence";
+import type {
+  ConfluenceMinDisplayTier,
+  ConfluenceVisualOpacity,
+} from "./bookmapConfluenceConfig";
+import {
+  pickConfluenceLabels,
+  renderConfluenceLabels,
+  renderPassiveConfluenceOverlay,
+  type ConfluenceRenderMode,
+} from "./bookmapConfluenceRenderer";
 
 export type BookmapEngineFrameParams = {
   width: number;
@@ -37,6 +55,8 @@ export type BookmapEngineFrameParams = {
   spot: number | null;
   priceToY: (price: number) => number;
   heatmapBucketSize: number;
+  /** DOM ladder tick step for BBO guide line row snapping. */
+  domBucketSize?: number;
   crosshair?: BookmapCrosshair;
   engine: PreparedEngineRenderData;
   timeViewport: BookmapTimeViewport;
@@ -45,10 +65,18 @@ export type BookmapEngineFrameParams = {
   tradeDots?: EngineTradeDot[];
   tradeDotVerticalMode?: VerticalCompressionMode;
   tradeDotVisual?: TradeDotVisualContext;
+  executionRailsEnabled?: boolean;
+  executionRailLength?: ExecutionRailLength;
   visualSettings?: BookmapVisualSettings;
   /** Perp ghost layer in Both mode (drawn after primary bands). */
   overlayEngine?: PreparedEngineRenderData;
   overlayOpacity?: number;
+  /** Passive S+P confluence (Both mode only). */
+  confluenceLevels?: PassiveConfluenceLevel[];
+  showConfluenceLabels?: boolean;
+  confluenceVisualOpacity?: ConfluenceVisualOpacity;
+  confluenceRenderMode?: ConfluenceRenderMode;
+  confluenceMinDisplayTier?: ConfluenceMinDisplayTier;
 };
 
 type EnginePlotMetrics = {
@@ -214,14 +242,11 @@ function renderHeatmapBands(
   }
 }
 
-function renderWallLabels(
+function renderWallLabelPlacements(
   ctx: CanvasRenderingContext2D,
-  metrics: EnginePlotMetrics,
-  bands: HeatmapBand[],
+  plotRight: number,
+  placements: WallLabelPlacement[],
 ) {
-  const plotRight = HEATMAP_PAD.left + metrics.plotW;
-  const placements = pickWallLabels(bands, metrics.priceToY, plotRight);
-
   ctx.font = "9px ui-monospace, monospace";
   ctx.textAlign = "right";
 
@@ -240,6 +265,16 @@ function renderWallLabels(
   }
 
   ctx.textAlign = "left";
+}
+
+function renderWallLabels(
+  ctx: CanvasRenderingContext2D,
+  metrics: EnginePlotMetrics,
+  bands: HeatmapBand[],
+) {
+  const plotRight = HEATMAP_PAD.left + metrics.plotW;
+  const placements = pickWallLabels(bands, metrics.priceToY, plotRight);
+  renderWallLabelPlacements(ctx, plotRight, placements);
 }
 
 function renderEngineFarWallMarkers(
@@ -340,10 +375,83 @@ export function paintBookmapEngineHeatmapFrame(
         params.overlayOpacity ?? 0.35,
       );
     }
-    renderWallLabels(ctx, metrics, engine.bands);
+    if (params.confluenceLevels && params.confluenceLevels.length > 0) {
+      renderPassiveConfluenceOverlay(
+        ctx,
+        {
+          plotW: metrics.plotW,
+          plotH: metrics.plotH,
+          priceToY: metrics.priceToY,
+          timeToX: metrics.timeToX,
+          priceStep: params.heatmapBucketSize,
+        },
+        params.confluenceLevels,
+        engine.bands,
+        timeViewport,
+        params.confluenceVisualOpacity ?? "normal",
+        params.confluenceRenderMode ?? "intraday",
+        params.confluenceMinDisplayTier ?? "strong",
+        params.overlayEngine?.bands,
+      );
+    }
+    const plotRight = HEATMAP_PAD.left + metrics.plotW;
+    const wallPlacements = pickWallLabels(
+      engine.bands,
+      metrics.priceToY,
+      plotRight,
+    );
+    if (
+      params.showConfluenceLabels !== false &&
+      params.confluenceLevels &&
+      params.confluenceLevels.length > 0
+    ) {
+      const reservedYs = wallPlacements.map((p) => p.y);
+      const confLabels = pickConfluenceLabels(
+        params.confluenceLevels,
+        metrics.priceToY,
+        plotRight,
+        spot,
+        reservedYs,
+        params.confluenceRenderMode ?? "intraday",
+        params.confluenceMinDisplayTier ?? "strong",
+      );
+      renderConfluenceLabels(ctx, confLabels);
+    }
+    renderWallLabelPlacements(ctx, plotRight, wallPlacements);
+  }
+
+  if (
+    params.showBidAskLines !== false &&
+    params.bboGuide &&
+    metrics
+  ) {
+    renderBookmapBidAskGuideLines(
+      ctx,
+      params.bboGuide,
+      metrics,
+      timeViewport,
+      params.tradeDotVerticalMode ?? "intraday",
+      params.bidAskLineOpacity ?? "normal",
+      Math.max(1, params.domBucketSize ?? params.heatmapBucketSize),
+    );
   }
 
   if (params.tradeDots && params.tradeDots.length > 0) {
+    if (params.executionRailsEnabled !== false) {
+      renderEngineExecutionRails(
+        ctx,
+        params.tradeDots,
+        metrics.timeToX,
+        metrics.priceToY,
+        metrics.plotW,
+        metrics.plotH,
+        {
+          verticalMode: params.tradeDotVerticalMode ?? "intraday",
+          railLength: params.executionRailLength ?? "normal",
+          visual: params.tradeDotVisual,
+        },
+      );
+    }
     renderEngineTradeDots(
       ctx,
       params.tradeDots,

@@ -5,6 +5,16 @@ import { useBookmapCompositeState } from "@/hooks/useBookmapCompositeState";
 import { useBookmapPriceScale } from "@/hooks/useBookmapPriceScale";
 import { useBookmapTimeScale } from "@/hooks/useBookmapTimeScale";
 import { formatBookmapTimeSpanMs } from "@/lib/bookmapInteractionUtils";
+import {
+  detectPassiveConfluence,
+  summarizePassiveConfluence,
+  type PassiveConfluenceLevel,
+} from "./bookmapConfluence";
+import { resolveConfluenceRenderMode } from "./bookmapConfluenceRenderer";
+import { extractBboFromDomSnapshot, isBboValid } from "./bookmapBboGuideLines";
+import { BOOKMAP_OB_STALE_MS, isOrderbookStale } from "@shared/bookmapFreshness";
+import { countExecutionRails } from "./bookmapExecutionRails";
+import { HEATMAP_PAD } from "./bookmapHeatmapRenderer";
 import { useLiquidityHeatmapFeed } from "@/hooks/useLiquidityHeatmapFeed";
 import {
   BOOKMAP_ENGINE_PRICE_RANGE_PCT,
@@ -121,6 +131,7 @@ export function LiquidityHeatmapPanel({
     depthRangePreset,
     localRangeUsd,
     rightSpacePct,
+    confluence: confluencePrefs,
   } = prefs;
 
   const viewMode = depthPresetToLegacyViewMode(depthRangePreset);
@@ -179,6 +190,10 @@ export function LiquidityHeatmapPanel({
     hasRenderableHeatmap,
     usingCachedPrimary,
     primaryQuery,
+    spotAgeMs,
+    perpAgeMs,
+    activeDomAgeMs,
+    perpBookmapStale,
     everLoadedByMarket,
   } = composite;
 
@@ -194,7 +209,18 @@ export function LiquidityHeatmapPanel({
     tradeBufferCount,
     receivedTradeCount,
     tradesStreamConnected,
-  } = useLiquidityHeatmapFeed(symbol, true, activeTradeMarket);
+    latestTradeTs,
+    lastMessageTs,
+    tradeVersion,
+    sseUrl: tradeSseUrl,
+    bufferKey: tradeBufferKey,
+    market: tradeFeedMarket,
+    orderbookMarket: orderbookFeedMarket,
+    orderbookAgeMs,
+  } = useLiquidityHeatmapFeed(symbol, true, {
+    tradeMarket: activeTradeMarket,
+    orderbookMarket: activeDomMarket,
+  });
 
   const bookmapEngineLoading = primaryQuery.isLoading;
   const bookmapEngineFetching = primaryQuery.isFetching;
@@ -237,6 +263,57 @@ export function LiquidityHeatmapPanel({
     );
   }, [useEngineRenderer, effectiveDomState, latestLegacy]);
 
+  const domBboRaw = useMemo(() => extractBboFromDomSnapshot(latest), [latest]);
+
+  const domBboFresh = useMemo(() => {
+    if (!domBboRaw || !isBboValid(domBboRaw.bestBid, domBboRaw.bestAsk)) return false;
+    if (useEngineRenderer) {
+      return !isOrderbookStale(activeDomAgeMs) && !isOrderbookStale(orderbookAgeMs);
+    }
+    return !isOrderbookStale(orderbookAgeMs);
+  }, [domBboRaw, activeDomAgeMs, orderbookAgeMs, useEngineRenderer]);
+
+  const domBbo = domBboFresh ? domBboRaw : null;
+
+  const perpLiveStale =
+    activeDomMarket === "perp" &&
+    (perpBookmapStale || isOrderbookStale(orderbookAgeMs) || isOrderbookStale(perpAgeMs));
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const tradeAgeMs =
+      latestTradeTs != null ? Math.max(0, Date.now() - latestTradeTs) : null;
+    console.debug("[BOOKMAP_MARKET_FRESHNESS]", {
+      sourceMode,
+      domSource: activeDomMarket,
+      tradeSource: activeTradeMarket,
+      market: activeDomMarket,
+      bookmapAgeMs: activeDomAgeMs,
+      spotBookmapAgeMs: spotAgeMs,
+      perpBookmapAgeMs: perpAgeMs,
+      orderbookAgeMs,
+      orderbookFeedMarket,
+      tradeAgeMs,
+      bestBid: domBboRaw?.bestBid ?? null,
+      bestAsk: domBboRaw?.bestAsk ?? null,
+      bboValid: domBboFresh,
+      perpLiveStale,
+    });
+  }, [
+    sourceMode,
+    activeDomMarket,
+    activeTradeMarket,
+    activeDomAgeMs,
+    spotAgeMs,
+    perpAgeMs,
+    orderbookAgeMs,
+    orderbookFeedMarket,
+    latestTradeTs,
+    domBboRaw,
+    domBboFresh,
+    perpLiveStale,
+  ]);
+
   const trades = getRecentTrades();
 
   const tradeDotsEnabled =
@@ -248,7 +325,7 @@ export function LiquidityHeatmapPanel({
   const deltaPanelEnabled = showTrades && ENABLE_BOOKMAP_DELTA_VOLUME;
   const tradeAggEnabled = tradeDotsEnabled || deltaPanelEnabled;
 
-  const bookmapTradeAgg = useBookmapTrades(trades, tradeTick, {
+  const bookmapTradeAgg = useBookmapTrades(trades, tradeTick, tradeVersion, {
     enabled: tradeAggEnabled,
     scope: "session",
   });
@@ -493,6 +570,62 @@ export function LiquidityHeatmapPanel({
     [engineOverlayBase, normalizeBands],
   );
 
+  const passiveConfluenceDetect = useMemo(() => {
+    if (sourceMode !== "both" || !effectiveSpot || !effectivePerp) {
+      return {
+        levels: [] as PassiveConfluenceLevel[],
+        debug: {
+          candidateConfluences: 0,
+          rejectedBySide: 0,
+          rejectedByStrength: 0,
+          rejectedByDistance: 0,
+          rejectedByMinTier: 0,
+          renderedConfluences: 0,
+          strong: 0,
+          major: 0,
+        },
+      };
+    }
+    return detectPassiveConfluence({
+      spotState: effectiveSpot,
+      perpState: effectivePerp,
+      minPrice: priceRange.minPrice,
+      maxPrice: priceRange.maxPrice,
+      heatmapBucketSize: priceScale.heatmapBucketSize,
+      domBucketSize: priceScale.domBucketSize,
+      verticalMode: priceScale.verticalMode,
+      prefs: confluencePrefs,
+    });
+  }, [
+    sourceMode,
+    effectiveSpot,
+    effectivePerp,
+    priceRange.minPrice,
+    priceRange.maxPrice,
+    priceScale.heatmapBucketSize,
+    priceScale.domBucketSize,
+    priceScale.verticalMode,
+    confluencePrefs,
+  ]);
+
+  const passiveConfluenceLevels = passiveConfluenceDetect.levels;
+  const passiveConfluenceDebug = passiveConfluenceDetect.debug;
+
+  const passiveConfluenceSummary = useMemo(
+    () =>
+      summarizePassiveConfluence(
+        passiveConfluenceLevels,
+        confluencePrefs.minDisplayTier,
+        passiveConfluenceDebug,
+      ),
+    [passiveConfluenceLevels, confluencePrefs.minDisplayTier, passiveConfluenceDebug],
+  );
+
+  const confluenceRenderMode = useMemo(
+    () => resolveConfluenceRenderMode(priceScale.verticalMode, depthRangePreset),
+    [priceScale.verticalMode, depthRangePreset],
+  );
+
   const engineTradeDots = useMemo(() => {
     if (!tradeDotsEnabled) {
       return {
@@ -525,13 +658,88 @@ export function LiquidityHeatmapPanel({
     tradeDotsEnabled,
     bookmapTradeAgg.trades,
     tradeTick,
+    tradeVersion,
+    bookmapTradeAgg.summary.tradeCount,
     priceRange.minPrice,
     priceRange.maxPrice,
     timeScale.viewport.visibleStartTime,
     timeScale.viewport.visibleEndTime,
+    timeScale.followLive,
+    timeScale.horizontalOffsetMs,
     priceScale.verticalMode,
     priceScale.heatmapBucketSize,
     priceScale.domBucketSize,
+    tradeDotVisual,
+    activeTradeMarket,
+    sourceMode,
+    tradeSource,
+  ]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const latestAgeMs =
+      latestTradeTs != null ? Math.max(0, Date.now() - latestTradeTs) : null;
+    console.debug("[BOOKMAP_TRADE_SOURCE]", {
+      sourceMode,
+      tradeSource,
+      marketForTrades: activeTradeMarket,
+      tradeFeedMarket,
+      sseUrl: tradeSseUrl,
+      connected: tradesStreamConnected,
+      bufferKey: tradeBufferKey,
+      tradesTotal: tradeBufferCount,
+      receivedTradeCount,
+      latestTradeTs,
+      latestAgeMs,
+      lastMessageTs,
+      renderedDots: engineTradeDots.stats.dotCount,
+    });
+  }, [
+    sourceMode,
+    tradeSource,
+    activeTradeMarket,
+    tradeFeedMarket,
+    tradeSseUrl,
+    tradesStreamConnected,
+    tradeBufferKey,
+    tradeBufferCount,
+    receivedTradeCount,
+    latestTradeTs,
+    lastMessageTs,
+    tradeVersion,
+    engineTradeDots.stats.dotCount,
+  ]);
+
+  const executionRailCount = useMemo(() => {
+    if (!tradeDotsEnabled || !visualSettings.trades.executionRailsEnabled) return 0;
+    if (!engineTradeDots.dots.length || heatmapPlotWidth < 10 || heatmapPlotHeight < 10) {
+      return 0;
+    }
+    const plotW = heatmapPlotWidth - HEATMAP_PAD.left - HEATMAP_PAD.right;
+    const plotH = heatmapPlotHeight - HEATMAP_PAD.top - HEATMAP_PAD.bottom;
+    if (plotW <= 0 || plotH <= 0) return 0;
+    return countExecutionRails(
+      engineTradeDots.dots,
+      timeScale.timeToX,
+      priceScale.priceToY,
+      plotW,
+      plotH,
+      {
+        verticalMode: priceScale.verticalMode,
+        railLength: visualSettings.trades.executionRailLength,
+        visual: tradeDotVisual,
+      },
+    );
+  }, [
+    tradeDotsEnabled,
+    visualSettings.trades.executionRailsEnabled,
+    visualSettings.trades.executionRailLength,
+    engineTradeDots.dots,
+    heatmapPlotWidth,
+    heatmapPlotHeight,
+    timeScale.timeToX,
+    priceScale.priceToY,
+    priceScale.verticalMode,
     tradeDotVisual,
   ]);
 
@@ -847,6 +1055,7 @@ export function LiquidityHeatmapPanel({
         spot: priceReference ?? tickerSpot,
         priceToY: priceScale.priceToY,
         heatmapBucketSize: priceScale.heatmapBucketSize,
+        domBucketSize: priceScale.domBucketSize,
         crosshair,
         engine: engineRenderData,
         overlayEngine:
@@ -854,11 +1063,22 @@ export function LiquidityHeatmapPanel({
             ? engineOverlayRenderData
             : undefined,
         overlayOpacity: sourceMode === "both" ? perpOverlayOpacity : undefined,
+        confluenceLevels:
+          sourceMode === "both" ? passiveConfluenceLevels : undefined,
+        showConfluenceLabels: confluencePrefs.showConfluenceLabels,
+        confluenceVisualOpacity: confluencePrefs.visualOpacity,
+        confluenceRenderMode,
+        confluenceMinDisplayTier: confluencePrefs.minDisplayTier,
         timeViewport: timeScale.viewport,
         showFarWallMarkers: showImportantFarLevels,
         tradeDots: tradeDotsEnabled ? engineTradeDots.dots : undefined,
         tradeDotVerticalMode: priceScale.verticalMode,
         tradeDotVisual,
+        executionRailsEnabled: visualSettings.trades.executionRailsEnabled,
+        executionRailLength: visualSettings.trades.executionRailLength,
+        bboGuide: domBbo,
+        showBidAskLines: visualSettings.layout.showBidAskLines,
+        bidAskLineOpacity: visualSettings.layout.bidAskLineOpacity,
         visualSettings,
       });
       return;
@@ -888,6 +1108,11 @@ export function LiquidityHeatmapPanel({
     engineOverlayRenderData,
     sourceMode,
     perpOverlayOpacity,
+    passiveConfluenceLevels,
+    confluencePrefs.showConfluenceLabels,
+    confluencePrefs.visualOpacity,
+    confluenceRenderMode,
+    confluencePrefs.minDisplayTier,
     timeScale.viewport,
     getSnapshots,
     priceRange,
@@ -908,6 +1133,11 @@ export function LiquidityHeatmapPanel({
     engineTradeDots,
     tradeDotVisual,
     visualSettings,
+    visualSettings.trades.executionRailsEnabled,
+    visualSettings.trades.executionRailLength,
+    domBbo,
+    visualSettings.layout.showBidAskLines,
+    visualSettings.layout.bidAskLineOpacity,
   ]);
 
   useEffect(() => {
@@ -920,6 +1150,9 @@ export function LiquidityHeatmapPanel({
     priceScale.visibleRange,
     timeScale.viewport,
     timeScale.followLive,
+    tradeTick,
+    tradeVersion,
+    engineTradeDots,
   ]);
 
   useEffect(() => {
@@ -1059,17 +1292,21 @@ export function LiquidityHeatmapPanel({
     const td = engineTradeDots.stats;
     const tradeDbgParts: string[] = [];
     if (tradeDotsEnabled || deltaPanelEnabled) {
-      tradeDbgParts.push(`trades ${td.tradeCount || bookmapTradeAgg.summary.tradeCount}`);
+      const latestMs =
+        latestTradeTs != null ? Math.max(0, Date.now() - latestTradeTs) : null;
+      const latestLabel =
+        latestMs != null
+          ? latestMs >= BOOKMAP_OB_STALE_MS
+            ? "STALE"
+            : `${(latestMs / 1000).toFixed(1)}s`
+          : "—";
+      tradeDbgParts.push(
+        `trade ${activeTradeMarket}`,
+        `trades ${tradeBufferCount || td.tradeCount || bookmapTradeAgg.summary.tradeCount}`,
+        `latest ${latestLabel}`,
+      );
       if (tradeDotsEnabled) {
-        tradeDbgParts.push(
-          `visibleTrades ${td.visibleTrades}`,
-          `dots ${td.dotCount}`,
-          `grouped ${td.groupedCount}`,
-          `buyDots ${td.buyDots}`,
-          `sellDots ${td.sellDots}`,
-          `r ${td.dotRadiusMin.toFixed(1)}–${td.dotRadiusMax.toFixed(1)}`,
-          `clusterMs ${td.clusterMs}`,
-        );
+        tradeDbgParts.push(`dots ${td.dotCount}`);
       }
     }
     if (deltaPanelEnabled) {
@@ -1085,16 +1322,35 @@ export function LiquidityHeatmapPanel({
       timeScale.viewport.visibleEndTime - timeScale.viewport.visibleStartTime;
     const interactionTag = `follow ${timeScale.followLive ? "ON" : "OFF"} · offset ${offsetSec}s · tspan ${formatBookmapTimeSpanMs(tspanMs)} · right ${rightSpacePct}%`;
     const wv = priceScale.visibleWallCounts;
+    const bboTag =
+      domBbo != null
+        ? ` · bbo ${formatHeatmapPrice(domBbo.bestBid)} / ${formatHeatmapPrice(domBbo.bestAsk)}`
+        : "";
     const sourceTag =
       sourceMode === "both"
-        ? `source both · spot cells ${effectiveSpot?.heatmapCells.length ?? 0} · perp cells ${effectivePerp?.heatmapCells.length ?? 0} · dom ${activeDomMarket} · trade ${activeTradeMarket} · perpOpacity ${perpOverlayOpacityPct}%`
-        : `source ${sourceMode}`;
+        ? `source both · spot cells ${effectiveSpot?.heatmapCells.length ?? 0} · perp cells ${effectivePerp?.heatmapCells.length ?? 0} · conf candidates ${passiveConfluenceDebug.candidateConfluences} · rejected strength ${passiveConfluenceDebug.rejectedByStrength} · rendered ${passiveConfluenceSummary.visible} · strong ${passiveConfluenceSummary.strong} · major ${passiveConfluenceSummary.major} · minTier ${confluencePrefs.minDisplayTier} · dom ${activeDomMarket}${bboTag} · trade ${activeTradeMarket} · perpOpacity ${perpOverlayOpacityPct}%`
+        : `source ${sourceMode} · dom ${activeDomMarket}${bboTag}`;
     const domWalls =
       domBook != null
         ? `${domBook.importantWalls.length}/${domBook.structuralWalls.length}/${domBook.majorWalls.length}`
         : "—/—/—";
+    const tradeAgeDbg =
+      latestTradeTs != null ? Math.round(Date.now() - latestTradeTs) : null;
+    const obAgeDbg = orderbookAgeMs != null ? Math.round(orderbookAgeMs) : null;
+    const perpBmAgeDbg = perpAgeMs != null ? Math.round(perpAgeMs) : null;
+    const showPerpFreshness =
+      sourceMode === "perp" || sourceMode === "both" || activeDomMarket === "perp";
+    const perpFreshnessDbg = showPerpFreshness
+      ? perpLiveStale
+        ? ` · PERP STALE · ob ${obAgeDbg ?? "—"}ms · bm ${perpBmAgeDbg ?? "—"}ms · reconnecting`
+        : ` · perp ob ${obAgeDbg ?? "—"}ms · tr ${tradeAgeDbg ?? "—"}ms · bbo ${domBboFresh ? "OK" : "—"}${
+            domBboRaw && domBboFresh
+              ? ` · spread ${Math.round(domBboRaw.bestAsk - domBboRaw.bestBid)}`
+              : ""
+          }`
+      : "";
     return (
-      `BOOKMAP · ${sourceTag} · ${interactionTag} · ${statusTag} · verticalMode ${priceScale.verticalMode} · depth ${depthPresetLabel(depthRangePreset, localRangeUsd)} · range ${formatBookmapRangeShort(priceScale.visibleMinPrice)}–${formatBookmapRangeShort(priceScale.visibleMaxPrice)} · domWalls ${domWalls} · bands ${st?.visibleBandCount ?? 0}/${st?.renderedBandCount ?? 0} · age ${age}ms${tradeDbg}`
+      `BOOKMAP · ${sourceTag} · ${interactionTag} · ${statusTag} · verticalMode ${priceScale.verticalMode} · depth ${depthPresetLabel(depthRangePreset, localRangeUsd)} · range ${formatBookmapRangeShort(priceScale.visibleMinPrice)}–${formatBookmapRangeShort(priceScale.visibleMaxPrice)} · domWalls ${domWalls} · bands ${st?.visibleBandCount ?? 0}/${st?.renderedBandCount ?? 0} · age ${age}ms${perpFreshnessDbg}${tradeDbg}`
     );
   }, [
     sourceMode,
@@ -1103,6 +1359,15 @@ export function LiquidityHeatmapPanel({
     activeDomMarket,
     activeTradeMarket,
     perpOverlayOpacityPct,
+    passiveConfluenceSummary,
+    confluencePrefs.minDisplayTier,
+    passiveConfluenceDebug,
+    domBbo,
+    domBboRaw,
+    domBboFresh,
+    perpLiveStale,
+    perpAgeMs,
+    orderbookAgeMs,
     engineEverLoaded,
     bookmapEngineLoading,
     bookmapEngineFetching,
@@ -1121,6 +1386,11 @@ export function LiquidityHeatmapPanel({
     timeScale.horizontalOffsetMs,
     tradeDotsEnabled,
     engineTradeDots.stats,
+    tradeBufferCount,
+    latestTradeTs,
+    activeTradeMarket,
+    executionRailCount,
+    visualSettings.trades.executionRailsEnabled,
     deltaPanelEnabled,
     bookmapTradeAgg.summary,
   ]);
@@ -1267,6 +1537,11 @@ export function LiquidityHeatmapPanel({
           </>
         )}
 
+        {perpLiveStale && (
+          <div className="pointer-events-none absolute left-2 top-2 z-20 rounded border border-amber-500/50 bg-amber-950/80 px-1.5 py-0.5 text-[9px] font-mono text-amber-200">
+            PERP stale
+          </div>
+        )}
         {visualSettings.layout.showDebug && engineDebugLine && (
           <span
             className={cn(
@@ -1487,6 +1762,11 @@ export function LiquidityHeatmapPanel({
               <BookmapControlPanel
                 settings={visualSettings}
                 operational={bookmapOperational}
+                confluence={{
+                  bothMode: sourceMode === "both",
+                  prefs: confluencePrefs,
+                  onChange: (patch) => updatePrefs({ confluence: patch }),
+                }}
                 onChange={(next) =>
                   setVisualSettings(mergeBookmapVisualSettings(next, {}))
                 }

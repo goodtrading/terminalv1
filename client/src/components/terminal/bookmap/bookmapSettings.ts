@@ -1,6 +1,8 @@
 export type DotScaleMode = "linear" | "log" | "adaptive";
 export type AggressorColorMode = "classic" | "bookmap" | "orangeAsk" | "custom";
 export type HeatmapIntensityMode = "classic" | "adaptive" | "microstructure";
+export type ExecutionRailLength = "short" | "normal" | "long";
+export type BidAskLineOpacity = "low" | "normal" | "high";
 
 export interface BookmapVisualSettings {
   trades: {
@@ -18,6 +20,9 @@ export interface BookmapVisualSettings {
     minTradeSize: number;
     buyColorMode: "green" | "cyan";
     sellColorMode: "red" | "orange";
+    /** Horizontal bid/ask execution tick lines at trade price. */
+    executionRailsEnabled: boolean;
+    executionRailLength: ExecutionRailLength;
   };
   liquidity: {
     showMajorWalls: boolean;
@@ -41,6 +46,9 @@ export interface BookmapVisualSettings {
     rightSpacePct: number;
     showDebug: boolean;
     showTopMetrics: boolean;
+    /** Live best bid/ask horizontal guide lines on heatmap. */
+    showBidAskLines: boolean;
+    bidAskLineOpacity: BidAskLineOpacity;
   };
 }
 
@@ -84,6 +92,8 @@ export const DEFAULT_BOOKMAP_VISUAL_SETTINGS: BookmapVisualSettings = {
     rightSpacePct: 20,
     showDebug: false,
     showTopMetrics: true,
+    showBidAskLines: true,
+    bidAskLineOpacity: "normal",
   },
 };
 
@@ -109,6 +119,13 @@ function mergeTrades(
     ),
     opacity: clamp(patch.opacity ?? base.opacity, 0.2, 1),
     minTradeSize: clamp(patch.minTradeSize ?? base.minTradeSize, 0, 20),
+    executionRailsEnabled:
+      patch.executionRailsEnabled ?? base.executionRailsEnabled ?? true,
+    executionRailLength:
+      patch.executionRailLength === "short" ||
+      patch.executionRailLength === "long"
+        ? patch.executionRailLength
+        : (base.executionRailLength ?? "normal"),
   };
 }
 
@@ -136,6 +153,13 @@ export function mergeBookmapVisualSettings(
         10,
         35,
       ),
+      showBidAskLines:
+        patch.layout?.showBidAskLines ?? base.layout.showBidAskLines ?? true,
+      bidAskLineOpacity:
+        patch.layout?.bidAskLineOpacity === "low" ||
+        patch.layout?.bidAskLineOpacity === "high"
+          ? patch.layout.bidAskLineOpacity
+          : (base.layout.bidAskLineOpacity ?? "normal"),
     },
   };
 }

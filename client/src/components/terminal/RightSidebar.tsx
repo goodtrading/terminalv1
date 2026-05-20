@@ -127,6 +127,8 @@ function LiquidityMapPanel() {
     queryKey: ["/api/vacuum"],
     refetchInterval: 5000,
     enabled: !!terminalData?.positioning,
+    retry: false,
+    throwOnError: false,
   });
   const lines: string[] = heatmap?.liquidityMapLines || [];
   const pressure = heatmap?.liquidityPressure || "BALANCED";

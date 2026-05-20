@@ -30,13 +30,20 @@ const COMPACT_AFTER_DROPPED = 40_000;
 const SEED_REST_LIMIT = 1000;
 const MAX_BUFFER_RETURN = 120_000;
 const DEBUG = process.env.NODE_ENV === "development";
+const TRADE_STALE_MS = 3_000;
+const TRADE_HEALTH_MS = 2_000;
+
+let perpSseClients = 0;
 
 function createAggTradeBuffer(config: BufferConfig) {
-  const { streamSymbol, wsBase, wsPath, restAggTradesUrl, logTag } = config;
+  const { market, streamSymbol, wsBase, wsPath, restAggTradesUrl, logTag } = config;
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
   let connected = false;
+  let lastMessageTs = 0;
+  let lastTrade: BufferedAggTrade | null = null;
+  let healthTimer: ReturnType<typeof setInterval> | null = null;
   const listeners = new Set<(trade: BufferedAggTrade) => void>();
   const backing: BufferedAggTrade[] = [];
   let start = 0;
@@ -89,11 +96,44 @@ function createAggTradeBuffer(config: BufferConfig) {
       const idx = lowerBound(start, backing.length, t.time);
       if (backing[idx]?.id === t.id) return;
       backing.splice(idx, 0, t);
+      lastMessageTs = Date.now();
+      lastTrade = t;
       for (const fn of listeners) fn(t);
       return;
     }
     backing.push(t);
+    lastMessageTs = Date.now();
+    lastTrade = t;
     for (const fn of listeners) fn(t);
+  }
+
+  function logPerpTradesHealth(reason?: string): void {
+    if (market !== "perp" || !DEBUG) return;
+    const ageMs = lastMessageTs > 0 ? Date.now() - lastMessageTs : null;
+    console.debug("[PERP_TRADES_HEALTH]", {
+      reason,
+      connected,
+      lastMessageTs: lastMessageTs || null,
+      latestTradeTs: lastTrade?.time ?? null,
+      latestAgeMs: lastTrade?.time != null ? Date.now() - lastTrade.time : ageMs,
+      tradesInBuffer: Math.max(0, backing.length - start),
+      bufferKey: aggTradeBufferKey(streamSymbol, "perp"),
+      reconnectCount: reconnectAttempt,
+      sseClients: perpSseClients,
+      lastTradePrice: lastTrade?.price ?? null,
+      lastTradeSize: lastTrade?.qty ?? null,
+      lastTradeSide: lastTrade?.side ?? null,
+    });
+  }
+
+  function runTradeHealthCheck(): void {
+    if (market !== "perp") return;
+    const ageMs = lastMessageTs > 0 ? Date.now() - lastMessageTs : Infinity;
+    logPerpTradesHealth();
+    if (ageMs > TRADE_STALE_MS && (connected || backing.length > start)) {
+      void seedFromRest();
+      if (ws?.readyState !== WebSocket.OPEN) connect();
+    }
   }
 
   function parseAggTradePayload(raw: string): BufferedAggTrade | null {
@@ -201,6 +241,10 @@ function createAggTradeBuffer(config: BufferConfig) {
   }
 
   connect();
+  void seedFromRest();
+  if (market === "perp") {
+    healthTimer = setInterval(runTradeHealthCheck, TRADE_HEALTH_MS);
+  }
 
   return {
     query(symbol: string, startMs: number, endMs: number): BufferedAggTrade[] {
@@ -290,4 +334,31 @@ export function getBufferCoverage(
   market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
 ) {
   return resolveBuffer(market).getCoverage(symbol);
+}
+
+/** Stable buffer id for diagnostics (exchange:symbol:market). */
+export function aggTradeBufferKey(
+  symbol: string,
+  market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
+): string {
+  const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
+  const m = parseBookmapMarket(market);
+  return `binance:${sym}:${m}`;
+}
+
+export function trackAggTradeSseClient(
+  market: BookmapMarketSource,
+  delta: 1 | -1,
+): void {
+  if (parseBookmapMarket(market) !== "perp") return;
+  perpSseClients = Math.max(0, perpSseClients + delta);
+}
+
+export function getPerpTradesBufferHealth() {
+  const cov = perpBuffer.getCoverage("BTCUSDT");
+  return {
+    ...cov,
+    sseClients: perpSseClients,
+    bufferKey: aggTradeBufferKey("BTCUSDT", "perp"),
+  };
 }

@@ -20,6 +20,13 @@ import {
   DOM_MAX_WIDTH_PX,
   DOM_MIN_WIDTH_PX,
 } from "./bookmapLayoutConstants";
+import {
+  DEFAULT_BOOKMAP_CONFLUENCE_PREFS,
+  parseConfluenceVisualOpacity,
+  type BookmapConfluencePrefs,
+  type ConfluenceMinDisplayTier,
+  type ConfluenceSensitivity,
+} from "./bookmapConfluenceConfig";
 
 const STORAGE_KEY = "gt-bookmap-prefs";
 
@@ -40,6 +47,7 @@ export type BookmapPanelPrefs = {
   depthRangePreset: DepthRangePreset;
   /** Empty time projection right of latest data (% of visible data span). */
   rightSpacePct: RightSpacePct;
+  confluence: BookmapConfluencePrefs;
 };
 
 const DEFAULTS: BookmapPanelPrefs = {
@@ -55,7 +63,27 @@ const DEFAULTS: BookmapPanelPrefs = {
   localRangeUsd: DEFAULT_LOCAL_RANGE_USD,
   depthRangePreset: DEFAULT_DEPTH_RANGE_PRESET,
   rightSpacePct: DEFAULT_RIGHT_SPACE_PCT,
+  confluence: { ...DEFAULT_BOOKMAP_CONFLUENCE_PREFS },
 };
+
+function parseConfluencePrefs(raw: unknown): BookmapConfluencePrefs {
+  const o = raw && typeof raw === "object" ? (raw as Partial<BookmapConfluencePrefs>) : {};
+  const minTier: ConfluenceMinDisplayTier =
+    o.minDisplayTier === "medium" || o.minDisplayTier === "major"
+      ? o.minDisplayTier
+      : o.minDisplayTier === "strong"
+        ? "strong"
+        : DEFAULT_BOOKMAP_CONFLUENCE_PREFS.minDisplayTier;
+  const sensitivity: ConfluenceSensitivity =
+    o.sensitivity === "low" || o.sensitivity === "high" ? o.sensitivity : "normal";
+  return {
+    passiveConfluenceEnabled: o.passiveConfluenceEnabled !== false,
+    minDisplayTier: minTier,
+    sensitivity,
+    showConfluenceLabels: o.showConfluenceLabels !== false,
+    visualOpacity: parseConfluenceVisualOpacity(o.visualOpacity),
+  };
+}
 
 function loadPrefs(): BookmapPanelPrefs {
   try {
@@ -94,6 +122,7 @@ function loadPrefs(): BookmapPanelPrefs {
       )
         ? (parsed.rightSpacePct as RightSpacePct)
         : DEFAULT_RIGHT_SPACE_PCT,
+      confluence: parseConfluencePrefs(parsed.confluence),
     };
   } catch {
     return { ...DEFAULTS };
@@ -109,7 +138,13 @@ export function useBookmapPanelPrefs() {
 
   const updatePrefs = useCallback((patch: Partial<BookmapPanelPrefs>) => {
     setPrefs((prev) => {
-      const next = { ...prev, ...patch };
+      const next = {
+        ...prev,
+        ...patch,
+        confluence: patch.confluence
+          ? { ...prev.confluence, ...patch.confluence }
+          : prev.confluence,
+      };
       if (patch.domWidth != null) {
         next.domWidth = clampDomWidth(patch.domWidth);
       }
