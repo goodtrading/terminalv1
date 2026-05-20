@@ -441,7 +441,7 @@ export function paintBookmapEngineHeatmapFrame(
   }
 
   if (
-    params.showHistoricalBboPath !== false &&
+    params.showHistoricalBboPath === true &&
     params.bboHistoryPoints &&
     params.bboHistoryPoints.length >= 2
   ) {

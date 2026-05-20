@@ -14,6 +14,7 @@ import { resolveConfluenceRenderMode } from "./bookmapConfluenceRenderer";
 import { extractBboFromDomSnapshot, isBboValid } from "./bookmapBboGuideLines";
 import { downsampleBboPointsForViewport } from "./bookmapBboHistoryPath";
 import { useBookmapBboHistory } from "@/hooks/useBookmapBboHistory";
+import { useBookmapBboMarketDebug } from "@/hooks/useBookmapBboMarketDebug";
 import { useBookmapMarketTradeSummary } from "@/hooks/useBookmapMarketTradeSummary";
 import {
   detectSpotPerpDivergence,
@@ -200,6 +201,8 @@ export function LiquidityHeatmapPanel({
     primaryQuery,
     spotAgeMs,
     perpAgeMs,
+    spotDataUpdatedAt,
+    perpDataUpdatedAt,
     activeDomAgeMs,
     perpBookmapStale,
     everLoadedByMarket,
@@ -262,6 +265,12 @@ export function LiquidityHeatmapPanel({
   const snapshots = getSnapshots();
   const latestLegacy = snapshots[snapshots.length - 1];
 
+  /** BBO path + live guide lines follow DOM source in Both mode; otherwise source mode. */
+  const effectiveBboMarket = useMemo((): BookmapMarketSource => {
+    if (sourceMode === "both") return domSource;
+    return sourceMode;
+  }, [sourceMode, domSource]);
+
   const latest = useMemo(() => {
     if (!useEngineRenderer || !effectiveDomState) return latestLegacy;
     return bookLevelsToDomSnapshot(
@@ -271,23 +280,78 @@ export function LiquidityHeatmapPanel({
     );
   }, [useEngineRenderer, effectiveDomState, latestLegacy]);
 
-  const domBboRaw = useMemo(() => extractBboFromDomSnapshot(latest), [latest]);
+  const bboDomState = useMemo((): BookmapState | null => {
+    return effectiveBboMarket === "perp" ? effectivePerp : effectiveSpot;
+  }, [effectiveBboMarket, effectivePerp, effectiveSpot]);
+
+  const bboDomSnapshot = useMemo(() => {
+    if (useEngineRenderer && bboDomState) {
+      return bookLevelsToDomSnapshot(
+        bboDomState.bids,
+        bboDomState.asks,
+        bboDomState.timestamp,
+      );
+    }
+    if (orderbookFeedMarket === effectiveBboMarket) return latestLegacy;
+    return undefined;
+  }, [
+    useEngineRenderer,
+    bboDomState,
+    orderbookFeedMarket,
+    effectiveBboMarket,
+    latestLegacy,
+  ]);
+
+  const domBboRaw = useMemo(
+    () => extractBboFromDomSnapshot(bboDomSnapshot),
+    [bboDomSnapshot],
+  );
+
+  const bboEngineClientAgeMs = useMemo(() => {
+    const updatedAt =
+      effectiveBboMarket === "perp" ? perpDataUpdatedAt : spotDataUpdatedAt;
+    if (updatedAt > 0) return Math.max(0, Date.now() - updatedAt);
+    return effectiveBboMarket === "perp" ? perpAgeMs : spotAgeMs;
+  }, [
+    effectiveBboMarket,
+    perpDataUpdatedAt,
+    spotDataUpdatedAt,
+    perpAgeMs,
+    spotAgeMs,
+  ]);
 
   const domBboFresh = useMemo(() => {
     if (!domBboRaw || !isBboValid(domBboRaw.bestBid, domBboRaw.bestAsk)) return false;
-    if (useEngineRenderer) {
-      return !isOrderbookStale(activeDomAgeMs) && !isOrderbookStale(orderbookAgeMs);
-    }
-    return !isOrderbookStale(orderbookAgeMs);
-  }, [domBboRaw, activeDomAgeMs, orderbookAgeMs, useEngineRenderer]);
+    const feedMatchesMarket = orderbookFeedMarket === effectiveBboMarket;
+    const feedFresh = feedMatchesMarket && !isOrderbookStale(orderbookAgeMs);
+    if (!useEngineRenderer) return feedFresh;
+    const engineFresh = !isOrderbookStale(bboEngineClientAgeMs);
+    return feedFresh || engineFresh;
+  }, [
+    domBboRaw,
+    orderbookFeedMarket,
+    effectiveBboMarket,
+    orderbookAgeMs,
+    useEngineRenderer,
+    bboEngineClientAgeMs,
+  ]);
 
   const domBbo = domBboFresh ? domBboRaw : null;
 
+  const bboFeaturesEnabled =
+    visualSettings.layout.showHistoricalBboPath ||
+    visualSettings.layout.showBidAskLines;
+
   const bboHistory = useBookmapBboHistory({
     symbol,
-    market: activeDomMarket,
-    enabled: USE_BOOKMAP_ENGINE,
+    market: effectiveBboMarket,
+    enabled: USE_BOOKMAP_ENGINE && bboFeaturesEnabled,
   });
+
+  const bboMarketDebug = useBookmapBboMarketDebug(
+    symbol,
+    import.meta.env.DEV && USE_BOOKMAP_ENGINE,
+  );
 
   const bothModeDivergence =
     sourceMode === "both" && visualSettings.divergence.enabled;
@@ -305,14 +369,16 @@ export function LiquidityHeatmapPanel({
   useEffect(() => {
     if (!domBboFresh || !domBbo) return;
     const ts =
-      effectiveDomState?.timestamp ??
-      (latest?.ts != null && Number.isFinite(latest.ts) ? latest.ts : Date.now());
+      bboDomState?.timestamp ??
+      (bboDomSnapshot?.ts != null && Number.isFinite(bboDomSnapshot.ts)
+        ? bboDomSnapshot.ts
+        : Date.now());
     bboHistory.appendLiveBbo(domBbo.bestBid, domBbo.bestAsk, ts);
   }, [
     domBbo,
     domBboFresh,
-    effectiveDomState?.timestamp,
-    latest?.ts,
+    bboDomState?.timestamp,
+    bboDomSnapshot?.ts,
     bboHistory.appendLiveBbo,
   ]);
 
@@ -613,24 +679,24 @@ export function LiquidityHeatmapPanel({
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    console.debug("[BOOKMAP_BBO_PATH]", {
+    console.debug("[BOOKMAP_BBO_MARKET]", {
       sourceMode,
-      domSource: activeDomMarket,
-      market: activeDomMarket,
-      totalPoints: bboPathDebug.totalPoints,
-      visiblePoints: bboPathDebug.visiblePoints,
-      renderedSegments: bboPathDebug.renderedSegments,
+      domSource,
+      effectiveBboMarket,
+      historicalPoints: bboPathDebug.totalPoints,
       latestBboAgeMs: bboHistory.latestAgeMs,
-      bestBid: bboHistory.latestBbo?.bestBid ?? domBbo?.bestBid ?? null,
-      bestAsk: bboHistory.latestBbo?.bestAsk ?? domBbo?.bestAsk ?? null,
+      bestBid: domBbo?.bestBid ?? null,
+      bestAsk: domBbo?.bestAsk ?? null,
+      bboValid: domBboFresh,
     });
   }, [
     sourceMode,
-    activeDomMarket,
-    bboPathDebug,
+    domSource,
+    effectiveBboMarket,
+    bboPathDebug.totalPoints,
     bboHistory.latestAgeMs,
-    bboHistory.latestBbo,
     domBbo,
+    domBboFresh,
   ]);
 
   const divergenceResult = useMemo(() => {
@@ -1306,8 +1372,10 @@ export function LiquidityHeatmapPanel({
     visualSettings.trades.executionRailsEnabled,
     visualSettings.trades.executionRailLength,
     domBbo,
+    effectiveBboMarket,
     bboHistory.points,
     bboHistory.clientVersion,
+    bboFeaturesEnabled,
     visualSettings.layout.showHistoricalBboPath,
     visualSettings.layout.bboPathOpacity,
     visualSettings.layout.showBidAskLines,
@@ -1500,9 +1568,13 @@ export function LiquidityHeatmapPanel({
       bboHistory.latestAgeMs != null
         ? `${(bboHistory.latestAgeMs / 1000).toFixed(1)}s`
         : "—";
-    const bboPathDbg = visualSettings.layout.showHistoricalBboPath
-      ? ` · bboPath ${activeDomMarket} · pts ${bboPathDebug.totalPoints} · rendered ${bboPathDebug.renderedSegments} · latest ${bboPathLatest}`
+    const bboPathDbg = bboFeaturesEnabled
+      ? ` · bboPath ${effectiveBboMarket} · pts ${bboPathDebug.totalPoints} · rendered ${bboPathDebug.renderedSegments} · latest ${bboPathLatest}`
       : "";
+    const bboDualDbg =
+      import.meta.env.DEV && bboMarketDebug.spot && bboMarketDebug.perp
+        ? ` · bboPath spot · pts ${bboMarketDebug.spot.points} · latest ${bboMarketDebug.spot.latestSec} · bboPath perp · pts ${bboMarketDebug.perp.points} · latest ${bboMarketDebug.perp.latestSec}`
+        : "";
     const offsetSec = Math.round(timeScale.horizontalOffsetMs / 1000);
     const tspanMs =
       timeScale.viewport.visibleEndTime - timeScale.viewport.visibleStartTime;
@@ -1514,8 +1586,8 @@ export function LiquidityHeatmapPanel({
         : "";
     const sourceTag =
       sourceMode === "both"
-        ? `source both · spot cells ${effectiveSpot?.heatmapCells.length ?? 0} · perp cells ${effectivePerp?.heatmapCells.length ?? 0} · conf candidates ${passiveConfluenceDebug.candidateConfluences} · rejected strength ${passiveConfluenceDebug.rejectedByStrength} · rendered ${passiveConfluenceSummary.visible} · strong ${passiveConfluenceSummary.strong} · major ${passiveConfluenceSummary.major} · minTier ${confluencePrefs.minDisplayTier} · dom ${activeDomMarket}${bboTag} · trade ${activeTradeMarket} · perpOpacity ${perpOverlayOpacityPct}%`
-        : `source ${sourceMode} · dom ${activeDomMarket}${bboTag}`;
+        ? `source both · dom ${domSource} · bboPath ${effectiveBboMarket} · pts ${bboPathDebug.totalPoints} · spot cells ${effectiveSpot?.heatmapCells.length ?? 0} · perp cells ${effectivePerp?.heatmapCells.length ?? 0} · conf candidates ${passiveConfluenceDebug.candidateConfluences} · rejected strength ${passiveConfluenceDebug.rejectedByStrength} · rendered ${passiveConfluenceSummary.visible} · strong ${passiveConfluenceSummary.strong} · major ${passiveConfluenceSummary.major} · minTier ${confluencePrefs.minDisplayTier}${bboTag} · trade ${activeTradeMarket} · perpOpacity ${perpOverlayOpacityPct}%`
+        : `source ${sourceMode} · bboPath ${effectiveBboMarket}${bboTag}`;
     const domWalls =
       domBook != null
         ? `${domBook.importantWalls.length}/${domBook.structuralWalls.length}/${domBook.majorWalls.length}`
@@ -1540,10 +1612,12 @@ export function LiquidityHeatmapPanel({
         ? ` · div candidates ${divergenceResult.debug.candidates} · active ${divergenceDisplaySignals.length} · high ${divergenceDisplaySignals.filter((s) => s.severity === "high").length}`
         : "";
     return (
-      `BOOKMAP · ${sourceTag} · ${interactionTag} · ${statusTag} · verticalMode ${priceScale.verticalMode} · depth ${depthPresetLabel(depthRangePreset, localRangeUsd)} · range ${formatBookmapRangeShort(priceScale.visibleMinPrice)}–${formatBookmapRangeShort(priceScale.visibleMaxPrice)} · domWalls ${domWalls} · bands ${st?.visibleBandCount ?? 0}/${st?.renderedBandCount ?? 0} · age ${age}ms${perpFreshnessDbg}${bboPathDbg}${divDbg}${tradeDbg}`
+      `BOOKMAP · ${sourceTag} · ${interactionTag} · ${statusTag} · verticalMode ${priceScale.verticalMode} · depth ${depthPresetLabel(depthRangePreset, localRangeUsd)} · range ${formatBookmapRangeShort(priceScale.visibleMinPrice)}–${formatBookmapRangeShort(priceScale.visibleMaxPrice)} · domWalls ${domWalls} · bands ${st?.visibleBandCount ?? 0}/${st?.renderedBandCount ?? 0} · age ${age}ms${perpFreshnessDbg}${bboPathDbg}${bboDualDbg}${divDbg}${tradeDbg}`
     );
   }, [
     sourceMode,
+    domSource,
+    effectiveBboMarket,
     effectiveSpot,
     effectivePerp,
     activeDomMarket,
@@ -1589,6 +1663,9 @@ export function LiquidityHeatmapPanel({
     bookmapTradeAgg.summary,
     bboPathDebug,
     bboHistory.latestAgeMs,
+    bboFeaturesEnabled,
+    bboMarketDebug.spot,
+    bboMarketDebug.perp,
     visualSettings.layout.showHistoricalBboPath,
   ]);
 

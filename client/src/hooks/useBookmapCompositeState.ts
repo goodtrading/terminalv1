@@ -175,6 +175,8 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
     perpQuery,
     spotAgeMs: spotQuery.ageMs,
     perpAgeMs: perpQuery.ageMs,
+    spotDataUpdatedAt: spotQuery.dataUpdatedAt,
+    perpDataUpdatedAt: perpQuery.dataUpdatedAt,
     activeDomAgeMs,
     activeTradeAgeMs,
     perpBookmapStale,

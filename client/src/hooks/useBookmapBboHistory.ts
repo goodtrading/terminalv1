@@ -95,7 +95,8 @@ export function useBookmapBboHistory(options: UseBookmapBboHistoryOptions = {}) 
       ...p,
       market,
     }));
-    return mergePoints(serverPts, clientPointsRef.current);
+    const merged = mergePoints(serverPts, clientPointsRef.current);
+    return merged.filter((p) => p.market === market);
   }, [query.data?.points, market, clientVersion]);
 
   const latest = points.length > 0 ? points[points.length - 1]! : null;
