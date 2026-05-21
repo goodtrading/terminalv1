@@ -310,7 +310,7 @@ export function BingXReadOnlyExecutionBlock({
         </section>
       ) : null}
 
-      <ReadOnlyRiskMirrorPanel symbol={symbol} />
+      <ReadOnlyRiskMirrorPanel brokerSession={session} symbol={symbol} />
     </div>
   );
 }

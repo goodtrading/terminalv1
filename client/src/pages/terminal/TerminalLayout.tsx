@@ -47,9 +47,9 @@ const viewMode: "PRO" = "PRO";
       
       <div className="flex-1 flex overflow-hidden min-h-0">
         {activeTab === "TERMINAL" && (
-          <>
+          <BrokerSessionProvider>
             <LeftSidebar />
-            
+
             <div className="flex-1 flex flex-col p-1 gap-1 min-w-0 min-h-0 bg-terminal-bg relative overflow-hidden">
               <MarketStructureBar />
               <div className="flex flex-wrap items-start gap-2 shrink-0 min-h-0">
@@ -61,7 +61,7 @@ const viewMode: "PRO" = "PRO";
                   viewMode={viewMode}
                 />
               </div>
-              
+
               <div
                 className={`relative flex gap-1 min-h-0 transition-all duration-200 max-[1000px]:flex-col ${
                   bottomPanelsMinimized
@@ -77,20 +77,18 @@ const viewMode: "PRO" = "PRO";
                 >
                   {bottomPanelsMinimized ? "EXPAND" : "MINIMIZE"}
                 </button>
-                <BrokerSessionProvider>
-                  <ExchangeConnectionPanel collapsed={bottomPanelsMinimized} />
-                  <TradingExecutionPanel collapsed={bottomPanelsMinimized} />
-                </BrokerSessionProvider>
+                <ExchangeConnectionPanel collapsed={bottomPanelsMinimized} />
+                <TradingExecutionPanel collapsed={bottomPanelsMinimized} />
               </div>
             </div>
 
-            <RightSidebar 
+            <RightSidebar
               onScenarioSelect={(s) => {
-                window.dispatchEvent(new CustomEvent('scenario-select', { detail: s }));
+                window.dispatchEvent(new CustomEvent("scenario-select", { detail: s }));
               }}
               onActiveScenarioChange={setActiveScenario}
             />
-          </>
+          </BrokerSessionProvider>
         )}
 
         {activeTab === "OPTIONS" && (

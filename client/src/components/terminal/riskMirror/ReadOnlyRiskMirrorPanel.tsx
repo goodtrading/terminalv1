@@ -3,7 +3,7 @@ import type {
   ReadOnlyRiskMirrorSnapshot,
   RiskMirrorScoreStatus,
 } from "./riskMirrorTypes";
-import { useBrokerSession } from "../execution/useBrokerSession";
+import type { BrokerSessionState } from "../execution/executionTypes";
 import { useBingXReadOnlyRiskMirror } from "./useBingXReadOnlyRiskMirror";
 
 function fmtPrice(n: number | undefined): string {
@@ -76,13 +76,16 @@ function WarningCard({
 }
 
 type ReadOnlyRiskMirrorPanelProps = {
+  brokerSession: BrokerSessionState | null;
   symbol: string;
 };
 
-export function ReadOnlyRiskMirrorPanel({ symbol }: ReadOnlyRiskMirrorPanelProps) {
-  const { session } = useBrokerSession();
+export function ReadOnlyRiskMirrorPanel({
+  brokerSession,
+  symbol,
+}: ReadOnlyRiskMirrorPanelProps) {
   const { enabled, isLoading, isError, error, snapshot, isEmpty } =
-    useBingXReadOnlyRiskMirror({ brokerSession: session, symbol });
+    useBingXReadOnlyRiskMirror({ brokerSession, symbol });
 
   if (!enabled) return null;
 
