@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +11,22 @@ import { ExternalLink, Loader2, Star } from "lucide-react";
 import { EXCHANGE_LOGO_URLS } from "./exchangeLogos";
 import { BINGX_REFERRAL_URL } from "./executionMockState";
 import type { BrokerConnectionPhase } from "./executionTypes";
+import {
+  bingxConnectErrorForUi,
+  bingxEncryptionMissingUserMessage,
+  bingxReadOnlyErrorMessage,
+  isBingXStaleClientAuthMessage,
+} from "./bingxReadOnlyMessages";
+import { bingxApiFetch } from "./bingxApiClient";
+import { isBingXReadOnlySession } from "./bingxSession";
+import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 import { useBrokerSession } from "./useBrokerSession";
+import {
+  bingXAuthSessionStatus,
+  logBingXAuthDebug,
+} from "./bingxAuthDebug";
+import { logBingXLoadingState } from "./bingxLoadingDebug";
+import { BingXAuthDevPanel } from "./BingXAuthDevPanel";
 
 export interface BingXConnectionModalProps {
   open: boolean;
@@ -309,14 +324,25 @@ export function BingXConnectionModal({
   onClose,
   referralUrl = BINGX_REFERRAL_URL,
 }: BingXConnectionModalProps) {
+  const { authReady, authenticated, user, token, refreshSession } = useTerminalAuth();
   const {
     session,
     loginStatus,
     connectBingX,
     connectSecureApi,
+    clearBingXSecureApiError,
     simulateBingXDemoConnection,
     disconnectBroker,
+    restoreLoading,
+    connectInFlight,
+    loginStatusLoading,
+    lastBrokerAction,
   } = useBrokerSession();
+
+  const authStatus = bingXAuthSessionStatus(authReady, authenticated, user);
+  const userIdExists = user?.id != null && Number.isFinite(Number(user.id));
+  const hasUser = userIdExists;
+  const authBlocked = authReady && !hasUser;
 
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
@@ -331,8 +357,7 @@ export function BingXConnectionModal({
   const phase = session.exchange === "bingx" ? session.phase : "not_connected";
   const demoAvailable = loginStatus?.demoAvailable ?? false;
   const apiTabEnabled = loginStatus?.apiConnectionEnabled !== false;
-  const isSecureConnected =
-    session.connectionMode === "secure_api" && session.connected;
+  const isSecureConnected = isBingXReadOnlySession(session);
   const isBrokerOnlyConnected =
     session.connected &&
     session.connectionMode === "broker_login" &&
@@ -346,15 +371,99 @@ export function BingXConnectionModal({
       phase === "error" ||
       isBrokerOnlyConnected ||
       phase === "not_connected");
-  const isChecking = phase === "checking" || apiLoading;
+  const isChecking =
+    apiLoading ||
+    connectInFlight ||
+    (phase === "checking" || phase === "connecting");
 
   const hasCredentials = Boolean(apiKey.trim() && apiSecret.trim());
-  const canSubmit = confirmKey && hasCredentials && !apiLoading;
+  const saveBlocked =
+    saveConnection && encryptionAvailable === false;
+  const canSubmit =
+    authReady &&
+    hasUser &&
+    hasCredentials &&
+    confirmKey &&
+    saveConnection &&
+    !saveBlocked &&
+    !apiLoading;
+
+  const submitBlockReason = useMemo(() => {
+    if (!authReady) return null;
+    if (authBlocked) return null;
+    if (!hasCredentials) return "API Key and API Secret are required.";
+    if (!confirmKey) return "Confirm read-only usage first.";
+    if (!saveConnection) return "Enable save encrypted connection to persist credentials.";
+    if (saveBlocked) return bingxEncryptionMissingUserMessage();
+    if (apiLoading) return "Testing connection…";
+    return null;
+  }, [
+    authReady,
+    authBlocked,
+    hasCredentials,
+    confirmKey,
+    saveConnection,
+    saveBlocked,
+    apiLoading,
+  ]);
+
+  useEffect(() => {
+    logBingXAuthDebug(authStatus, userIdExists);
+  }, [authStatus, userIdExists]);
 
   useEffect(() => {
     if (!open) return;
+    logBingXLoadingState({
+      apiLoading,
+      restoreLoading,
+      loginStatusLoading,
+      connectionStatus: phase,
+      brokerStatus: session.exchange ?? "none",
+      authReady,
+      hasUser: hasUser,
+      requestInFlight: apiLoading || restoreLoading || connectInFlight,
+      lastAction: lastBrokerAction,
+    });
+  }, [
+    open,
+    apiLoading,
+    restoreLoading,
+    connectInFlight,
+    loginStatusLoading,
+    phase,
+    session.exchange,
+    authReady,
+    hasUser,
+    lastBrokerAction,
+  ]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (authReady && hasUser) {
+      setApiError((prev) =>
+        isBingXStaleClientAuthMessage(prev) ? null : prev,
+      );
+      clearBingXSecureApiError();
+    }
+  }, [open, authReady, hasUser, clearBingXSecureApiError]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!authReady) return;
+    if (token && !authenticated) {
+      void refreshSession();
+    }
+  }, [open, authReady, token, authenticated, refreshSession]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!authReady) return;
+    if (!authenticated) {
+      setEncryptionAvailable(null);
+      return;
+    }
     let cancelled = false;
-    void fetch("/api/bingx/connections")
+    void bingxApiFetch("/api/bingx/connections", { method: "GET", assertOk: false })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!cancelled && data && typeof data.encryptionAvailable === "boolean") {
@@ -367,7 +476,7 @@ export function BingXConnectionModal({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, authReady, authenticated, user]);
 
   const clearApiForm = () => {
     setApiKey("");
@@ -377,38 +486,90 @@ export function BingXConnectionModal({
   };
 
   const handleTestAndConnect = async () => {
+    const apiKeyValue = apiKey.trim();
+    const apiSecretValue = apiSecret.trim();
+    const labelValue = label.trim();
+    const saveValue = saveConnection;
+    const confirmValue = confirmKey;
+
+    if (import.meta.env.DEV) {
+      console.debug("[BingX Submit]", {
+        authReady,
+        hasUser: Boolean(user),
+        hasUserId: userIdExists,
+        hasApiKey: Boolean(apiKeyValue),
+        hasApiSecret: Boolean(apiSecretValue),
+        confirmKey: confirmValue,
+        saveConnection: saveValue,
+        encryptionAvailable,
+        apiLoading,
+        submitBlockReason,
+      });
+      console.debug("[BingX Submit Auth]", {
+        authReady,
+        hasUser: Boolean(user),
+        hasUserId: userIdExists,
+        hasToken: Boolean(token),
+        willPost: Boolean(user && authReady),
+      });
+    }
+
     setApiError(null);
     setApiWarning(null);
 
-    if (!hasCredentials) {
+    if (!apiKeyValue || !apiSecretValue) {
       setApiError("API Key and API Secret are required.");
       return;
     }
-    if (!confirmKey) {
+    if (!confirmValue) {
       setApiError("Confirm read-only usage first.");
       return;
     }
+    if (!saveValue) {
+      setApiError("Enable save encrypted connection to persist credentials.");
+      return;
+    }
+    if (!authReady) {
+      setApiError(bingxReadOnlyErrorMessage("AUTH_LOADING"));
+      return;
+    }
+    if (!user?.id || !Number.isFinite(Number(user.id))) {
+      setApiError(bingxReadOnlyErrorMessage("UNAUTHORIZED"));
+      return;
+    }
+    if (encryptionAvailable === false) {
+      setApiError(bingxEncryptionMissingUserMessage());
+      return;
+    }
 
-    const key = apiKey.trim();
-    const secret = apiSecret.trim();
-    setApiSecret("");
-    setApiKey("");
     setApiLoading(true);
 
     try {
       const result = await connectSecureApi({
-        apiKey: key,
-        apiSecret: secret,
-        label: label.trim() || undefined,
-        save: saveConnection,
+        apiKey: apiKeyValue,
+        apiSecret: apiSecretValue,
+        label: labelValue || undefined,
+        save: saveValue,
         requestedTrading: false,
+        callerAuth: { authReady: true, userId: user.id },
       });
-      if (result.warning) setApiWarning(result.warning);
       if (!result.success) {
-        setApiError(result.message ?? "Connection failed");
-      } else {
-        clearApiForm();
+        setApiError(
+          bingxConnectErrorForUi(result.code, result.message ?? "Connection failed", {
+            clientHasUser: true,
+          }),
+        );
+        return;
       }
+      if (result.saved) {
+        setApiWarning("Credentials saved securely to your account.");
+      } else if (result.warning) {
+        setApiWarning(
+          result.warning ??
+            "Connected for this session only. Encryption key is missing, so credentials were not saved.",
+        );
+      }
+      clearApiForm();
     } finally {
       setApiLoading(false);
     }
@@ -421,7 +582,7 @@ export function BingXConnectionModal({
     if (saveConnection && encryptionAvailable === true) {
       lines.push("Saved connections are encrypted server-side.");
     } else if (saveConnection && encryptionAvailable === false) {
-      lines.push("Encryption key missing: connection can be tested but will not be saved.");
+      lines.push(bingxEncryptionMissingUserMessage());
     }
     return lines;
   })();
@@ -525,6 +686,29 @@ export function BingXConnectionModal({
                   Connect via secure API · Read-only first · Trading locked
                 </p>
 
+                {authStatus === "loading" ? (
+                  <div className="rounded border border-terminal-border bg-terminal-bg/80 px-2 py-1.5 text-[9px] text-slate-400">
+                    Checking session…
+                  </div>
+                ) : authBlocked ? (
+                  <div className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[9px] text-amber-200/90">
+                    {bingxReadOnlyErrorMessage("UNAUTHORIZED")}
+                  </div>
+                ) : null}
+
+                <BingXAuthDevPanel
+                  open={open}
+                  authReady={authReady}
+                  contextAuthenticated={authenticated}
+                  userExists={Boolean(user)}
+                  userIdExists={userIdExists}
+                  tokenExists={Boolean(token ?? undefined)}
+                  submitBlockReason={submitBlockReason}
+                  apiErrorStaleAuth={
+                    Boolean(apiError) && isBingXStaleClientAuthMessage(apiError)
+                  }
+                />
+
                 <SecureApiPermissionsWarning />
 
                 <div>
@@ -614,9 +798,14 @@ export function BingXConnectionModal({
                   </div>
                 ) : null}
 
+                {submitBlockReason && authReady && !authBlocked && !apiError ? (
+                  <p className="text-[8px] text-slate-500 leading-snug">{submitBlockReason}</p>
+                ) : null}
+
                 <button
                   type="button"
-                  disabled={!canSubmit}
+                  disabled={!authReady || !canSubmit}
+                  title={submitBlockReason ?? (!authReady ? "Checking session…" : undefined)}
                   onClick={() => void handleTestAndConnect()}
                   className={cn(
                     "w-full flex items-center justify-center gap-2 rounded border border-cyan-500/50 bg-cyan-600/20 py-2.5 text-[11px] font-bold uppercase tracking-widest text-cyan-100",

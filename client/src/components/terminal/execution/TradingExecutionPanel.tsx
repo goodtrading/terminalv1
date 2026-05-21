@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TerminalPanel } from "../TerminalPanel";
 import { cn } from "@/lib/utils";
 import type {
-  BingXAccountSnapshot,
   ExecutionRiskGuardState,
   OrderPreviewSummary,
   OrderTicketState,
@@ -14,6 +13,14 @@ import type {
   PaperTradingSettings,
 } from "./executionTypes";
 import { DEFAULT_ORDER_TICKET, DEFAULT_RISK_GUARD } from "./executionMockState";
+import {
+  DEFAULT_CHART_SYMBOL,
+  EXECUTION_MAPPING_MISSING_MESSAGE,
+  resolveExecutionSymbolForChart,
+} from "./executionContext";
+import { ExecutionVenueStrip } from "./ExecutionVenueStrip";
+import { BingXReadOnlyExecutionBlock } from "./BingXReadOnlyExecutionBlock";
+import { isBingXReadOnlySession } from "./bingxSession";
 import { useBrokerSession } from "./useBrokerSession";
 import { PaperClosePositionModal } from "./PaperClosePositionModal";
 import { PaperRiskManagementSection } from "./PaperRiskManagementSection";
@@ -90,7 +97,13 @@ import {
 function buildPaperOrderPayload(
   ticket: OrderTicketState,
   referenceMark: number | null | undefined,
+  chartSymbol: string = DEFAULT_CHART_SYMBOL,
 ): { payload: Record<string, unknown> } | { error: string } {
+  const executionSymbol = resolveExecutionSymbolForChart(chartSymbol);
+  if (!executionSymbol) {
+    return { error: EXECUTION_MAPPING_MISSING_MESSAGE };
+  }
+
   const risk = buildPaperSubmitRiskPayload(ticket.stopLoss, ticket.takeProfit);
   if (risk.error) return { error: risk.error };
 
@@ -115,7 +128,11 @@ function buildPaperOrderPayload(
 
   return {
     payload: {
-      symbol: ticket.symbol || "BTC-USDT",
+      symbol: executionSymbol,
+      chartSymbol: chartSymbol.toUpperCase().replace(/-/g, ""),
+      venue: "bingx",
+      marketType: "perpetual",
+      executionExchange: "bingx",
       side: ticket.side,
       type: ticket.type,
       price: ticket.type === "limit" && Number.isFinite(price) ? price : undefined,
@@ -144,7 +161,7 @@ function isPaperSession(session: {
 
 export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boolean }) {
   const queryClient = useQueryClient();
-  const { session } = useBrokerSession();
+  const { session, connectPaperTrading } = useBrokerSession();
   const [ticket, setTicket] = useState<OrderTicketState>(DEFAULT_ORDER_TICKET);
   const [risk, setRisk] = useState<ExecutionRiskGuardState>(DEFAULT_RISK_GUARD);
   const [preview, setPreview] = useState<OrderPreviewSummary | null>(null);
@@ -236,18 +253,19 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
 
   useEffect(() => {
     if (!isPaper || !paperSettings || paperTicketInitialized) return;
+    const executionSymbol = resolveExecutionSymbolForChart(DEFAULT_CHART_SYMBOL);
     setTicket((t) => ({
       ...t,
       exchange: "paper",
+      symbol: executionSymbol ?? "BTC-USDT",
       leverage: String(paperSettings.defaultLeverage),
       marginMode: paperSettings.defaultMarginMode,
     }));
     setPaperTicketInitialized(true);
   }, [isPaper, paperSettings, paperTicketInitialized]);
 
-  const secureApi =
-    session.connectionMode === "secure_api" && session.connected;
-
+  const isBingXReadOnly = isBingXReadOnlySession(session);
+  const liveTradingLocked = !isPaper && (isBingXReadOnly || risk.tradingLocked);
   const {
     data: paperAccount,
     isLoading: paperAccountLoading,
@@ -306,6 +324,18 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
 
   const paperPosition = paperPositionData?.position ?? null;
   const paperOpenOrders = paperOrdersData?.orders ?? [];
+  const safePaperOpenOrders = paperOpenOrders ?? [];
+  const openOrdersLabel = useMemo(() => {
+    if (session.exchange === "paper") {
+      return safePaperOpenOrders.length > 0
+        ? `${safePaperOpenOrders.length} paper`
+        : "none";
+    }
+    if (isBingXReadOnly) {
+      return "—";
+    }
+    return "none";
+  }, [session.exchange, isBingXReadOnly, safePaperOpenOrders.length]);
 
   const { data: paperTradesData, refetch: refetchPaperTrades } = useQuery<{
     trades: PaperTradeLedgerSnapshot[];
@@ -350,34 +380,10 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
     invalidatePaper,
   ]);
 
-  const { data: account, error: accountError } = useQuery<BingXAccountSnapshot>({
-    queryKey: ["/api/bingx/account", session.connectionId, ticket.symbol],
-    queryFn: async () => {
-      const id = session.connectionId;
-      if (!id) throw new Error("No connection id");
-      const res = await fetch(
-        `/api/bingx/account?connectionId=${encodeURIComponent(id)}&symbol=${encodeURIComponent(ticket.symbol)}`,
-      );
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(json.message ?? "Account sync failed");
-      }
-      return json.account as BingXAccountSnapshot;
-    },
-    enabled: secureApi && Boolean(session.connectionId),
-    refetchInterval: 8000,
-    retry: 1,
-  });
-
-  const primaryBalance = account?.balances[0];
-  const primaryPosition =
-    account?.positions.find((p) => p.side !== "flat" && p.positionAmt > 0) ??
-    account?.positions[0];
-
   const connectionLabel = (() => {
     if (isPaper) return "Connected · Simulated";
     if (session.connected && session.demo) return "Connected demo";
-    if (secureApi) return "Connected read-only";
+    if (isBingXReadOnly) return "Connected read-only";
     if (session.connected && session.phase === "connected") return "Connected";
     if (session.phase === "connecting" || session.phase === "checking") {
       return "Connecting";
@@ -389,7 +395,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
   const permissionsLabel = (() => {
     if (isPaper) return "Paper simulated";
     if (session.demo) return "Demo / Live locked";
-    if (secureApi) return "Read-only";
+    if (isBingXReadOnly) return "Read-only";
     if (session.connected && session.phase === "connected") return "Pending / Live locked";
     return "Locked";
   })();
@@ -402,11 +408,8 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
     if (isPaper) {
       return "Paper mode — simulated orders only. No real funds. Live trading OFF.";
     }
-    if (accountError && secureApi) {
-      return "Account sync error. Read-only connection active; retrying…";
-    }
-    if (secureApi) {
-      return "Read-only connected. Live trading disabled.";
+    if (isBingXReadOnly) {
+      return "BingX connected read-only. Live trading locked — use Paper Trading to simulate orders.";
     }
     if (session.connected && session.demo) {
       return "Demo broker session active. Live trading remains disabled.";
@@ -558,6 +561,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
       : paperSettings.allowLimitOrders);
 
   const submitDisabled =
+    liveTradingLocked ||
     !isPaper ||
     !paperSizeValid ||
     !paperLimitValid ||
@@ -579,7 +583,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
 
   const brokerName = isPaper
     ? "GoodTrading Paper Trading"
-    : secureApi || session.exchange === "bingx"
+    : isBingXReadOnly || session.exchange === "bingx"
       ? "BingX"
       : "—";
 
@@ -605,14 +609,14 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
             Demo · Not live
           </span>
         ) : null}
-        {secureApi ? (
+        {isBingXReadOnly ? (
           <span className="text-[7px] font-bold uppercase tracking-wider text-emerald-300 border border-emerald-500/40 px-1 rounded">
-            Read-only
+            BingX read-only
           </span>
         ) : null}
       </div>
     ),
-    [isPaper, session.demo, secureApi],
+    [isPaper, session.demo, isBingXReadOnly],
   );
 
   return (
@@ -624,113 +628,121 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
       className="flex-[0.65] min-w-[260px] min-h-0 max-[1200px]:min-w-[220px] max-[1000px]:min-w-0 max-[1000px]:flex-1"
     >
       <div className="flex flex-col gap-2 p-2 overflow-y-auto max-h-full text-[10px] font-mono">
-        {/* Account */}
-        <section className="rounded border border-terminal-border bg-[#0a0a0a] p-2 space-y-1">
-          <div className="text-[8px] font-bold uppercase tracking-widest text-cyan-500/80 mb-1">
-            Account / Broker
-          </div>
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-slate-400">
-            <span>Broker</span>
-            <span className="text-right text-slate-200">{brokerName}</span>
-            <span>Connection</span>
-            <span className="text-right text-slate-200">{connectionLabel}</span>
-            {isPaper ? (
-              <>
-                <span>Mode</span>
-                <span className="text-right text-cyan-300/90">Simulated</span>
-              </>
-            ) : null}
-            {secureApi && session.apiKeyMasked ? (
-              <>
-                <span>API</span>
-                <span className="text-right text-slate-200">{session.apiKeyMasked}</span>
-              </>
-            ) : null}
-            <span>Symbol</span>
-            <span className="text-right text-slate-200">{ticket.symbol}</span>
-            <span>Market</span>
-            <span className="text-right text-slate-200">Perpetual Futures</span>
-            <span>Balance</span>
-            <span className="text-right">
-              {isPaper
-                ? paperAccount && !paperAccountBusy && !paperAccountError
-                  ? `${(paperAccount.equityUsdt ?? paperAccount.balanceUsdt ?? 0).toFixed(2)} USDT`
-                  : paperAccountLabel(
-                      true,
-                      paperAccountBusy,
-                      paperAccountError,
-                      paperAccount?.equityUsdt ?? paperAccount?.balanceUsdt,
-                      " USDT",
-                    )
-                : primaryBalance
-                  ? `${primaryBalance.walletBalance.toFixed(2)} ${primaryBalance.asset}`
+        {isBingXReadOnly ? (
+          <BingXReadOnlyExecutionBlock
+            session={session}
+            symbol={ticket.symbol}
+            liveTradingEnabled={risk.liveTradingEnabled}
+            onSwitchToPaper={() => connectPaperTrading()}
+          />
+        ) : (
+          <ExecutionVenueStrip
+            chartSymbol={DEFAULT_CHART_SYMBOL}
+            liveTradingEnabled={risk.liveTradingEnabled}
+          />
+        )}
+
+        {/* Account — paper and other modes only (BingX read-only uses unified block above) */}
+        {!isBingXReadOnly ? (
+          <section className="rounded border border-terminal-border bg-[#0a0a0a] p-2 space-y-1">
+            <div className="text-[8px] font-bold uppercase tracking-widest text-cyan-500/80 mb-1">
+              Account / Broker
+            </div>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-slate-400">
+              <span>Broker</span>
+              <span className="text-right text-slate-200">{brokerName}</span>
+              <span>Connection</span>
+              <span className="text-right text-slate-200">{connectionLabel}</span>
+              {isPaper ? (
+                <>
+                  <span>Mode</span>
+                  <span className="text-right text-cyan-300/90">Simulated</span>
+                </>
+              ) : null}
+              <span>Symbol</span>
+              <span className="text-right text-slate-200">{ticket.symbol}</span>
+              <span>Market</span>
+              <span className="text-right text-slate-200">Perpetual Futures</span>
+              <span>Balance</span>
+              <span className="text-right">
+                {isPaper
+                  ? paperAccount && !paperAccountBusy && !paperAccountError
+                    ? `${(paperAccount.equityUsdt ?? paperAccount.balanceUsdt ?? 0).toFixed(2)} USDT`
+                    : paperAccountLabel(
+                        true,
+                        paperAccountBusy,
+                        paperAccountError,
+                        paperAccount?.equityUsdt ?? paperAccount?.balanceUsdt,
+                        " USDT",
+                      )
                   : session.demo
                     ? "Demo --"
                     : "--"}
-            </span>
-            <span>Avail. margin</span>
-            <span className="text-right">
-              {isPaper
-                ? paperAccount && !paperAccountBusy && !paperAccountError
-                  ? `${(paperAccount.availableMarginUsdt ?? 0).toFixed(2)} USDT`
-                  : paperAccountLabel(
-                      true,
-                      paperAccountBusy,
-                      paperAccountError,
-                      paperAccount?.availableMarginUsdt,
-                      " USDT",
-                    )
-                : primaryBalance
-                  ? `${primaryBalance.availableBalance.toFixed(2)} ${primaryBalance.asset}`
+              </span>
+              <span>Avail. margin</span>
+              <span className="text-right">
+                {isPaper
+                  ? paperAccount && !paperAccountBusy && !paperAccountError
+                    ? `${(paperAccount.availableMarginUsdt ?? 0).toFixed(2)} USDT`
+                    : paperAccountLabel(
+                        true,
+                        paperAccountBusy,
+                        paperAccountError,
+                        paperAccount?.availableMarginUsdt,
+                        " USDT",
+                      )
                   : "--"}
-            </span>
-            <span>Unrealized PnL</span>
-            <span className="text-right">
-              {isPaper
-                ? paperAccount && !paperAccountBusy && !paperAccountError
-                  ? `${(paperAccount.unrealizedPnlUsdt ?? 0).toFixed(2)} USDT`
-                  : paperAccountLabel(
-                      true,
-                      paperAccountBusy,
-                      paperAccountError,
-                      paperAccount?.unrealizedPnlUsdt,
-                      " USDT",
-                    )
-                : primaryBalance?.unrealizedPnl != null
-                  ? primaryBalance.unrealizedPnl.toFixed(2)
-                  : primaryPosition?.unrealizedPnl != null
-                    ? primaryPosition.unrealizedPnl.toFixed(2)
-                    : "--"}
-            </span>
-            <span>Position</span>
-            <span className="text-right text-slate-200">
-              {isPaper
-                ? paperPosition && paperPosition.side !== "flat"
-                  ? `${paperPosition.side.toUpperCase()} ${paperPosition.quantity.toFixed(6)} BTC @ ${paperPosition.symbol}`
-                  : "No position"
-                : primaryPosition && primaryPosition.side !== "flat"
-                  ? `${primaryPosition.side.toUpperCase()} ${primaryPosition.positionAmt} @ ${primaryPosition.symbol}`
+              </span>
+              <span>Unrealized PnL</span>
+              <span className="text-right">
+                {isPaper
+                  ? paperAccount && !paperAccountBusy && !paperAccountError
+                    ? `${(paperAccount.unrealizedPnlUsdt ?? 0).toFixed(2)} USDT`
+                    : paperAccountLabel(
+                        true,
+                        paperAccountBusy,
+                        paperAccountError,
+                        paperAccount?.unrealizedPnlUsdt,
+                        " USDT",
+                      )
+                  : "--"}
+              </span>
+              <span>Position</span>
+              <span className="text-right text-slate-200">
+                {isPaper
+                  ? paperPosition && paperPosition.side !== "flat"
+                    ? `${paperPosition.side.toUpperCase()} ${paperPosition.quantity.toFixed(6)} BTC @ ${paperPosition.symbol}`
+                    : "No position"
                   : session.demo
                     ? "No live position"
                     : "No position"}
-            </span>
-            <span>Open orders</span>
-            <span className="text-right text-slate-200">
-              {isPaper
-                ? paperAccountBusy
-                  ? "Loading…"
-                  : String(paperOpenOrders.length)
-                : account
-                  ? String(account.openOrders.length)
+              </span>
+              <span>Open orders</span>
+              <span className="text-right text-slate-200">
+                {isPaper
+                  ? paperAccountBusy
+                    ? "Loading…"
+                    : String(paperOpenOrders.length)
                   : "--"}
-            </span>
-            <span>Trading permissions</span>
-            <span className="text-right text-amber-400/90">{permissionsLabel}</span>
-          </div>
-        </section>
+              </span>
+              <span>Trading permissions</span>
+              <span className="text-right text-amber-400/90">{permissionsLabel}</span>
+            </div>
+          </section>
+        ) : null}
 
-        {/* Order ticket */}
-        <section className="rounded border border-terminal-border bg-[#0a0a0a] p-2 space-y-2">
+        {/* Order ticket — paper only; BingX read-only never submits */}
+        <section
+          className={cn(
+            "rounded border border-terminal-border bg-[#0a0a0a] p-2 space-y-2",
+            isBingXReadOnly && "opacity-60 pointer-events-none",
+          )}
+          title={
+            isBingXReadOnly
+              ? "Real trading is disabled in this build."
+              : undefined
+          }
+        >
           <div className="text-[8px] font-bold uppercase tracking-widest text-cyan-500/80">
             Order ticket
           </div>
@@ -908,34 +920,37 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
           ) : null}
         </section>
 
-        {/* Risk guard */}
-        <section className="rounded border border-amber-500/25 bg-amber-950/20 p-2 space-y-0.5 text-[9px] text-amber-200/80">
-          <div className="font-bold uppercase tracking-widest text-[8px] mb-1">Risk guard</div>
-          <div className="flex justify-between">
-            <span>Live trading</span>
-            <span>{risk.liveTradingEnabled ? "ON" : "OFF"}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Broker login</span>
-            <span>{risk.brokerLoginAvailable ? "Ready" : "Not connected"}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Max notional</span>
-            <span>{risk.maxNotionalUsdt ?? "--"}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Max leverage</span>
-            <span>{risk.maxLeverage ?? "--"}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Confirmation</span>
-            <span>{risk.confirmationRequired ? "YES" : "NO"}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Permissions</span>
-            <span className="uppercase">{permissionsLabel}</span>
-          </div>
-        </section>
+        {/* Risk guard — compact while live trading is off */}
+        {!isBingXReadOnly && !risk.liveTradingEnabled ? (
+          <p className="text-[8px] text-slate-500 px-0.5">
+            Risk guard: Live trading locked
+            {isPaper ? " · Paper simulation" : " · Read-only mode"}
+          </p>
+        ) : !isBingXReadOnly && risk.liveTradingEnabled ? (
+          <section className="rounded border border-amber-500/25 bg-amber-950/20 p-2 space-y-0.5 text-[9px] text-amber-200/80">
+            <div className="font-bold uppercase tracking-widest text-[8px] mb-1">Risk guard</div>
+            <div className="flex justify-between">
+              <span>Live trading</span>
+              <span>{risk.liveTradingEnabled ? "ON" : "OFF"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Max notional</span>
+              <span>{risk.maxNotionalUsdt ?? "--"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Max leverage</span>
+              <span>{risk.maxLeverage ?? "--"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Confirmation</span>
+              <span>{risk.confirmationRequired ? "YES" : "NO"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Permissions</span>
+              <span className="uppercase">{permissionsLabel}</span>
+            </div>
+          </section>
+        ) : null}
 
         {/* Preview result */}
         {preview ? (
@@ -998,7 +1013,9 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
             title={
               isPaper
                 ? "Submit simulated paper order"
-                : "Live trading disabled in this phase."
+                : isBingXReadOnly
+                  ? "Real trading is disabled in this build."
+                  : "Live trading disabled in this phase."
             }
             className={cn(
               "rounded border py-1.5 text-[9px] font-bold uppercase tracking-wider",
@@ -1031,7 +1048,8 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
           {workspaceMessage}
         </p>
 
-        {/* Position mgmt */}
+        {/* Position mgmt — paper only (hidden in BingX read-only; account panel covers it) */}
+        {!isBingXReadOnly ? (
         <section className="rounded border border-terminal-border p-2 space-y-1">
           <div className="text-[8px] font-bold uppercase tracking-widest text-slate-500">
             Position management
@@ -1042,19 +1060,10 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
               ? paperPosition && paperPosition.side !== "flat"
                 ? `${paperPosition.side} ${paperPosition.quantity.toFixed(6)} BTC`
                 : "none"
-              : primaryPosition && primaryPosition.side !== "flat"
-                ? `${primaryPosition.side} ${primaryPosition.positionAmt}`
-                : "none"}
+              : "none"}
           </div>
           <div className="text-[9px] text-slate-500">
-            Open orders:{" "}
-            {isPaper
-              ? paperOpenOrders.length
-                ? `${paperOpenOrders.length} paper`
-                : "none"
-              : account?.openOrders.length
-                ? String(account.openOrders.length)
-                : "none"}
+            Open orders: {openOrdersLabel}
           </div>
           {isPaper && paperPosition && paperPosition.side !== "flat" ? (
             <div className="text-[9px] font-mono text-slate-400 space-y-0.5">
@@ -1139,6 +1148,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
                 : "Available after broker connection."}
           </p>
         </section>
+        ) : null}
 
         {isPaper ? (
           <section className="rounded border border-terminal-border p-2 space-y-1">

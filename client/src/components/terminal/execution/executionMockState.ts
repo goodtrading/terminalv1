@@ -61,6 +61,7 @@ export const DEFAULT_EXCHANGE_CONNECTIONS: ExchangeConnectionState[] = [
   },
 ];
 
+/** Ticket uses execution venue symbol (BingX perpetual), not Binance spot chart symbol. */
 export const DEFAULT_ORDER_TICKET: OrderTicketState = {
   exchange: "bingx",
   symbol: "BTC-USDT",

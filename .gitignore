@@ -5,6 +5,8 @@ build
 .local
 .upm
 .env
+.env.local
+.env.*.local
 .DS_Store
 server/public
 vite.config.ts.*

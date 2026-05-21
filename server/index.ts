@@ -15,6 +15,12 @@ console.log("[ENV] OPENAI key exists:", !!process.env.OPENAI_API_KEY);
 console.log("[ENV] DATABASE_URL exists:", !!process.env.DATABASE_URL);
 console.log("[ENV] DATABASE_URL length:", process.env.DATABASE_URL?.length || 0);
 
+const bingxEncKey = process.env.BINGX_CREDENTIAL_ENCRYPTION_KEY?.trim() ?? "";
+console.log(
+  "[ENV] BingX credential encryption:",
+  bingxEncKey.length >= 16 ? "configured" : "missing",
+);
+
 const rawKey = process.env.OPENAI_API_KEY || "";
 const visiblePrefix = rawKey ? rawKey.slice(0, 8) : "";
 console.log("[ENV] OPENAI key prefix:", visiblePrefix);

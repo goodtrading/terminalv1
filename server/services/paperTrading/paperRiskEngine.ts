@@ -1,12 +1,22 @@
 import type { PaperOrderIntent, PaperOrderPreview, PaperOrderType } from "./paperTypes";
 import { readLeverage, readOrderPrice, readOrderSize } from "./paperNormalize";
+import { resolvePaperExecutionVenue } from "./paperVenueResolver";
 import { getPaperState } from "./paperStore";
 
 export function parseIntent(
   body: Partial<PaperOrderIntent>,
 ): { intent: PaperOrderIntent } | { error: string; code: string } {
-  const symbol = typeof body.symbol === "string" ? body.symbol.trim() : "";
-  if (!symbol) return { error: "Symbol is required", code: "PAPER_ORDER_REJECTED" };
+  const venueResult = resolvePaperExecutionVenue({
+    symbol: body.symbol,
+    chartSymbol: body.chartSymbol,
+    venue: body.venue,
+    marketType: body.marketType,
+    executionExchange: body.executionExchange,
+  });
+  if (!venueResult.ok) {
+    return { error: venueResult.message, code: venueResult.code };
+  }
+  const { venue } = venueResult;
   if (body.side !== "long" && body.side !== "short") {
     return { error: "Invalid side (long or short)", code: "PAPER_ORDER_REJECTED" };
   }
@@ -46,7 +56,11 @@ export function parseIntent(
 
   return {
     intent: {
-      symbol,
+      symbol: venue.symbol,
+      chartSymbol: venue.chartSymbol,
+      venue: venue.venue,
+      marketType: venue.marketType,
+      executionExchange: venue.executionExchange,
       side: body.side,
       type: body.type,
       price: body.type === "limit" ? readOrderPrice(body.price) : undefined,
@@ -209,7 +223,9 @@ export function validatePaperOrder(
   }
 
   warnings.push("Paper trading only — no real funds at risk.");
-  warnings.push("Simulated execution — not sent to any exchange.");
+  warnings.push(
+    `Simulated BingX perpetual (${intent.symbol}) — chart is Binance Spot for display only.`,
+  );
 
   return { valid: errors.length === 0, errors, warnings };
 }

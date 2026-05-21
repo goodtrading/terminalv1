@@ -6,14 +6,22 @@ import type {
 } from "./bingxTypes";
 import { maskApiKey } from "./bingxSigner";
 import {
-  getConnection,
-  getCredentials,
-  updateConnectionStatus,
+  getConnectionForUser,
+  getCredentialsForUser,
+  updateConnectionStatusForUser,
 } from "./bingxCredentialStore";
 
-const BALANCE_PATH = "/openApi/swap/v3/user/balance";
+export const BINGX_SWAP_BALANCE_PATH = "/openApi/swap/v3/user/balance";
+const BALANCE_PATH = BINGX_SWAP_BALANCE_PATH;
 const POSITIONS_PATH = "/openApi/swap/v2/user/positions";
 const OPEN_ORDERS_PATH = "/openApi/swap/v2/trade/openOrders";
+
+export type BingXBalanceParseHint = "ok" | "parser_mismatch" | "empty_response";
+
+export interface BingXBalancesResult {
+  balances: BingXAccountSnapshot["balances"];
+  parseHint: BingXBalanceParseHint;
+}
 
 function envBool(key: string, fallback = false): boolean {
   const v = process.env[key];
@@ -34,37 +42,182 @@ function coerceNumber(v: unknown): number {
   return 0;
 }
 
-function mapBalance(data: unknown): BingXAccountSnapshot["balances"] {
-  const balances: BingXAccountSnapshot["balances"] = [];
-  if (!data || typeof data !== "object") return balances;
+function extractBalanceRows(data: unknown): Record<string, unknown>[] {
+  if (data == null) return [];
+  if (Array.isArray(data)) {
+    return data.filter(
+      (r): r is Record<string, unknown> => r != null && typeof r === "object",
+    );
+  }
+  if (typeof data !== "object") return [];
 
   const root = data as Record<string, unknown>;
-  const balanceNode =
-    root.balance && typeof root.balance === "object"
-      ? (root.balance as Record<string, unknown>)
-      : root;
+  if (Array.isArray(root.balances)) {
+    return root.balances.filter(
+      (r): r is Record<string, unknown> => r != null && typeof r === "object",
+    );
+  }
+  if (root.balance != null && typeof root.balance === "object") {
+    if (Array.isArray(root.balance)) {
+      return root.balance.filter(
+        (r): r is Record<string, unknown> => r != null && typeof r === "object",
+      );
+    }
+    return [root.balance as Record<string, unknown>];
+  }
+  return [root];
+}
 
-  const asset = String(balanceNode.asset ?? "USDT");
+function mapBalanceRow(
+  node: Record<string, unknown>,
+): BingXAccountSnapshot["balances"][number] | null {
+  const asset = String(node.asset ?? node.currency ?? "USDT").toUpperCase();
+  const equity = coerceNumber(node.equity);
   const walletBalance = coerceNumber(
-    balanceNode.balance ?? balanceNode.equity ?? balanceNode.walletBalance,
+    node.balance ?? node.walletBalance ?? node.equity,
   );
   const availableBalance = coerceNumber(
-    balanceNode.availableMargin ?? balanceNode.availableBalance ?? balanceNode.available,
+    node.availableMargin ??
+      node.availableBalance ??
+      node.available ??
+      node.maxWithdrawAmount,
   );
-  const unrealizedPnl = coerceNumber(
-    balanceNode.unrealizedProfit ?? balanceNode.unrealizedPnl ?? balanceNode.unrealizedPNL,
-  );
+  const unrealizedRaw =
+    node.unrealizedProfit ?? node.unrealizedPnl ?? node.unrealizedPNL;
+  const unrealizedPnl =
+    unrealizedRaw != null && String(unrealizedRaw).trim() !== ""
+      ? coerceNumber(unrealizedRaw)
+      : undefined;
 
-  if (walletBalance !== 0 || availableBalance !== 0) {
-    balances.push({
-      asset,
-      walletBalance,
-      availableBalance,
-      unrealizedPnl: unrealizedPnl || undefined,
-    });
+  const hasRecognizedField =
+    node.asset != null ||
+    node.currency != null ||
+    node.equity != null ||
+    node.balance != null ||
+    node.walletBalance != null ||
+    node.availableMargin != null ||
+    node.availableBalance != null ||
+    node.available != null ||
+    unrealizedRaw != null;
+
+  if (!hasRecognizedField) return null;
+
+  const equityValue = equity > 0 || node.equity != null ? equity : walletBalance;
+
+  return {
+    asset,
+    walletBalance: walletBalance > 0 || node.balance != null ? walletBalance : equityValue,
+    equity: equityValue,
+    availableBalance,
+    unrealizedPnl,
+  };
+}
+
+function describeBalancePayload(data: unknown): {
+  topLevelKeys: string[];
+  detectedAccountType: "swap_array" | "swap_object" | "nested_balance" | "unknown" | "empty";
+  hasEquity: boolean;
+  hasAvailableMargin: boolean;
+  hasUnrealizedPnl: boolean;
+  rawNumericFields: string[];
+  rawRowCount: number;
+} {
+  const rows = extractBalanceRows(data);
+  const topLevelKeys = Array.isArray(data)
+    ? [`[array:${data.length}]`]
+    : data && typeof data === "object"
+      ? Object.keys(data as object)
+      : [];
+
+  let detectedAccountType: ReturnType<typeof describeBalancePayload>["detectedAccountType"] =
+    "empty";
+  if (Array.isArray(data) && data.length > 0) detectedAccountType = "swap_array";
+  else if (data && typeof data === "object") {
+    const root = data as Record<string, unknown>;
+    if (Array.isArray(root.balances) || Array.isArray(root.balance)) {
+      detectedAccountType = "nested_balance";
+    } else if (root.asset != null || root.equity != null || root.balance != null) {
+      detectedAccountType = "swap_object";
+    } else {
+      detectedAccountType = "unknown";
+    }
   }
 
-  return balances;
+  const sample = rows[0] ?? (data && typeof data === "object" && !Array.isArray(data)
+    ? (data as Record<string, unknown>)
+    : null);
+
+  const numericKeys = new Set<string>();
+  if (sample) {
+    for (const key of [
+      "equity",
+      "balance",
+      "walletBalance",
+      "availableMargin",
+      "availableBalance",
+      "available",
+      "unrealizedProfit",
+      "unrealizedPnl",
+      "usedMargin",
+    ]) {
+      const v = sample[key];
+      if (v != null && String(v).trim() !== "" && Number.isFinite(Number(v))) {
+        numericKeys.add(key);
+      }
+    }
+  }
+
+  return {
+    topLevelKeys,
+    detectedAccountType,
+    hasEquity: numericKeys.has("equity"),
+    hasAvailableMargin:
+      numericKeys.has("availableMargin") ||
+      numericKeys.has("availableBalance") ||
+      numericKeys.has("available"),
+    hasUnrealizedPnl:
+      numericKeys.has("unrealizedProfit") || numericKeys.has("unrealizedPnl"),
+    rawNumericFields: [...numericKeys],
+    rawRowCount: rows.length,
+  };
+}
+
+function logBingXAccountSync(payload: Record<string, unknown>): void {
+  const debug =
+    process.env.NODE_ENV !== "production" ||
+    process.env.BINGX_DEBUG_ACCOUNT_SYNC === "true" ||
+    process.env.BINGX_DEBUG_ACCOUNT_SYNC === "1";
+  if (!debug) return;
+  console.debug("[BingX Account Sync]", payload);
+}
+
+function mapBalance(data: unknown): BingXBalancesResult {
+  const rows = extractBalanceRows(data);
+  const balances: BingXAccountSnapshot["balances"] = [];
+
+  for (const row of rows) {
+    const mapped = mapBalanceRow(row);
+    if (mapped) balances.push(mapped);
+  }
+
+  if (
+    balances.length === 0 &&
+    data &&
+    typeof data === "object" &&
+    !Array.isArray(data)
+  ) {
+    const mapped = mapBalanceRow(data as Record<string, unknown>);
+    if (mapped) balances.push(mapped);
+  }
+
+  const parseHint: BingXBalanceParseHint =
+    rows.length > 0 && balances.length === 0
+      ? "parser_mismatch"
+      : rows.length === 0 && balances.length === 0
+        ? "empty_response"
+        : "ok";
+
+  return { balances, parseHint };
 }
 
 function mapPositions(data: unknown): BingXAccountSnapshot["positions"] {
@@ -160,10 +313,44 @@ export async function testConnection(
 
 export async function getBalances(
   credentials: BingXApiCredentials,
-): Promise<BingXAccountSnapshot["balances"]> {
+): Promise<BingXBalancesResult> {
   const client = new BingXHttpClient(credentials);
-  const data = await client.signedGet<unknown>(BALANCE_PATH);
-  return mapBalance(data);
+  try {
+    const data = await client.signedGet<unknown>(BALANCE_PATH);
+    const shape = describeBalancePayload(data);
+    const { balances, parseHint } = mapBalance(data);
+    logBingXAccountSync({
+      endpoint: BALANCE_PATH,
+      accountType: "swap_perpetual",
+      httpStatus: 200,
+      ok: true,
+      topLevelKeys: shape.topLevelKeys,
+      detectedAccountType: shape.detectedAccountType,
+      hasEquity: shape.hasEquity,
+      hasAvailableMargin: shape.hasAvailableMargin,
+      hasUnrealizedPnl: shape.hasUnrealizedPnl,
+      rawNumericFields: shape.rawNumericFields,
+      rawRowCount: shape.rawRowCount,
+      parsedRowCount: balances.length,
+      parseHint,
+    });
+    return { balances, parseHint };
+  } catch (err) {
+    const httpStatus = err instanceof BingXApiError ? err.httpStatus : undefined;
+    logBingXAccountSync({
+      endpoint: BALANCE_PATH,
+      accountType: "swap_perpetual",
+      httpStatus,
+      ok: false,
+      topLevelKeys: [],
+      detectedAccountType: "unknown",
+      hasEquity: false,
+      hasAvailableMargin: false,
+      hasUnrealizedPnl: false,
+      errorCode: err instanceof BingXApiError ? err.code : "UNKNOWN",
+    });
+    throw err;
+  }
 }
 
 export async function getPositions(
@@ -198,14 +385,15 @@ export async function getOpenOrders(
 
 export async function getAccountSnapshot(
   connectionId: string,
+  userId: number,
   symbol?: string,
 ): Promise<BingXAccountSnapshot> {
-  const row = getConnection(connectionId);
+  const row = getConnectionForUser(connectionId, userId);
   if (!row || row.status !== "connected") {
     throw new BingXApiError("Connection not found or not active", "CONNECTION_NOT_FOUND", 400);
   }
 
-  const credentials = getCredentials(connectionId);
+  const credentials = getCredentialsForUser(connectionId, userId);
   if (!credentials) {
     throw new BingXApiError(
       "Unable to decrypt stored credentials",
@@ -220,13 +408,14 @@ export async function getAccountSnapshot(
     "BTC-USDT";
 
   try {
-    const [balances, positions, openOrders] = await Promise.all([
+    const [balanceResult, positions, openOrders] = await Promise.all([
       getBalances(credentials),
       getPositions(credentials, sym),
       getOpenOrders(credentials, sym).catch(() => [] as BingXAccountSnapshot["openOrders"]),
     ]);
+    const balances = balanceResult.balances;
 
-    updateConnectionStatus(connectionId, "connected");
+    updateConnectionStatusForUser(connectionId, userId, "connected");
 
     return {
       exchange: "bingx",
@@ -239,7 +428,7 @@ export async function getAccountSnapshot(
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Account sync failed";
-    updateConnectionStatus(connectionId, "error", msg);
+    updateConnectionStatusForUser(connectionId, userId, "error", msg);
     throw err;
   }
 }

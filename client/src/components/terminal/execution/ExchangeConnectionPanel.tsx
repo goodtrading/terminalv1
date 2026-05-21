@@ -12,6 +12,8 @@ import {
   DEFAULT_EXCHANGE_CONNECTIONS,
 } from "./executionMockState";
 import { BingXConnectionModal } from "./BingXConnectionModal";
+import { BingXReadOnlyConnectionCard } from "./BingXReadOnlyConnectionCard";
+import { isBingXReadOnlySession } from "./bingxSession";
 import { useBrokerSession } from "./useBrokerSession";
 
 function openReferral(url: string) {
@@ -69,6 +71,7 @@ type ExchangeCardProps = {
   onManage?: () => void;
   onDisconnect?: () => void;
   onOpenPaperSettings?: () => void;
+  brokerBackgroundBusy?: boolean;
 };
 
 function ExchangeCard({
@@ -83,6 +86,7 @@ function ExchangeCard({
   onManage,
   onDisconnect,
   onOpenPaperSettings,
+  brokerBackgroundBusy = false,
 }: ExchangeCardProps) {
   const disabled = exchange.status === "coming_soon";
   const referral = exchange.referralUrl ?? BINGX_REFERRAL_URL;
@@ -101,7 +105,9 @@ function ExchangeCard({
     if (exchange.status === "coming_soon") return "Coming soon";
     return "Ready";
   })();
-  const connecting = phase === "connecting" || phase === "checking";
+  const connecting =
+    !brokerBackgroundBusy &&
+    (phase === "connecting" || phase === "checking");
   const showDisconnect =
     (isBingx && bingxConnected && onDisconnect) || (isPaper && paperConnected && onDisconnect);
 
@@ -294,8 +300,14 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
   );
   const [bingxModalOpen, setBingxModalOpen] = useState(false);
   const [paperSettingsOpen, setPaperSettingsOpen] = useState(false);
-  const { session, disconnectBroker, connectPaperTrading, disconnectPaperTrading } =
-    useBrokerSession();
+  const {
+    session,
+    disconnectBroker,
+    connectPaperTrading,
+    disconnectPaperTrading,
+    restoreLoading,
+    loginStatusLoading,
+  } = useBrokerSession();
 
   const loadStatus = useCallback(async () => {
     try {
@@ -341,6 +353,8 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
 
   const bingxPhase =
     session.exchange === "bingx" ? session.phase : ("not_connected" as BrokerConnectionPhase);
+  const bingxReadOnly = isBingXReadOnlySession(session);
+  const brokerBackgroundBusy = restoreLoading || loginStatusLoading;
 
   return (
     <>
@@ -351,43 +365,50 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
         className="flex-[0.35] h-full min-w-0 max-[1000px]:flex-1"
       >
         <div className="flex flex-col gap-2 p-2 overflow-y-auto max-h-full">
-          {exchanges.map((ex) => (
-            <ExchangeCard
-              key={ex.id}
-              exchange={ex}
-              bingxPhase={ex.id === "bingx" ? bingxPhase : undefined}
-              bingxConnected={ex.id === "bingx" ? session.connected : false}
-              bingxDemo={ex.id === "bingx" ? session.demo : false}
-              paperConnected={
-                ex.id === "paper" &&
-                session.exchange === "paper" &&
-                session.connected
-              }
-              onConnect={() => {
-                if (ex.id === "bingx") setBingxModalOpen(true);
-                if (ex.id === "paper") connectPaperTrading();
-              }}
-              onManage={() => {
-                if (ex.id === "bingx") setBingxModalOpen(true);
-              }}
-              bingxSecureApi={
-                ex.id === "bingx" &&
-                session.connectionMode === "secure_api" &&
-                session.connected
-              }
-              apiKeyMasked={ex.id === "bingx" ? session.apiKeyMasked : undefined}
-              onDisconnect={
-                ex.id === "bingx"
-                  ? () => void disconnectBroker({ deleteStored: true })
-                  : ex.id === "paper"
-                    ? () => disconnectPaperTrading()
-                    : undefined
-              }
-              onOpenPaperSettings={
-                ex.id === "paper" ? () => setPaperSettingsOpen(true) : undefined
-              }
+          {bingxReadOnly ? (
+            <BingXReadOnlyConnectionCard
+              session={session}
+              onManage={() => setBingxModalOpen(true)}
+              onDisconnect={() => void disconnectBroker({ deleteStored: true })}
             />
-          ))}
+          ) : null}
+          {exchanges.map((ex) => {
+            if (ex.id === "bingx" && bingxReadOnly) return null;
+            return (
+              <ExchangeCard
+                key={ex.id}
+                exchange={ex}
+                bingxPhase={ex.id === "bingx" ? bingxPhase : undefined}
+                bingxConnected={ex.id === "bingx" ? session.connected : false}
+                bingxDemo={ex.id === "bingx" ? session.demo : false}
+                paperConnected={
+                  ex.id === "paper" &&
+                  session.exchange === "paper" &&
+                  session.connected
+                }
+                onConnect={() => {
+                  if (ex.id === "bingx") setBingxModalOpen(true);
+                  if (ex.id === "paper") connectPaperTrading();
+                }}
+                onManage={() => {
+                  if (ex.id === "bingx") setBingxModalOpen(true);
+                }}
+                bingxSecureApi={ex.id === "bingx" && bingxReadOnly}
+                apiKeyMasked={ex.id === "bingx" ? session.apiKeyMasked : undefined}
+                onDisconnect={
+                  ex.id === "bingx"
+                    ? () => void disconnectBroker({ deleteStored: true })
+                    : ex.id === "paper"
+                      ? () => disconnectPaperTrading()
+                      : undefined
+                }
+                onOpenPaperSettings={
+                  ex.id === "paper" ? () => setPaperSettingsOpen(true) : undefined
+                }
+                brokerBackgroundBusy={ex.id === "bingx" ? brokerBackgroundBusy : false}
+              />
+            );
+          })}
           <p className="text-[8px] text-slate-600 px-1 leading-snug">
             BingX: secure API read-only or broker login. Paper Trading: internal simulated
             broker — no real funds.

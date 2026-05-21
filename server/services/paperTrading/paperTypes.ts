@@ -57,6 +57,9 @@ export interface PaperFill {
   tradeId: string;
   orderId: string;
   symbol: string;
+  venue?: "bingx";
+  marketType?: "perpetual";
+  chartSymbol?: string;
   side: "long" | "short";
   action: "open" | "increase" | "reduce" | "close" | "flip";
   price: number;
@@ -70,6 +73,9 @@ export interface PaperFill {
 export interface PaperTradeLedgerEntry {
   id: string;
   symbol: string;
+  venue?: "bingx";
+  marketType?: "perpetual";
+  chartSymbol?: string;
   side: "long" | "short";
   status: "open" | "closed" | "cancelled" | "rejected";
   entryOrderId?: string;
@@ -97,6 +103,9 @@ export interface PaperTradeLedgerEntry {
 export interface PaperOrder {
   id: string;
   symbol: string;
+  venue?: "bingx";
+  marketType?: "perpetual";
+  chartSymbol?: string;
   side: PaperOrderSide;
   type: PaperOrderType;
   price?: number;
@@ -141,8 +150,20 @@ export interface PaperTradingState {
   tradeLedger: PaperTradeLedgerEntry[];
 }
 
+/** Execution venue metadata (simulated fills mirror BingX perpetual). */
+export interface PaperExecutionVenueMeta {
+  venue: "bingx";
+  marketType: "perpetual";
+  executionExchange: "bingx";
+  chartSymbol?: string;
+}
+
 export interface PaperOrderIntent {
   symbol: string;
+  chartSymbol?: string;
+  venue?: "bingx";
+  marketType?: "perpetual";
+  executionExchange?: "bingx";
   side: PaperOrderSide;
   type: PaperOrderType;
   price?: string;

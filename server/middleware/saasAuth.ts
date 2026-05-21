@@ -1,53 +1,302 @@
 import type { Request, Response, NextFunction } from "express";
 import { describeJwtSecretSource } from "../config/authConfig";
 import { AUTH_COOKIE_NAME } from "../lib/authCookie";
-import { verifyUserToken, verifyUserTokenDebug } from "../lib/jwt";
+import { verifyUserTokenDebug } from "../lib/jwt";
 import { dbRoleToApiRole, isAdminRole } from "../lib/userRoles";
 import { findUserById, userMayAuthenticate } from "../services/userService";
+
+console.log("[saasAuth] middleware version: multi-token fallback active");
 
 declare global {
   namespace Express {
     interface Request {
-      saasUser?: { id: number; email: string; role: string };
+      saasUser?: SaasAuthUser;
+      /** Mirror of saasUser for handlers that still read req.user */
+      user?: SaasAuthUser;
     }
   }
 }
 
-/** @param label — optional middleware name for log prefix (e.g. optionalSaasAuth). */
-function extractToken(req: Request, label?: string): string | null {
-  const logP = `[saasAuth/extractToken${label ? `/${label}` : ""}]`;
-  console.log(logP, "AUTH_COOKIE_NAME:", AUTH_COOKIE_NAME);
-  console.log(logP, "REQ COOKIES:", req.cookies);
+function attachAuthUser(req: Request, user: SaasAuthUser): void {
+  req.saasUser = user;
+  req.user = user;
+}
 
-  const cookieToken = req.cookies?.[AUTH_COOKIE_NAME];
-  const cookieOk = typeof cookieToken === "string" && cookieToken.trim().length > 0;
-  console.log(
-    logP,
-    "COOKIE TOKEN FOUND:",
-    cookieOk,
-    cookieOk ? `(len=${cookieToken!.trim().length})` : "",
-  );
+export type SaasAuthUser = { id: number; email: string; role: string };
 
+export type AuthTokenDiagnostic = {
+  hasCookie: boolean;
+  hasBearer: boolean;
+  tokenCandidatesCount: number;
+  bearerJwtVerified: boolean;
+  cookieJwtVerified: boolean;
+  bearerUserFound: boolean;
+  cookieUserFound: boolean;
+  userResolved: boolean;
+  userIdPresent: boolean;
+  tokenSource: "bearer" | "cookie" | "none";
+  failureReason?: string;
+  jwtSecretSource: string;
+};
+
+function requestRoute(req: Request): string {
+  const raw = req.originalUrl ?? req.url ?? req.path ?? "";
+  return raw.split("?")[0];
+}
+
+function isBingxApiRoute(req: Request): boolean {
+  return requestRoute(req).includes("/api/bingx");
+}
+
+function hasBearerHeader(req: Request): boolean {
   const auth = req.headers.authorization;
-  const bearerPresent =
-    typeof auth === "string" && auth.startsWith("Bearer ") && auth.slice("Bearer ".length).trim().length > 0;
-  console.log(logP, "BEARER FOUND:", bearerPresent);
+  return (
+    typeof auth === "string" &&
+    auth.startsWith("Bearer ") &&
+    auth.slice("Bearer ".length).trim().length > 0
+  );
+}
 
-  if (cookieOk) {
-    console.log(logP, "USING_TOKEN_SOURCE: cookie");
-    return cookieToken!.trim();
+function hasAuthCookie(req: Request): boolean {
+  const cookieToken = req.cookies?.[AUTH_COOKIE_NAME];
+  return typeof cookieToken === "string" && cookieToken.trim().length > 0;
+}
+
+function getBearerToken(req: Request): string | null {
+  const auth = req.headers.authorization;
+  if (typeof auth !== "string" || !auth.startsWith("Bearer ")) return null;
+  const t = auth.slice("Bearer ".length).trim();
+  return t.length > 0 ? t : null;
+}
+
+function getCookieToken(req: Request): string | null {
+  const raw = req.cookies?.[AUTH_COOKIE_NAME];
+  if (typeof raw !== "string") return null;
+  const t = raw.trim();
+  return t.length > 0 ? t : null;
+}
+
+/** Bearer first, then httpOnly cookie. */
+function collectAuthTokens(req: Request): string[] {
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  const push = (t: string | null) => {
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    tokens.push(t);
+  };
+  push(getBearerToken(req));
+  push(getCookieToken(req));
+  return tokens;
+}
+
+async function probeSingleToken(
+  token: string,
+  kind: "bearer" | "cookie",
+): Promise<{
+  jwtVerified: boolean;
+  userFound: boolean;
+  user: SaasAuthUser | null;
+  jwtError?: string;
+  blockedByMayAuthenticate: boolean;
+}> {
+  const dbg = verifyUserTokenDebug(token);
+  if (!dbg.payload) {
+    return {
+      jwtVerified: false,
+      userFound: false,
+      user: null,
+      jwtError: dbg.error,
+      blockedByMayAuthenticate: false,
+    };
+  }
+  const row = await findUserById(dbg.payload.sub);
+  if (!row) {
+    return {
+      jwtVerified: true,
+      userFound: false,
+      user: null,
+      blockedByMayAuthenticate: false,
+    };
+  }
+  const user: SaasAuthUser = {
+    id: row.id,
+    email: row.email,
+    role: dbRoleToApiRole(row.role),
+  };
+  return {
+    jwtVerified: true,
+    userFound: true,
+    user,
+    blockedByMayAuthenticate: !userMayAuthenticate(row),
+  };
+}
+
+/** Safe per-token probe (no secrets in logs). */
+export async function diagnoseAuthTokens(req: Request): Promise<AuthTokenDiagnostic> {
+  const hasCookie = hasAuthCookie(req);
+  const hasBearer = hasBearerHeader(req);
+  const tokens = collectAuthTokens(req);
+  const bearerToken = getBearerToken(req);
+  const cookieToken = getCookieToken(req);
+
+  let bearerJwtVerified = false;
+  let cookieJwtVerified = false;
+  let bearerUserFound = false;
+  let cookieUserFound = false;
+
+  if (bearerToken) {
+    const p = await probeSingleToken(bearerToken, "bearer");
+    bearerJwtVerified = p.jwtVerified;
+    bearerUserFound = p.userFound;
+  }
+  if (cookieToken) {
+    const p = await probeSingleToken(cookieToken, "cookie");
+    cookieJwtVerified = p.jwtVerified;
+    cookieUserFound = p.userFound;
   }
 
-  if (typeof auth === "string" && auth.startsWith("Bearer ")) {
-    const bearerToken = auth.slice("Bearer ".length).trim();
-    if (bearerToken.length > 0) {
-      console.log(logP, "USING_TOKEN_SOURCE: bearer");
-      return bearerToken;
+  return {
+    hasCookie,
+    hasBearer,
+    tokenCandidatesCount: tokens.length,
+    bearerJwtVerified,
+    cookieJwtVerified,
+    bearerUserFound,
+    cookieUserFound,
+    userResolved: false,
+    userIdPresent: false,
+    tokenSource: "none",
+    jwtSecretSource: describeJwtSecretSource(),
+  };
+}
+
+/**
+ * Single resolver for /api/auth/me, optionalSaasAuth, and requireSaasAuth.
+ * Tries Bearer then cookie; same JWT verification for each candidate.
+ */
+export async function resolveAuthenticatedUser(
+  req: Request,
+  options: { enforceMayAuthenticate?: boolean } = {},
+): Promise<{
+  user: SaasAuthUser | null;
+  tokenSource: "bearer" | "cookie" | "none";
+  diagnostic: AuthTokenDiagnostic;
+}> {
+  const enforceMayAuthenticate = options.enforceMayAuthenticate === true;
+  const base = await diagnoseAuthTokens(req);
+  const tokens = collectAuthTokens(req);
+  const bearerToken = getBearerToken(req);
+  const cookieToken = getCookieToken(req);
+
+  if (tokens.length === 0) {
+    return {
+      user: null,
+      tokenSource: "none",
+      diagnostic: {
+        ...base,
+        failureReason: "no_token",
+      },
+    };
+  }
+
+  let failureReason = "all_tokens_invalid";
+
+  for (const token of tokens) {
+    const kind: "bearer" | "cookie" =
+      bearerToken && token === bearerToken
+        ? "bearer"
+        : cookieToken && token === cookieToken
+          ? "cookie"
+          : bearerToken
+            ? "bearer"
+            : "cookie";
+
+    const p = await probeSingleToken(token, kind);
+    if (!p.jwtVerified) {
+      failureReason =
+        kind === "bearer" ? "bearer_jwt_invalid" : "cookie_jwt_invalid";
+      continue;
     }
+    if (!p.userFound) {
+      failureReason =
+        kind === "bearer" ? "bearer_user_missing" : "cookie_user_missing";
+      continue;
+    }
+    if (enforceMayAuthenticate && p.blockedByMayAuthenticate) {
+      failureReason = `${kind}_user_blocked`;
+      continue;
+    }
+    if (!p.user) continue;
+
+    return {
+      user: p.user,
+      tokenSource: kind,
+      diagnostic: {
+        ...base,
+        userResolved: true,
+        userIdPresent: Number.isFinite(p.user.id),
+        tokenSource: kind,
+      },
+    };
   }
 
-  console.log(logP, "USING_TOKEN_SOURCE: none");
-  return null;
+  return {
+    user: null,
+    tokenSource: "none",
+    diagnostic: {
+      ...base,
+      failureReason,
+    },
+  };
+}
+
+/** @deprecated Alias — use resolveAuthenticatedUser */
+export const resolveSaasUserFromRequest = resolveAuthenticatedUser;
+
+function logBingXAuthBackend(
+  req: Request,
+  diagnostic: AuthTokenDiagnostic,
+  route?: string,
+): void {
+  console.log("[BingX Auth Backend]", {
+    route: route ?? requestRoute(req),
+    hasCookie: diagnostic.hasCookie,
+    hasBearer: diagnostic.hasBearer,
+    tokenCandidatesCount: diagnostic.tokenCandidatesCount,
+    bearerJwtVerified: diagnostic.bearerJwtVerified,
+    cookieJwtVerified: diagnostic.cookieJwtVerified,
+    bearerUserFound: diagnostic.bearerUserFound,
+    cookieUserFound: diagnostic.cookieUserFound,
+    userResolved: diagnostic.userResolved,
+    userIdPresent: diagnostic.userIdPresent,
+    tokenSource: diagnostic.tokenSource,
+    failureReason: diagnostic.failureReason ?? null,
+    jwtSecretSource: diagnostic.jwtSecretSource,
+  });
+}
+
+export function logAuthMeDiagnostic(
+  req: Request,
+  authenticated: boolean,
+  userId: number | null,
+  tokenSource: "bearer" | "cookie" | "none",
+  diagnostic: AuthTokenDiagnostic,
+): void {
+  console.log("[AuthMe]", {
+    hasCookie: diagnostic.hasCookie,
+    hasBearer: diagnostic.hasBearer,
+    tokenCandidatesCount: diagnostic.tokenCandidatesCount,
+    bearerJwtVerified: diagnostic.bearerJwtVerified,
+    cookieJwtVerified: diagnostic.cookieJwtVerified,
+    bearerUserFound: diagnostic.bearerUserFound,
+    cookieUserFound: diagnostic.cookieUserFound,
+    authenticated,
+    userIdPresent: userId != null && Number.isFinite(userId),
+    tokenSource,
+    failureReason: diagnostic.failureReason ?? null,
+    jwtSecretSource: diagnostic.jwtSecretSource,
+  });
 }
 
 export async function optionalSaasAuth(
@@ -56,58 +305,37 @@ export async function optionalSaasAuth(
   next: NextFunction,
 ) {
   req.saasUser = undefined;
-  const token = extractToken(req, "optionalSaasAuth");
-  if (!token) {
-    console.log("[saasAuth/optionalSaasAuth] no token — skipping verify, req.saasUser unset");
-    next();
-    return;
-  }
-  console.log(
-    "[saasAuth/optionalSaasAuth] token preview:",
-    `${token.slice(0, 12)}…`,
-    "len=",
-    token.length,
-    "| jwtSecretSource:",
-    describeJwtSecretSource(),
-  );
-
-  try {
-    const dbg = verifyUserTokenDebug(token);
-    if (!dbg.payload) {
-      console.error(
-        "[saasAuth/optionalSaasAuth] JWT VERIFY FAILED:",
-        dbg.error,
-        "| jwtSecretSource:",
-        describeJwtSecretSource(),
-      );
-      next();
-      return;
-    }
-    console.log("[saasAuth/optionalSaasAuth] JWT PAYLOAD OK:", {
-      sub: dbg.payload.sub,
-      email: dbg.payload.email,
-      role: dbg.payload.role,
-      exp: dbg.payload.exp,
-    });
-
-    const user = await findUserById(dbg.payload.sub);
-    if (!user) {
-      console.error(
-        "[saasAuth/optionalSaasAuth] USER ROW MISSING for sub:",
-        dbg.payload.sub,
-        "(JWT ok but findUserById returned nothing)",
-      );
-      next();
-      return;
-    }
-    req.saasUser = { id: user.id, email: user.email, role: dbRoleToApiRole(user.role) };
-    console.log("[saasAuth/optionalSaasAuth] req.saasUser SET:", req.saasUser);
-  } catch (err) {
-    console.error("[saasAuth/optionalSaasAuth] unexpected error:", err);
-    next();
-    return;
-  }
+  const { user } = await resolveAuthenticatedUser(req, {
+    enforceMayAuthenticate: false,
+  });
+  if (user) attachAuthUser(req, user);
   next();
+}
+
+function saasUnauthorized(
+  res: Response,
+  legacyCode: "UNAUTHORIZED" | "INVALID_TOKEN",
+  bingxCode?: string,
+  failureReason?: string,
+): void {
+  const message =
+    legacyCode === "INVALID_TOKEN"
+      ? "Session expired. Please sign in again."
+      : "You must be logged in to manage exchange connections.";
+  const responseCode = bingxCode ?? legacyCode;
+  if (bingxCode) {
+    console.log("[BingX Auth Backend] 401 response", {
+      bingxCode,
+      failureReason: failureReason ?? null,
+    });
+  }
+  res.status(401).json({
+    success: false,
+    code: responseCode,
+    message,
+    error: legacyCode,
+    failureReason: failureReason ?? undefined,
+  });
 }
 
 export async function requireSaasAuth(
@@ -115,22 +343,50 @@ export async function requireSaasAuth(
   res: Response,
   next: NextFunction,
 ) {
-  const token = extractToken(req);
-  if (!token) {
-    res.status(401).json({ error: "UNAUTHORIZED" });
+  const route = requestRoute(req);
+  const { user, tokenSource, diagnostic } = await resolveAuthenticatedUser(req, {
+    enforceMayAuthenticate: false,
+  });
+
+  if (!user) {
+    const out: AuthTokenDiagnostic = {
+      ...diagnostic,
+      userResolved: false,
+      userIdPresent: false,
+      tokenSource: "none",
+    };
+    if (isBingxApiRoute(req)) {
+      logBingXAuthBackend(req, out, route);
+    }
+    const invalidJwt =
+      diagnostic.bearerJwtVerified ||
+      diagnostic.cookieJwtVerified ||
+      diagnostic.failureReason === "bearer_jwt_invalid" ||
+      diagnostic.failureReason === "cookie_jwt_invalid";
+    const legacyCode = invalidJwt ? "INVALID_TOKEN" : "UNAUTHORIZED";
+    const bingxCode = isBingxApiRoute(req)
+      ? invalidJwt
+        ? "BINGX_401_REQUIRE_SAAS_AUTH_INVALID_TOKEN"
+        : "BINGX_401_REQUIRE_SAAS_AUTH"
+      : undefined;
+    saasUnauthorized(
+      res,
+      legacyCode,
+      bingxCode,
+      diagnostic.failureReason,
+    );
     return;
   }
-  const payload = verifyUserToken(token);
-  if (!payload) {
-    res.status(401).json({ error: "INVALID_TOKEN" });
-    return;
+
+  attachAuthUser(req, user);
+  if (isBingxApiRoute(req)) {
+    logBingXAuthBackend(req, {
+      ...diagnostic,
+      userResolved: true,
+      userIdPresent: true,
+      tokenSource,
+    }, route);
   }
-  const user = await findUserById(payload.sub);
-  if (!user || !userMayAuthenticate(user)) {
-    res.status(401).json({ error: "UNAUTHORIZED" });
-    return;
-  }
-  req.saasUser = { id: user.id, email: user.email, role: dbRoleToApiRole(user.role) };
   next();
 }
 
@@ -139,25 +395,17 @@ export async function requireSaasAdmin(
   res: Response,
   next: NextFunction,
 ) {
-  const token = extractToken(req);
-  if (!token) {
-    res.status(401).json({ error: "UNAUTHORIZED" });
-    return;
-  }
-  const payload = verifyUserToken(token);
-  if (!payload) {
-    res.status(401).json({ error: "INVALID_TOKEN" });
-    return;
-  }
-  const user = await findUserById(payload.sub);
-  if (!user || !userMayAuthenticate(user)) {
-    res.status(401).json({ error: "UNAUTHORIZED" });
+  const { user } = await resolveAuthenticatedUser(req, {
+    enforceMayAuthenticate: true,
+  });
+  if (!user) {
+    saasUnauthorized(res, "UNAUTHORIZED");
     return;
   }
   if (!isAdminRole(user.role)) {
     res.status(403).json({ error: "FORBIDDEN" });
     return;
   }
-  req.saasUser = { id: user.id, email: user.email, role: dbRoleToApiRole(user.role) };
+  attachAuthUser(req, user);
   next();
 }

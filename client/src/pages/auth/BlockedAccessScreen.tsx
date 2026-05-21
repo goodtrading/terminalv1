@@ -7,7 +7,8 @@ import ExpiredSubscriptionScreen from "@/pages/auth/ExpiredSubscriptionScreen";
 import { cn } from "@/lib/utils";
 
 export default function BlockedAccessScreen({ children }: { children: ReactNode }) {
-  const { saasDisabled, authReady, user, access, login, register } = useTerminalAuth();
+  const { saasDisabled, authReady, authenticated, user, access, login, register } =
+    useTerminalAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -40,7 +41,7 @@ export default function BlockedAccessScreen({ children }: { children: ReactNode 
     );
   }
 
-  if (!user) {
+  if (!authenticated || !user) {
     const isRegister = mode === "register";
 
     const mapAuthError = (msg: string) => {

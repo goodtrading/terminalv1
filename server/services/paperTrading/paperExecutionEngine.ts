@@ -730,6 +730,9 @@ export async function submitPaperOrder(body: unknown): Promise<{
   const order: PaperOrder = {
     id: randomUUID(),
     symbol: intent.symbol,
+    venue: intent.venue ?? "bingx",
+    marketType: intent.marketType ?? "perpetual",
+    chartSymbol: intent.chartSymbol,
     side: intent.side,
     type: "limit",
     price: Number(intent.price),

@@ -1,14 +1,15 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { describeJwtSecretSource } from "../config/authConfig";
 import { dbRoleToApiRole, isAdminRole } from "../lib/userRoles";
 import { AUTH_COOKIE_NAME, clearAuthCookie, getAuthCookieOptions } from "../lib/authCookie";
 import { verifyPassword } from "../lib/password";
 import { signUserToken } from "../lib/jwt";
 import {
+  logAuthMeDiagnostic,
   optionalSaasAuth,
   requireSaasAuth,
   requireSaasAdmin,
+  resolveAuthenticatedUser,
 } from "../middleware/saasAuth";
 import {
   createUser,
@@ -262,29 +263,33 @@ export function registerSaasRoutes(app: Express): void {
       Pragma: "no-cache",
       Expires: "0",
     });
-    const meLog = "[SaaS GET /api/auth/me]";
-    console.log(meLog, "AUTH_COOKIE_NAME (expected):", AUTH_COOKIE_NAME);
-    console.log(meLog, "raw Cookie header present:", Boolean(req.headers.cookie), "length:", req.headers.cookie?.length ?? 0);
-    console.log(meLog, "req.cookies (parsed):", req.cookies);
-    console.log(meLog, "optionalSaasAuth result — req.saasUser (not req.user):", req.saasUser ?? null);
-    console.log(
-      meLog,
-      "JWT secret source (login/register/signUserToken + verifyUserToken):",
-      describeJwtSecretSource(),
-    );
     try {
-      if (!req.saasUser) {
-        console.log(meLog, "responding: user null (no req.saasUser) — check prior [saasAuth/optionalSaasAuth] logs");
-        res.json({ user: null, access: null });
+      const { user, tokenSource, diagnostic } = await resolveAuthenticatedUser(req, {
+        enforceMayAuthenticate: false,
+      });
+      const authenticated = Boolean(user);
+      logAuthMeDiagnostic(
+        req,
+        authenticated,
+        user?.id ?? null,
+        tokenSource,
+        diagnostic,
+      );
+      if (!user) {
+        res.json({ authenticated: false, user: null, access: null });
         return;
       }
-      const access = await getAccessForUserId(req.saasUser.id);
-      console.log(meLog, "responding with user id:", req.saasUser.id, "access.allowed:", access.allowed);
+      if (req.saasUser?.id !== user.id) {
+        req.saasUser = user;
+        req.user = user;
+      }
+      const access = await getAccessForUserId(user.id);
       res.json({
+        authenticated: true,
         user: {
-          id: req.saasUser.id,
-          email: req.saasUser.email,
-          role: req.saasUser.role,
+          id: user.id,
+          email: user.email,
+          role: user.role,
         },
         access,
       });

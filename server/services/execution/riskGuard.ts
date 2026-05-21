@@ -1,3 +1,4 @@
+import { assertNotChartVenue } from "@shared/execution/executionGuards";
 import type { OrderIntent } from "./executionTypes";
 
 function envBool(key: string, fallback = false): boolean {
@@ -64,6 +65,13 @@ export function validateOrderIntent(intent: Partial<OrderIntent>): {
 } {
   const errors: string[] = [];
   if (!intent.exchange) errors.push("exchange is required");
+  if (intent.exchange === "binance") {
+    errors.push(
+      "Binance is chart-only; orders must use the configured execution venue (BingX perpetual)",
+    );
+  }
+  const chartVenue = assertNotChartVenue(intent.exchange, undefined);
+  if (!chartVenue.ok) errors.push(chartVenue.message);
   if (!intent.symbol?.trim()) errors.push("symbol is required");
   if (!intent.side || !["long", "short"].includes(intent.side)) {
     errors.push("side must be long or short");

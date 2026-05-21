@@ -798,7 +798,7 @@ export async function registerRoutes(
         Pragma: "no-cache",
         Expires: "0",
       });
-      res.json({ user: null, access: null, saasDisabled: true });
+      res.json({ authenticated: false, user: null, access: null, saasDisabled: true });
     });
     app.get("/api/plans", (_req, res) => {
       res.json({ plans: [], saasDisabled: true });

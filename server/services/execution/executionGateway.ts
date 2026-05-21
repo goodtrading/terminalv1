@@ -15,13 +15,15 @@ import {
   isLiveTradingEnabled,
   validateOrderIntent,
 } from "./riskGuard";
-import { getFirstConnectedConnection } from "../exchanges/bingx/bingxCredentialStore";
+import { getTerminalExecutionContext, routeIntentToExecutionAdapter } from "./executionVenue";
+import { getFirstConnectedConnectionForUser } from "../exchanges/bingx/bingxCredentialStore";
 
-export function getExchangeStatus(): ExchangeStatusResponse {
+export function getExchangeStatus(userId?: number): ExchangeStatusResponse {
   const brokerLoginAvailable = isBrokerLoginAvailable();
   const brokerLoginUrl = getBrokerLoginUrl();
   const referralUrl = getBingxReferralUrl();
-  const apiConnected = getFirstConnectedConnection();
+  const apiConnected =
+    userId != null ? getFirstConnectedConnectionForUser(userId) : null;
 
   return {
     exchanges: [
@@ -54,9 +56,14 @@ export function getExchangeStatus(): ExchangeStatusResponse {
   };
 }
 
-export function getExecutionStatus(): ExecutionStatusResponse {
+export function getExecutionContextPayload() {
+  return getTerminalExecutionContext();
+}
+
+export function getExecutionStatus(userId?: number): ExecutionStatusResponse {
   const rg = getRiskGuardStatus();
-  const apiConnected = getFirstConnectedConnection();
+  const apiConnected =
+    userId != null ? getFirstConnectedConnectionForUser(userId) : null;
   const readOnly = Boolean(apiConnected);
   return {
     liveTradingEnabled: rg.liveTradingEnabled,
@@ -127,16 +134,22 @@ export function previewOrder(intent: Partial<OrderIntent>): {
   };
 }
 
-export function submitOrder(_intent: Partial<OrderIntent>) {
+export async function submitOrder(intent: Partial<OrderIntent>) {
+  const validation = validateOrderIntent(intent);
+  if (!validation.valid) {
+    return {
+      success: false as const,
+      code: "INVALID_ORDER_INTENT",
+      message: validation.errors.join("; "),
+    };
+  }
+
   const blocked = checkLiveTradingEnabled();
   if (blocked) {
     return { success: false as const, ...blocked };
   }
-  return {
-    success: false as const,
-    code: "LIVE_TRADING_DISABLED",
-    message: "Live trading is disabled. Broker execution is not enabled yet.",
-  };
+
+  return routeIntentToExecutionAdapter(intent as OrderIntent);
 }
 
 export function killSwitch() {

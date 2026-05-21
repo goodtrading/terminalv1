@@ -19,6 +19,7 @@ export type BrokerConnectionPhase =
 export type BrokerConnectionMode =
   | "broker_login"
   | "secure_api"
+  | "read-only"
   | "demo"
   | "paper"
   | null;
@@ -37,6 +38,90 @@ export interface BrokerSessionState {
   brokerLoginUrl?: string | null;
   connectedAt?: string;
   lastError?: string;
+}
+
+export type BingXReadOnlyHealth = "healthy" | "degraded" | "error";
+
+export type BingXAccountSyncStatus =
+  | "loaded"
+  | "unavailable"
+  | "empty"
+  | "permission_denied"
+  | "parser_mismatch";
+
+export interface BingXNormalizedPosition {
+  symbol: string;
+  side: "long" | "short" | "flat" | "unknown";
+  quantity: number;
+  entryPrice?: number;
+  markPrice?: number;
+  liquidationPrice?: number;
+  leverage?: number;
+  marginMode?: "cross" | "isolated" | "unknown";
+  unrealizedPnlUsdt?: number;
+  roePct?: number;
+  notionalUsdt?: number;
+}
+
+export interface BingXNormalizedOrder {
+  id: string;
+  symbol: string;
+  side: "buy" | "sell" | "unknown";
+  type: "market" | "limit" | "stop" | "take_profit" | "unknown";
+  status: "open" | "partially_filled" | "unknown";
+  price?: number;
+  quantity?: number;
+  reduceOnly?: boolean;
+  createdTime?: number;
+}
+
+export interface BingXReadOnlySnapshot {
+  connectionId: string;
+  exchange: "bingx";
+  mode: "read-only";
+  connected: boolean;
+  health: BingXReadOnlyHealth;
+  lastSyncTime: number;
+  account?: {
+    equityUsdt?: number;
+    balanceUsdt?: number;
+    availableMarginUsdt?: number;
+    marginUsedUsdt?: number;
+    unrealizedPnlUsdt?: number;
+  };
+  connectionHealth?: BingXReadOnlyHealth;
+  accountSync?: {
+    status: BingXAccountSyncStatus;
+    message?: string;
+  };
+  positions: BingXNormalizedPosition[];
+  openOrders: BingXNormalizedOrder[];
+  permissions: {
+    read: boolean;
+    trade: false;
+    withdraw: false;
+  };
+  warnings: string[];
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
+export interface BingXReadOnlyHealthResponse {
+  success: boolean;
+  health: BingXReadOnlyHealth;
+  latencyMs?: number;
+  lastSyncTime?: number;
+  permissions: {
+    read: boolean;
+    trade: false;
+    withdraw: false;
+  };
+  warnings: string[];
+  code?: string;
+  message?: string;
+  details?: { safeReason?: string };
 }
 
 export interface BingXAccountSnapshot {
@@ -71,14 +156,38 @@ export interface BingXAccountSnapshot {
   updatedAt: string;
 }
 
+export interface BingXSavedConnection {
+  id: string;
+  exchange: "bingx";
+  label: string;
+  apiKeyMasked: string;
+  mode: "read-only";
+  readOnly: true;
+  tradingEnabled: false;
+  connected: boolean;
+  status: string;
+  lastHealth?: BingXReadOnlyHealth;
+  lastValidatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BingXConnectResponse {
   success: boolean;
+  saved?: boolean;
   connection?: {
     id: string;
     exchange: "bingx";
-    status: string;
+    mode?: "read-only";
+    status?: string;
     apiKeyMasked: string;
-    permissions: { readOnly: boolean; trading: boolean };
+    connected?: boolean;
+    readOnly?: boolean;
+    tradingEnabled?: false;
+    permissions?: { readOnly: boolean; trading: boolean };
+    label?: string;
+    createdAt?: string;
+    lastValidatedAt?: string;
   };
   warning?: string;
   warnings?: string[];

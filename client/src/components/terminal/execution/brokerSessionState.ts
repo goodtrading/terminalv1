@@ -2,6 +2,11 @@ import type { BrokerSessionState } from "./executionTypes";
 
 export const BROKER_SESSION_STORAGE_KEY = "goodtrading.brokerSession.v1";
 
+const TRANSIENT_PHASES = new Set<BrokerSessionState["phase"]>([
+  "checking",
+  "connecting",
+]);
+
 export const DEFAULT_BROKER_SESSION: BrokerSessionState = {
   exchange: null,
   phase: "not_connected",
@@ -34,27 +39,66 @@ function isValidSession(raw: unknown): raw is BrokerSessionState {
   );
 }
 
+/** Never leave UI stuck on in-flight phases after reload or crash. */
+export function normalizeBrokerSession(
+  session: BrokerSessionState,
+): BrokerSessionState {
+  if (!TRANSIENT_PHASES.has(session.phase)) {
+    return session;
+  }
+  if (session.connected) {
+    return {
+      ...session,
+      phase: "connected",
+      message: session.message ?? "BingX connected read-only.",
+    };
+  }
+  return {
+    ...session,
+    phase: "not_connected",
+    connected: false,
+    message: "No broker connected.",
+    lastError: session.lastError,
+  };
+}
+
+function persistablePhase(
+  session: BrokerSessionState,
+): BrokerSessionState["phase"] {
+  if (TRANSIENT_PHASES.has(session.phase)) {
+    return session.connected ? "connected" : "not_connected";
+  }
+  return session.phase;
+}
+
 export function loadBrokerSession(): BrokerSessionState {
   try {
     const stored = localStorage.getItem(BROKER_SESSION_STORAGE_KEY);
     if (!stored) return { ...DEFAULT_BROKER_SESSION };
     const parsed: unknown = JSON.parse(stored);
     if (!isValidSession(parsed)) return { ...DEFAULT_BROKER_SESSION };
-    return {
+    const merged = {
       ...DEFAULT_BROKER_SESSION,
       ...parsed,
     };
+    if (merged.connectionMode === "secure_api") {
+      merged.connectionMode = "read-only";
+      merged.readOnly = true;
+      merged.tradingEnabled = false;
+    }
+    return normalizeBrokerSession(merged);
   } catch {
     return { ...DEFAULT_BROKER_SESSION };
   }
 }
 
-/** Persist session metadata only — never API secrets. */
+/** Persist session metadata only — never API secrets or in-flight phases. */
 export function saveBrokerSession(session: BrokerSessionState): void {
   try {
+    const phase = persistablePhase(session);
     const safe: BrokerSessionState = {
       exchange: session.exchange,
-      phase: session.phase,
+      phase,
       connected: session.connected,
       demo: session.demo,
       connectionMode: session.connectionMode ?? null,
@@ -81,4 +125,10 @@ export function clearBrokerSession(): void {
   } catch {
     // ignore
   }
+}
+
+export function isTransientBrokerPhase(
+  phase: BrokerSessionState["phase"],
+): boolean {
+  return TRANSIENT_PHASES.has(phase);
 }

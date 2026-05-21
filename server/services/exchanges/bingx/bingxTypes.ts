@@ -3,21 +3,28 @@ export interface BingXApiCredentials {
   apiSecret: string;
 }
 
+export type BingXConnectionHealth = "healthy" | "degraded" | "error";
+
 export interface StoredBingXConnection {
   id: string;
+  userId: number;
   exchange: "bingx";
   label: string;
   apiKeyMasked: string;
   encryptedApiKey: string;
   encryptedApiSecret: string;
+  mode: "read-only";
+  tradingEnabled: false;
   permissions: {
-    readOnly: boolean;
-    trading: boolean;
+    readOnly: true;
+    trading: false;
   };
   status: "not_connected" | "checking" | "connected" | "error";
   createdAt: string;
   updatedAt: string;
   lastCheckedAt?: string;
+  lastValidatedAt?: string;
+  lastHealth?: BingXConnectionHealth;
   lastError?: string;
 }
 
@@ -37,6 +44,8 @@ export interface BingXAccountSnapshot {
   balances: Array<{
     asset: string;
     walletBalance: number;
+    /** Net asset value from BingX `equity` when present. */
+    equity?: number;
     availableBalance: number;
     unrealizedPnl?: number;
   }>;
@@ -67,13 +76,33 @@ export interface BingXPublicConnection {
   exchange: "bingx";
   label: string;
   apiKeyMasked: string;
+  mode: "read-only";
+  readOnly: true;
+  tradingEnabled: false;
+  connected: boolean;
   permissions: {
-    readOnly: boolean;
-    trading: boolean;
+    readOnly: true;
+    trading: false;
   };
   status: StoredBingXConnection["status"];
   createdAt: string;
   updatedAt: string;
   lastCheckedAt?: string;
+  lastValidatedAt?: string;
+  lastHealth?: BingXConnectionHealth;
   lastError?: string;
+}
+
+export interface BingXConnectResponseConnection {
+  id: string;
+  exchange: "bingx";
+  mode: "read-only";
+  apiKeyMasked: string;
+  connected: boolean;
+  tradingEnabled: false;
+  readOnly: true;
+  label?: string;
+  createdAt: string;
+  lastValidatedAt?: string;
+  lastHealth?: BingXConnectionHealth;
 }
