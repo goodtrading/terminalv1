@@ -20,6 +20,7 @@ import {
 } from "./executionContext";
 import { ExecutionVenueStrip } from "./ExecutionVenueStrip";
 import { BingXReadOnlyExecutionBlock } from "./BingXReadOnlyExecutionBlock";
+import { PaperTradingExecutionBlock } from "./PaperTradingExecutionBlock";
 import { isBingXReadOnlySession } from "./bingxSession";
 import { useBrokerSession } from "./useBrokerSession";
 import { PaperClosePositionModal } from "./PaperClosePositionModal";
@@ -88,6 +89,7 @@ import {
   PAPER_INVALIDATE_KEYS,
 } from "./paperQueryKeys";
 import { postPaperClosePartial } from "./paperChartActions";
+import { paperApiFetch } from "./paperApiClient";
 import {
   buildPaperSubmitRiskPayload,
   paperRiskReferencePrice,
@@ -161,7 +163,7 @@ function isPaperSession(session: {
 
 export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boolean }) {
   const queryClient = useQueryClient();
-  const { session, connectPaperTrading } = useBrokerSession();
+  const { session, connectPaperTrading, restoreBingXAfterPaper } = useBrokerSession();
   const [ticket, setTicket] = useState<OrderTicketState>(DEFAULT_ORDER_TICKET);
   const [risk, setRisk] = useState<ExecutionRiskGuardState>(DEFAULT_RISK_GUARD);
   const [preview, setPreview] = useState<OrderPreviewSummary | null>(null);
@@ -232,7 +234,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
   useEffect(() => {
     if (!isPaper) return;
     const tick = () => {
-      void fetch("/api/paper/check-stops", { method: "POST" }).then(() => {
+      void paperApiFetch("/api/paper/check-stops", { method: "POST" }).then(() => {
         void invalidatePaper();
       });
     };
@@ -247,7 +249,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
       if (!res.ok) throw new Error("Paper settings failed");
       return res.json() as Promise<PaperTradingSettings>;
     },
-    enabled: isPaper,
+    enabled: false,
     staleTime: 30_000,
   });
 
@@ -286,8 +288,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
       }
       return json;
     },
-    enabled: isPaper,
-    refetchInterval: isPaper ? 6000 : false,
+    enabled: false,
     refetchOnMount: "always",
     retry: 2,
   });
@@ -303,7 +304,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
       if (!res.ok) throw new Error("Paper orders sync failed");
       return res.json() as Promise<{ orders: PaperOrderSnapshot[] }>;
     },
-    enabled: isPaper,
+    enabled: false,
     refetchInterval: 6000,
     retry: 1,
   });
@@ -317,7 +318,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
       if (!res.ok) throw new Error("Paper position sync failed");
       return res.json() as Promise<{ position: PaperPositionSnapshot | null }>;
     },
-    enabled: isPaper,
+    enabled: false,
     refetchInterval: 6000,
     retry: 1,
   });
@@ -346,7 +347,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
       if (!res.ok) throw new Error("Paper trades sync failed");
       return res.json() as Promise<{ trades: PaperTradeLedgerSnapshot[] }>;
     },
-    enabled: isPaper,
+    enabled: false,
     refetchInterval: 6000,
     retry: 1,
   });
@@ -628,7 +629,17 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
       className="flex-[0.65] min-w-[260px] min-h-0 max-[1200px]:min-w-[220px] max-[1000px]:min-w-0 max-[1000px]:flex-1"
     >
       <div className="flex flex-col gap-2 p-2 overflow-y-auto max-h-full text-[10px] font-mono">
-        {isBingXReadOnly ? (
+        {isPaper ? (
+          <PaperTradingExecutionBlock
+            bingxStillConnected={Boolean(session.bingxReferenceConnectionId)}
+            bingxReferenceConnectionId={session.bingxReferenceConnectionId}
+            onSwitchFromPaper={
+              session.bingxReferenceConnectionId
+                ? () => restoreBingXAfterPaper()
+                : undefined
+            }
+          />
+        ) : isBingXReadOnly ? (
           <BingXReadOnlyExecutionBlock
             session={session}
             symbol={ticket.symbol}
@@ -642,8 +653,8 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
           />
         )}
 
-        {/* Account — paper and other modes only (BingX read-only uses unified block above) */}
-        {!isBingXReadOnly ? (
+        {/* Account — non-paper, non–BingX read-only */}
+        {!isPaper && !isBingXReadOnly ? (
           <section className="rounded border border-terminal-border bg-[#0a0a0a] p-2 space-y-1">
             <div className="text-[8px] font-bold uppercase tracking-widest text-cyan-500/80 mb-1">
               Account / Broker
@@ -731,7 +742,8 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
           </section>
         ) : null}
 
-        {/* Order ticket — paper only; BingX read-only never submits */}
+        {/* Order ticket — legacy panel path (paper uses PaperTradingExecutionBlock) */}
+        {!isPaper ? (
         <section
           className={cn(
             "rounded border border-terminal-border bg-[#0a0a0a] p-2 space-y-2",
@@ -919,14 +931,15 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
             </p>
           ) : null}
         </section>
+        ) : null}
 
         {/* Risk guard — compact while live trading is off */}
-        {!isBingXReadOnly && !risk.liveTradingEnabled ? (
+        {!isPaper && !isBingXReadOnly && !risk.liveTradingEnabled ? (
           <p className="text-[8px] text-slate-500 px-0.5">
             Risk guard: Live trading locked
             {isPaper ? " · Paper simulation" : " · Read-only mode"}
           </p>
-        ) : !isBingXReadOnly && risk.liveTradingEnabled ? (
+        ) : !isPaper && !isBingXReadOnly && risk.liveTradingEnabled ? (
           <section className="rounded border border-amber-500/25 bg-amber-950/20 p-2 space-y-0.5 text-[9px] text-amber-200/80">
             <div className="font-bold uppercase tracking-widest text-[8px] mb-1">Risk guard</div>
             <div className="flex justify-between">
@@ -953,7 +966,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
         ) : null}
 
         {/* Preview result */}
-        {preview ? (
+        {!isPaper && preview ? (
           <section className="rounded border border-cyan-500/25 bg-cyan-950/20 p-2 text-[9px] text-cyan-100/90 space-y-1">
             <div className="font-bold uppercase tracking-widest text-[8px]">Order preview</div>
             <div>
@@ -997,6 +1010,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
         ) : null}
 
         {/* Actions */}
+        {!isPaper ? (
         <div className="grid grid-cols-2 gap-1">
           <button
             type="button"
@@ -1031,25 +1045,14 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
                 : "Submit order"}
           </button>
         </div>
-        {isPaper && submitDisabled && !submitLoading ? (
-          <p className="text-[8px] text-center text-amber-500/70 px-1">
-            {!paperSizeValid
-              ? "Enter size > 0 to submit."
-              : !paperLimitValid
-                ? "Limit orders require price > 0."
-                : !paperLeverageValid
-                  ? `Leverage must be 1–${paperSettings?.maxLeverage ?? 125}x.`
-                  : !paperTypeAllowed
-                    ? "This order type is disabled in paper settings."
-                    : null}
-          </p>
         ) : null}
+
         <p className="text-[8px] text-center text-slate-600 leading-snug px-1">
           {workspaceMessage}
         </p>
 
-        {/* Position mgmt — paper only (hidden in BingX read-only; account panel covers it) */}
-        {!isBingXReadOnly ? (
+        {/* Position mgmt — non-paper */}
+        {!isPaper && !isBingXReadOnly ? (
         <section className="rounded border border-terminal-border p-2 space-y-1">
           <div className="text-[8px] font-bold uppercase tracking-widest text-slate-500">
             Position management
@@ -1150,7 +1153,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
         </section>
         ) : null}
 
-        {isPaper ? (
+        {isPaper && false ? (
           <section className="rounded border border-terminal-border p-2 space-y-1">
             <div className="text-[8px] font-bold uppercase tracking-widest text-slate-500">
               Paper trades

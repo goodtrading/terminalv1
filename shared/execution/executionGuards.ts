@@ -52,6 +52,19 @@ export function assertNotChartVenue(
   return { ok: true };
 }
 
+export const PAPER_MODE_LIVE_LOCKED_MESSAGE =
+  "Live trading is locked. Use Paper Trading.";
+
+/** Paper path must never route to live BingX order APIs. */
+export function assertPaperExecutionMode(
+  mode: string | undefined,
+): ExecutionGuardResult {
+  if (mode === "live") {
+    return block("LIVE_MODE_BLOCKED", PAPER_MODE_LIVE_LOCKED_MESSAGE);
+  }
+  return { ok: true };
+}
+
 export function assertLiveTradingAllowed(
   context: Pick<TerminalExecutionContext, "liveTradingEnabled">,
   serverLiveFlag: boolean,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { PaperPositionSnapshot } from "./executionTypes";
+import { paperApiFetch } from "./paperApiClient";
 import {
   paperRiskReferencePrice,
   parseRiskInput,
@@ -13,6 +14,8 @@ const inputClass =
 export interface PaperRiskManagementSectionProps {
   position: PaperPositionSnapshot;
   disabled?: boolean;
+  /** Omit section title when wrapped in a parent summary (e.g. details). */
+  compact?: boolean;
   onSuccess: (message: string) => void;
   onError: (message: string) => void;
   onUpdated: () => void | Promise<void>;
@@ -21,6 +24,7 @@ export interface PaperRiskManagementSectionProps {
 export function PaperRiskManagementSection({
   position,
   disabled = false,
+  compact = false,
   onSuccess,
   onError,
   onUpdated,
@@ -54,7 +58,7 @@ export function PaperRiskManagementSection({
       setLoading(true);
       setInlineMsg(null);
       try {
-        const res = await fetch("/api/paper/position/risk", {
+        const res = await paperApiFetch("/api/paper/position/risk", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -112,10 +116,17 @@ export function PaperRiskManagementSection({
   const hasTp = position.takeProfit != null && position.takeProfit > 0;
 
   return (
-    <div className="mt-2 pt-2 border-t border-terminal-border/60 space-y-1.5">
-      <div className="text-[8px] font-bold uppercase tracking-widest text-slate-500">
-        Risk management
-      </div>
+    <div
+      className={cn(
+        "space-y-1.5",
+        compact ? "pt-1" : "mt-2 pt-2 border-t border-terminal-border/60",
+      )}
+    >
+      {!compact ? (
+        <div className="text-[8px] font-bold uppercase tracking-widest text-slate-500">
+          Risk management
+        </div>
+      ) : null}
       <div className="grid grid-cols-2 gap-1">
         <div>
           <div className="text-[8px] text-slate-600 mb-0.5">Stop loss</div>

@@ -16,6 +16,8 @@ export {
   DEFAULT_TERMINAL_EXECUTION_CONTEXT,
 } from "@shared/execution/defaultExecutionContext";
 
+export { getPaperTerminalExecutionContext } from "@shared/execution/paperExecutionContext";
+
 export {
   CHART_TO_BINGX_PERPETUAL,
   formatChartSymbolDisplay,

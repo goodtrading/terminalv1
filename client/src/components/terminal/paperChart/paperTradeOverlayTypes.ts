@@ -1,7 +1,9 @@
 export interface PaperChartTradeOverlay {
   symbol: string;
   side: "long" | "short";
+  /** BTC size (normalized from qty / quantity / size / notional). */
   quantity: number;
+  notionalUSDT?: number | null;
   entryPrice: number | null;
   stopLoss: number | null;
   takeProfit: number | null;

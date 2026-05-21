@@ -239,3 +239,74 @@ export function normalizeTradeMetadataPatch(
 
   return { ok: true, patch };
 }
+
+export type PaperQuantityApiFields = {
+  quantity: number;
+  qty: number;
+  qtyBTC: number;
+  size: number;
+  notionalUSDT: number | null;
+  marginRequired: number | null;
+};
+
+/** Consistent qty fields for API responses (legacy + new clients). */
+export function enrichPaperQuantityFields(params: {
+  qtyBtc: number;
+  entryPrice?: number | null;
+  leverage?: number | null;
+  notionalUsdt?: number | null;
+}): PaperQuantityApiFields {
+  const qtyBTC = Number(params.qtyBtc);
+  const entry =
+    params.entryPrice != null && Number.isFinite(Number(params.entryPrice))
+      ? Number(params.entryPrice)
+      : null;
+  const lev =
+    params.leverage != null && Number.isFinite(Number(params.leverage))
+      ? Number(params.leverage)
+      : null;
+
+  let notionalUSDT =
+    params.notionalUsdt != null && Number.isFinite(Number(params.notionalUsdt))
+      ? Number(params.notionalUsdt)
+      : null;
+  if (notionalUSDT == null && entry != null && entry > 0 && qtyBTC > 0) {
+    notionalUSDT = entry * qtyBTC;
+  }
+
+  const marginRequired =
+    notionalUSDT != null && lev != null && lev > 0 ? notionalUSDT / lev : null;
+
+  return {
+    quantity: qtyBTC,
+    qty: qtyBTC,
+    qtyBTC,
+    size: qtyBTC,
+    notionalUSDT,
+    marginRequired,
+  };
+}
+
+export type PaperPnlApiFields = {
+  unrealizedPnl: number;
+  unrealizedPnL: number;
+  realizedPnl: number;
+  realizedPnL: number;
+};
+
+/** Consistent PnL field names for API responses (legacy + new clients). */
+export function enrichPaperPnlFields(params: {
+  unrealizedPnl?: unknown;
+  realizedPnl?: unknown;
+}): PaperPnlApiFields {
+  const u = Number(params.unrealizedPnl);
+  const r = Number(params.realizedPnl);
+  const unrealized = Number.isFinite(u) ? u : 0;
+  const realized = Number.isFinite(r) ? r : 0;
+  return {
+    unrealizedPnl: unrealized,
+    unrealizedPnL: unrealized,
+    realizedPnl: realized,
+    realizedPnL: realized,
+  };
+}

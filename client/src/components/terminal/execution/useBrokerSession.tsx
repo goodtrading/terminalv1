@@ -62,6 +62,7 @@ type BrokerSessionContextValue = {
   disconnectBroker: (options?: { deleteStored?: boolean }) => Promise<void>;
   connectPaperTrading: () => void;
   disconnectPaperTrading: () => void;
+  restoreBingXAfterPaper: () => void;
   refreshBrokerStatus: () => Promise<void>;
 };
 
@@ -646,8 +647,15 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const connectPaperTrading = useCallback(() => {
-    setSession((prev) =>
-      applySession({
+    setSession((prev) => {
+      const bingxRef =
+        prev.exchange === "bingx" &&
+        prev.connectionId &&
+        prev.connectionId !== "session-only" &&
+        prev.connectionId !== "ephemeral"
+          ? prev.connectionId
+          : prev.bingxReferenceConnectionId;
+      return applySession({
         ...prev,
         exchange: "paper",
         phase: "connected",
@@ -656,19 +664,31 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
         connectionMode: "paper",
         readOnly: false,
         tradingEnabled: false,
+        bingxReferenceConnectionId: bingxRef,
         connectionId: undefined,
-        apiKeyMasked: undefined,
-        message: "GoodTrading Paper Trading connected.",
+        apiKeyMasked: prev.apiKeyMasked,
+        message:
+          "Paper Trading on BingX Perpetual (simulated). BingX read-only remains available for reference.",
         connectedAt: new Date().toISOString(),
         lastError: undefined,
-      }),
-    );
+      });
+    });
   }, []);
 
   const disconnectPaperTrading = useCallback(() => {
     clearBrokerSession();
     setSession({ ...DEFAULT_BROKER_SESSION });
   }, []);
+
+  const restoreBingXAfterPaper = useCallback(() => {
+    const saved = loadBrokerSession();
+    const refId = saved.bingxReferenceConnectionId;
+    if (refId) {
+      void restoreSavedBingXConnection();
+      return;
+    }
+    disconnectPaperTrading();
+  }, [restoreSavedBingXConnection, disconnectPaperTrading]);
 
   const disconnectBroker = useCallback(
     async (options?: { deleteStored?: boolean }) => {
@@ -706,6 +726,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       disconnectBroker,
       connectPaperTrading,
       disconnectPaperTrading,
+      restoreBingXAfterPaper,
       refreshBrokerStatus,
     }),
     [
@@ -724,6 +745,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       disconnectBroker,
       connectPaperTrading,
       disconnectPaperTrading,
+      restoreBingXAfterPaper,
       refreshBrokerStatus,
     ],
   );

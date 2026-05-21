@@ -14,6 +14,7 @@ import {
   formatOverlayPrice,
   formatPnlUsdt,
   formatQtyBtc,
+  normalizePaperQuantity,
   formatSignedPct,
   formatSignedUsd,
   initialPlacementPreviewPrice,
@@ -563,7 +564,14 @@ export function PaperTradeOverlay({
 
   const entry = displayOverlay.entryPrice!;
   const side = displayOverlay.side;
-  const qty = displayOverlay.quantity;
+  const { qtyBTC: qty } = normalizePaperQuantity(
+    {
+      quantity: displayOverlay.quantity,
+      qty: displayOverlay.quantity,
+      entryPrice: entry,
+    },
+    entry,
+  );
 
   const emptyMetrics = { netPnlUsdt: null, accountPct: null };
 
@@ -581,12 +589,14 @@ export function PaperTradeOverlay({
         ? tpPrice!
         : null;
 
+  const qtyForMetrics = qty != null && qty > 0 ? qty : 0;
+
   const slMetrics =
-    slLabelPrice != null
+    slLabelPrice != null && qtyForMetrics > 0
       ? buildRiskLevelNetMetrics(
           side,
           entry,
-          qty,
+          qtyForMetrics,
           slLabelPrice,
           accountEquityUsdt,
           feeSettings,
@@ -594,11 +604,11 @@ export function PaperTradeOverlay({
       : emptyMetrics;
 
   const tpMetrics =
-    tpLabelPrice != null
+    tpLabelPrice != null && qtyForMetrics > 0
       ? buildRiskLevelNetMetrics(
           side,
           entry,
-          qty,
+          qtyForMetrics,
           tpLabelPrice,
           accountEquityUsdt,
           feeSettings,
@@ -606,11 +616,11 @@ export function PaperTradeOverlay({
       : emptyMetrics;
 
   const previewMetrics =
-    placementMode != null && previewRiskPrice != null
+    placementMode != null && previewRiskPrice != null && qtyForMetrics > 0
       ? buildRiskLevelNetMetrics(
           side,
           entry,
-          qty,
+          qtyForMetrics,
           previewRiskPrice,
           accountEquityUsdt,
           feeSettings,
@@ -632,7 +642,8 @@ export function PaperTradeOverlay({
       : 12;
 
   const sideLabel = displayOverlay.side.toUpperCase();
-  const qtyLabel = `${formatQtyBtc(displayOverlay.quantity)} BTC`;
+  const qtyLabel =
+    qty != null ? `${formatQtyBtc(qty)} BTC` : "Qty: —";
 
   const placementHint =
     placementMode === "takeProfit"
@@ -835,7 +846,7 @@ export function PaperTradeOverlay({
         </button>
       </div>
 
-      {position && position.side !== "flat" && position.quantity > 0 ? (
+      {position && position.side !== "flat" ? (
         <PaperClosePositionModal
           open={closeModalOpen}
           onClose={() => setCloseModalOpen(false)}

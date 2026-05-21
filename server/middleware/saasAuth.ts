@@ -48,6 +48,10 @@ function isBingxApiRoute(req: Request): boolean {
   return requestRoute(req).includes("/api/bingx");
 }
 
+function isPaperApiRoute(req: Request): boolean {
+  return requestRoute(req).includes("/api/paper");
+}
+
 function hasBearerHeader(req: Request): boolean {
   const auth = req.headers.authorization;
   return (
@@ -254,6 +258,26 @@ export async function resolveAuthenticatedUser(
 /** @deprecated Alias — use resolveAuthenticatedUser */
 export const resolveSaasUserFromRequest = resolveAuthenticatedUser;
 
+function logPaperAuthBackend(
+  req: Request,
+  diagnostic: AuthTokenDiagnostic,
+  route?: string,
+  extra?: Record<string, unknown>,
+): void {
+  console.log("[Paper Auth Backend]", {
+    route: route ?? requestRoute(req),
+    method: req.method,
+    hasCookie: diagnostic.hasCookie,
+    hasBearer: diagnostic.hasBearer,
+    userResolved: diagnostic.userResolved,
+    userIdPresent: diagnostic.userIdPresent,
+    tokenSource: diagnostic.tokenSource,
+    failureReason: diagnostic.failureReason ?? null,
+    jwtSecretSource: diagnostic.jwtSecretSource,
+    ...extra,
+  });
+}
+
 function logBingXAuthBackend(
   req: Request,
   diagnostic: AuthTokenDiagnostic,
@@ -355,14 +379,43 @@ export async function requireSaasAuth(
       userIdPresent: false,
       tokenSource: "none",
     };
+    const invalidJwt =
+      diagnostic.failureReason === "bearer_jwt_invalid" ||
+      diagnostic.failureReason === "cookie_jwt_invalid" ||
+      (diagnostic.hasBearer &&
+        !diagnostic.bearerJwtVerified &&
+        diagnostic.failureReason !== "no_token") ||
+      (diagnostic.hasCookie &&
+        !diagnostic.cookieJwtVerified &&
+        diagnostic.failureReason !== "no_token");
+
+    if (isPaperApiRoute(req)) {
+      logPaperAuthBackend(req, out, route, {
+        paperAuthCode: invalidJwt
+          ? "PAPER_401_INVALID_TOKEN"
+          : diagnostic.tokenCandidatesCount === 0
+            ? "PAPER_401_REQUIRE_SAAS_AUTH"
+            : "PAPER_401_NO_USER",
+      });
+      const paperCode = invalidJwt
+        ? "PAPER_401_INVALID_TOKEN"
+        : diagnostic.tokenCandidatesCount === 0
+          ? "PAPER_401_REQUIRE_SAAS_AUTH"
+          : "PAPER_401_NO_USER";
+      res.status(401).json({
+        success: false,
+        code: paperCode,
+        message: invalidJwt
+          ? "Session expired. Please sign in again."
+          : "Authentication required for paper trading.",
+        failureReason: diagnostic.failureReason ?? undefined,
+      });
+      return;
+    }
+
     if (isBingxApiRoute(req)) {
       logBingXAuthBackend(req, out, route);
     }
-    const invalidJwt =
-      diagnostic.bearerJwtVerified ||
-      diagnostic.cookieJwtVerified ||
-      diagnostic.failureReason === "bearer_jwt_invalid" ||
-      diagnostic.failureReason === "cookie_jwt_invalid";
     const legacyCode = invalidJwt ? "INVALID_TOKEN" : "UNAUTHORIZED";
     const bingxCode = isBingxApiRoute(req)
       ? invalidJwt
@@ -379,7 +432,18 @@ export async function requireSaasAuth(
   }
 
   attachAuthUser(req, user);
-  if (isBingxApiRoute(req)) {
+  if (isPaperApiRoute(req)) {
+    logPaperAuthBackend(
+      req,
+      {
+        ...diagnostic,
+        userResolved: true,
+        userIdPresent: true,
+        tokenSource,
+      },
+      route,
+    );
+  } else if (isBingxApiRoute(req)) {
     logBingXAuthBackend(req, {
       ...diagnostic,
       userResolved: true,

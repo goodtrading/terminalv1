@@ -7,6 +7,13 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { PaperPositionSnapshot } from "./executionTypes";
+import {
+  formatPrice,
+  formatQtyBtc,
+  formatUSDT,
+  normalizePaperPositionDisplay,
+  pnlColorClass,
+} from "./paperFormatHelpers";
 
 const QUICK_PERCENTS = [25, 50, 75, 100] as const;
 
@@ -27,22 +34,33 @@ export function PaperClosePositionModal({
 }: PaperClosePositionModalProps) {
   const [percent, setPercent] = useState(100);
 
-  const entry = position.entryPrice ?? 0;
-  const mark = position.markPrice ?? entry;
-  const closeQty = useMemo(
-    () => (position.quantity * percent) / 100,
-    [position.quantity, percent],
+  const display = useMemo(
+    () => normalizePaperPositionDisplay(position),
+    [position],
   );
 
+  const entry = display?.entryPrice ?? null;
+  const mark = display?.markPrice ?? entry;
+  const qtyBTC = display?.qtyBTC ?? null;
+
+  const closeQty = useMemo(() => {
+    if (qtyBTC == null || qtyBTC <= 0) return null;
+    return (qtyBTC * percent) / 100;
+  }, [qtyBTC, percent]);
+
   const estRealized = useMemo(() => {
-    if (!entry || entry <= 0 || !mark) return null;
+    if (entry == null || entry <= 0 || mark == null || closeQty == null) {
+      return null;
+    }
     const pnlPerUnit =
-      position.side === "long" ? mark - entry : entry - mark;
+      display?.side === "long" ? mark - entry : entry - mark;
     return pnlPerUnit * closeQty;
-  }, [closeQty, entry, mark, position.side]);
+  }, [closeQty, entry, mark, display?.side]);
 
   const confirmLabel =
     percent >= 100 ? "Close full position" : "Close partial position";
+
+  const sideLabel = display?.side?.toUpperCase() ?? "—";
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && !loading && onClose()}>
@@ -55,22 +73,28 @@ export function PaperClosePositionModal({
 
         <div className="text-[9px] space-y-1 text-slate-400">
           <div>
-            Side:{" "}
-            <span className="text-slate-200">{position.side.toUpperCase()}</span>
+            Side: <span className="text-slate-200">{sideLabel}</span>
           </div>
-          <div>Quantity: {position.quantity.toFixed(6)} BTC</div>
-          <div>Entry: {entry > 0 ? entry.toFixed(2) : "—"}</div>
-          <div>Mark: {mark > 0 ? mark.toFixed(2) : "—"}</div>
+          <div>Quantity: {formatQtyBtc(qtyBTC)} BTC</div>
+          {display?.notionalUSDT != null ? (
+            <div>Notional: {formatUSDT(display.notionalUSDT)}</div>
+          ) : null}
+          <div>Entry: {formatPrice(entry)}</div>
+          <div>Mark: {formatPrice(mark)}</div>
           <div>
             Unrealized PnL:{" "}
-            <span
-              className={cn(
-                position.unrealizedPnl >= 0 ? "text-emerald-400" : "text-red-400",
-              )}
-            >
-              {position.unrealizedPnl.toFixed(2)} USDT
+            <span className={cn(pnlColorClass(display?.unrealizedPnl))}>
+              {formatUSDT(display?.unrealizedPnl)}
             </span>
           </div>
+          {display?.realizedPnl != null ? (
+            <div>
+              Realized PnL:{" "}
+              <span className={cn(pnlColorClass(display.realizedPnl))}>
+                {formatUSDT(display.realizedPnl)}
+              </span>
+            </div>
+          ) : null}
         </div>
 
         <div className="space-y-2">
@@ -82,7 +106,7 @@ export function PaperClosePositionModal({
               <button
                 key={p}
                 type="button"
-                disabled={loading}
+                disabled={loading || qtyBTC == null}
                 onClick={() => setPercent(p)}
                 className={cn(
                   "py-1 text-[8px] font-bold uppercase border rounded",
@@ -100,7 +124,7 @@ export function PaperClosePositionModal({
             min={1}
             max={100}
             value={percent}
-            disabled={loading}
+            disabled={loading || qtyBTC == null}
             onChange={(e) => setPercent(Number(e.target.value))}
             className="w-full accent-cyan-500"
           />
@@ -110,7 +134,7 @@ export function PaperClosePositionModal({
               min={1}
               max={100}
               value={percent}
-              disabled={loading}
+              disabled={loading || qtyBTC == null}
               onChange={(e) => {
                 const v = Number(e.target.value);
                 if (Number.isFinite(v)) setPercent(Math.min(100, Math.max(1, v)));
@@ -122,19 +146,17 @@ export function PaperClosePositionModal({
         </div>
 
         <div className="text-[9px] text-slate-500 space-y-0.5 border-t border-terminal-border/60 pt-2">
-          <div>Est. close qty: {closeQty.toFixed(6)} BTC</div>
+          <div>Est. close qty: {formatQtyBtc(closeQty)} BTC</div>
           {estRealized != null ? (
             <div>
               Est. realized PnL:{" "}
-              <span
-                className={cn(
-                  estRealized >= 0 ? "text-emerald-400/90" : "text-red-400/90",
-                )}
-              >
-                {estRealized.toFixed(2)} USDT
+              <span className={cn(pnlColorClass(estRealized))}>
+                {formatUSDT(estRealized)}
               </span>
             </div>
-          ) : null}
+          ) : (
+            <div>Est. realized PnL: —</div>
+          )}
           <div className="text-[8px] text-slate-600 pt-1">
             Paper simulated only. No real funds.
           </div>
@@ -151,7 +173,7 @@ export function PaperClosePositionModal({
           </button>
           <button
             type="button"
-            disabled={loading}
+            disabled={loading || qtyBTC == null || closeQty == null}
             onClick={() => void onConfirm(percent)}
             className="py-1.5 text-[9px] font-bold uppercase border border-red-900/50 rounded text-red-300 bg-red-950/25 hover:bg-red-950/40 disabled:opacity-50"
           >

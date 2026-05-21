@@ -7,11 +7,13 @@ import type {
   PaperTradingSettings,
 } from "../execution/executionTypes";
 import { invalidatePaperQueries } from "../execution/paperQueryKeys";
+import { paperApiFetch } from "../execution/paperApiClient";
 import {
   BROKER_SESSION_STORAGE_KEY,
   loadBrokerSession,
 } from "../execution/brokerSessionState";
 import {
+  mapApiPaperPosition,
   mapPaperChartOverlay,
   resolvePaperAccountBaseUsdt,
   resolvePaperChartFeeBps,
@@ -46,7 +48,7 @@ export function usePaperTradeOverlay() {
   const { data: positionData } = useQuery<{ position: PaperPositionSnapshot | null }>({
     queryKey: ["/api/paper/position"],
     queryFn: async () => {
-      const res = await fetch("/api/paper/position");
+      const res = await paperApiFetch("/api/paper/position");
       if (!res.ok) throw new Error("Paper position sync failed");
       return res.json() as Promise<{ position: PaperPositionSnapshot | null }>;
     },
@@ -58,7 +60,7 @@ export function usePaperTradeOverlay() {
   const { data: accountData } = useQuery<PaperAccountSnapshot>({
     queryKey: ["/api/paper/account"],
     queryFn: async () => {
-      const accRes = await fetch("/api/paper/account");
+      const accRes = await paperApiFetch("/api/paper/account");
       if (!accRes.ok) throw new Error("Paper account sync failed");
       return accRes.json() as Promise<PaperAccountSnapshot>;
     },
@@ -70,7 +72,7 @@ export function usePaperTradeOverlay() {
   const { data: paperSettings } = useQuery<PaperTradingSettings>({
     queryKey: ["/api/paper/settings"],
     queryFn: async () => {
-      const res = await fetch("/api/paper/settings");
+      const res = await paperApiFetch("/api/paper/settings");
       if (!res.ok) throw new Error("Paper settings failed");
       return res.json() as Promise<PaperTradingSettings>;
     },
@@ -82,7 +84,7 @@ export function usePaperTradeOverlay() {
   const { data: ordersData } = useQuery<{ orders: PaperOrderSnapshot[] }>({
     queryKey: ["/api/paper/orders"],
     queryFn: async () => {
-      const res = await fetch("/api/paper/orders");
+      const res = await paperApiFetch("/api/paper/orders");
       if (!res.ok) throw new Error("Paper orders sync failed");
       return res.json() as Promise<{ orders: PaperOrderSnapshot[] }>;
     },
@@ -91,7 +93,10 @@ export function usePaperTradeOverlay() {
     staleTime: 500,
   });
 
-  const position = positionData?.position ?? null;
+  const position = useMemo(
+    () => mapApiPaperPosition(positionData?.position ?? null),
+    [positionData?.position],
+  );
 
   const overlay = mapPaperChartOverlay(position, accountData?.unrealizedPnlUsdt);
 
@@ -124,7 +129,7 @@ export function usePaperTradeOverlay() {
 
   const patchRisk = useCallback(
     async (patch: { stopLoss?: number | null; takeProfit?: number | null }) => {
-      const res = await fetch("/api/paper/position/risk", {
+      const res = await paperApiFetch("/api/paper/position/risk", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),

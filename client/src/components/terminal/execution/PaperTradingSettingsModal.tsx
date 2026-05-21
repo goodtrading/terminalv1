@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import type { PaperAccountSnapshot, PaperTradingSettings } from "./executionTypes";
+import { paperApiFetch } from "./paperApiClient";
 
 const inputClass =
   "w-full rounded border border-terminal-border bg-terminal-bg px-2 py-1.5 text-[11px] font-mono text-white focus:border-cyan-500/40 focus:outline-none";
@@ -43,7 +44,7 @@ export function PaperTradingSettingsModal({ open, onClose }: Props) {
   const settingsQuery = useQuery<PaperTradingSettings>({
     queryKey: ["/api/paper/settings"],
     queryFn: async () => {
-      const res = await fetch("/api/paper/settings");
+      const res = await paperApiFetch("/api/paper/settings");
       if (!res.ok) throw new Error("Failed to load settings");
       return res.json() as Promise<PaperTradingSettings>;
     },
@@ -53,7 +54,7 @@ export function PaperTradingSettingsModal({ open, onClose }: Props) {
   const accountQuery = useQuery<PaperAccountSnapshot>({
     queryKey: ["/api/paper/account"],
     queryFn: async () => {
-      const res = await fetch("/api/paper/account");
+      const res = await paperApiFetch("/api/paper/account");
       if (!res.ok) throw new Error("Failed to load account");
       return res.json() as Promise<PaperAccountSnapshot>;
     },
@@ -120,13 +121,13 @@ export function PaperTradingSettingsModal({ open, onClose }: Props) {
       return;
     }
     try {
-      let res = await fetch("/api/paper/settings", {
+      let res = await paperApiFetch("/api/paper/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (res.status === 404 || res.status === 405) {
-        res = await fetch("/api/paper/settings", {
+        res = await paperApiFetch("/api/paper/settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -160,7 +161,7 @@ export function PaperTradingSettingsModal({ open, onClose }: Props) {
     setResetting(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/paper/reset-account", {
+      const res = await paperApiFetch("/api/paper/reset-account", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

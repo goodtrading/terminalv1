@@ -38,6 +38,8 @@ export interface BrokerSessionState {
   brokerLoginUrl?: string | null;
   connectedAt?: string;
   lastError?: string;
+  /** BingX connection id kept while UI is in paper mode (account reference). */
+  bingxReferenceConnectionId?: string;
 }
 
 export type BingXReadOnlyHealth = "healthy" | "degraded" | "error";
@@ -355,9 +357,16 @@ export interface PaperPositionSnapshot {
   symbol: string;
   side: "long" | "short" | "flat";
   quantity: number;
+  qty?: number;
+  qtyBTC?: number;
+  size?: number;
+  notionalUSDT?: number | null;
   entryPrice: number | null;
   markPrice: number | null;
-  unrealizedPnl: number;
+  unrealizedPnl?: number;
+  unrealizedPnL?: number;
+  realizedPnl?: number;
+  realizedPnL?: number;
   leverage: number;
   marginMode: "isolated" | "cross";
   stopLoss?: number | null;

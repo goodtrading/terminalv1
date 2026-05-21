@@ -1,20 +1,78 @@
 import type { PaperPositionSnapshot } from "../execution/executionTypes";
 import type { PaperChartTradeOverlay } from "./paperTradeOverlayTypes";
+import {
+  normalizePaperQuantity,
+  type PaperQuantitySource,
+} from "./normalizePaperQuantity";
+
+/** Map API position (may use size instead of quantity) to client snapshot. */
+export function mapApiPaperPosition(
+  raw: PaperPositionSnapshot | null | undefined,
+): PaperPositionSnapshot | null {
+  if (!raw || raw.side === "flat") return null;
+
+  const { qtyBTC, notionalUSDT } = normalizePaperQuantity(
+    raw as PaperQuantitySource,
+    raw.entryPrice,
+  );
+
+  if (qtyBTC == null || qtyBTC <= 0) {
+    return {
+      ...raw,
+      quantity: 0,
+    };
+  }
+
+  const rawAny = raw as PaperPositionSnapshot & Record<string, unknown>;
+  const unrealized =
+    rawAny.unrealizedPnl ??
+    rawAny.unrealizedPnL ??
+    (rawAny as { uPnl?: number }).uPnl ??
+    (rawAny as { pnl?: number }).pnl;
+
+  return {
+    ...raw,
+    quantity: qtyBTC,
+    ...(notionalUSDT != null ? { notionalUSDT } : {}),
+    ...(Number.isFinite(Number(unrealized)) ? { unrealizedPnl: Number(unrealized) } : {}),
+  } as PaperPositionSnapshot;
+}
 
 export function mapPaperChartOverlay(
   position: PaperPositionSnapshot | null | undefined,
   unrealizedPnlUsdt: number | undefined,
 ): PaperChartTradeOverlay | null {
-  if (!position || position.side === "flat" || position.quantity <= 0) {
+  if (!position || position.side === "flat") {
     return null;
   }
   if (position.entryPrice == null || !Number.isFinite(position.entryPrice)) {
     return null;
   }
+
+  const { qtyBTC, notionalUSDT } = normalizePaperQuantity(
+    {
+      qtyBTC: (position as { qtyBTC?: number }).qtyBTC,
+      qty: (position as { qty?: number }).qty,
+      quantity: position.quantity,
+      size: (position as { size?: number }).size,
+      notionalUSDT: (position as { notionalUSDT?: number }).notionalUSDT,
+      entryPrice: position.entryPrice,
+      markPrice: position.markPrice,
+    },
+    position.entryPrice,
+  );
+
+  if (qtyBTC == null || qtyBTC <= 0) {
+    return null;
+  }
+
   return {
     symbol: position.symbol,
     side: position.side,
-    quantity: position.quantity,
+    quantity: qtyBTC,
+    qtyBTC,
+    qty: qtyBTC,
+    notionalUSDT,
     entryPrice: position.entryPrice,
     stopLoss:
       position.stopLoss != null && Number.isFinite(position.stopLoss)
@@ -215,7 +273,9 @@ export function buildRiskLevelNetMetrics(
   return { netPnlUsdt: net.netPnlUsdt, accountPct: net.accountPct };
 }
 
-export function formatQtyBtc(qty: number): string {
+export function formatQtyBtc(value: unknown): string {
+  const qty = Number(value);
+  if (!Number.isFinite(qty) || qty <= 0) return "—";
   if (qty >= 1) return qty.toFixed(4);
   if (qty >= 0.01) return qty.toFixed(5);
   return qty.toFixed(6);
@@ -258,3 +318,9 @@ export function validateChartPlacement(
   }
   return null;
 }
+
+export {
+  normalizePaperQuantity,
+  type NormalizedPaperQuantity,
+  type PaperQuantitySource,
+} from "./normalizePaperQuantity";

@@ -58,8 +58,13 @@ import { renderSqueezeLevels } from "./overlay/renderers/squeezeLevels";
 import { buildChartCoordinateHelpers } from "./chart/buildChartCoordinateHelpers";
 import { MeasurementOverlay } from "./measurement/MeasurementOverlay";
 import { useChartMeasurement } from "./measurement/useChartMeasurement";
+import { BingXReadOnlyChartOverlay } from "./bingxChart/BingXReadOnlyChartOverlay";
 import { PaperChartLimitOrders } from "./paperChart/PaperChartLimitOrders";
 import { PaperTradeOverlay } from "./paperChart/PaperTradeOverlay";
+import {
+  BROKER_SESSION_STORAGE_KEY,
+  loadBrokerSession,
+} from "./execution/brokerSessionState";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
 type UTCTimestamp = number;
@@ -91,6 +96,7 @@ export function MainChart({
   const chartFullResyncRef = useRef(true);
   const lastChartPushRef = useRef<{ tf: ChartTimeframeId; len: number; lastTime: number } | null>(null);
   const [chartReady, setChartReady] = useState(false);
+  const [brokerSession, setBrokerSession] = useState(loadBrokerSession);
     const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
   const [drawingsViewportVersion, setDrawingsViewportVersion] = useState(0);
   const [chartCandleTimes, setChartCandleTimes] = useState<{ time: number }[]>([]);
@@ -141,6 +147,32 @@ export function MainChart({
   useEffect(() => {
     localStorage.setItem('terminal-activePanels', JSON.stringify(Array.from(activePanels)));
   }, [activePanels]);
+
+  useEffect(() => {
+    const sync = () => setBrokerSession(loadBrokerSession());
+    sync();
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === BROKER_SESSION_STORAGE_KEY) sync();
+    };
+    const onCustom = () => sync();
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("goodtrading-broker-session-changed", onCustom);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("goodtrading-broker-session-changed", onCustom);
+    };
+  }, []);
+
+  const showPaperChartOverlay =
+    brokerSession.exchange === "paper" &&
+    brokerSession.connectionMode === "paper" &&
+    brokerSession.connected;
+
+  const showBingXReadOnlyChartOverlay =
+    brokerSession.exchange === "bingx" &&
+    brokerSession.connectionMode === "read-only" &&
+    brokerSession.connected &&
+    Boolean(brokerSession.connectionId);
 
   const [showAccelZones, setShowAccelZones] = useState(true);
   const [showAbsorbZones, setShowAbsorbZones] = useState(true);
@@ -1991,20 +2023,35 @@ export function MainChart({
               />
               {candleSeriesRef.current ? (
                 <>
-                  <PaperChartLimitOrders
-                    chartWidth={timeScaleWidth}
-                    chartHeight={chartSize.h}
-                    viewportVersion={drawingsViewportVersion}
-                    coordinates={chartCoordinates}
-                    candleSeries={candleSeriesRef.current}
-                  />
-                  <PaperTradeOverlay
-                    chartWidth={timeScaleWidth}
-                    chartHeight={chartSize.h}
-                    viewportVersion={drawingsViewportVersion}
-                    coordinates={chartCoordinates}
-                    candleSeries={candleSeriesRef.current}
-                  />
+                  {showPaperChartOverlay ? (
+                    <>
+                      <PaperChartLimitOrders
+                        chartWidth={timeScaleWidth}
+                        chartHeight={chartSize.h}
+                        viewportVersion={drawingsViewportVersion}
+                        coordinates={chartCoordinates}
+                        candleSeries={candleSeriesRef.current}
+                      />
+                      <PaperTradeOverlay
+                        chartWidth={timeScaleWidth}
+                        chartHeight={chartSize.h}
+                        viewportVersion={drawingsViewportVersion}
+                        coordinates={chartCoordinates}
+                        candleSeries={candleSeriesRef.current}
+                      />
+                    </>
+                  ) : null}
+                  {showBingXReadOnlyChartOverlay ? (
+                    <BingXReadOnlyChartOverlay
+                      chartWidth={timeScaleWidth}
+                      chartHeight={chartSize.h}
+                      viewportVersion={drawingsViewportVersion}
+                      coordinates={chartCoordinates}
+                      chartSymbol="BTCUSDT"
+                      visible
+                      candleSeries={candleSeriesRef.current}
+                    />
+                  ) : null}
                 </>
               ) : null}
               <DrawingsLayer

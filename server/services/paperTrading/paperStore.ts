@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { getCurrentPaperUserId } from "./paperUserContext";
 import type {
   PaperFill,
   PaperLogType,
@@ -12,7 +13,16 @@ import type {
 import { DEFAULT_PAPER_SETTINGS } from "./paperTypes";
 
 const STORAGE_DIR = path.resolve(process.cwd(), "server", "storage");
-const STORAGE_FILE = path.join(STORAGE_DIR, "paper-trading-state.json");
+const LEGACY_STORAGE_FILE = path.join(STORAGE_DIR, "paper-trading-state.json");
+
+function storageFileForUser(userId: number): string {
+  if (userId <= 0) return LEGACY_STORAGE_FILE;
+  return path.join(STORAGE_DIR, `paper-trading-user-${userId}.json`);
+}
+
+function activeStorageFile(): string {
+  return storageFileForUser(getCurrentPaperUserId());
+}
 
 function createDefaultAccount(initialBalanceUsdt: number) {
   return {
@@ -111,13 +121,14 @@ function ensureStorageDir(): void {
 
 export function getPaperState(): PaperTradingState {
   ensureStorageDir();
-  if (!fs.existsSync(STORAGE_FILE)) {
+  const file = activeStorageFile();
+  if (!fs.existsSync(file)) {
     const initial = createDefaultPaperState();
     savePaperState(initial);
     return initial;
   }
   try {
-    const raw = fs.readFileSync(STORAGE_FILE, "utf8");
+    const raw = fs.readFileSync(file, "utf8");
     const parsed = JSON.parse(raw) as Partial<PaperTradingState>;
     if (!parsed.account) return createDefaultPaperState();
     return normalizeState(parsed);
@@ -129,7 +140,7 @@ export function getPaperState(): PaperTradingState {
 export function savePaperState(state: PaperTradingState): void {
   ensureStorageDir();
   state.account.updatedAt = new Date().toISOString();
-  fs.writeFileSync(STORAGE_FILE, JSON.stringify(state, null, 2), "utf8");
+  fs.writeFileSync(activeStorageFile(), JSON.stringify(state, null, 2), "utf8");
 }
 
 export function getPaperSettings(): PaperTradingSettings {

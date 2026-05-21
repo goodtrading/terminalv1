@@ -1,19 +1,19 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
+import { requirePaperUserId } from "../middleware/paperAuth";
+import { requireSaasAuth } from "../middleware/saasAuth";
 import {
-  cancelAllPaperOrders,
-  cancelPaperOrder,
-  closePaperPosition,
-  partialClosePaperPosition,
-  getPaperAccount,
+  normalizePaperOrderBody,
+  paperExecutionAdapter,
+} from "../services/paperExecutionAdapter";
+import { getPaperTerminalExecutionContext } from "@shared/execution/paperExecutionContext";
+import {
   getPaperFills,
   getPaperLogs,
-  getPaperOrders,
-  getPaperPosition,
   getPaperSettings,
   getPaperTradeById,
   getPaperTradeLedger,
   killSwitchPaper,
-  previewPaperOrder,
+  partialClosePaperPosition,
   resetPaperAccount,
   resetPaperEngine,
   runPaperStopCheck,
@@ -28,46 +28,64 @@ import {
   normalizeSettingsPatch,
   normalizeTradeMetadataPatch,
 } from "../services/paperTrading/paperNormalize";
+import { runWithPaperUser, runWithPaperUserAsync } from "../services/paperTrading/paperUserContext";
 import { updatePaperSettings } from "../services/paperTrading/paperStore";
 import type { ResetPaperAccountOptions } from "../services/paperTrading/paperTypes";
 
 export const paperTradingRouter = Router();
 
-function savePaperSettingsHandler(req: { body?: Record<string, unknown> }, res: {
-  status: (code: number) => { json: (body: unknown) => void };
-  json: (body: unknown) => void;
-}): void {
-  try {
-    const validated = normalizeSettingsPatch(req.body ?? {});
-    if (!validated.ok) {
-      res.status(400).json({
-        success: false,
-        code: validated.code,
-        message: validated.message,
-      });
-      return;
-    }
-    const settings = updatePaperSettings(validated.patch);
-    res.json({ success: true, settings });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("[paper-settings] save failed", message);
-    res.status(500).json({
-      success: false,
-      code: "PAPER_SETTINGS_SAVE_FAILED",
-      message: "Unable to save paper settings.",
-    });
-  }
+paperTradingRouter.use(requireSaasAuth);
+
+function withPaperUser(
+  handler: (req: Request, res: Response, userId: number) => void | Promise<void>,
+) {
+  return (req: Request, res: Response) => {
+    const userId = requirePaperUserId(req, res);
+    if (userId == null) return;
+    return runWithPaperUserAsync(userId, () => Promise.resolve(handler(req, res, userId)));
+  };
 }
 
-paperTradingRouter.get("/settings", (_req, res) => {
-  res.json(getPaperSettings());
+paperTradingRouter.get("/context", (_req, res) => {
+  res.json({ success: true, context: getPaperTerminalExecutionContext() });
 });
+
+function savePaperSettingsHandler(req: Request, res: Response): void {
+  const userId = requirePaperUserId(req, res);
+  if (userId == null) return;
+  runWithPaperUser(userId, () => {
+    try {
+      const validated = normalizeSettingsPatch(req.body ?? {});
+      if (!validated.ok) {
+        res.status(400).json({
+          success: false,
+          code: validated.code,
+          message: validated.message,
+        });
+        return;
+      }
+      const settings = updatePaperSettings(validated.patch);
+      res.json({ success: true, settings });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      console.error("[paper-settings] save failed", message);
+      res.status(500).json({
+        success: false,
+        code: "PAPER_SETTINGS_SAVE_FAILED",
+        message: "Unable to save paper settings.",
+      });
+    }
+  });
+}
+
+paperTradingRouter.get("/settings", withPaperUser((_req, res) => {
+  res.json(getPaperSettings());
+}));
 
 paperTradingRouter.patch("/settings", savePaperSettingsHandler);
 paperTradingRouter.post("/settings", savePaperSettingsHandler);
 
-paperTradingRouter.post("/reset-account", (req, res) => {
+paperTradingRouter.post("/reset-account", withPaperUser((req, res) => {
   try {
     const body = (req.body ?? {}) as ResetPaperAccountOptions;
     const state = resetPaperAccount(body);
@@ -77,21 +95,32 @@ paperTradingRouter.post("/reset-account", (req, res) => {
     console.error("[paper-settings] reset-account failed", message);
     res.status(500).json({ success: false, message: "Unable to reset paper account." });
   }
-});
+}));
 
-paperTradingRouter.get("/account", (_req, res) => {
-  res.json(getPaperAccount());
-});
+paperTradingRouter.get("/account", withPaperUser(async (_req, res, userId) => {
+  const data = await paperExecutionAdapter.getAccount(userId);
+  res.json({
+    exchange: "paper",
+    ...data,
+  });
+}));
 
-paperTradingRouter.get("/orders", (_req, res) => {
-  res.json({ orders: getPaperOrders() });
-});
+paperTradingRouter.get("/orders", withPaperUser(async (_req, res, userId) => {
+  const orders = await paperExecutionAdapter.getOrders(userId);
+  res.json({ orders });
+}));
 
-paperTradingRouter.get("/position", (_req, res) => {
-  res.json({ position: getPaperPosition() });
-});
+paperTradingRouter.get("/positions", withPaperUser(async (_req, res, userId) => {
+  const positions = await paperExecutionAdapter.getPositions(userId);
+  res.json({ positions });
+}));
 
-paperTradingRouter.patch("/position/risk", (req, res) => {
+paperTradingRouter.get("/position", withPaperUser(async (_req, res, userId) => {
+  const positions = await paperExecutionAdapter.getPositions(userId);
+  res.json({ position: positions[0] ?? null });
+}));
+
+paperTradingRouter.patch("/position/risk", withPaperUser((req, res) => {
   try {
     const body = (req.body ?? {}) as { stopLoss?: number | null; takeProfit?: number | null };
     const result = updatePaperPositionRisk(body);
@@ -114,44 +143,44 @@ paperTradingRouter.patch("/position/risk", (req, res) => {
     console.error("[paper-execution] position/risk failed", message);
     res.status(500).json({ success: false, message });
   }
-});
+}));
 
-paperTradingRouter.get("/logs", (_req, res) => {
+paperTradingRouter.get("/logs", withPaperUser((_req, res) => {
   res.json({ logs: getPaperLogs() });
-});
+}));
 
-paperTradingRouter.get("/fills", (_req, res) => {
+paperTradingRouter.get("/fills", withPaperUser((_req, res) => {
   res.json({ fills: getPaperFills() });
-});
+}));
 
-paperTradingRouter.get("/trades", (_req, res) => {
+paperTradingRouter.get("/trades", withPaperUser((_req, res) => {
   res.json({ trades: getPaperTradeLedger() });
-});
+}));
 
-paperTradingRouter.get("/trades/export.csv", (_req, res) => {
+paperTradingRouter.get("/trades/export.csv", withPaperUser((_req, res) => {
   const csv = buildPaperTradesCsv();
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", 'attachment; filename="paper-trades.csv"');
   res.send(csv);
-});
+}));
 
-paperTradingRouter.get("/fills/export.csv", (_req, res) => {
+paperTradingRouter.get("/fills/export.csv", withPaperUser((_req, res) => {
   const csv = buildPaperFillsCsv();
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", 'attachment; filename="paper-fills.csv"');
   res.send(csv);
-});
+}));
 
-paperTradingRouter.get("/trades/:id", (req, res) => {
+paperTradingRouter.get("/trades/:id", withPaperUser((req, res) => {
   const trade = getPaperTradeById(req.params.id);
   if (!trade) {
     res.status(404).json({ success: false, message: "Trade not found" });
     return;
   }
   res.json({ trade });
-});
+}));
 
-paperTradingRouter.patch("/trades/:id", (req, res) => {
+paperTradingRouter.patch("/trades/:id", withPaperUser((req, res) => {
   const validated = normalizeTradeMetadataPatch((req.body ?? {}) as Record<string, unknown>);
   if (!validated.ok) {
     res.status(400).json({ success: false, message: validated.message });
@@ -163,9 +192,9 @@ paperTradingRouter.patch("/trades/:id", (req, res) => {
     return;
   }
   res.json({ success: true, trade });
-});
+}));
 
-paperTradingRouter.post("/check-stops", async (_req, res) => {
+paperTradingRouter.post("/check-stops", withPaperUser(async (_req, res) => {
   try {
     res.json(await runPaperStopCheck());
   } catch (err) {
@@ -173,29 +202,56 @@ paperTradingRouter.post("/check-stops", async (_req, res) => {
     console.error("[paper-execution] check-stops failed", message);
     res.status(500).json({ success: false, message });
   }
-});
+}));
 
-paperTradingRouter.post("/preview", async (req, res) => {
+paperTradingRouter.post("/preview", withPaperUser(async (req, res, userId) => {
   try {
-    const body = normalizeOrderBody((req.body ?? {}) as Record<string, unknown>);
-    const result = await previewPaperOrder(body);
-    if ("error" in result) {
+    const normalized = normalizePaperOrderBody((req.body ?? {}) as Record<string, unknown>);
+    if ("error" in normalized) {
       res.status(400).json({
         success: false,
-        code: result.code ?? "PAPER_ORDER_REJECTED",
-        message: result.error,
+        code: normalized.code,
+        message: normalized.error,
       });
       return;
     }
-    res.json({ success: true, preview: result });
+    const result = await paperExecutionAdapter.previewOrder(userId, normalized);
+    if (!result.success) {
+      res.status(400).json(result);
+      return;
+    }
+    res.json({ success: true, preview: result.data });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Preview failed";
     console.error("[paper-execution] preview failed", message);
     res.status(500).json({ success: false, message });
   }
-});
+}));
 
-paperTradingRouter.post("/submit", async (req, res) => {
+async function handlePaperOrderSubmit(req: Request, res: Response, userId: number) {
+  const normalized = normalizePaperOrderBody((req.body ?? {}) as Record<string, unknown>);
+  if ("error" in normalized) {
+    res.status(400).json({
+      success: false,
+      code: normalized.code,
+      message: normalized.error,
+    });
+    return;
+  }
+  const result = await paperExecutionAdapter.submitOrder(userId, normalized);
+  if (!result.success) {
+    res.status(400).json(result);
+    return;
+  }
+  res.json({
+    success: true,
+    ...result.data,
+    message: result.data.message ?? "Paper order submitted",
+  });
+}
+
+paperTradingRouter.post("/order", withPaperUser(handlePaperOrderSubmit));
+paperTradingRouter.post("/submit", withPaperUser(async (req, res, userId) => {
   try {
     const body = normalizeOrderBody((req.body ?? {}) as Record<string, unknown>);
     const result = await submitPaperOrder(body);
@@ -219,9 +275,9 @@ paperTradingRouter.post("/submit", async (req, res) => {
     console.error("[paper-execution] submit failed", message);
     res.status(500).json({ success: false, code: "PAPER_SUBMIT_FAILED", message });
   }
-});
+}));
 
-paperTradingRouter.patch("/orders/:id", (req, res) => {
+paperTradingRouter.patch("/orders/:id", withPaperUser((req, res) => {
   try {
     const body = (req.body ?? {}) as { price?: number };
     const result = updatePaperOrder(req.params.id, { price: body.price });
@@ -239,23 +295,37 @@ paperTradingRouter.patch("/orders/:id", (req, res) => {
     console.error("[paper-execution] order patch failed", message);
     res.status(500).json({ success: false, message });
   }
-});
+}));
 
-paperTradingRouter.post("/orders/:id/cancel", (req, res) => {
-  const ok = cancelPaperOrder(req.params.id);
-  if (!ok) {
-    res.status(404).json({ success: false, message: "Order not found" });
+paperTradingRouter.post("/orders/:id/cancel", withPaperUser(async (req, res, userId) => {
+  const result = await paperExecutionAdapter.cancelOrder(userId, req.params.id);
+  if (!result.success) {
+    res.status(404).json(result);
     return;
   }
-  res.json({ success: true, message: "Paper order cancelled" });
-});
+  res.json({ success: true, message: result.data.message });
+}));
 
-paperTradingRouter.post("/cancel-all", (_req, res) => {
-  const count = cancelAllPaperOrders();
-  res.json({ success: true, cancelled: count });
-});
+paperTradingRouter.post("/cancel-order", withPaperUser(async (req, res, userId) => {
+  const orderId = String((req.body as { orderId?: string })?.orderId ?? "");
+  if (!orderId) {
+    res.status(400).json({ success: false, message: "orderId is required" });
+    return;
+  }
+  const result = await paperExecutionAdapter.cancelOrder(userId, orderId);
+  if (!result.success) {
+    res.status(404).json(result);
+    return;
+  }
+  res.json({ success: true, message: result.data.message });
+}));
 
-paperTradingRouter.post("/position/close-partial", async (req, res) => {
+paperTradingRouter.post("/cancel-all", withPaperUser(async (_req, res, userId) => {
+  const result = await paperExecutionAdapter.cancelAllOrders(userId);
+  res.json({ success: true, cancelled: result.data.cancelled });
+}));
+
+paperTradingRouter.post("/position/close-partial", withPaperUser(async (req, res) => {
   try {
     const percent = Number((req.body as { percent?: number })?.percent);
     const result = await partialClosePaperPosition(percent);
@@ -273,28 +343,18 @@ paperTradingRouter.post("/position/close-partial", async (req, res) => {
     console.error("[paper-execution] close-partial failed", message);
     res.status(500).json({ success: false, code: "PARTIAL_CLOSE_FAILED", message });
   }
-});
+}));
 
-paperTradingRouter.post("/close-position", async (_req, res) => {
-  try {
-    const result = await closePaperPosition();
-    if (!result.success) {
-      res.status(400).json({
-        success: false,
-        code: result.code,
-        message: result.message,
-      });
-      return;
-    }
-    res.json(result);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Close failed";
-    console.error("[paper-execution] close failed", message);
-    res.status(500).json({ success: false, message });
+paperTradingRouter.post("/close-position", withPaperUser(async (_req, res, userId) => {
+  const result = await paperExecutionAdapter.closePosition(userId);
+  if (!result.success) {
+    res.status(400).json(result);
+    return;
   }
-});
+  res.json(result.data);
+}));
 
-paperTradingRouter.post("/kill-switch", async (_req, res) => {
+paperTradingRouter.post("/kill-switch", withPaperUser(async (_req, res) => {
   try {
     res.json(await killSwitchPaper());
   } catch (err) {
@@ -302,9 +362,9 @@ paperTradingRouter.post("/kill-switch", async (_req, res) => {
     console.error("[paper-execution] kill-switch failed", message);
     res.status(500).json({ success: false, message });
   }
-});
+}));
 
-paperTradingRouter.post("/reset", (_req, res) => {
+paperTradingRouter.post("/reset", withPaperUser((_req, res) => {
   try {
     const state = resetPaperEngine();
     res.json({ success: true, state });
@@ -313,4 +373,4 @@ paperTradingRouter.post("/reset", (_req, res) => {
     console.error("[paper-settings] full reset failed", message);
     res.status(500).json({ success: false, message });
   }
-});
+}));
