@@ -60,7 +60,12 @@ type BrokerSessionContextValue = {
   }) => Promise<BingXConnectResponse>;
   clearBingXSecureApiError: () => void;
   simulateBingXDemoConnection: () => Promise<void>;
-  disconnectBroker: (options?: { deleteStored?: boolean }) => Promise<void>;
+  disconnectBroker: (options?: {
+    deleteStored?: boolean;
+    connectionId?: string;
+  }) => Promise<void>;
+  /** Delete stored BingX credentials (confirm + DELETE). Does not run on deactivate-only. */
+  deleteSavedBingXConnection: (connectionId?: string) => Promise<void>;
   /** Activate persisted BingX read-only without API key/secret. */
   activateSavedBingXConnection: (connectionId?: string) => boolean;
   deactivateBingXSession: () => void;
@@ -830,28 +835,26 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
   }, [activateSavedBingXConnection, restoreSavedBingXConnection]);
 
   const disconnectBroker = useCallback(
-    async (options?: { deleteStored?: boolean }) => {
-      const id =
-        session.connectionId ??
-        session.bingxReferenceConnectionId;
-      if (
-        options?.deleteStored &&
-        id &&
-        id !== "session-only" &&
-        id !== "ephemeral"
-      ) {
-        try {
-          await bingxApiFetch(`/api/bingx/connections/${encodeURIComponent(id)}`, {
-            method: "DELETE",
-          });
-          emitTerminalAudit("credential_deleted", "BingX stored credentials deleted");
-          setSavedConnections((prev) => prev.filter((c) => c.id !== id));
-        } catch {
-          // still deactivate locally
+    async (options?: { deleteStored?: boolean; connectionId?: string }) => {
+      if (options?.deleteStored) {
+        const id =
+          options.connectionId ??
+          session.connectionId ??
+          session.bingxReferenceConnectionId;
+        if (id && id !== "session-only" && id !== "ephemeral") {
+          try {
+            await bingxApiFetch(`/api/bingx/connections/${encodeURIComponent(id)}`, {
+              method: "DELETE",
+            });
+            emitTerminalAudit("credential_deleted", "BingX stored credentials deleted");
+            setSavedConnections((prev) => prev.filter((c) => c.id !== id));
+          } catch {
+            // still deactivate locally
+          }
+          clearBrokerSession();
+          setSession({ ...DEFAULT_BROKER_SESSION });
+          void refreshSavedBingXConnections();
         }
-        clearBrokerSession();
-        setSession({ ...DEFAULT_BROKER_SESSION });
-        void refreshSavedBingXConnections();
         return;
       }
 
@@ -862,6 +865,30 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       session.bingxReferenceConnectionId,
       deactivateBingXSession,
       refreshSavedBingXConnections,
+    ],
+  );
+
+  const deleteSavedBingXConnection = useCallback(
+    async (connectionId?: string) => {
+      const id =
+        connectionId ??
+        session.connectionId ??
+        session.bingxReferenceConnectionId ??
+        savedConnections[0]?.id;
+      if (!id || id === "session-only" || id === "ephemeral") return;
+
+      const confirmed = window.confirm(
+        "Delete saved BingX connection? You will need to enter your API key again.",
+      );
+      if (!confirmed) return;
+
+      await disconnectBroker({ deleteStored: true, connectionId: id });
+    },
+    [
+      session.connectionId,
+      session.bingxReferenceConnectionId,
+      savedConnections,
+      disconnectBroker,
     ],
   );
 
@@ -880,6 +907,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       clearBingXSecureApiError,
       simulateBingXDemoConnection,
       disconnectBroker,
+      deleteSavedBingXConnection,
       activateSavedBingXConnection,
       deactivateBingXSession,
       connectPaperTrading,
@@ -902,6 +930,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       clearBingXSecureApiError,
       simulateBingXDemoConnection,
       disconnectBroker,
+      deleteSavedBingXConnection,
       activateSavedBingXConnection,
       deactivateBingXSession,
       connectPaperTrading,

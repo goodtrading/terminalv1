@@ -337,6 +337,7 @@ function ConnectedReadOnlyPanel({
   session,
   onClose,
   onDisconnect,
+  onDeleteSaved,
 }: {
   session: {
     apiKeyMasked?: string;
@@ -421,6 +422,7 @@ export function BingXConnectionModal({
     clearBingXSecureApiError,
     simulateBingXDemoConnection,
     disconnectBroker,
+    deleteSavedBingXConnection,
     activateSavedBingXConnection,
     restoreLoading,
     connectInFlight,
@@ -727,8 +729,9 @@ export function BingXConnectionModal({
               onClose={onClose}
               onDisconnect={() => void disconnectBroker()}
               onDeleteSaved={() => {
-                void disconnectBroker({ deleteStored: true });
-                onClose();
+                void deleteSavedBingXConnection(session.connectionId).then(() =>
+                  onClose(),
+                );
               }}
             />
           ) : showSavedFirst && primarySaved ? (
@@ -737,8 +740,9 @@ export function BingXConnectionModal({
               onUseSaved={() => activateSavedBingXConnection(primarySaved.id)}
               onReplaceKeys={() => setShowReplaceForm(true)}
               onDeleteSaved={() => {
-                void disconnectBroker({ deleteStored: true });
-                onClose();
+                void deleteSavedBingXConnection(primarySaved.id).then(() =>
+                  onClose(),
+                );
               }}
               onClose={onClose}
             />

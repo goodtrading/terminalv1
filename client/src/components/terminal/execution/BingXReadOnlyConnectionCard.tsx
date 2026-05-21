@@ -27,7 +27,7 @@ type BingXReadOnlyConnectionCardProps = {
   onManage: () => void;
   /** Deactivate active session only — keeps saved credentials. */
   onDisconnect: () => void;
-  onDeleteSaved: () => void | Promise<void>;
+  onDeleteSaved: (connectionId?: string) => void | Promise<void>;
 };
 
 export function BingXReadOnlyConnectionCard({
@@ -189,7 +189,7 @@ export function BingXReadOnlyConnectionCard({
             type="button"
             onClick={() => {
               setConfirmDelete(false);
-              void onDeleteSaved();
+              void onDeleteSaved(connectionId ?? undefined);
             }}
             className="rounded border border-red-900/50 bg-red-950/30 px-2 py-1 text-[8px] font-bold uppercase text-red-300"
           >

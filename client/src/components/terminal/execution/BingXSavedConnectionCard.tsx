@@ -10,7 +10,7 @@ type Props = {
   paperActive?: boolean;
   onUseSaved: () => void;
   onManage: () => void;
-  onDeleteSaved: () => void | Promise<void>;
+  onDeleteSaved: (connectionId?: string) => void | Promise<void>;
 };
 
 export function BingXSavedConnectionCard({
@@ -92,7 +92,7 @@ export function BingXSavedConnectionCard({
             type="button"
             onClick={() => {
               setConfirmDelete(false);
-              void onDeleteSaved();
+              void onDeleteSaved(saved.id);
             }}
             className={cn(
               "rounded border border-red-900/50 bg-red-950/30 px-2 py-1",

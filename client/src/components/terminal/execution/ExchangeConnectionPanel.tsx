@@ -305,6 +305,7 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
     session,
     savedBingXConnections,
     disconnectBroker,
+    deleteSavedBingXConnection,
     activateSavedBingXConnection,
     connectPaperTrading,
     disconnectPaperTrading,
@@ -378,7 +379,9 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
               session={session}
               onManage={() => setBingxModalOpen(true)}
               onDisconnect={() => void disconnectBroker()}
-              onDeleteSaved={() => void disconnectBroker({ deleteStored: true })}
+              onDeleteSaved={() =>
+                void deleteSavedBingXConnection(session.connectionId)
+              }
             />
           ) : null}
           {showSavedBingxInactive && primarySavedBingX ? (
@@ -388,7 +391,9 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
               paperActive={paperActive}
               onUseSaved={() => activateSavedBingXConnection(primarySavedBingX.id)}
               onManage={() => setBingxModalOpen(true)}
-              onDeleteSaved={() => disconnectBroker({ deleteStored: true })}
+              onDeleteSaved={() =>
+                void deleteSavedBingXConnection(primarySavedBingX.id)
+              }
             />
           ) : null}
           {exchanges.map((ex) => {
