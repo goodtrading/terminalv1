@@ -1,29 +1,26 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   BingXNormalizedOrder,
   BingXNormalizedPosition,
+  BingXNormalizedRiskOrder,
   BingXReadOnlySnapshot,
+  BrokerSessionState,
 } from "../execution/executionTypes";
+import { isRiskChartOrder } from "./bingxPositionRiskAdapter";
 import { bingxApiFetch } from "../execution/bingxApiClient";
-import {
-  BROKER_SESSION_STORAGE_KEY,
-  loadBrokerSession,
-} from "../execution/brokerSessionState";
 import { bingxReadOnlyErrorMessage } from "../execution/bingxReadOnlyMessages";
-import { hasPersistedBingXConnection } from "../execution/bingxSession";
-import { DEFAULT_TERMINAL_EXECUTION_CONTEXT } from "../execution/executionContext";
+import {
+  hasPersistedBingXConnection,
+  isBingXReadOnlySession,
+} from "../execution/bingxSession";
+import {
+  DEFAULT_CHART_SYMBOL,
+  resolveExecutionSymbolForChart,
+} from "../execution/executionContext";
 import { exchangeSymbolsMatch } from "./normalizeExchangeSymbol";
 
-function isBingXReadOnlyChartActive(): boolean {
-  const s = loadBrokerSession();
-  return (
-    s.exchange === "bingx" &&
-    s.connectionMode === "read-only" &&
-    s.connected &&
-    Boolean(s.connectionId)
-  );
-}
+const SNAPSHOT_QUERY_KEY = "/api/bingx/read-only/snapshot";
 
 function filterPositionsForChart(
   positions: BingXNormalizedPosition[],
@@ -32,14 +29,29 @@ function filterPositionsForChart(
   return positions.filter(
     (p) =>
       p.side !== "flat" &&
+      p.side !== "unknown" &&
       p.quantity > 0 &&
       exchangeSymbolsMatch(p.symbol, chartSymbol),
+  );
+}
+
+function filterRiskOrdersForChart(
+  riskOrders: BingXNormalizedRiskOrder[],
+  chartSymbol: string,
+): BingXNormalizedRiskOrder[] {
+  return riskOrders.filter(
+    (r) =>
+      exchangeSymbolsMatch(r.symbol, chartSymbol) &&
+      (r.triggerPrice ?? r.price) != null &&
+      Number.isFinite(r.triggerPrice ?? r.price) &&
+      (r.triggerPrice ?? r.price)! > 0,
   );
 }
 
 function filterOrdersForChart(
   orders: BingXNormalizedOrder[],
   chartSymbol: string,
+  riskOrderIds: Set<string>,
 ): BingXNormalizedOrder[] {
   return orders.filter(
     (o) =>
@@ -47,41 +59,57 @@ function filterOrdersForChart(
       o.price != null &&
       Number.isFinite(o.price) &&
       o.price > 0 &&
-      exchangeSymbolsMatch(o.symbol, chartSymbol),
+      exchangeSymbolsMatch(o.symbol, chartSymbol) &&
+      !isRiskChartOrder(o, riskOrderIds),
   );
 }
 
-export function useBingXReadOnlyChartData(chartSymbol?: string) {
+async function fetchBingXSnapshot(
+  connectionId: string,
+  executionSymbol: string,
+): Promise<BingXReadOnlySnapshot> {
+  const params = new URLSearchParams({
+    connectionId,
+    symbol: executionSymbol,
+  });
+  const res = await bingxApiFetch(`/api/bingx/read-only/snapshot?${params}`, {
+    method: "GET",
+    assertOk: false,
+  });
+  const json = (await res.json()) as {
+    success?: boolean;
+    snapshot?: BingXReadOnlySnapshot;
+    code?: string;
+    message?: string;
+  };
+  if (!res.ok || !json.success || !json.snapshot) {
+    throw new Error(
+      bingxReadOnlyErrorMessage(json.code, json.message ?? "Sync failed"),
+    );
+  }
+  return json.snapshot;
+}
+
+export function isBingXChartOverlaySession(
+  brokerSession: BrokerSessionState | null | undefined,
+): boolean {
+  if (!brokerSession) return false;
+  return isBingXReadOnlySession(brokerSession);
+}
+
+export function useBingXReadOnlyChartData(
+  brokerSession: BrokerSessionState | null | undefined,
+  chartSymbol?: string,
+) {
   const resolvedChartSymbol =
-    chartSymbol ?? DEFAULT_TERMINAL_EXECUTION_CONTEXT.chartSymbol;
+    chartSymbol ?? DEFAULT_CHART_SYMBOL;
   const executionSymbol =
-    DEFAULT_TERMINAL_EXECUTION_CONTEXT.executionSymbol ?? "BTC-USDT";
+    resolveExecutionSymbolForChart(resolvedChartSymbol) ?? "BTC-USDT";
 
-  const [bingxActive, setBingxActive] = useState(isBingXReadOnlyChartActive);
-
-  useEffect(() => {
-    const sync = () => setBingxActive(isBingXReadOnlyChartActive());
-    sync();
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === BROKER_SESSION_STORAGE_KEY) sync();
-    };
-    const onCustom = () => sync();
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("goodtrading-broker-session-changed", onCustom);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("goodtrading-broker-session-changed", onCustom);
-    };
-  }, []);
-
-  const session = loadBrokerSession();
-  const connectionId = session.connectionId;
+  const connectionId = brokerSession?.connectionId;
   const queryEnabled =
-    bingxActive &&
-    session.exchange === "bingx" &&
-    session.connectionMode === "read-only" &&
-    Boolean(connectionId) &&
-    hasPersistedBingXConnection(session);
+    isBingXChartOverlaySession(brokerSession) &&
+    hasPersistedBingXConnection(brokerSession!);
 
   const {
     data: snapshot,
@@ -89,34 +117,8 @@ export function useBingXReadOnlyChartData(chartSymbol?: string) {
     isError,
     error,
   } = useQuery<BingXReadOnlySnapshot>({
-    queryKey: [
-      "/api/bingx/read-only/snapshot",
-      connectionId,
-      executionSymbol,
-      "chart-overlay",
-    ],
-    queryFn: async () => {
-      const params = new URLSearchParams({
-        connectionId: connectionId!,
-        symbol: executionSymbol,
-      });
-      const res = await bingxApiFetch(`/api/bingx/read-only/snapshot?${params}`, {
-        method: "GET",
-        assertOk: false,
-      });
-      const json = (await res.json()) as {
-        success?: boolean;
-        snapshot?: BingXReadOnlySnapshot;
-        code?: string;
-        message?: string;
-      };
-      if (!res.ok || !json.success || !json.snapshot) {
-        throw new Error(
-          bingxReadOnlyErrorMessage(json.code, json.message ?? "Sync failed"),
-        );
-      }
-      return json.snapshot;
-    },
+    queryKey: [SNAPSHOT_QUERY_KEY, connectionId, executionSymbol],
+    queryFn: () => fetchBingXSnapshot(connectionId!, executionSymbol),
     enabled: queryEnabled,
     refetchInterval: queryEnabled ? 8_000 : false,
     staleTime: 4_000,
@@ -128,9 +130,24 @@ export function useBingXReadOnlyChartData(chartSymbol?: string) {
     [snapshot?.positions, resolvedChartSymbol],
   );
 
+  const riskOrdersForSymbol = useMemo(
+    () => filterRiskOrdersForChart(snapshot?.riskOrders ?? [], resolvedChartSymbol),
+    [snapshot?.riskOrders, resolvedChartSymbol],
+  );
+
+  const riskOrderIds = useMemo(
+    () => new Set(riskOrdersForSymbol.map((r) => r.id)),
+    [riskOrdersForSymbol],
+  );
+
   const ordersForSymbol = useMemo(
-    () => filterOrdersForChart(snapshot?.openOrders ?? [], resolvedChartSymbol),
-    [snapshot?.openOrders, resolvedChartSymbol],
+    () =>
+      filterOrdersForChart(
+        snapshot?.openOrders ?? [],
+        resolvedChartSymbol,
+        riskOrderIds,
+      ),
+    [snapshot?.openOrders, resolvedChartSymbol, riskOrderIds],
   );
 
   const health = snapshot?.connectionHealth ?? snapshot?.health ?? "healthy";
@@ -143,11 +160,24 @@ export function useBingXReadOnlyChartData(chartSymbol?: string) {
         ? bingxReadOnlyErrorMessage(snapshot.error.code, snapshot.error.message)
         : null;
 
+  if (import.meta.env.DEV && queryEnabled) {
+    console.debug("[bingx-chart] data", {
+      enabled: queryEnabled,
+      chartSymbol: resolvedChartSymbol,
+      executionSymbol,
+      positions: positionsForSymbol.length,
+      openOrders: ordersForSymbol.length,
+      riskOrders: riskOrdersForSymbol.length,
+      totalPositions: snapshot?.positions?.length ?? 0,
+    });
+  }
+
   return {
-    bingxActive,
+    bingxActive: isBingXChartOverlaySession(brokerSession),
     snapshot: queryEnabled ? (snapshot ?? null) : null,
     positionsForSymbol,
     ordersForSymbol,
+    riskOrdersForSymbol,
     isLoading: queryEnabled && isLoading,
     health,
     lastSyncTime,

@@ -60,8 +60,13 @@ const riskMirrorAuditLastEmit = new Map<string, number>();
 const RISK_MIRROR_AUDIT_THROTTLE_MS = 60_000;
 
 function ensureStorageDir(): void {
-  if (!fs.existsSync(STORAGE_DIR)) {
+  try {
     fs.mkdirSync(STORAGE_DIR, { recursive: true });
+  } catch (err) {
+    console.warn(
+      "[storage] failed to ensure audit storage dir:",
+      err instanceof Error ? err.message : err,
+    );
   }
 }
 
@@ -115,6 +120,11 @@ export function sanitizeAuditMetadata(
   }
 
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Warm storage at boot; safe no-op on failure. */
+export function readStorageWarmup(): void {
+  readStorage();
 }
 
 function readStorage(): StorageFile {
@@ -244,6 +254,7 @@ export async function emitBingXSnapshotSyncedIfAllowed(
 
 /** Throttle risk mirror audit events to at most once per 60s per throttle key. */
 export async function emitRiskMirrorAuditIfAllowed(
+  userId: number,
   throttleKey: string,
   event: {
     type: "risk_mirror_warning" | "risk_mirror_error";
@@ -268,8 +279,9 @@ export async function emitRiskMirrorAuditIfAllowed(
   });
 }
 
-export const CLIENT_ALLOWED_AUDIT_TYPES: ReadonlySet<AuditEventType> = new Set([
-  "broker_switched",
-  "bingx_saved_connection_restored",
-  "system_health_error",
-]);
+export const CLIENT_ALLOWED_AUDIT_TYPES: ReadonlySet<AuditEventType> =
+  new Set<AuditEventType>([
+    "broker_switched",
+    "bingx_saved_connection_restored",
+    "system_health_error",
+  ]);

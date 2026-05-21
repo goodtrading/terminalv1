@@ -10,7 +10,7 @@ import { buildLiveMarketContext } from "./ai/buildLiveMarketContext";
 import { generateAIResponse } from "./lib/openaiClient";
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
-import { initializeFullDepth } from "./services/orderbookService";
+import { getOrderBook, initializeFullDepth } from "./services/orderbookService";
 import { initializePerpFullDepth } from "./services/orderbookServicePerp";
 import { getBookmapEngine, logBookmapMarketStateDiagnostics } from "./services/bookmapEngine";
 import { getOrderBookForMarket, parseBookmapMarket } from "./services/orderbookMarketRegistry";
@@ -1182,8 +1182,11 @@ export async function registerRoutes(
   registerExecutionRoutes(app);
   registerBrokerRoutes(app);
   registerBingxApiRoutes(app);
+  console.log("[routes] bingx read-only registered");
   registerSystemRoutes(app);
+  console.log("[routes] system registered");
   registerRiskMirrorRoutes(app);
+  console.log("[routes] risk mirror registered");
   app.use("/api/paper", paperTradingRouter);
   app.use("/api/reports", reportsRouter);
 

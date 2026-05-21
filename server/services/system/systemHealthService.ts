@@ -10,7 +10,7 @@ import { runWithPaperUser } from "../paperTrading/paperUserContext";
 import { buildReadOnlyRiskMirrorSnapshot } from "../riskMirror/riskMirrorService";
 import type { ReadOnlyRiskMirrorSnapshot } from "../riskMirror/riskMirrorTypes";
 import { getAuditEvents } from "./auditLogService";
-import { emitRiskMirrorAuditsFromSnapshot } from "./riskMirrorAudits";
+import { emitRiskMirrorAuditsFromSnapshotSafe } from "./riskMirrorAudits";
 
 export type SystemHealthOverallStatus =
   | "healthy"
@@ -177,7 +177,12 @@ function computeOverall(
     return "degraded";
   }
 
-  if (riskMirror.status === "degraded" && riskMirror.positionOpen) {
+  if (
+    riskMirror.positionOpen &&
+    (riskMirror.scoreStatus === "danger" ||
+      riskMirror.scoreStatus === "conflicted" ||
+      riskMirror.status === "degraded")
+  ) {
     return "degraded";
   }
 
@@ -247,7 +252,7 @@ export async function buildSystemHealthSnapshot(
         sym,
       );
       riskMirror = buildRiskMirrorHealthFromSnapshot(rmSnapshot, bingxConn.id);
-      void emitRiskMirrorAuditsFromSnapshot(
+      emitRiskMirrorAuditsFromSnapshotSafe(
         userId,
         bingxConn.id,
         sym,

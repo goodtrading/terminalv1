@@ -19,9 +19,23 @@ export interface ReadOnlyRiskMirrorSnapshot {
     availableMarginUsdt?: number;
   };
   position: RiskMirrorPosition | null;
+  protection: RiskMirrorProtection;
   context: RiskMirrorContext;
   warnings: RiskMirrorWarning[];
   score: RiskMirrorScore;
+}
+
+export interface RiskMirrorProtectionLevel {
+  kind: "stop_loss" | "take_profit" | "unknown";
+  triggerPrice?: number;
+  netPnlUsdt?: number;
+  accountPct?: number;
+  readOnly: true;
+}
+
+export interface RiskMirrorProtection {
+  stopLoss: RiskMirrorProtectionLevel | null;
+  takeProfit: RiskMirrorProtectionLevel | null;
 }
 
 export interface RiskMirrorPosition {

@@ -103,7 +103,7 @@ export function SystemHealthPanel() {
           <HealthRow label="Heatmap panel" value={h.market.heatmapLabel} tone={h.market.heatmapTone} />
         </HealthSection>
 
-        <HealthSection title="4 · Real Risk Mirror">
+        <HealthSection title="4 · Real Risk Mirror (BingX)">
           <div className="flex items-center gap-1.5 py-0.5">
             <StatusDot tone={h.riskMirror.statusTone} />
             <span
@@ -115,6 +115,13 @@ export function SystemHealthPanel() {
               {h.riskMirror.statusLabel}
             </span>
           </div>
+          {h.serverOverall ? (
+            <HealthRow
+              label="System overall"
+              value={h.serverOverall.toUpperCase()}
+              tone={h.serverOverallTone}
+            />
+          ) : null}
           {!h.riskMirror.active ? (
             <p className="text-[8px] text-slate-500 leading-snug">
               {h.riskMirror.message ??

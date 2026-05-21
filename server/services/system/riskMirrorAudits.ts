@@ -8,6 +8,8 @@ const SKIP_WARNING_IDS = new Set([
   "liq_unavailable",
   "bingx_sync_degraded",
   "connection_not_found",
+  "real_stop_loss_detected",
+  "no_real_take_profit",
 ]);
 
 function buildSafeMetadata(
@@ -40,6 +42,28 @@ function throttleKey(
   return `${userId}:${connectionId}:${symbol}:${warningId}`;
 }
 
+function logRiskMirrorAuditFailure(err: unknown): void {
+  console.warn(
+    "[audit] risk mirror audit emit failed (non-fatal):",
+    err instanceof Error ? err.message : err,
+  );
+}
+
+/** Fire-and-forget audits; never rejects to caller. */
+export function emitRiskMirrorAuditsFromSnapshotSafe(
+  userId: number,
+  connectionId: string,
+  symbol: string,
+  snapshot: ReadOnlyRiskMirrorSnapshot,
+): void {
+  void emitRiskMirrorAuditsFromSnapshot(
+    userId,
+    connectionId,
+    symbol,
+    snapshot,
+  ).catch(logRiskMirrorAuditFailure);
+}
+
 /** Emit throttled risk mirror audit events (max 1 per key / 60s). */
 export async function emitRiskMirrorAuditsFromSnapshot(
   userId: number,
@@ -51,6 +75,7 @@ export async function emitRiskMirrorAuditsFromSnapshot(
 
   if (score === "conflicted") {
     void emitRiskMirrorAuditIfAllowed(
+      userId,
       throttleKey(userId, connectionId, symbol, "score:conflicted"),
       {
         type: "risk_mirror_warning",
@@ -66,6 +91,7 @@ export async function emitRiskMirrorAuditsFromSnapshot(
 
   if (score === "danger") {
     void emitRiskMirrorAuditIfAllowed(
+      userId,
       throttleKey(userId, connectionId, symbol, "score:danger"),
       {
         type: "risk_mirror_error",
@@ -88,6 +114,7 @@ export async function emitRiskMirrorAuditsFromSnapshot(
     const severity = w.severity === "danger" ? "error" : "warning";
 
     void emitRiskMirrorAuditIfAllowed(
+      userId,
       throttleKey(userId, connectionId, symbol, w.id),
       {
         type: auditType,
@@ -110,6 +137,7 @@ export async function emitRiskMirrorServiceErrorIfAllowed(
   safeMessage: string,
 ): Promise<void> {
   void emitRiskMirrorAuditIfAllowed(
+    userId,
     `${userId}:${connectionId}:${symbol}:error:${errorCode}`,
     {
       type: "risk_mirror_error",
@@ -125,5 +153,21 @@ export async function emitRiskMirrorServiceErrorIfAllowed(
         errorCode,
       },
     },
-  );
+  ).catch(logRiskMirrorAuditFailure);
+}
+
+export function emitRiskMirrorServiceErrorIfAllowedSafe(
+  userId: number,
+  connectionId: string,
+  symbol: string,
+  errorCode: string,
+  safeMessage: string,
+): void {
+  void emitRiskMirrorServiceErrorIfAllowed(
+    userId,
+    connectionId,
+    symbol,
+    errorCode,
+    safeMessage,
+  ).catch(logRiskMirrorAuditFailure);
 }

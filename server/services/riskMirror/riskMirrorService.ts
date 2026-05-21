@@ -2,13 +2,18 @@ import { getConnectionForUser } from "../exchanges/bingx/bingxCredentialStore";
 import {
   getBingXReadOnlySnapshot,
   type BingXNormalizedPosition,
+  type BingXNormalizedRiskOrder,
 } from "../exchanges/bingx/bingxReadOnlyService";
+import { pickPrimaryRiskOrders } from "../exchanges/bingx/bingxRiskOrders";
+import { calculateRiskLevelNetPnl } from "../risk/riskLevelMetrics";
 import { getOrderBook } from "../orderbookService";
 import { getTerminalState } from "../../terminal-state";
 import type {
   ReadOnlyRiskMirrorSnapshot,
   RiskMirrorContext,
   RiskMirrorPosition,
+  RiskMirrorProtection,
+  RiskMirrorProtectionLevel,
   RiskMirrorScore,
   RiskMirrorScoreStatus,
   RiskMirrorWarning,
@@ -294,8 +299,20 @@ async function loadInstitutionalContext(
           sizeBtc: number;
           side: "bid" | "ask";
         }> = [];
-        if (bestBid) magnets.push({ ...bestBid, side: "bid" });
-        if (bestAsk) magnets.push({ ...bestAsk, side: "ask" });
+        if (bestBid) {
+          magnets.push({
+            price: bestBid.price,
+            sizeBtc: bestBid.size,
+            side: "bid",
+          });
+        }
+        if (bestAsk) {
+          magnets.push({
+            price: bestAsk.price,
+            sizeBtc: bestAsk.size,
+            side: "ask",
+          });
+        }
         let nearest = magnets[0]!;
         let nearDist = distancePct(ref, nearest.price) ?? Infinity;
         for (const m of magnets) {
@@ -461,6 +478,112 @@ function computeScore(
   return { status, confidence, summary };
 }
 
+function buildProtectionLevel(
+  order: BingXNormalizedRiskOrder | null,
+  position: RiskMirrorPosition,
+  accountEquity?: number,
+): RiskMirrorProtectionLevel | null {
+  if (!order) return null;
+  const level = order.triggerPrice ?? order.price;
+  if (level == null || level <= 0) return null;
+
+  const equity =
+    accountEquity != null && accountEquity > 0 ? accountEquity : undefined;
+  const net =
+    equity != null
+      ? calculateRiskLevelNetPnl({
+          side: position.side,
+          entryPrice: position.entryPrice,
+          levelPrice: level,
+          quantity: position.quantity,
+          accountEquityUsdt: equity,
+        })
+      : null;
+
+  return {
+    kind: order.kind,
+    triggerPrice: level,
+    netPnlUsdt: net?.netPnlUsdt,
+    accountPct: net?.accountPct,
+    readOnly: true,
+  };
+}
+
+function buildProtection(
+  riskOrders: BingXNormalizedRiskOrder[],
+  position: RiskMirrorPosition | null,
+  accountEquity?: number,
+): RiskMirrorProtection {
+  if (!position) {
+    return { stopLoss: null, takeProfit: null };
+  }
+  const { stopLoss, takeProfit } = pickPrimaryRiskOrders(riskOrders);
+  return {
+    stopLoss: buildProtectionLevel(stopLoss, position, accountEquity),
+    takeProfit: buildProtectionLevel(takeProfit, position, accountEquity),
+  };
+}
+
+function buildProtectionWarnings(
+  position: RiskMirrorPosition | null,
+  protection: RiskMirrorProtection,
+): RiskMirrorWarning[] {
+  const out: RiskMirrorWarning[] = [];
+  if (!position) return out;
+
+  if (!protection.stopLoss || protection.stopLoss.kind !== "stop_loss") {
+    out.push({
+      id: "no_real_stop_loss",
+      severity: "danger",
+      title: "No real stop loss",
+      message: "NO_REAL_STOP_LOSS — open BingX position has no detected stop loss.",
+      source: "position",
+    });
+  } else {
+    out.push({
+      id: "real_stop_loss_detected",
+      severity: "info",
+      title: "Stop loss",
+      message: "Real stop loss detected.",
+      source: "position",
+    });
+
+    const pct = protection.stopLoss.accountPct;
+    if (pct != null && pct < 0) {
+      const loss = Math.abs(pct);
+      if (loss > 5) {
+        out.push({
+          id: "sl_account_drawdown_danger",
+          severity: "danger",
+          title: "SL account impact",
+          message: `Estimated SL net loss ~${loss.toFixed(2)}% of account equity.`,
+          source: "position",
+        });
+      } else if (loss > 2) {
+        out.push({
+          id: "sl_account_drawdown_warn",
+          severity: "warning",
+          title: "SL account impact",
+          message: `Estimated SL net loss ~${loss.toFixed(2)}% of account equity.`,
+          source: "position",
+        });
+      }
+    }
+  }
+
+  if (!protection.takeProfit || protection.takeProfit.kind !== "take_profit") {
+    out.push({
+      id: "no_real_take_profit",
+      severity: "info",
+      title: "Take profit",
+      message: "No take profit detected.",
+      source: "position",
+    });
+  }
+
+  return out;
+}
+
 function buildPositionWarnings(position: RiskMirrorPosition): RiskMirrorWarning[] {
   const out: RiskMirrorWarning[] = [];
 
@@ -541,6 +664,7 @@ export async function buildReadOnlyRiskMirrorSnapshot(
       symbol: sym,
       account: {},
       position: null,
+      protection: { stopLoss: null, takeProfit: null },
       context: {},
       warnings: [
         {
@@ -571,6 +695,12 @@ export async function buildReadOnlyRiskMirrorSnapshot(
     ? buildPositionMetrics(rawPos, account.equityUsdt)
     : null;
 
+  const protection = buildProtection(
+    bingx.riskOrders ?? [],
+    position,
+    account.equityUsdt,
+  );
+
   const { context, warnings: ctxWarnings } = await loadInstitutionalContext(
     position?.markPrice,
   );
@@ -578,6 +708,7 @@ export async function buildReadOnlyRiskMirrorSnapshot(
   const warnings: RiskMirrorWarning[] = [...ctxWarnings];
   if (position) {
     warnings.push(...buildPositionWarnings(position));
+    warnings.push(...buildProtectionWarnings(position, protection));
   }
 
   warnings.push({
@@ -600,6 +731,16 @@ export async function buildReadOnlyRiskMirrorSnapshot(
 
   const score = computeScore(position, context, warnings);
 
+  if (
+    position &&
+    (!protection.stopLoss || protection.stopLoss.kind !== "stop_loss") &&
+    score.status !== "danger"
+  ) {
+    score.status = "danger";
+    score.summary = "Open real position without detected stop loss (read-only).";
+    score.confidence = Math.max(score.confidence, 55);
+  }
+
   return {
     timestamp: Date.now(),
     exchange: "bingx",
@@ -608,6 +749,7 @@ export async function buildReadOnlyRiskMirrorSnapshot(
     symbol: sym,
     account,
     position,
+    protection,
     context,
     warnings,
     score,

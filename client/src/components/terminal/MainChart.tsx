@@ -65,6 +65,7 @@ import {
   BROKER_SESSION_STORAGE_KEY,
   loadBrokerSession,
 } from "./execution/brokerSessionState";
+import { isBingXReadOnlySession } from "./execution/bingxSession";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
 type UTCTimestamp = number;
@@ -168,11 +169,18 @@ export function MainChart({
     brokerSession.connectionMode === "paper" &&
     brokerSession.connected;
 
-  const showBingXReadOnlyChartOverlay =
-    brokerSession.exchange === "bingx" &&
-    brokerSession.connectionMode === "read-only" &&
-    brokerSession.connected &&
-    Boolean(brokerSession.connectionId);
+  const showBingXReadOnlyChartOverlay = isBingXReadOnlySession(brokerSession);
+
+  if (import.meta.env.DEV) {
+    console.debug("[bingx-chart] overlay gate", {
+      exchange: brokerSession.exchange,
+      connectionMode: brokerSession.connectionMode,
+      connected: brokerSession.connected,
+      connectionId: Boolean(brokerSession.connectionId),
+      showBingXReadOnlyChartOverlay,
+      showPaperChartOverlay,
+    });
+  }
 
   const [showAccelZones, setShowAccelZones] = useState(true);
   const [showAbsorbZones, setShowAbsorbZones] = useState(true);

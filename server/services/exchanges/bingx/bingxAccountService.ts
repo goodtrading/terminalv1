@@ -10,6 +10,13 @@ import {
   getCredentialsForUser,
   updateConnectionStatusForUser,
 } from "./bingxCredentialStore";
+import {
+  extractOrderRiskPrices,
+  extractPositionRiskPrices,
+  isBingxRiskDebugEnabled,
+  riskRelatedKeys,
+} from "./bingxRiskFieldExtractors";
+import { logBingxOrderRiskShape, logBingxPositionRiskShape } from "./bingxRiskDebug";
 
 export const BINGX_SWAP_BALANCE_PATH = "/openApi/swap/v3/user/balance";
 const BALANCE_PATH = BINGX_SWAP_BALANCE_PATH;
@@ -183,11 +190,7 @@ function describeBalancePayload(data: unknown): {
 }
 
 function logBingXAccountSync(payload: Record<string, unknown>): void {
-  const debug =
-    process.env.NODE_ENV !== "production" ||
-    process.env.BINGX_DEBUG_ACCOUNT_SYNC === "true" ||
-    process.env.BINGX_DEBUG_ACCOUNT_SYNC === "1";
-  if (!debug) return;
+  if (!isBingxRiskDebugEnabled()) return;
   console.debug("[BingX Account Sync]", payload);
 }
 
@@ -233,6 +236,20 @@ function mapPositions(data: unknown): BingXAccountSnapshot["positions"] {
       else if (sideRaw.includes("short") || amt < 0) side = "short";
       if (Math.abs(amt) < 1e-12) side = "flat";
 
+      const risk = extractPositionRiskPrices(p);
+      if (isBingxRiskDebugEnabled()) {
+        logBingxPositionRiskShape(p, risk);
+        logBingXAccountSync({
+          kind: "position_row_shape",
+          symbol: String(p.symbol ?? ""),
+          side,
+          keys: Object.keys(p),
+          riskRelatedKeys: riskRelatedKeys(Object.keys(p)),
+          extractedStopLossPrice: risk.stopLossPrice ?? null,
+          extractedTakeProfitPrice: risk.takeProfitPrice ?? null,
+        });
+      }
+
       return {
         symbol: String(p.symbol ?? ""),
         side,
@@ -247,6 +264,8 @@ function mapPositions(data: unknown): BingXAccountSnapshot["positions"] {
           coerceNumber(
             p.liquidationPrice ?? p.liqPrice ?? p.liquidation ?? p.liquidationPx,
           ) || undefined,
+        stopLossPrice: risk.stopLossPrice,
+        takeProfitPrice: risk.takeProfitPrice,
       };
     })
     .filter((p): p is NonNullable<typeof p> => p != null && p.symbol.length > 0);
@@ -263,13 +282,34 @@ function mapOpenOrders(data: unknown): BingXAccountSnapshot["openOrders"] {
     .map((row) => {
       if (!row || typeof row !== "object") return null;
       const o = row as Record<string, unknown>;
+      const risk = extractOrderRiskPrices(o);
+      if (isBingxRiskDebugEnabled()) {
+        logBingxOrderRiskShape(o, risk);
+        logBingXAccountSync({
+          kind: "open_order_row_shape",
+          symbol: String(o.symbol ?? ""),
+          type: String(o.type ?? o.orderType ?? ""),
+          side: String(o.side ?? o.positionSide ?? ""),
+          keys: Object.keys(o),
+          riskRelatedKeys: riskRelatedKeys(Object.keys(o)),
+          extractedTriggerPrice: risk.triggerPrice ?? null,
+          extractedStopPrice: risk.stopPrice ?? null,
+        });
+      }
+
+      const price = coerceNumber(o.price) || undefined;
       return {
         orderId: String(o.orderId ?? o.orderID ?? o.id ?? ""),
         symbol: String(o.symbol ?? ""),
         side: String(o.side ?? o.positionSide ?? ""),
         type: String(o.type ?? o.orderType ?? ""),
-        price: coerceNumber(o.price) || undefined,
+        price: price || undefined,
+        triggerPrice: risk.triggerPrice,
+        stopPrice: risk.stopPrice,
         quantity: coerceNumber(o.quantity ?? o.origQty ?? o.qty) || undefined,
+        reduceOnly: Boolean(
+          o.reduceOnly ?? o.isReduceOnly ?? o.closePosition ?? o.onlyReduce,
+        ),
         status: String(o.status ?? "open"),
       };
     })
@@ -367,6 +407,21 @@ export async function getPositions(
   return mapPositions(data);
 }
 
+function mergeOpenOrdersById(
+  primary: BingXAccountSnapshot["openOrders"],
+  secondary: BingXAccountSnapshot["openOrders"],
+): BingXAccountSnapshot["openOrders"] {
+  const seen = new Set(primary.map((o) => o.orderId));
+  const out = [...primary];
+  for (const o of secondary) {
+    if (!o.orderId || seen.has(o.orderId)) continue;
+    seen.add(o.orderId);
+    out.push(o);
+  }
+  return out;
+}
+
+/** Open orders for symbol; when symbol set, also merges account-wide open orders (SL/TP often only in one list). */
 export async function getOpenOrders(
   credentials: BingXApiCredentials,
   symbol?: string,
@@ -375,7 +430,24 @@ export async function getOpenOrders(
   const params = symbol ? { symbol } : {};
   try {
     const data = await client.signedGet<unknown>(OPEN_ORDERS_PATH, params);
-    return mapOpenOrders(data);
+    const scoped = mapOpenOrders(data);
+    if (!symbol?.trim()) return scoped;
+    try {
+      const allData = await client.signedGet<unknown>(OPEN_ORDERS_PATH, {});
+      const merged = mergeOpenOrdersById(scoped, mapOpenOrders(allData));
+      if (isBingxRiskDebugEnabled()) {
+        logBingXAccountSync({
+          kind: "open_orders_merge",
+          symbol,
+          scopedCount: scoped.length,
+          allCount: mapOpenOrders(allData).length,
+          mergedCount: merged.length,
+        });
+      }
+      return merged;
+    } catch {
+      return scoped;
+    }
   } catch (err) {
     if (err instanceof BingXApiError && err.code.includes("BINGX")) {
       throw err;

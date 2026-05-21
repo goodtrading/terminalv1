@@ -76,12 +76,16 @@ export function summarizeAuditMetadata(
   pick("symbol");
   pick("side");
   pick("type");
+  pick("action");
   pick("orderType");
   pick("percent");
   pick("scoreStatus");
   pick("warningId");
   pick("warningSeverity");
-  pick("distanceToLiquidationPct");
+  const liq = metadata.distanceToLiquidationPct;
+  if (liq != null && liq !== "") {
+    parts.push(`liqDist=${String(liq)}%`);
+  }
   pick("unrealizedPnlAccountPct");
   if (metadata.tradingLocked === true) parts.push("tradingLocked=true");
   if (metadata.paper === true) parts.push("paper=true");

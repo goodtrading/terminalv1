@@ -59,6 +59,8 @@ export interface BingXAccountSnapshot {
     leverage?: number;
     marginMode?: string;
     liquidationPrice?: number;
+    stopLossPrice?: number;
+    takeProfitPrice?: number;
   }>;
   openOrders: Array<{
     orderId: string;
@@ -66,7 +68,10 @@ export interface BingXAccountSnapshot {
     side: string;
     type: string;
     price?: number;
+    triggerPrice?: number;
+    stopPrice?: number;
     quantity?: number;
+    reduceOnly?: boolean;
     status: string;
   }>;
   updatedAt: string;

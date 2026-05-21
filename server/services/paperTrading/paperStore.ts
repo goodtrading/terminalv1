@@ -114,8 +114,13 @@ function normalizeState(parsed: Partial<PaperTradingState>): PaperTradingState {
 }
 
 function ensureStorageDir(): void {
-  if (!fs.existsSync(STORAGE_DIR)) {
+  try {
     fs.mkdirSync(STORAGE_DIR, { recursive: true });
+  } catch (err) {
+    console.warn(
+      "[storage] failed to ensure paper storage dir:",
+      err instanceof Error ? err.message : err,
+    );
   }
 }
 

@@ -3,8 +3,8 @@ import { requireSaasAuth } from "../middleware/saasAuth";
 import { buildReadOnlyRiskMirrorSnapshot } from "../services/riskMirror/riskMirrorService";
 import { emitAuditEvent } from "../services/system/auditLogService";
 import {
-  emitRiskMirrorAuditsFromSnapshot,
-  emitRiskMirrorServiceErrorIfAllowed,
+  emitRiskMirrorAuditsFromSnapshotSafe,
+  emitRiskMirrorServiceErrorIfAllowedSafe,
 } from "../services/system/riskMirrorAudits";
 
 function resolveUserId(req: Request): number | null {
@@ -52,7 +52,7 @@ export function registerRiskMirrorRoutes(app: Express): void {
           symbol,
         );
 
-        void emitRiskMirrorAuditsFromSnapshot(
+        emitRiskMirrorAuditsFromSnapshotSafe(
           userId,
           connectionId,
           symbol,
@@ -71,7 +71,7 @@ export function registerRiskMirrorRoutes(app: Express): void {
           error instanceof Error ? error.message : error,
         );
 
-        void emitRiskMirrorServiceErrorIfAllowed(
+        emitRiskMirrorServiceErrorIfAllowedSafe(
           userId,
           connectionId,
           symbol,

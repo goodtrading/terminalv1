@@ -8,9 +8,11 @@ import {
 import {
   clearBingXReadOnlyCache,
   getBingXReadOnlyHealth,
+  getBingXReadOnlyRiskDebugShape,
   getBingXReadOnlySnapshot,
   mapBingXErrorToSafe,
 } from "../services/exchanges/bingx/bingxReadOnlyService";
+import { isBingxRiskDebugEnabled } from "../services/exchanges/bingx/bingxRiskFieldExtractors";
 import {
   deleteConnectionForUser,
   getConnectionForUser,
@@ -388,6 +390,78 @@ export function registerBingxApiRoutes(app: Express): void {
           code: "BINGX_API_ERROR",
           message: mapped.message,
           details: { safeReason: mapped.safeReason },
+        });
+      }
+    },
+  );
+
+  app.get(
+    "/api/bingx/read-only/debug-shape",
+    requireSaasAuth,
+    async (req: Request, res: Response) => {
+      try {
+        if (!isBingxRiskDebugEnabled()) {
+          return res.status(403).json({
+            success: false,
+            code: "BINGX_DEBUG_DISABLED",
+            message:
+              "Set BINGX_DEBUG_ACCOUNT_SYNC=true on the server to enable debug-shape.",
+          });
+        }
+
+        const userId = requireUserId(req, res, "/api/bingx/read-only/debug-shape");
+        if (userId == null) return;
+
+        const connectionId = String(req.query.connectionId ?? "").trim();
+        if (!connectionId) {
+          return res.status(400).json({
+            success: false,
+            code: "BINGX_CONNECTION_NOT_FOUND",
+            message: "connectionId is required.",
+          });
+        }
+
+        if (!getConnectionForUser(connectionId, userId)) {
+          return res.status(404).json({
+            success: false,
+            code: "BINGX_CONNECTION_NOT_FOUND",
+            message: "BingX connection not found.",
+          });
+        }
+
+        const symbol =
+          typeof req.query.symbol === "string" ? req.query.symbol : undefined;
+        const result = await getBingXReadOnlyRiskDebugShape(
+          connectionId,
+          userId,
+          symbol,
+        );
+
+        if (!result.ok) {
+          return res.status(400).json({
+            success: false,
+            code: result.code,
+            message: result.message,
+          });
+        }
+
+        res.json({
+          success: true,
+          positionKeys: result.shape.positionKeys,
+          orderKeys: result.shape.orderKeys,
+          candidateFields: result.shape.candidateFields,
+          supplementalFetch: result.shape.supplementalFetch,
+        });
+      } catch (error: unknown) {
+        const mapped = mapBingXErrorToSafe(error);
+        console.error(
+          "[API] GET /api/bingx/read-only/debug-shape error:",
+          mapped.code,
+        );
+        res.status(500).json({
+          success: false,
+          code: mapped.code,
+          message: mapped.message,
         });
       }
     },

@@ -7,12 +7,14 @@ export function isBingXReadOnlySession(session: {
   connectionMode?: string | null;
   readOnly?: boolean;
 }): boolean {
+  const readOnlyMode =
+    session.connectionMode === "read-only" || session.connectionMode === "secure_api";
+
   return (
     session.connected &&
     session.exchange === "bingx" &&
-    (session.connectionMode === "read-only" ||
-      session.connectionMode === "secure_api") &&
-    session.readOnly !== false
+    readOnlyMode &&
+    (session.readOnly !== false || readOnlyMode)
   );
 }
 

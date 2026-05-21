@@ -18,8 +18,13 @@ type StorageFile = {
 };
 
 function ensureStorageDir(): void {
-  if (!fs.existsSync(STORAGE_DIR)) {
+  try {
     fs.mkdirSync(STORAGE_DIR, { recursive: true });
+  } catch (err) {
+    console.warn(
+      "[storage] failed to ensure BingX storage dir:",
+      err instanceof Error ? err.message : err,
+    );
   }
 }
 

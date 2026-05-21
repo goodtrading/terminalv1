@@ -4,6 +4,30 @@ import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
 
+function safeErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+function safeErrorStack(err: unknown): string | undefined {
+  if (err instanceof Error) return err.stack;
+  return undefined;
+}
+
+process.on("uncaughtException", (err) => {
+  console.error("[fatal] uncaughtException:", safeErrorMessage(err));
+  const stack = safeErrorStack(err);
+  if (stack) console.error(stack.split("\n").slice(0, 12).join("\n"));
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[fatal] unhandledRejection:", safeErrorMessage(reason));
+  const stack = safeErrorStack(reason);
+  if (stack) console.error(stack.split("\n").slice(0, 12).join("\n"));
+});
+
+console.log("[startup] GoodTrading server starting");
 console.log("[BOOT] Starting server initialization...");
 
 dotenv.config({
@@ -17,9 +41,10 @@ console.log("[ENV] DATABASE_URL length:", process.env.DATABASE_URL?.length || 0)
 
 const bingxEncKey = process.env.BINGX_CREDENTIAL_ENCRYPTION_KEY?.trim() ?? "";
 console.log(
-  "[ENV] BingX credential encryption:",
+  "[config] BingX encryption:",
   bingxEncKey.length >= 16 ? "configured" : "missing",
 );
+console.log("[config] live trading: locked (read-only / risk guard)");
 
 const rawKey = process.env.OPENAI_API_KEY || "";
 const visiblePrefix = rawKey ? rawKey.slice(0, 8) : "";
@@ -91,6 +116,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  try {
   console.log("[BOOT] Runtime entrypoint: server/index.ts");
   
   console.log("[BOOT] Importing routes and endpoints...");
@@ -98,6 +124,17 @@ app.use((req, res, next) => {
   const { serveStatic } = await import("./static");
   const { setupMobileDirectEndpoint } = await import("./mobile-direct-endpoint");
   console.log("[BOOT] Routes and endpoints imported");
+
+  try {
+    const { readStorageWarmup } = await import("./services/system/auditLogService");
+    readStorageWarmup();
+    console.log("[storage] ready");
+  } catch (storageErr) {
+    console.warn(
+      "[storage] audit warmup failed (non-fatal):",
+      safeErrorMessage(storageErr),
+    );
+  }
 
   // Register ALL API routes FIRST - before any Vite middleware
   console.log("[BOOT] Registering API routes...");
@@ -183,6 +220,7 @@ app.use((req, res, next) => {
       host: "0.0.0.0",
     },
     () => {
+      console.log(`[startup] listening on port ${port}`);
       console.log(`[BOOT] Server listening on port ${port}`);
       log(`serving on port ${port}`);
     },
@@ -204,4 +242,10 @@ app.use((req, res, next) => {
       console.error("[BOOT] Failed to start Replit push service:", error);
     }
   })();
+  } catch (bootErr) {
+    console.error("[fatal] server bootstrap failed:", safeErrorMessage(bootErr));
+    const stack = safeErrorStack(bootErr);
+    if (stack) console.error(stack.split("\n").slice(0, 16).join("\n"));
+    process.exit(1);
+  }
 })();

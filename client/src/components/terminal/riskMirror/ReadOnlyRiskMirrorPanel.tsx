@@ -1,6 +1,15 @@
 import { cn } from "@/lib/utils";
+import {
+  formatSignedPct,
+  formatSignedUsd,
+} from "../chartRisk/riskLevelMetrics";
+import {
+  formatRiskLevelPrice,
+  riskKindPrefix,
+} from "../chartRisk/positionRiskOverlayShared";
 import type {
   ReadOnlyRiskMirrorSnapshot,
+  RiskMirrorProtectionLevel,
   RiskMirrorScoreStatus,
 } from "./riskMirrorTypes";
 import type { BrokerSessionState } from "../execution/executionTypes";
@@ -115,6 +124,65 @@ export function ReadOnlyRiskMirrorPanel({
   );
 }
 
+function ProtectionLevelRow({
+  label,
+  level,
+  missingMessage,
+  missingSeverity = "warning",
+}: {
+  label: string;
+  level: RiskMirrorProtectionLevel | null;
+  missingMessage: string;
+  missingSeverity?: "info" | "warning";
+}) {
+  const hasLevel =
+    level != null &&
+    (level.kind === "stop_loss" || level.kind === "take_profit") &&
+    level.triggerPrice != null;
+
+  if (!hasLevel) {
+    return (
+      <div className="text-[8px] text-slate-500">
+        <span className="text-slate-400">{label}: </span>
+        <span
+          className={cn(
+            missingSeverity === "info" ? "text-slate-500 italic" : "text-red-400 font-bold",
+          )}
+        >
+          {missingMessage}
+        </span>
+      </div>
+    );
+  }
+
+  const pnlTone =
+    (level.netPnlUsdt ?? 0) > 0
+      ? "text-emerald-400"
+      : (level.netPnlUsdt ?? 0) < 0
+        ? "text-red-400"
+        : "text-slate-300";
+
+  const kindLabel =
+    level.kind === "take_profit"
+      ? riskKindPrefix("bingx_read_only", "TP")
+      : riskKindPrefix("bingx_read_only", "SL");
+
+  return (
+    <div className="space-y-0.5 text-[8px] text-slate-400">
+      <div className="font-mono font-bold tabular-nums text-slate-200">
+        {kindLabel} {formatRiskLevelPrice(level.triggerPrice!)}
+        {level.netPnlUsdt != null ? (
+          <span className={cn("ml-1", pnlTone)}>{formatSignedUsd(level.netPnlUsdt)}</span>
+        ) : null}
+        {level.accountPct != null ? (
+          <span className={cn("ml-1", pnlTone)}>{formatSignedPct(level.accountPct)}</span>
+        ) : null}
+        <span className="ml-1 text-slate-500 uppercase text-[7px]">READ ONLY</span>
+      </div>
+    </div>
+  );
+}
+
 function MirrorBody({
   snapshot,
   isEmpty,
@@ -123,6 +191,7 @@ function MirrorBody({
   isEmpty: boolean;
 }) {
   const pos = snapshot.position;
+  const protection = snapshot.protection ?? { stopLoss: null, takeProfit: null };
   const ctx = snapshot.context;
   const scoreStyle = SCORE_STYLES[snapshot.score.status] ?? SCORE_STYLES.unknown;
   const displayWarnings = snapshot.warnings.filter((w) => w.id !== "trading_locked");
@@ -208,6 +277,25 @@ function MirrorBody({
               {pos.distanceToEntryPct != null ? fmtPct(pos.distanceToEntryPct) : "--"}
             </span>
           </div>
+        </div>
+      ) : null}
+
+      {pos ? (
+        <div className="rounded border border-terminal-border/60 bg-[#080808] p-1.5 space-y-1">
+          <div className="text-[7px] font-bold uppercase tracking-widest text-slate-500">
+            Real protection
+          </div>
+          <ProtectionLevelRow
+            label="Stop loss"
+            level={protection.stopLoss}
+            missingMessage="NO_REAL_STOP_LOSS"
+          />
+          <ProtectionLevelRow
+            label="Take profit"
+            level={protection.takeProfit}
+            missingMessage="No take profit detected."
+            missingSeverity="info"
+          />
         </div>
       ) : null}
 

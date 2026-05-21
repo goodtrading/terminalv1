@@ -4,22 +4,22 @@ import { cn } from "@/lib/utils";
 import type { DrawingsCoordinateHelpers } from "../drawings/DrawingsLayer";
 import type {
   BingXNormalizedOrder,
-  BingXNormalizedPosition,
   BrokerSessionState,
 } from "../execution/executionTypes";
-import { isBingXReadOnlySession } from "../execution/bingxSession";
+import { resolveExecutionSymbolForChart } from "../execution/executionContext";
 import { formatLastSyncAgo } from "../execution/bingxReadOnlyMessages";
+import { PositionRiskOverlay } from "../chartRisk/PositionRiskOverlay";
+import { useBingxRealActionsEnabled } from "../chartRisk/useBingxRealActionsEnabled";
+import { buildOrderBadgeLabel, orderLineColor, PRICE_SCALE_INSET } from "./bingxReadOnlyChartHelpers";
 import {
-  BINGX_LIQ_LINE,
-  buildOrderBadgeLabel,
-  buildPositionBadgeLabel,
-  orderLineColor,
-  positionLineColor,
-  PRICE_SCALE_INSET,
-} from "./bingxReadOnlyChartHelpers";
-import { useBingXReadOnlyChartData } from "./useBingXReadOnlyChartData";
+  bingxPositionToOverlayPosition,
+  bingxSnapshotToRiskLevels,
+} from "./bingxPositionRiskAdapter";
+import {
+  isBingXChartOverlaySession,
+  useBingXReadOnlyChartData,
+} from "./useBingXReadOnlyChartData";
 import { useBingXReadOnlyRiskMirror } from "../riskMirror/useBingXReadOnlyRiskMirror";
-import { formatOverlayPrice } from "../paperChart/paperTradeOverlayHelpers";
 
 const BAR_HEIGHT = 22;
 
@@ -44,47 +44,6 @@ type BingXReadOnlyChartOverlayProps = {
   } | null;
 };
 
-function ReadOnlyBadge({
-  y,
-  chartWidth,
-  chartHeight,
-  label,
-  accentClass,
-  title,
-}: {
-  y: number;
-  chartWidth: number;
-  chartHeight: number;
-  label: string;
-  accentClass: string;
-  title?: string;
-}) {
-  if (!Number.isFinite(y)) return null;
-  const barTop = Math.min(
-    Math.max(y - BAR_HEIGHT / 2, 4),
-    chartHeight - BAR_HEIGHT - 4,
-  );
-
-  return (
-    <div
-      className={cn(
-        "absolute z-[11] pointer-events-none flex items-center font-mono text-[9px] leading-none",
-        "border border-slate-600/50 bg-[#080808]/95 px-1.5 py-0.5 rounded max-w-[min(100%,280px)]",
-        accentClass,
-      )}
-      style={{
-        top: barTop,
-        right: PRICE_SCALE_INSET + 4,
-        height: BAR_HEIGHT,
-        maxWidth: chartWidth - PRICE_SCALE_INSET - 12,
-      }}
-      title={title}
-    >
-      <span className="truncate tabular-nums">{label}</span>
-    </div>
-  );
-}
-
 function SyncStatusBadge({
   health,
   lastSyncTime,
@@ -97,7 +56,6 @@ function SyncStatusBadge({
   hasOverlayContent: boolean;
 }) {
   const syncAgo = formatLastSyncAgo(lastSyncTime);
-
   let label = `BINGX REAL READ-ONLY · SYNC ${syncAgo.toUpperCase()}`;
   let tone = "text-slate-400 border-slate-600/60";
 
@@ -124,6 +82,49 @@ function SyncStatusBadge({
   );
 }
 
+function LimitOrderBadge({
+  order,
+  chartWidth,
+  chartHeight,
+  coordinates,
+}: {
+  order: BingXNormalizedOrder;
+  chartWidth: number;
+  chartHeight: number;
+  coordinates: DrawingsCoordinateHelpers;
+}) {
+  const price = order.price;
+  if (price == null || price <= 0) return null;
+  const y = coordinates.priceToCoordinate(price);
+  if (y == null || !Number.isFinite(y)) return null;
+
+  const barTop = Math.min(
+    Math.max(y - BAR_HEIGHT / 2, 4),
+    chartHeight - BAR_HEIGHT - 4,
+  );
+  const tone =
+    order.side === "sell" ? "text-orange-300/90" : "text-cyan-300/90";
+
+  return (
+    <div
+      className={cn(
+        "absolute z-[11] pointer-events-none flex items-center font-mono text-[9px] leading-none",
+        "border border-slate-600/50 bg-[#080808]/95 px-1.5 py-0.5 rounded max-w-[min(100%,280px)]",
+        tone,
+      )}
+      style={{
+        top: barTop,
+        right: PRICE_SCALE_INSET + 4,
+        height: BAR_HEIGHT,
+        maxWidth: chartWidth - PRICE_SCALE_INSET - 12,
+      }}
+      title="Real BingX limit order. Read-only visualization."
+    >
+      <span className="truncate tabular-nums">{buildOrderBadgeLabel(order)}</span>
+    </div>
+  );
+}
+
 export function BingXReadOnlyChartOverlay({
   brokerSession,
   chartWidth,
@@ -134,88 +135,52 @@ export function BingXReadOnlyChartOverlay({
   chartSymbol,
   candleSeries,
 }: BingXReadOnlyChartOverlayProps) {
+  const chartOverlayActive = isBingXChartOverlaySession(brokerSession);
+
   const {
-    bingxActive,
     positionsForSymbol,
     ordersForSymbol,
+    riskOrdersForSymbol,
+    snapshot,
     isLoading,
     health,
     lastSyncTime,
     syncError,
-  } = useBingXReadOnlyChartData(chartSymbol);
+    executionSymbol,
+  } = useBingXReadOnlyChartData(brokerSession, chartSymbol);
 
-  const sym = chartSymbol ?? "BTC-USDT";
-  const riskMirrorEnabled =
-    visible &&
-    brokerSession != null &&
-    isBingXReadOnlySession(brokerSession);
+  const bingxRealActionsEnabled = useBingxRealActionsEnabled();
+  const riskMirrorEnabled = visible && chartOverlayActive;
   const { snapshot: riskSnapshot } = useBingXReadOnlyRiskMirror({
     brokerSession,
-    symbol: sym,
+    symbol: executionSymbol,
     enabled: riskMirrorEnabled,
   });
   const riskBadge =
     riskSnapshot?.score.status === "danger"
       ? "RISK: DANGER"
       : riskSnapshot?.score.status === "conflicted"
-        ? "CONTEXT: CONFLICTED"
+        ? "RISK: CONFLICTED"
         : null;
 
   const priceLineRefs = useRef<Map<string, IPriceLine>>(new Map());
 
-  const lineSpecs = useMemo(() => {
-    const specs: Array<{
-      key: string;
-      price: number;
-      color: string;
-      lineWidth: 1 | 2;
-      lineStyle: number;
-      thin?: boolean;
-    }> = [];
-
-    for (const pos of positionsForSymbol) {
-      if (pos.entryPrice != null && pos.entryPrice > 0) {
-        specs.push({
-          key: `entry-${pos.symbol}-${pos.side}`,
-          price: pos.entryPrice,
-          color: positionLineColor(pos),
-          lineWidth: 1,
-          lineStyle: LineStyle.Solid,
-        });
-      }
-      if (
-        pos.liquidationPrice != null &&
-        Number.isFinite(pos.liquidationPrice) &&
-        pos.liquidationPrice > 0
-      ) {
-        specs.push({
-          key: `liq-${pos.symbol}`,
-          price: pos.liquidationPrice,
-          color: BINGX_LIQ_LINE,
-          lineWidth: 1,
-          lineStyle: LineStyle.Dotted,
-          thin: true,
-        });
-      }
-    }
-
+  const limitOrderLineSpecs = useMemo(() => {
+    const specs: Array<{ key: string; price: number; color: string }> = [];
     for (const order of ordersForSymbol) {
       if (order.price == null || order.price <= 0) continue;
       specs.push({
         key: `order-${order.id}`,
         price: order.price,
         color: orderLineColor(order),
-        lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
       });
     }
-
     return specs;
-  }, [positionsForSymbol, ordersForSymbol]);
+  }, [ordersForSymbol]);
 
-  const syncPriceLines = useCallback(() => {
+  const syncLimitOrderLines = useCallback(() => {
     const series = candleSeries;
-    if (!series || !bingxActive || !visible) {
+    if (!series || !visible || !chartOverlayActive) {
       for (const [, line] of priceLineRefs.current) {
         series?.removePriceLine(line);
       }
@@ -223,8 +188,7 @@ export function BingXReadOnlyChartOverlay({
       return;
     }
 
-    const nextKeys = new Set(lineSpecs.map((s) => s.key));
-
+    const nextKeys = new Set(limitOrderLineSpecs.map((s) => s.key));
     for (const [key, line] of priceLineRefs.current) {
       if (!nextKeys.has(key)) {
         series.removePriceLine(line);
@@ -232,7 +196,7 @@ export function BingXReadOnlyChartOverlay({
       }
     }
 
-    for (const spec of lineSpecs) {
+    for (const spec of limitOrderLineSpecs) {
       const existing = priceLineRefs.current.get(spec.key);
       if (existing) series.removePriceLine(existing);
       priceLineRefs.current.set(
@@ -240,17 +204,17 @@ export function BingXReadOnlyChartOverlay({
         series.createPriceLine({
           price: spec.price,
           color: spec.color,
-          lineWidth: spec.lineWidth,
-          lineStyle: spec.lineStyle,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
           axisLabelVisible: false,
           title: "",
         }),
       );
     }
-  }, [bingxActive, visible, candleSeries, lineSpecs]);
+  }, [visible, chartOverlayActive, candleSeries, limitOrderLineSpecs]);
 
   useEffect(() => {
-    syncPriceLines();
+    syncLimitOrderLines();
     return () => {
       const series = candleSeries;
       if (!series) return;
@@ -259,24 +223,38 @@ export function BingXReadOnlyChartOverlay({
       }
       priceLineRefs.current.clear();
     };
-  }, [syncPriceLines, candleSeries, viewportVersion]);
+  }, [syncLimitOrderLines, candleSeries, viewportVersion]);
 
-  if (
-    !visible ||
-    !bingxActive ||
-    !brokerSession ||
-    !isBingXReadOnlySession(brokerSession)
-  ) {
+  if (import.meta.env.DEV && visible) {
+    console.debug("[bingx-chart] overlay gate", {
+      visible,
+      chartOverlayActive,
+      exchange: brokerSession?.exchange,
+      connectionMode: brokerSession?.connectionMode,
+      connected: brokerSession?.connected,
+      connectionId: Boolean(brokerSession?.connectionId),
+      positions: positionsForSymbol.length,
+    });
+  }
+
+  if (!visible || !chartOverlayActive || !brokerSession) {
     return null;
   }
 
+  const { stopLoss, takeProfit } = bingxSnapshotToRiskLevels(
+    snapshot,
+    riskOrdersForSymbol,
+  );
+
   const hasOverlayContent =
-    positionsForSymbol.length > 0 || ordersForSymbol.length > 0;
+    positionsForSymbol.length > 0 ||
+    ordersForSymbol.length > 0 ||
+    riskOrdersForSymbol.length > 0;
 
   return (
     <div
       data-bingx-readonly-chart-root
-      className="absolute inset-0 z-[11] overflow-hidden pointer-events-none"
+      className="absolute inset-0 z-[12] overflow-hidden pointer-events-none"
       style={{ width: chartWidth, height: chartHeight }}
     >
       <SyncStatusBadge
@@ -305,103 +283,41 @@ export function BingXReadOnlyChartOverlay({
         </div>
       ) : null}
 
-      {positionsForSymbol.map((pos) => (
-        <PositionVisuals
-          key={`pos-${pos.symbol}-${pos.side}`}
-          pos={pos}
-          chartWidth={chartWidth}
-          chartHeight={chartHeight}
-          coordinates={coordinates}
-        />
-      ))}
-
-      {ordersForSymbol.map((order) => (
-        <OrderVisuals
-          key={order.id}
-          order={order}
-          chartWidth={chartWidth}
-          chartHeight={chartHeight}
-          coordinates={coordinates}
-        />
-      ))}
+      {positionsForSymbol.map((pos) => {
+        const overlayPosition = bingxPositionToOverlayPosition(pos);
+        if (!overlayPosition) {
+          if (import.meta.env.DEV) {
+            console.debug("[bingx-chart] skip position normalize", {
+              side: pos.side,
+              quantity: pos.quantity,
+              entryPrice: pos.entryPrice,
+            });
+          }
+          return null;
+        }
+        return (
+          <PositionRiskOverlay
+            key={`bingx-risk-${pos.symbol}-${pos.side}`}
+            mode="bingx_read_only"
+            readonly
+            showReadOnlyBadge
+            liveTradingEnabled={bingxRealActionsEnabled}
+            realActionsEnabled={bingxRealActionsEnabled}
+            showLockedActionControls
+            position={overlayPosition}
+            account={snapshot?.account}
+            stopLoss={stopLoss}
+            takeProfit={takeProfit}
+            liquidationPrice={pos.liquidationPrice}
+            chartWidth={chartWidth}
+            chartHeight={chartHeight}
+            viewportVersion={viewportVersion}
+            coordinates={coordinates}
+            candleSeries={candleSeries}
+            zIndex={12}
+          />
+        );
+      })}
     </div>
-  );
-}
-
-function PositionVisuals({
-  pos,
-  chartWidth,
-  chartHeight,
-  coordinates,
-}: {
-  pos: BingXNormalizedPosition;
-  chartWidth: number;
-  chartHeight: number;
-  coordinates: DrawingsCoordinateHelpers;
-}) {
-  const entryY =
-    pos.entryPrice != null ? coordinates.priceToCoordinate(pos.entryPrice) : null;
-  const liqY =
-    pos.liquidationPrice != null && pos.liquidationPrice > 0
-      ? coordinates.priceToCoordinate(pos.liquidationPrice)
-      : null;
-
-  const sideTone =
-    pos.side === "short" ? "text-orange-300/95" : "text-cyan-300/95";
-
-  return (
-    <>
-      {entryY != null ? (
-        <ReadOnlyBadge
-          y={entryY}
-          chartWidth={chartWidth}
-          chartHeight={chartHeight}
-          label={buildPositionBadgeLabel(pos)}
-          accentClass={sideTone}
-          title="Real BingX position. Read-only visualization. Trading locked."
-        />
-      ) : null}
-      {liqY != null ? (
-        <ReadOnlyBadge
-          y={liqY}
-          chartWidth={chartWidth}
-          chartHeight={chartHeight}
-          label={`LIQ REAL ${formatOverlayPrice(pos.liquidationPrice!)} · READ ONLY`}
-          accentClass="text-red-400/70"
-          title="Real liquidation price. Read-only. No actions."
-        />
-      ) : null}
-    </>
-  );
-}
-
-function OrderVisuals({
-  order,
-  chartWidth,
-  chartHeight,
-  coordinates,
-}: {
-  order: BingXNormalizedOrder;
-  chartWidth: number;
-  chartHeight: number;
-  coordinates: DrawingsCoordinateHelpers;
-}) {
-  const price = order.price;
-  if (price == null || price <= 0) return null;
-  const y = coordinates.priceToCoordinate(price);
-  if (y == null || !Number.isFinite(y)) return null;
-
-  const tone =
-    order.side === "sell" ? "text-orange-300/90" : "text-cyan-300/90";
-
-  return (
-    <ReadOnlyBadge
-      y={y}
-      chartWidth={chartWidth}
-      chartHeight={chartHeight}
-      label={buildOrderBadgeLabel(order)}
-      accentClass={tone}
-      title="Real BingX order. Read-only visualization."
-    />
   );
 }

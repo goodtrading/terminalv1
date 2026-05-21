@@ -81,6 +81,11 @@ export function riskMirrorStatusLabel(
   if (!rm) return "Unknown";
   if (!rm.active || rm.exchange === "none") return "Inactive";
   if (!rm.positionOpen && rm.status === "healthy") return "Idle";
+  if (rm.scoreStatus === "danger" || rm.dangerWarningsCount > 0) return "Danger";
+  if (rm.scoreStatus === "conflicted") return "Conflicted";
+  if (rm.status === "error") return "Error";
+  if (rm.status === "degraded") return "Degraded";
+  if (rm.status === "healthy" && rm.positionOpen) return "Active";
   return rm.status.charAt(0).toUpperCase() + rm.status.slice(1);
 }
 

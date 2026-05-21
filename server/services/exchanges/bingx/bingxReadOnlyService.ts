@@ -14,6 +14,13 @@ import {
   updateConnectionHealthForUser,
   updateConnectionStatusForUser,
 } from "./bingxCredentialStore";
+import {
+  buildRiskOrdersFromNormalized,
+  type BingXNormalizedRiskOrder,
+} from "./bingxRiskOrders";
+import { buildBingXRiskDebugShape } from "./bingxRiskDebug";
+
+export type { BingXNormalizedRiskOrder } from "./bingxRiskOrders";
 
 export type BingXReadOnlyHealth = "healthy" | "degraded" | "error";
 
@@ -36,6 +43,8 @@ export interface BingXNormalizedPosition {
   unrealizedPnlUsdt?: number;
   roePct?: number;
   notionalUsdt?: number;
+  stopLossPrice?: number;
+  takeProfitPrice?: number;
 }
 
 export interface BingXNormalizedOrder {
@@ -45,6 +54,8 @@ export interface BingXNormalizedOrder {
   type: "market" | "limit" | "stop" | "take_profit" | "unknown";
   status: "open" | "partially_filled" | "unknown";
   price?: number;
+  triggerPrice?: number;
+  stopPrice?: number;
   quantity?: number;
   reduceOnly?: boolean;
   createdTime?: number;
@@ -73,6 +84,7 @@ export interface BingXReadOnlySnapshot {
   };
   positions: BingXNormalizedPosition[];
   openOrders: BingXNormalizedOrder[];
+  riskOrders: BingXNormalizedRiskOrder[];
   permissions: {
     read: boolean;
     trade: false;
@@ -264,6 +276,8 @@ function mapPositions(
         unrealizedPnlUsdt: p.unrealizedPnl,
         roePct: roePct != null && Number.isFinite(roePct) ? Math.round(roePct * 100) / 100 : undefined,
         notionalUsdt: notional,
+        stopLossPrice: p.stopLossPrice,
+        takeProfitPrice: p.takeProfitPrice,
       };
     });
 }
@@ -271,22 +285,39 @@ function mapPositions(
 function mapOrders(
   rows: Awaited<ReturnType<typeof getOpenOrders>>,
 ): BingXNormalizedOrder[] {
-  return rows.map((o) => ({
-    id: o.orderId,
-    symbol: o.symbol,
-    side: normalizeOrderSide(o.side),
-    type: normalizeOrderType(o.type),
-    status:
-      o.status.toLowerCase().includes("partial")
-        ? "partially_filled"
-        : o.status.toLowerCase().includes("open") || o.status === ""
-          ? "open"
-          : "unknown",
-    price: o.price,
-    quantity: o.quantity,
-    reduceOnly: undefined,
-    createdTime: undefined,
-  }));
+  return rows.map((o) => {
+    const type = normalizeOrderType(o.type);
+    const trigger = o.triggerPrice ?? o.stopPrice;
+    const limitPrice = o.price;
+    const typeLower = (o.type ?? "").toLowerCase();
+    const isConditional =
+      type === "stop" ||
+      type === "take_profit" ||
+      /stop|take_profit|trigger|trailing|tpsl|conditional|plan/.test(typeLower);
+    const effectivePrice = isConditional
+      ? trigger ?? limitPrice
+      : limitPrice ?? trigger;
+    return {
+      id: o.orderId,
+      symbol: o.symbol,
+      side: normalizeOrderSide(o.side),
+      type,
+      status:
+        o.status.toLowerCase().includes("partial")
+          ? "partially_filled"
+          : o.status.toLowerCase().includes("open") ||
+              o.status.toLowerCase().includes("new") ||
+              o.status === ""
+            ? "open"
+            : "unknown",
+      price: effectivePrice,
+      triggerPrice: trigger,
+      stopPrice: o.stopPrice,
+      quantity: o.quantity,
+      reduceOnly: o.reduceOnly,
+      createdTime: undefined,
+    };
+  });
 }
 
 function finiteOrUndefined(n: number): number | undefined {
@@ -407,6 +438,7 @@ async function syncSnapshotCore(
       lastSyncTime: Date.now(),
       positions: [],
       openOrders: [],
+      riskOrders: [],
       permissions: { read: false, trade: false, withdraw: false },
       warnings: [],
       error: {
@@ -429,6 +461,7 @@ async function syncSnapshotCore(
       lastSyncTime: Date.now(),
       positions: [],
       openOrders: [],
+      riskOrders: [],
       permissions: { read: false, trade: false, withdraw: false },
       warnings: [],
       error: { code: check.code, message: check.message },
@@ -477,6 +510,7 @@ async function syncSnapshotCore(
       lastSyncTime: Date.now(),
       positions: [],
       openOrders: [],
+      riskOrders: [],
       permissions: { read: false, trade: false, withdraw: false },
       warnings: [],
       error: { code: mapped.code, message: mapped.message },
@@ -516,6 +550,8 @@ async function syncSnapshotCore(
     health as BingXConnectionHealth,
   );
 
+  const riskOrders = buildRiskOrdersFromNormalized(positions, openOrders);
+
   return {
     connectionId: check.connectionId,
     exchange: "bingx",
@@ -528,9 +564,27 @@ async function syncSnapshotCore(
     account,
     positions,
     openOrders,
+    riskOrders,
     permissions: { read: true, trade: false, withdraw: false },
     warnings,
   };
+}
+
+export async function getBingXReadOnlyRiskDebugShape(
+  connectionId: string,
+  userId: number,
+  symbol?: string,
+): Promise<
+  | { ok: true; shape: Awaited<ReturnType<typeof buildBingXRiskDebugShape>> }
+  | { ok: false; code: string; message: string }
+> {
+  const check = assertConnection(connectionId, userId);
+  if (!check.ok) {
+    return { ok: false, code: check.code, message: check.message };
+  }
+  const credentials = getCredentialsForUser(check.connectionId, check.userId)!;
+  const shape = await buildBingXRiskDebugShape(credentials, symbol);
+  return { ok: true, shape };
 }
 
 export async function getBingXReadOnlySnapshot(

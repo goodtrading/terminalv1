@@ -63,6 +63,8 @@ export interface BingXNormalizedPosition {
   unrealizedPnlUsdt?: number;
   roePct?: number;
   notionalUsdt?: number;
+  stopLossPrice?: number;
+  takeProfitPrice?: number;
 }
 
 export interface BingXNormalizedOrder {
@@ -72,9 +74,24 @@ export interface BingXNormalizedOrder {
   type: "market" | "limit" | "stop" | "take_profit" | "unknown";
   status: "open" | "partially_filled" | "unknown";
   price?: number;
+  triggerPrice?: number;
+  stopPrice?: number;
   quantity?: number;
   reduceOnly?: boolean;
   createdTime?: number;
+}
+
+export interface BingXNormalizedRiskOrder {
+  id: string;
+  symbol: string;
+  kind: "stop_loss" | "take_profit" | "unknown";
+  side: "buy" | "sell" | "unknown";
+  triggerPrice?: number;
+  price?: number;
+  quantity?: number;
+  reduceOnly?: boolean;
+  status?: string;
+  source: "bingx";
 }
 
 export interface BingXReadOnlySnapshot {
@@ -98,6 +115,7 @@ export interface BingXReadOnlySnapshot {
   };
   positions: BingXNormalizedPosition[];
   openOrders: BingXNormalizedOrder[];
+  riskOrders?: BingXNormalizedRiskOrder[];
   permissions: {
     read: boolean;
     trade: false;
