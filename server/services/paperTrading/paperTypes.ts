@@ -121,7 +121,8 @@ export type PaperLogType =
   | "kill_switch"
   | "reject"
   | "stop_loss"
-  | "take_profit";
+  | "take_profit"
+  | "update";
 
 export interface PaperExecutionLogEntry {
   id: string;

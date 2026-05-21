@@ -120,7 +120,7 @@ function LimitOrderBar({
             color: accent,
           }}
         >
-          <span className="font-bold uppercase tracking-wider opacity-90">Limit</span>
+          <span className="font-bold uppercase tracking-wider opacity-90">Paper Limit</span>
         </div>
         <div
           className={cn(
