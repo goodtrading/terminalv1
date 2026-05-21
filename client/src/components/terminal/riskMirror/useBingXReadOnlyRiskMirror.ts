@@ -1,18 +1,32 @@
 import { useQuery } from "@tanstack/react-query";
 import { bingxApiFetch } from "../execution/bingxApiClient";
+import type { BrokerSessionState } from "../execution/executionTypes";
 import { hasPersistedBingXConnection, isBingXReadOnlySession } from "../execution/bingxSession";
-import { useBrokerSession } from "../execution/useBrokerSession";
 import type { ReadOnlyRiskMirrorSnapshot } from "./riskMirrorTypes";
 
 const REFETCH_MS = 6_000;
 const STALE_MS = 3_000;
 
-export function useBingXReadOnlyRiskMirror(symbol: string) {
-  const { session } = useBrokerSession();
-  const readOnlyActive = isBingXReadOnlySession(session);
-  const connectionId = session.connectionId;
+export type UseBingXReadOnlyRiskMirrorParams = {
+  brokerSession: BrokerSessionState | null;
+  symbol: string;
+  enabled?: boolean;
+};
+
+export function useBingXReadOnlyRiskMirror({
+  brokerSession,
+  symbol,
+  enabled = true,
+}: UseBingXReadOnlyRiskMirrorParams) {
+  const readOnlyActive =
+    brokerSession != null && isBingXReadOnlySession(brokerSession);
+  const connectionId = brokerSession?.connectionId;
   const canFetch =
-    readOnlyActive && hasPersistedBingXConnection(session) && Boolean(connectionId);
+    enabled &&
+    readOnlyActive &&
+    brokerSession != null &&
+    hasPersistedBingXConnection(brokerSession) &&
+    Boolean(connectionId);
 
   const query = useQuery<ReadOnlyRiskMirrorSnapshot>({
     queryKey: ["/api/risk-mirror/bingx", connectionId, symbol],

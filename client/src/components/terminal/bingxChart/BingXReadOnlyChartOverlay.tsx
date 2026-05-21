@@ -5,7 +5,9 @@ import type { DrawingsCoordinateHelpers } from "../drawings/DrawingsLayer";
 import type {
   BingXNormalizedOrder,
   BingXNormalizedPosition,
+  BrokerSessionState,
 } from "../execution/executionTypes";
+import { isBingXReadOnlySession } from "../execution/bingxSession";
 import { formatLastSyncAgo } from "../execution/bingxReadOnlyMessages";
 import {
   BINGX_LIQ_LINE,
@@ -22,6 +24,7 @@ import { formatOverlayPrice } from "../paperChart/paperTradeOverlayHelpers";
 const BAR_HEIGHT = 22;
 
 type BingXReadOnlyChartOverlayProps = {
+  brokerSession: BrokerSessionState | null;
   chartWidth: number;
   chartHeight: number;
   viewportVersion: number;
@@ -122,6 +125,7 @@ function SyncStatusBadge({
 }
 
 export function BingXReadOnlyChartOverlay({
+  brokerSession,
   chartWidth,
   chartHeight,
   viewportVersion,
@@ -141,7 +145,15 @@ export function BingXReadOnlyChartOverlay({
   } = useBingXReadOnlyChartData(chartSymbol);
 
   const sym = chartSymbol ?? "BTC-USDT";
-  const { snapshot: riskSnapshot } = useBingXReadOnlyRiskMirror(sym);
+  const riskMirrorEnabled =
+    visible &&
+    brokerSession != null &&
+    isBingXReadOnlySession(brokerSession);
+  const { snapshot: riskSnapshot } = useBingXReadOnlyRiskMirror({
+    brokerSession,
+    symbol: sym,
+    enabled: riskMirrorEnabled,
+  });
   const riskBadge =
     riskSnapshot?.score.status === "danger"
       ? "RISK: DANGER"
@@ -249,7 +261,12 @@ export function BingXReadOnlyChartOverlay({
     };
   }, [syncPriceLines, candleSeries, viewportVersion]);
 
-  if (!visible || !bingxActive) {
+  if (
+    !visible ||
+    !bingxActive ||
+    !brokerSession ||
+    !isBingXReadOnlySession(brokerSession)
+  ) {
     return null;
   }
 

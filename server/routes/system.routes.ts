@@ -7,6 +7,7 @@ import {
   type AuditEventSeverity,
   type AuditEventType,
 } from "../services/system/auditLogService";
+import { getSystemHealthForUser } from "../services/system/systemHealthService";
 
 function resolveUserId(req: Request): number | null {
   const raw = req.saasUser?.id ?? req.user?.id;
@@ -18,6 +19,45 @@ function resolveUserId(req: Request): number | null {
 const VALID_SEVERITIES = new Set<AuditEventSeverity>(["info", "warning", "error"]);
 
 export function registerSystemRoutes(app: Express): void {
+  app.get(
+    "/api/system/health",
+    requireSaasAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = resolveUserId(req);
+        if (userId == null) {
+          return res.status(401).json({
+            success: false,
+            code: "UNAUTHORIZED",
+            message: "Authentication required.",
+          });
+        }
+
+        const symbol =
+          typeof req.query.symbol === "string" && req.query.symbol.trim()
+            ? req.query.symbol.trim()
+            : "BTC-USDT";
+
+        const { snapshot, recentAudit } = await getSystemHealthForUser(
+          userId,
+          symbol,
+        );
+
+        res.json({ success: true, snapshot, recentAudit });
+      } catch (error: unknown) {
+        console.error(
+          "[API] GET /api/system/health error:",
+          error instanceof Error ? error.message : error,
+        );
+        res.status(500).json({
+          success: false,
+          code: "SYSTEM_HEALTH_FAILED",
+          message: "Failed to load system health.",
+        });
+      }
+    },
+  );
+
   app.get(
     "/api/system/audit-log",
     requireSaasAuth,

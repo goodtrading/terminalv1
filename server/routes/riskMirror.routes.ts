@@ -1,10 +1,11 @@
 import type { Express, Request, Response } from "express";
 import { requireSaasAuth } from "../middleware/saasAuth";
 import { buildReadOnlyRiskMirrorSnapshot } from "../services/riskMirror/riskMirrorService";
+import { emitAuditEvent } from "../services/system/auditLogService";
 import {
-  emitAuditEvent,
-  emitRiskMirrorAuditIfAllowed,
-} from "../services/system/auditLogService";
+  emitRiskMirrorAuditsFromSnapshot,
+  emitRiskMirrorServiceErrorIfAllowed,
+} from "../services/system/riskMirrorAudits";
 
 function resolveUserId(req: Request): number | null {
   const raw = req.saasUser?.id ?? req.user?.id;
@@ -51,22 +52,12 @@ export function registerRiskMirrorRoutes(app: Express): void {
           symbol,
         );
 
-        for (const w of snapshot.warnings) {
-          if (w.severity === "danger" || w.severity === "warning") {
-            void emitRiskMirrorAuditIfAllowed(userId, w.id, {
-              type:
-                w.severity === "danger" ? "risk_mirror_error" : "risk_mirror_warning",
-              severity: w.severity === "danger" ? "error" : "warning",
-              message: `${w.title}: ${w.message}`,
-              metadata: {
-                source: "risk_mirror",
-                warningId: w.id,
-                symbol,
-                connectionId,
-              },
-            });
-          }
-        }
+        void emitRiskMirrorAuditsFromSnapshot(
+          userId,
+          connectionId,
+          symbol,
+          snapshot,
+        );
 
         res.json({ success: true, snapshot });
       } catch (error: unknown) {
@@ -80,18 +71,13 @@ export function registerRiskMirrorRoutes(app: Express): void {
           error instanceof Error ? error.message : error,
         );
 
-        void emitAuditEvent({
+        void emitRiskMirrorServiceErrorIfAllowed(
           userId,
-          type: "risk_mirror_error",
-          severity: "error",
-          message: "Risk mirror snapshot failed",
-          metadata: {
-            source: "risk_mirror",
-            connectionId,
-            symbol,
-            safeReason: message.slice(0, 200),
-          },
-        });
+          connectionId,
+          symbol,
+          "RISK_MIRROR_FAILED",
+          "Risk mirror snapshot failed",
+        );
 
         res.status(500).json({
           success: false,

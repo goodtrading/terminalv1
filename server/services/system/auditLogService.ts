@@ -242,10 +242,9 @@ export async function emitBingXSnapshotSyncedIfAllowed(
   });
 }
 
-/** Throttle risk mirror audit events to at most once per 60s per userId+warningId. */
+/** Throttle risk mirror audit events to at most once per 60s per throttle key. */
 export async function emitRiskMirrorAuditIfAllowed(
-  userId: number,
-  warningId: string,
+  throttleKey: string,
   event: {
     type: "risk_mirror_warning" | "risk_mirror_error";
     severity: AuditEventSeverity;
@@ -253,7 +252,7 @@ export async function emitRiskMirrorAuditIfAllowed(
     metadata?: Record<string, unknown>;
   },
 ): Promise<AuditLogEvent | null> {
-  const key = `${userId}:${warningId}`;
+  const key = throttleKey;
   const now = Date.now();
   const last = riskMirrorAuditLastEmit.get(key) ?? 0;
   if (now - last < RISK_MIRROR_AUDIT_THROTTLE_MS) {

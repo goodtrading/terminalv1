@@ -2043,6 +2043,7 @@ export function MainChart({
                   ) : null}
                   {showBingXReadOnlyChartOverlay ? (
                     <BingXReadOnlyChartOverlay
+                      brokerSession={brokerSession}
                       chartWidth={timeScaleWidth}
                       chartHeight={chartSize.h}
                       viewportVersion={drawingsViewportVersion}

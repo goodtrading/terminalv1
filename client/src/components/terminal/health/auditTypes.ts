@@ -16,6 +16,8 @@ export type AuditEventType =
   | "security_guard_event"
   | "market_data_error"
   | "system_health_error"
+  | "risk_mirror_warning"
+  | "risk_mirror_error"
   | "credential_saved"
   | "credential_deleted"
   | "system";
@@ -76,6 +78,12 @@ export function summarizeAuditMetadata(
   pick("type");
   pick("orderType");
   pick("percent");
+  pick("scoreStatus");
+  pick("warningId");
+  pick("warningSeverity");
+  pick("distanceToLiquidationPct");
+  pick("unrealizedPnlAccountPct");
+  if (metadata.tradingLocked === true) parts.push("tradingLocked=true");
   if (metadata.paper === true) parts.push("paper=true");
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }

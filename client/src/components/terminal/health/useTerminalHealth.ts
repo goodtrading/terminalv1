@@ -28,6 +28,16 @@ import {
 import { usePersistentAuditLog } from "./usePersistentAuditLog";
 import type { TerminalAuditEntry } from "./auditTypes";
 import type { HealthTone } from "./healthUi";
+import {
+  overallHealthTone,
+  riskMirrorGlobalBadgeLabel,
+  riskMirrorGlobalBadgeTone,
+  riskMirrorScoreLabel,
+  riskMirrorScoreTone,
+  riskMirrorStatusLabel,
+  riskMirrorStatusTone,
+} from "./healthMappers";
+import { useSystemHealth } from "./useSystemHealth";
 
 function agoFromTs(ts?: number): string {
   if (!ts || !Number.isFinite(ts)) return "—";
@@ -301,13 +311,26 @@ export function useTerminalHealth() {
     ? "persistent"
     : "local_fallback";
 
+  const {
+    snapshot: serverHealth,
+    overall: serverOverall,
+    riskMirror: serverRiskMirror,
+    refetch: refetchSystemHealth,
+  } = useSystemHealth(true);
+
   const refresh = useCallback(() => {
     setMarketTick((n) => n + 1);
     setBrokerSession(loadBrokerSession());
     void refetchPersistentAudit();
-  }, [refetchPersistentAudit]);
+    void refetchSystemHealth();
+  }, [refetchPersistentAudit, refetchSystemHealth]);
+
+  const riskMirrorBadgeLabel = riskMirrorGlobalBadgeLabel(serverRiskMirror);
+  const riskMirrorBadgeTone = riskMirrorGlobalBadgeTone(serverRiskMirror);
 
   return {
+    serverOverall,
+    serverOverallTone: overallHealthTone(serverOverall),
     brokerSession,
     bingx: {
       active: bingxActive,
@@ -385,6 +408,30 @@ export function useTerminalHealth() {
     audit: auditEntries,
     auditSource,
     auditPersistentUnavailable: persistentAuditError && !isPersistentAvailable,
+    riskMirror: {
+      status: serverRiskMirror?.status,
+      statusLabel: riskMirrorStatusLabel(serverRiskMirror),
+      statusTone: riskMirrorStatusTone(serverRiskMirror?.status),
+      active: serverRiskMirror?.active ?? false,
+      exchange: serverRiskMirror?.exchange ?? "none",
+      mode: serverRiskMirror?.mode ?? "read-only",
+      symbol: serverRiskMirror?.symbol,
+      scoreStatus: serverRiskMirror?.scoreStatus,
+      scoreLabel: riskMirrorScoreLabel(serverRiskMirror?.scoreStatus),
+      scoreTone: riskMirrorScoreTone(serverRiskMirror?.scoreStatus),
+      scoreConfidence: serverRiskMirror?.scoreConfidence,
+      summary: serverRiskMirror?.summary,
+      message: serverRiskMirror?.message,
+      warningsCount: serverRiskMirror?.warningsCount ?? 0,
+      dangerWarningsCount: serverRiskMirror?.dangerWarningsCount ?? 0,
+      warningWarningsCount: serverRiskMirror?.warningWarningsCount ?? 0,
+      positionOpen: serverRiskMirror?.positionOpen ?? false,
+      tradingLocked: serverRiskMirror?.tradingLocked ?? true,
+      recentWarnings: serverRiskMirror?.recentWarnings ?? [],
+      globalBadgeLabel: riskMirrorBadgeLabel,
+      globalBadgeTone: riskMirrorBadgeTone,
+    },
+    serverHealth,
     refresh,
   };
 }

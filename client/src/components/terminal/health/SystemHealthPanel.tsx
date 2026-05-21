@@ -22,9 +22,23 @@ export function SystemHealthPanel() {
 
   return (
     <div className="h-full min-h-0 flex flex-col font-mono text-[9px] overflow-hidden">
-      <div className="shrink-0 flex items-center justify-between px-2 py-1 border-b border-terminal-border/60 bg-terminal-panel/30">
+      <div className="shrink-0 flex items-center justify-between gap-2 px-2 py-1 border-b border-terminal-border/60 bg-terminal-panel/30">
         <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">
           System health
+        </span>
+        <span
+          className={cn(
+            "shrink-0 rounded border px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-wider",
+            healthToneClass(h.riskMirror.globalBadgeTone),
+            h.riskMirror.globalBadgeTone === "ok" && "border-emerald-500/35",
+            h.riskMirror.globalBadgeTone === "warn" && "border-amber-500/40",
+            h.riskMirror.globalBadgeTone === "error" && "border-red-500/45",
+            h.riskMirror.globalBadgeTone === "off" && "border-slate-600/40",
+            h.riskMirror.globalBadgeTone === "neutral" && "border-slate-500/40",
+          )}
+          title="Real Risk Mirror (BingX read-only)"
+        >
+          {h.riskMirror.globalBadgeLabel}
         </span>
         <button
           type="button"
@@ -89,7 +103,95 @@ export function SystemHealthPanel() {
           <HealthRow label="Heatmap panel" value={h.market.heatmapLabel} tone={h.market.heatmapTone} />
         </HealthSection>
 
-        <HealthSection title="4 · Security guard">
+        <HealthSection title="4 · Real Risk Mirror">
+          <div className="flex items-center gap-1.5 py-0.5">
+            <StatusDot tone={h.riskMirror.statusTone} />
+            <span
+              className={cn(
+                "uppercase font-bold",
+                healthToneClass(h.riskMirror.statusTone),
+              )}
+            >
+              {h.riskMirror.statusLabel}
+            </span>
+          </div>
+          {!h.riskMirror.active ? (
+            <p className="text-[8px] text-slate-500 leading-snug">
+              {h.riskMirror.message ??
+                "Risk Mirror inactive — no BingX read-only connection."}
+            </p>
+          ) : (
+            <>
+              <HealthRow label="Exchange" value="BingX" tone="ok" />
+              <HealthRow label="Mode" value="Read-only" tone="ok" />
+              <HealthRow
+                label="Position"
+                value={h.riskMirror.positionOpen ? "open" : "none"}
+                tone={h.riskMirror.positionOpen ? "warn" : "neutral"}
+              />
+              <HealthRow
+                label="Score"
+                value={h.riskMirror.scoreLabel}
+                tone={h.riskMirror.scoreTone}
+              />
+              <HealthRow
+                label="Confidence"
+                value={
+                  h.riskMirror.scoreConfidence != null
+                    ? `${h.riskMirror.scoreConfidence}%`
+                    : "—"
+                }
+              />
+              <HealthRow
+                label="Warnings"
+                value={String(h.riskMirror.warningsCount)}
+                tone={
+                  h.riskMirror.warningsCount > 0 ? "warn" : "neutral"
+                }
+              />
+              <HealthRow
+                label="Danger"
+                value={String(h.riskMirror.dangerWarningsCount)}
+                tone={
+                  h.riskMirror.dangerWarningsCount > 0 ? "error" : "neutral"
+                }
+              />
+              <HealthRow label="Trading" value="LOCKED" tone="ok" />
+              {h.riskMirror.summary ? (
+                <p className="text-[8px] text-slate-400 leading-snug pt-0.5">
+                  {h.riskMirror.summary}
+                </p>
+              ) : null}
+              {!h.riskMirror.positionOpen && h.riskMirror.message ? (
+                <p className="text-[8px] text-slate-500 italic">
+                  {h.riskMirror.message}
+                </p>
+              ) : null}
+              {h.riskMirror.recentWarnings.length > 0 ? (
+                <ul className="mt-1 space-y-0.5 max-h-20 overflow-y-auto">
+                  {h.riskMirror.recentWarnings.map((w) => (
+                    <li
+                      key={w.id}
+                      className={cn(
+                        "text-[7px] leading-snug border-l-2 pl-1",
+                        w.severity === "danger"
+                          ? "border-red-500/60 text-red-300/90"
+                          : w.severity === "warning"
+                            ? "border-amber-500/50 text-amber-200/90"
+                            : "border-slate-600 text-slate-500",
+                      )}
+                    >
+                      <span className="font-bold uppercase">{w.title}</span>:{" "}
+                      {w.message}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          )}
+        </HealthSection>
+
+        <HealthSection title="5 · Security guard">
           <HealthRow
             label="Live trading"
             value={h.security.liveTradingLabel}
@@ -119,7 +221,7 @@ export function SystemHealthPanel() {
           />
         </HealthSection>
 
-        <HealthSection title="5 · Audit log" defaultOpen>
+        <HealthSection title="6 · Audit log" defaultOpen>
           <p className="text-[7px] text-slate-600 pb-0.5">
             {h.auditPersistentUnavailable
               ? "Local fallback — persistent audit unavailable"
