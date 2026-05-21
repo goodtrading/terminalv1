@@ -20,6 +20,10 @@ import {
   toPublicConnection,
 } from "../services/exchanges/bingx/bingxCredentialStore";
 import type { BingXConnectResponseConnection } from "../services/exchanges/bingx/bingxTypes";
+import {
+  emitAuditEvent,
+  emitBingXSnapshotSyncedIfAllowed,
+} from "../services/system/auditLogService";
 
 function logBingxConnectRouteEntered(req: Request): void {
   console.log("[BingX Connect Route Entered]", {
@@ -180,6 +184,18 @@ export function registerBingxApiRoutes(app: Express): void {
       }
 
       if (!save) {
+        void emitAuditEvent({
+          userId,
+          type: "bingx_connected",
+          severity: "info",
+          message: "BingX read-only connected (session only)",
+          metadata: {
+            exchange: "bingx",
+            mode: "read-only",
+            apiKeyMasked: test.apiKeyMasked,
+            saved: false,
+          },
+        });
         return res.json({
           success: true,
           saved: false,
@@ -215,10 +231,35 @@ export function registerBingxApiRoutes(app: Express): void {
         });
       }
 
+      const conn = toConnectResponse(saved.connection);
+      void emitAuditEvent({
+        userId,
+        type: "bingx_connected",
+        severity: "info",
+        message: "BingX read-only connected",
+        metadata: {
+          exchange: "bingx",
+          mode: "read-only",
+          apiKeyMasked: conn.apiKeyMasked,
+          connectionId: conn.id,
+        },
+      });
+      void emitAuditEvent({
+        userId,
+        type: "bingx_credential_saved",
+        severity: "info",
+        message: "BingX credentials saved (encrypted)",
+        metadata: {
+          exchange: "bingx",
+          connectionId: conn.id,
+          apiKeyMasked: conn.apiKeyMasked,
+        },
+      });
+
       res.json({
         success: true,
         saved: true,
-        connection: toConnectResponse(saved.connection),
+        connection: conn,
         message: "Credentials saved securely to your account.",
       });
     } catch (error: unknown) {
@@ -294,6 +335,18 @@ export function registerBingxApiRoutes(app: Express): void {
         if (snapshot.error) {
           const status =
             snapshot.error.code === "BINGX_CONNECTION_NOT_FOUND" ? 404 : 400;
+          void emitAuditEvent({
+            userId,
+            type: "bingx_sync_error",
+            severity: "error",
+            message: "BingX snapshot sync failed",
+            metadata: {
+              exchange: "bingx",
+              connectionId,
+              code: snapshot.error.code,
+              safeReason: snapshot.error.message,
+            },
+          });
           return res.status(status).json({
             success: false,
             code: snapshot.error.code,
@@ -302,9 +355,30 @@ export function registerBingxApiRoutes(app: Express): void {
           });
         }
 
+        void emitBingXSnapshotSyncedIfAllowed(userId, connectionId, {
+          symbol: snapshot.symbol,
+          health: snapshot.health,
+        });
+
         res.json({ success: true, snapshot });
       } catch (error: unknown) {
         const mapped = mapBingXErrorToSafe(error);
+        const uid = resolveRequestUserId(req);
+        if (uid != null) {
+          const connectionId = String(req.query.connectionId ?? "").trim();
+          void emitAuditEvent({
+            userId: uid,
+            type: "bingx_sync_error",
+            severity: "error",
+            message: "BingX snapshot sync failed",
+            metadata: {
+              exchange: "bingx",
+              connectionId: connectionId || undefined,
+              code: mapped.code,
+              safeReason: mapped.safeReason,
+            },
+          });
+        }
         console.error(
           "[API] GET /api/bingx/read-only/snapshot error:",
           mapped.code,
@@ -434,6 +508,7 @@ export function registerBingxApiRoutes(app: Express): void {
         if (userId == null) return;
 
         const id = String(req.params.id ?? "");
+        const existing = getConnectionForUser(id, userId);
         const removed = deleteConnectionForUser(id, userId);
         clearBingXReadOnlyCache(id, userId);
         if (!removed) {
@@ -443,6 +518,17 @@ export function registerBingxApiRoutes(app: Express): void {
             message: "Connection not found.",
           });
         }
+        void emitAuditEvent({
+          userId,
+          type: "bingx_credential_deleted",
+          severity: "warning",
+          message: "BingX saved connection deleted",
+          metadata: {
+            exchange: "bingx",
+            connectionId: id,
+            apiKeyMasked: existing?.apiKeyMasked,
+          },
+        });
         res.json({ success: true });
       } catch (error: unknown) {
         console.error("[API] DELETE /api/bingx/connections error:", error);

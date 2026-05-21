@@ -3,7 +3,8 @@ import { cn } from "@/lib/utils";
 import { HealthRow, HealthSection, StatusDot, healthToneClass } from "./healthUi";
 import type { HealthTone } from "./healthUi";
 import { useTerminalHealth } from "./useTerminalHealth";
-import { formatAuditTime, type TerminalAuditEntry } from "./terminalAuditLog";
+import { formatAuditTime } from "./terminalAuditLog";
+import type { TerminalAuditEntry } from "./auditTypes";
 import { registerTerminalAuditBridge } from "./terminalAuditBridge";
 
 function auditLevelTone(level: TerminalAuditEntry["level"]): HealthTone {
@@ -119,6 +120,13 @@ export function SystemHealthPanel() {
         </HealthSection>
 
         <HealthSection title="5 · Audit log" defaultOpen>
+          <p className="text-[7px] text-slate-600 pb-0.5">
+            {h.auditPersistentUnavailable
+              ? "Local fallback — persistent audit unavailable"
+              : h.auditSource === "persistent"
+                ? "Persistent — server-side audit log"
+                : "Local fallback — in-memory only"}
+          </p>
           {h.audit.length === 0 ? (
             <p className="text-[8px] text-slate-600 py-1">No events yet.</p>
           ) : (
@@ -127,15 +135,24 @@ export function SystemHealthPanel() {
                 <li
                   key={e.id}
                   className={cn(
-                    "flex gap-1.5 text-[8px] leading-snug border-b border-terminal-border/30 pb-0.5",
+                    "flex flex-col gap-0 text-[8px] leading-snug border-b border-terminal-border/30 pb-0.5",
                     healthToneClass(auditLevelTone(e.level)),
                   )}
                 >
-                  <span className="text-slate-600 shrink-0 tabular-nums">
-                    {formatAuditTime(e.ts)}
-                  </span>
-                  <span className="text-slate-500 shrink-0 uppercase">{e.type.replace(/_/g, " ")}</span>
-                  <span className="text-slate-300 truncate">{e.message}</span>
+                  <div className="flex gap-1.5 min-w-0">
+                    <span className="text-slate-600 shrink-0 tabular-nums">
+                      {formatAuditTime(e.ts)}
+                    </span>
+                    <span className="text-slate-500 shrink-0 uppercase">
+                      {e.type.replace(/_/g, " ")}
+                    </span>
+                    <span className="text-slate-300 truncate">{e.message}</span>
+                  </div>
+                  {e.metadataSummary ? (
+                    <span className="text-slate-600 truncate pl-0.5 text-[7px]">
+                      {e.metadataSummary}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>

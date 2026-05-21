@@ -370,6 +370,13 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
         emitTerminalAudit(
           "bingx_saved_connection_restored",
           `Restored read-only · ${saved.apiKeyMasked}`,
+          "info",
+          {
+            exchange: "bingx",
+            connectionId: saved.id,
+            apiKeyMasked: saved.apiKeyMasked,
+            mode: "read-only",
+          },
         );
         return applySession(sessionFromSavedConnection(saved));
       });
@@ -725,6 +732,13 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       emitTerminalAudit(
         "bingx_saved_connection_restored",
         `Activated read-only · ${saved.apiKeyMasked}`,
+        "info",
+        {
+          exchange: "bingx",
+          connectionId: saved.id,
+          apiKeyMasked: saved.apiKeyMasked,
+          mode: "read-only",
+        },
       );
       return true;
     },
@@ -766,7 +780,12 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       if (import.meta.env.DEV) {
         console.debug("[broker] switching to paper; saved BingX retained", bingxRef ?? "none");
       }
-      emitTerminalAudit("broker_switched", "Active broker: paper (BingX saved retained)");
+      emitTerminalAudit(
+        "broker_switched",
+        "Active broker: paper (BingX saved retained)",
+        "info",
+        { exchange: "paper", mode: "paper" },
+      );
       return applySession({
         ...prev,
         exchange: "paper",

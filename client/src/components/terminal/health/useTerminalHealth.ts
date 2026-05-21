@@ -20,10 +20,13 @@ import { hasPersistedBingXConnection } from "../execution/bingxSession";
 import { DEFAULT_TERMINAL_EXECUTION_CONTEXT } from "../execution/executionContext";
 import { DEFAULT_RISK_GUARD } from "../execution/executionMockState";
 import {
-  emitTerminalAudit,
   getTerminalAuditEntries,
+  severityToLevel,
   subscribeTerminalAudit,
+  summarizeAuditMetadata,
 } from "./terminalAuditLog";
+import { usePersistentAuditLog } from "./usePersistentAuditLog";
+import type { TerminalAuditEntry } from "./auditTypes";
 import type { HealthTone } from "./healthUi";
 
 function agoFromTs(ts?: number): string {
@@ -268,40 +271,41 @@ export function useTerminalHealth() {
   const risk = executionStatus ?? DEFAULT_RISK_GUARD;
   const liveLocked = !risk.liveTradingEnabled || risk.tradingLocked !== false;
 
-  const prevSnapshotOk = useRef(false);
-  const prevSnapshotErr = useRef(false);
+  const {
+    events: persistentAuditEvents,
+    isPersistentAvailable,
+    isError: persistentAuditError,
+    refetch: refetchPersistentAudit,
+  } = usePersistentAuditLog(80);
 
-  useEffect(() => {
-    if (!bingxCanSync) {
-      prevSnapshotOk.current = false;
-      prevSnapshotErr.current = false;
-      return;
-    }
-    if (bingxSnapshot && !snapshotError) {
-      if (!prevSnapshotOk.current) {
-        emitTerminalAudit(
-          "bingx_snapshot_synced",
-          `Snapshot ok · health ${bingxSnapshot.health}`,
-        );
-      }
-      prevSnapshotOk.current = true;
-      prevSnapshotErr.current = false;
-    } else if (snapshotError && !prevSnapshotErr.current) {
-      emitTerminalAudit("bingx_sync_error", "BingX snapshot sync failed", "error");
-      prevSnapshotErr.current = true;
-      prevSnapshotOk.current = false;
-    }
-  }, [bingxCanSync, bingxSnapshot, snapshotError]);
-
-  const auditEntries = useMemo(() => {
+  const auditEntries = useMemo((): TerminalAuditEntry[] => {
     void auditTick;
-    return getTerminalAuditEntries();
-  }, [auditTick]);
+    if (isPersistentAvailable && persistentAuditEvents.length > 0) {
+      return persistentAuditEvents.map((e) => ({
+        id: e.id,
+        ts: e.timestamp,
+        type: e.type,
+        level: severityToLevel(e.severity),
+        message: e.message,
+        metadataSummary: summarizeAuditMetadata(e.metadata),
+        persistent: true,
+      }));
+    }
+    if (isPersistentAvailable) {
+      return [];
+    }
+    return [...getTerminalAuditEntries()];
+  }, [auditTick, isPersistentAvailable, persistentAuditEvents]);
+
+  const auditSource: "persistent" | "local_fallback" = isPersistentAvailable
+    ? "persistent"
+    : "local_fallback";
 
   const refresh = useCallback(() => {
     setMarketTick((n) => n + 1);
     setBrokerSession(loadBrokerSession());
-  }, []);
+    void refetchPersistentAudit();
+  }, [refetchPersistentAudit]);
 
   return {
     brokerSession,
@@ -379,6 +383,8 @@ export function useTerminalHealth() {
       maxLeverage: risk.maxLeverage,
     },
     audit: auditEntries,
+    auditSource,
+    auditPersistentUnavailable: persistentAuditError && !isPersistentAvailable,
     refresh,
   };
 }

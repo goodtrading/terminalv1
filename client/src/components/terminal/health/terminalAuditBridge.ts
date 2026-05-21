@@ -24,7 +24,10 @@ export function registerTerminalAuditBridge(): void {
     if (ex !== prevExchange || mode !== prevMode) {
       const from = prevExchange ? `${prevExchange}/${prevMode ?? "—"}` : "none";
       const to = ex ? `${ex}/${mode ?? "—"}` : "none";
-      emitTerminalAudit("broker_switched", `Broker: ${from} → ${to}`);
+      emitTerminalAudit("broker_switched", `Broker: ${from} → ${to}`, "info", {
+        exchange: ex,
+        mode: mode ?? undefined,
+      });
     }
 
     if (

@@ -1,25 +1,23 @@
-export type TerminalAuditEventType =
-  | "bingx_connected"
-  | "bingx_disconnected"
-  | "bingx_snapshot_synced"
-  | "bingx_sync_error"
-  | "bingx_saved_connection_restored"
-  | "broker_switched"
-  | "paper_order_submitted"
-  | "paper_position_closed"
-  | "credential_saved"
-  | "credential_deleted"
-  | "system";
+import { apiRequest } from "@/lib/queryClient";
+import {
+  CLIENT_PERSISTABLE_AUDIT_TYPES,
+  severityToLevel,
+  summarizeAuditMetadata,
+  type AuditEventSeverity,
+  type AuditEventType,
+  type TerminalAuditEntry,
+  type TerminalAuditLevel,
+} from "./auditTypes";
 
-export type TerminalAuditLevel = "info" | "warn" | "error";
+export type {
+  AuditEventType,
+  AuditEventSeverity,
+  TerminalAuditEntry,
+  TerminalAuditLevel,
+} from "./auditTypes";
 
-export type TerminalAuditEntry = {
-  id: string;
-  ts: number;
-  type: TerminalAuditEventType;
-  level: TerminalAuditLevel;
-  message: string;
-};
+/** @deprecated Use AuditEventType */
+export type TerminalAuditEventType = AuditEventType;
 
 const MAX_ENTRIES = 80;
 const entries: TerminalAuditEntry[] = [];
@@ -42,23 +40,55 @@ export function subscribeTerminalAudit(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
+function persistClientAuditEvent(
+  type: string,
+  message: string,
+  level: TerminalAuditLevel,
+  metadata?: Record<string, unknown>,
+): void {
+  if (!CLIENT_PERSISTABLE_AUDIT_TYPES.has(type)) return;
+
+  const severity: AuditEventSeverity =
+    level === "error" ? "error" : level === "warn" ? "warning" : "info";
+
+  void apiRequest("/api/system/audit-log/client-event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type,
+      severity,
+      message,
+      metadata,
+    }),
+    assertOk: false,
+  }).catch((err) => {
+    if (import.meta.env.DEV) {
+      console.debug("[audit] client-event persist failed", type, err);
+    }
+  });
+}
+
 export function emitTerminalAudit(
-  type: TerminalAuditEventType,
+  type: AuditEventType | string,
   message: string,
   level: TerminalAuditLevel = "info",
+  metadata?: Record<string, unknown>,
 ): void {
   const entry: TerminalAuditEntry = {
-    id: `audit-${++idSeq}-${Date.now()}`,
+    id: `audit-local-${++idSeq}-${Date.now()}`,
     ts: Date.now(),
     type,
     level,
     message,
+    metadataSummary: summarizeAuditMetadata(metadata),
+    persistent: false,
   };
   entries.unshift(entry);
   if (entries.length > MAX_ENTRIES) {
     entries.length = MAX_ENTRIES;
   }
   notify();
+  persistClientAuditEvent(type, message, level, metadata);
 }
 
 export function formatAuditTime(ts: number): string {
@@ -68,3 +98,5 @@ export function formatAuditTime(ts: number): string {
     second: "2-digit",
   });
 }
+
+export { severityToLevel, summarizeAuditMetadata };

@@ -1174,12 +1174,14 @@ export async function registerRoutes(
   const { registerExecutionRoutes } = await import("./routes/execution.routes");
   const { registerBrokerRoutes } = await import("./routes/broker.routes");
   const { registerBingxApiRoutes } = await import("./routes/bingxApi.routes");
+  const { registerSystemRoutes } = await import("./routes/system.routes");
   const { paperTradingRouter } = await import("./routes/paperTrading.routes");
   const { reportsRouter } = await import("./routes/reports.routes");
   registerExchangeRoutes(app);
   registerExecutionRoutes(app);
   registerBrokerRoutes(app);
   registerBingxApiRoutes(app);
+  registerSystemRoutes(app);
   app.use("/api/paper", paperTradingRouter);
   app.use("/api/reports", reportsRouter);
 

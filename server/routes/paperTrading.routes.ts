@@ -31,6 +31,7 @@ import {
 import { runWithPaperUser, runWithPaperUserAsync } from "../services/paperTrading/paperUserContext";
 import { updatePaperSettings } from "../services/paperTrading/paperStore";
 import type { ResetPaperAccountOptions } from "../services/paperTrading/paperTypes";
+import { emitAuditEvent } from "../services/system/auditLogService";
 
 export const paperTradingRouter = Router();
 
@@ -243,6 +244,21 @@ async function handlePaperOrderSubmit(req: Request, res: Response, userId: numbe
     res.status(400).json(result);
     return;
   }
+  void emitAuditEvent({
+    userId,
+    type: "paper_order_submitted",
+    severity: "info",
+    message: result.data.message ?? "Paper order submitted",
+    metadata: {
+      exchange: "paper",
+      symbol: normalized.symbol,
+      side: normalized.side,
+      type: normalized.orderType,
+      notionalUsdt: normalized.notionalUSDT,
+      quantity: normalized.qty,
+      paper: true,
+    },
+  });
   res.json({
     success: true,
     ...result.data,
@@ -263,6 +279,21 @@ paperTradingRouter.post("/submit", withPaperUser(async (req, res, userId) => {
       });
       return;
     }
+    void emitAuditEvent({
+      userId,
+      type: "paper_order_submitted",
+      severity: "info",
+      message: result.message ?? "Paper order submitted",
+      metadata: {
+        exchange: "paper",
+        symbol: body.symbol,
+        side: body.side,
+        orderType: body.type,
+        size: body.size,
+        sizeUnit: body.sizeUnit,
+        paper: true,
+      },
+    });
     res.json({
       success: true,
       order: result.order,
@@ -303,6 +334,17 @@ paperTradingRouter.post("/orders/:id/cancel", withPaperUser(async (req, res, use
     res.status(404).json(result);
     return;
   }
+  void emitAuditEvent({
+    userId,
+    type: "paper_order_cancelled",
+    severity: "info",
+    message: result.data.message ?? "Paper order cancelled",
+    metadata: {
+      exchange: "paper",
+      orderId: req.params.id,
+      paper: true,
+    },
+  });
   res.json({ success: true, message: result.data.message });
 }));
 
@@ -317,6 +359,13 @@ paperTradingRouter.post("/cancel-order", withPaperUser(async (req, res, userId) 
     res.status(404).json(result);
     return;
   }
+  void emitAuditEvent({
+    userId,
+    type: "paper_order_cancelled",
+    severity: "info",
+    message: result.data.message ?? "Paper order cancelled",
+    metadata: { exchange: "paper", orderId, paper: true },
+  });
   res.json({ success: true, message: result.data.message });
 }));
 
@@ -325,7 +374,7 @@ paperTradingRouter.post("/cancel-all", withPaperUser(async (_req, res, userId) =
   res.json({ success: true, cancelled: result.data.cancelled });
 }));
 
-paperTradingRouter.post("/position/close-partial", withPaperUser(async (req, res) => {
+paperTradingRouter.post("/position/close-partial", withPaperUser(async (req, res, userId) => {
   try {
     const percent = Number((req.body as { percent?: number })?.percent);
     const result = await partialClosePaperPosition(percent);
@@ -337,6 +386,17 @@ paperTradingRouter.post("/position/close-partial", withPaperUser(async (req, res
       });
       return;
     }
+    void emitAuditEvent({
+      userId,
+      type: "paper_partial_close",
+      severity: "info",
+      message: result.message ?? "Paper position partially closed",
+      metadata: {
+        exchange: "paper",
+        percent,
+        paper: true,
+      },
+    });
     res.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Partial close failed";
@@ -351,6 +411,13 @@ paperTradingRouter.post("/close-position", withPaperUser(async (_req, res, userI
     res.status(400).json(result);
     return;
   }
+  void emitAuditEvent({
+    userId,
+    type: "paper_position_closed",
+    severity: "info",
+    message: "Paper position closed",
+    metadata: { exchange: "paper", paper: true },
+  });
   res.json(result.data);
 }));
 
