@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import type { BingXReadOnlyHealthResponse, BrokerSessionState } from "./executionTypes";
@@ -25,14 +25,18 @@ function healthColor(health: string): string {
 type BingXReadOnlyConnectionCardProps = {
   session: BrokerSessionState;
   onManage: () => void;
+  /** Deactivate active session only — keeps saved credentials. */
   onDisconnect: () => void;
+  onDeleteSaved: () => void | Promise<void>;
 };
 
 export function BingXReadOnlyConnectionCard({
   session,
   onManage,
   onDisconnect,
+  onDeleteSaved,
 }: BingXReadOnlyConnectionCardProps) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const queryClient = useQueryClient();
   const connectionId = session.connectionId;
   const canSync = hasPersistedBingXConnection(session);
@@ -167,10 +171,31 @@ export function BingXReadOnlyConnectionCard({
         <button
           type="button"
           onClick={onDisconnect}
-          className="rounded border border-terminal-border px-2 py-1 text-[8px] font-bold uppercase text-slate-400 hover:text-red-300"
+          className="rounded border border-terminal-border px-2 py-1 text-[8px] font-bold uppercase text-slate-400 hover:text-slate-300"
+          title="Deactivate session (saved credentials kept)"
         >
-          Disconnect
+          Deactivate
         </button>
+        {!confirmDelete ? (
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+            className="rounded border border-terminal-border px-2 py-1 text-[8px] font-bold uppercase text-slate-500 hover:text-red-300"
+          >
+            Delete saved
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setConfirmDelete(false);
+              void onDeleteSaved();
+            }}
+            className="rounded border border-red-900/50 bg-red-950/30 px-2 py-1 text-[8px] font-bold uppercase text-red-300"
+          >
+            Confirm
+          </button>
+        )}
       </div>
     </div>
   );

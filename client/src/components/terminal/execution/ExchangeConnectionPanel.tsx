@@ -13,6 +13,7 @@ import {
 } from "./executionMockState";
 import { BingXConnectionModal } from "./BingXConnectionModal";
 import { BingXReadOnlyConnectionCard } from "./BingXReadOnlyConnectionCard";
+import { BingXSavedConnectionCard } from "./BingXSavedConnectionCard";
 import { isBingXReadOnlySession } from "./bingxSession";
 import { useBrokerSession } from "./useBrokerSession";
 
@@ -302,12 +303,16 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
   const [paperSettingsOpen, setPaperSettingsOpen] = useState(false);
   const {
     session,
+    savedBingXConnections,
     disconnectBroker,
+    activateSavedBingXConnection,
     connectPaperTrading,
     disconnectPaperTrading,
     restoreLoading,
     loginStatusLoading,
   } = useBrokerSession();
+
+  const primarySavedBingX = savedBingXConnections[0];
 
   const loadStatus = useCallback(async () => {
     try {
@@ -354,6 +359,9 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
   const bingxPhase =
     session.exchange === "bingx" ? session.phase : ("not_connected" as BrokerConnectionPhase);
   const bingxReadOnly = isBingXReadOnlySession(session);
+  const paperActive =
+    session.exchange === "paper" && session.connected && session.connectionMode === "paper";
+  const showSavedBingxInactive = Boolean(primarySavedBingX) && !bingxReadOnly;
   const brokerBackgroundBusy = restoreLoading || loginStatusLoading;
 
   return (
@@ -369,11 +377,24 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
             <BingXReadOnlyConnectionCard
               session={session}
               onManage={() => setBingxModalOpen(true)}
-              onDisconnect={() => void disconnectBroker({ deleteStored: true })}
+              onDisconnect={() => void disconnectBroker()}
+              onDeleteSaved={() => void disconnectBroker({ deleteStored: true })}
+            />
+          ) : null}
+          {showSavedBingxInactive && primarySavedBingX ? (
+            <BingXSavedConnectionCard
+              session={session}
+              saved={primarySavedBingX}
+              paperActive={paperActive}
+              onUseSaved={() => activateSavedBingXConnection(primarySavedBingX.id)}
+              onManage={() => setBingxModalOpen(true)}
+              onDeleteSaved={() => disconnectBroker({ deleteStored: true })}
             />
           ) : null}
           {exchanges.map((ex) => {
-            if (ex.id === "bingx" && bingxReadOnly) return null;
+            if (ex.id === "bingx" && (bingxReadOnly || showSavedBingxInactive)) {
+              return null;
+            }
             return (
               <ExchangeCard
                 key={ex.id}
@@ -387,17 +408,27 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
                   session.connected
                 }
                 onConnect={() => {
-                  if (ex.id === "bingx") setBingxModalOpen(true);
+                  if (ex.id === "bingx") {
+                    if (primarySavedBingX) {
+                      activateSavedBingXConnection(primarySavedBingX.id);
+                    } else {
+                      setBingxModalOpen(true);
+                    }
+                  }
                   if (ex.id === "paper") connectPaperTrading();
                 }}
                 onManage={() => {
                   if (ex.id === "bingx") setBingxModalOpen(true);
                 }}
                 bingxSecureApi={ex.id === "bingx" && bingxReadOnly}
-                apiKeyMasked={ex.id === "bingx" ? session.apiKeyMasked : undefined}
+                apiKeyMasked={
+                  ex.id === "bingx"
+                    ? session.apiKeyMasked ?? primarySavedBingX?.apiKeyMasked
+                    : undefined
+                }
                 onDisconnect={
                   ex.id === "bingx"
-                    ? () => void disconnectBroker({ deleteStored: true })
+                    ? () => void disconnectBroker()
                     : ex.id === "paper"
                       ? () => disconnectPaperTrading()
                       : undefined

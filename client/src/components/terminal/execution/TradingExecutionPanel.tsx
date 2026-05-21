@@ -163,7 +163,14 @@ function isPaperSession(session: {
 
 export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boolean }) {
   const queryClient = useQueryClient();
-  const { session, connectPaperTrading, restoreBingXAfterPaper } = useBrokerSession();
+  const {
+    session,
+    savedBingXConnections,
+    connectPaperTrading,
+    restoreBingXAfterPaper,
+  } = useBrokerSession();
+  const bingxRefId =
+    session.bingxReferenceConnectionId ?? savedBingXConnections[0]?.id;
   const [ticket, setTicket] = useState<OrderTicketState>(DEFAULT_ORDER_TICKET);
   const [risk, setRisk] = useState<ExecutionRiskGuardState>(DEFAULT_RISK_GUARD);
   const [preview, setPreview] = useState<OrderPreviewSummary | null>(null);
@@ -631,10 +638,10 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
       <div className="flex flex-col gap-2 p-2 overflow-y-auto max-h-full text-[10px] font-mono">
         {isPaper ? (
           <PaperTradingExecutionBlock
-            bingxStillConnected={Boolean(session.bingxReferenceConnectionId)}
-            bingxReferenceConnectionId={session.bingxReferenceConnectionId}
+            bingxStillConnected={Boolean(bingxRefId)}
+            bingxReferenceConnectionId={bingxRefId}
             onSwitchFromPaper={
-              session.bingxReferenceConnectionId
+              savedBingXConnections.length > 0
                 ? () => restoreBingXAfterPaper()
                 : undefined
             }

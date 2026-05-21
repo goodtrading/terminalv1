@@ -35,6 +35,7 @@ import {
   normalizeBrokerSession,
   saveBrokerSession,
 } from "./brokerSessionState";
+import { emitTerminalAudit } from "../health/terminalAuditLog";
 
 const BINGX_LOADING_WATCHDOG_MS = 10_000;
 const BINGX_RESTORE_TIMEOUT_MS = 10_000;
@@ -60,10 +61,14 @@ type BrokerSessionContextValue = {
   clearBingXSecureApiError: () => void;
   simulateBingXDemoConnection: () => Promise<void>;
   disconnectBroker: (options?: { deleteStored?: boolean }) => Promise<void>;
+  /** Activate persisted BingX read-only without API key/secret. */
+  activateSavedBingXConnection: (connectionId?: string) => boolean;
+  deactivateBingXSession: () => void;
   connectPaperTrading: () => void;
   disconnectPaperTrading: () => void;
   restoreBingXAfterPaper: () => void;
   refreshBrokerStatus: () => Promise<void>;
+  refreshSavedBingXConnections: () => Promise<BingXSavedConnection[]>;
 };
 
 const BrokerSessionContext = createContext<BrokerSessionContextValue | null>(null);
@@ -84,8 +89,31 @@ function sessionFromSavedConnection(saved: BingXSavedConnection): BrokerSessionS
     apiKeyMasked: saved.apiKeyMasked,
     readOnly: true,
     tradingEnabled: false,
-    message: "Saved BingX read-only connection found.",
+    message: "BingX read-only active (saved credentials).",
     connectedAt: new Date().toISOString(),
+    lastError: undefined,
+  };
+}
+
+function inactiveSessionWithBingxRef(
+  connectionId: string,
+  apiKeyMasked?: string,
+  message?: string,
+): BrokerSessionState {
+  return {
+    exchange: null,
+    phase: "not_connected",
+    connected: false,
+    demo: false,
+    connectionMode: null,
+    connectionId: undefined,
+    bingxReferenceConnectionId: connectionId,
+    apiKeyMasked,
+    readOnly: true,
+    tradingEnabled: false,
+    message:
+      message ??
+      "BingX saved read-only available. Use BingX to activate without re-entering API keys.",
     lastError: undefined,
   };
 }
@@ -247,6 +275,30 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
     void refreshBrokerStatus();
   }, [refreshBrokerStatus]);
 
+  const refreshSavedBingXConnections = useCallback(async (): Promise<BingXSavedConnection[]> => {
+    if (!authReady || !user) {
+      setSavedConnections([]);
+      return [];
+    }
+    const res = await bingxApiFetch("/api/bingx/connections", {
+      method: "GET",
+      assertOk: false,
+    });
+    const data = (await res.json()) as {
+      success?: boolean;
+      connections?: BingXSavedConnection[];
+    };
+    if (!res.ok) {
+      throw new Error(`connections:${res.status}`);
+    }
+    const list = data.connections ?? [];
+    setSavedConnections(list);
+    if (import.meta.env.DEV) {
+      console.debug("[broker] saved BingX connections", list.length);
+    }
+    return list;
+  }, [authReady, user]);
+
   const restoreSavedBingXConnection = useCallback(async () => {
     const status = bingXAuthSessionStatus(authReady, authenticated, user);
     logBingXAuthDebug(status, user?.id != null && Number.isFinite(Number(user.id)));
@@ -266,24 +318,13 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
     setLastBrokerAction("restore");
 
     const restoreWork = async () => {
-      const res = await bingxApiFetch("/api/bingx/connections", {
-        method: "GET",
-        assertOk: false,
-      });
-      const data = (await res.json()) as {
-        success?: boolean;
-        connections?: BingXSavedConnection[];
-      };
-      if (!res.ok) {
-        throw new Error(`restore:${res.status}`);
-      }
-      const list = data.connections ?? [];
-      setSavedConnections(list);
+      const list = await refreshSavedBingXConnections();
       const saved =
         list.find((c) => c.status === "connected" && c.connected !== false) ??
         list[0];
       if (!saved?.id) {
         setSession((prev) => {
+          if (prev.exchange === "paper" && prev.connected) return prev;
           if (prev.exchange !== "bingx") return prev;
           if (prev.connected && prev.connectionMode === "read-only") {
             return applySession({
@@ -303,7 +344,17 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       }
 
       setSession((prev) => {
-        if (prev.exchange === "paper" && prev.connected) return prev;
+        if (prev.exchange === "paper" && prev.connected) {
+          if (import.meta.env.DEV) {
+            console.debug("[broker] switching to paper; saved BingX retained", saved.id);
+          }
+          return applySession({
+            ...prev,
+            bingxReferenceConnectionId:
+              prev.bingxReferenceConnectionId ?? saved.id,
+            apiKeyMasked: prev.apiKeyMasked ?? saved.apiKeyMasked,
+          });
+        }
         if (
           prev.connectionMode === "read-only" &&
           prev.connected &&
@@ -313,6 +364,13 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
             ? applySession({ ...prev, phase: "connected" })
             : prev;
         }
+        if (import.meta.env.DEV) {
+          console.debug("[broker] auto-restoring saved BingX connection", saved.id);
+        }
+        emitTerminalAudit(
+          "bingx_saved_connection_restored",
+          `Restored read-only · ${saved.apiKeyMasked}`,
+        );
         return applySession(sessionFromSavedConnection(saved));
       });
     };
@@ -328,16 +386,17 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
         }),
       ]);
     } catch {
-      setSavedConnections([]);
       setSession((prev) =>
-        applySession(releaseTransientSession(prev, "Could not restore BingX connection.")),
+        applySession(
+          releaseTransientSession(prev, "Could not restore BingX connection."),
+        ),
       );
     } finally {
       restoreInFlightRef.current = false;
       setRestoreLoading(false);
       setLastBrokerAction("restore_done");
     }
-  }, [authReady, authenticated, user]);
+  }, [authReady, authenticated, user, refreshSavedBingXConnections]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -588,7 +647,9 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
 
         if (persisted) {
           void restoreSavedBingXConnection();
+          emitTerminalAudit("credential_saved", "BingX API credentials saved (encrypted server-side)");
         }
+        emitTerminalAudit("bingx_connected", "BingX read-only session established");
 
         return data;
       } catch (err) {
@@ -646,15 +707,66 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const activateSavedBingXConnection = useCallback(
+    (connectionId?: string): boolean => {
+      const saved =
+        (connectionId
+          ? savedConnections.find((c) => c.id === connectionId)
+          : undefined) ??
+        savedConnections.find(
+          (c) => c.id === session.bingxReferenceConnectionId,
+        ) ??
+        savedConnections[0];
+      if (!saved?.id) return false;
+      if (import.meta.env.DEV) {
+        console.debug("[broker] activating saved BingX connection", saved.id);
+      }
+      setSession(applySession(sessionFromSavedConnection(saved)));
+      emitTerminalAudit(
+        "bingx_saved_connection_restored",
+        `Activated read-only · ${saved.apiKeyMasked}`,
+      );
+      return true;
+    },
+    [savedConnections, session.bingxReferenceConnectionId],
+  );
+
+  const deactivateBingXSession = useCallback(() => {
+    setSession((prev) => {
+      const ref =
+        prev.connectionId &&
+        prev.connectionId !== "session-only" &&
+        prev.connectionId !== "ephemeral"
+          ? prev.connectionId
+          : prev.bingxReferenceConnectionId;
+      if (!ref) {
+        clearBrokerSession();
+        return { ...DEFAULT_BROKER_SESSION };
+      }
+      return applySession(
+        inactiveSessionWithBingxRef(
+          ref,
+          prev.apiKeyMasked,
+          "BingX session deactivated. Saved connection still available.",
+        ),
+      );
+    });
+  }, []);
+
   const connectPaperTrading = useCallback(() => {
     setSession((prev) => {
+      const saved = savedConnections[0];
       const bingxRef =
         prev.exchange === "bingx" &&
         prev.connectionId &&
         prev.connectionId !== "session-only" &&
         prev.connectionId !== "ephemeral"
           ? prev.connectionId
-          : prev.bingxReferenceConnectionId;
+          : prev.bingxReferenceConnectionId ?? saved?.id;
+      if (import.meta.env.DEV) {
+        console.debug("[broker] switching to paper; saved BingX retained", bingxRef ?? "none");
+      }
+      emitTerminalAudit("broker_switched", "Active broker: paper (BingX saved retained)");
       return applySession({
         ...prev,
         exchange: "paper",
@@ -666,47 +778,72 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
         tradingEnabled: false,
         bingxReferenceConnectionId: bingxRef,
         connectionId: undefined,
-        apiKeyMasked: prev.apiKeyMasked,
+        apiKeyMasked: prev.apiKeyMasked ?? saved?.apiKeyMasked,
         message:
-          "Paper Trading on BingX Perpetual (simulated). BingX read-only remains available for reference.",
+          "Paper Trading on BingX Perpetual (simulated). BingX saved read-only available.",
         connectedAt: new Date().toISOString(),
         lastError: undefined,
       });
     });
-  }, []);
+  }, [savedConnections]);
 
   const disconnectPaperTrading = useCallback(() => {
-    clearBrokerSession();
-    setSession({ ...DEFAULT_BROKER_SESSION });
-  }, []);
+    setSession((prev) => {
+      const saved = savedConnections[0];
+      const ref = prev.bingxReferenceConnectionId ?? saved?.id;
+      if (ref) {
+        return applySession(
+          inactiveSessionWithBingxRef(
+            ref,
+            saved?.apiKeyMasked ?? prev.apiKeyMasked,
+            "Paper disconnected. BingX saved connection available.",
+          ),
+        );
+      }
+      clearBrokerSession();
+      return { ...DEFAULT_BROKER_SESSION };
+    });
+  }, [savedConnections]);
 
   const restoreBingXAfterPaper = useCallback(() => {
-    const saved = loadBrokerSession();
-    const refId = saved.bingxReferenceConnectionId;
-    if (refId) {
-      void restoreSavedBingXConnection();
-      return;
-    }
-    disconnectPaperTrading();
-  }, [restoreSavedBingXConnection, disconnectPaperTrading]);
+    if (activateSavedBingXConnection()) return;
+    void restoreSavedBingXConnection();
+  }, [activateSavedBingXConnection, restoreSavedBingXConnection]);
 
   const disconnectBroker = useCallback(
     async (options?: { deleteStored?: boolean }) => {
-      const id = session.connectionId;
-      if (options?.deleteStored && id && id !== "session-only" && id !== "ephemeral") {
+      const id =
+        session.connectionId ??
+        session.bingxReferenceConnectionId;
+      if (
+        options?.deleteStored &&
+        id &&
+        id !== "session-only" &&
+        id !== "ephemeral"
+      ) {
         try {
           await bingxApiFetch(`/api/bingx/connections/${encodeURIComponent(id)}`, {
             method: "DELETE",
           });
+          emitTerminalAudit("credential_deleted", "BingX stored credentials deleted");
+          setSavedConnections((prev) => prev.filter((c) => c.id !== id));
         } catch {
-          // still clear local session
+          // still deactivate locally
         }
+        clearBrokerSession();
+        setSession({ ...DEFAULT_BROKER_SESSION });
+        void refreshSavedBingXConnections();
+        return;
       }
-      clearBrokerSession();
-      setSession({ ...DEFAULT_BROKER_SESSION });
-      void restoreSavedBingXConnection();
+
+      deactivateBingXSession();
     },
-    [session.connectionId, restoreSavedBingXConnection],
+    [
+      session.connectionId,
+      session.bingxReferenceConnectionId,
+      deactivateBingXSession,
+      refreshSavedBingXConnections,
+    ],
   );
 
   const value = useMemo(
@@ -724,10 +861,13 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       clearBingXSecureApiError,
       simulateBingXDemoConnection,
       disconnectBroker,
+      activateSavedBingXConnection,
+      deactivateBingXSession,
       connectPaperTrading,
       disconnectPaperTrading,
       restoreBingXAfterPaper,
       refreshBrokerStatus,
+      refreshSavedBingXConnections,
     }),
     [
       session,
@@ -743,10 +883,13 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       clearBingXSecureApiError,
       simulateBingXDemoConnection,
       disconnectBroker,
+      activateSavedBingXConnection,
+      deactivateBingXSession,
       connectPaperTrading,
       disconnectPaperTrading,
       restoreBingXAfterPaper,
       refreshBrokerStatus,
+      refreshSavedBingXConnections,
     ],
   );
 

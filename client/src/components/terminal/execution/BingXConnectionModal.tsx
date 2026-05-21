@@ -254,6 +254,85 @@ function BrokerLoginPanel({
   );
 }
 
+function SavedBingXConnectionPanel({
+  saved,
+  onUseSaved,
+  onReplaceKeys,
+  onDeleteSaved,
+  onClose,
+}: {
+  saved: { id: string; apiKeyMasked: string };
+  onUseSaved: () => void;
+  onReplaceKeys: () => void;
+  onDeleteSaved: () => void;
+  onClose: () => void;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded border border-slate-600/50 bg-slate-950/50 px-3 py-3 space-y-2">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-300">
+          Saved BingX read-only connection found
+        </p>
+        <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[10px] text-slate-400">
+          <span>API</span>
+          <span className="font-mono text-slate-200">{saved.apiKeyMasked}</span>
+          <span>Mode</span>
+          <span>Read-only</span>
+          <span>Trading</span>
+          <span className="text-amber-400/90">Locked</span>
+        </div>
+        <p className="text-[9px] text-slate-500 leading-snug">
+          Credentials are stored encrypted on the server. No API secret is required to
+          reconnect.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => {
+          onUseSaved();
+          onClose();
+        }}
+        className="w-full rounded border border-cyan-500/50 bg-cyan-600/20 py-2.5 text-[10px] font-bold uppercase tracking-wider text-cyan-100 hover:bg-cyan-600/30"
+      >
+        Use saved connection
+      </button>
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={onReplaceKeys}
+          className="flex-1 rounded border border-terminal-border py-2 text-[9px] font-bold uppercase text-slate-400 hover:border-white/25"
+        >
+          Replace API key
+        </button>
+        {!confirmDelete ? (
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+            className="flex-1 rounded border border-terminal-border py-2 text-[9px] font-bold uppercase text-slate-500 hover:text-red-300"
+          >
+            Delete saved connection
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setConfirmDelete(false);
+              onDeleteSaved();
+            }}
+            className="flex-1 rounded border border-red-900/50 bg-red-950/30 py-2 text-[9px] font-bold uppercase text-red-300"
+          >
+            Confirm delete
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ConnectedReadOnlyPanel({
   session,
   onClose,
@@ -266,6 +345,7 @@ function ConnectedReadOnlyPanel({
   };
   onClose: () => void;
   onDisconnect: () => void;
+  onDeleteSaved: () => void;
 }) {
   const accountSync =
     session.connectionId &&
@@ -312,7 +392,14 @@ function ConnectedReadOnlyPanel({
           onClick={onDisconnect}
           className="flex-1 rounded border border-terminal-border py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:border-white/25 hover:bg-white/[0.04]"
         >
-          Disconnect
+          Deactivate
+        </button>
+        <button
+          type="button"
+          onClick={onDeleteSaved}
+          className="flex-1 rounded border border-red-900/40 py-2.5 text-[10px] font-bold uppercase tracking-wider text-red-300/90 hover:bg-red-950/30"
+        >
+          Delete saved
         </button>
       </div>
     </div>
@@ -327,17 +414,22 @@ export function BingXConnectionModal({
   const { authReady, authenticated, user, token, refreshSession } = useTerminalAuth();
   const {
     session,
+    savedBingXConnections,
     loginStatus,
     connectBingX,
     connectSecureApi,
     clearBingXSecureApiError,
     simulateBingXDemoConnection,
     disconnectBroker,
+    activateSavedBingXConnection,
     restoreLoading,
     connectInFlight,
     loginStatusLoading,
     lastBrokerAction,
   } = useBrokerSession();
+
+  const primarySaved = savedBingXConnections[0];
+  const [showReplaceForm, setShowReplaceForm] = useState(false);
 
   const authStatus = bingXAuthSessionStatus(authReady, authenticated, user);
   const userIdExists = user?.id != null && Number.isFinite(Number(user.id));
@@ -358,6 +450,8 @@ export function BingXConnectionModal({
   const demoAvailable = loginStatus?.demoAvailable ?? false;
   const apiTabEnabled = loginStatus?.apiConnectionEnabled !== false;
   const isSecureConnected = isBingXReadOnlySession(session);
+  const showSavedFirst =
+    Boolean(primarySaved) && !isSecureConnected && !showReplaceForm;
   const isBrokerOnlyConnected =
     session.connected &&
     session.connectionMode === "broker_login" &&
@@ -436,6 +530,11 @@ export function BingXConnectionModal({
     hasUser,
     lastBrokerAction,
   ]);
+
+  useEffect(() => {
+    if (!open) return;
+    setShowReplaceForm(false);
+  }, [open, primarySaved?.id]);
 
   useEffect(() => {
     if (!open) return;
@@ -626,7 +725,22 @@ export function BingXConnectionModal({
             <ConnectedReadOnlyPanel
               session={session}
               onClose={onClose}
-              onDisconnect={() => void disconnectBroker({ deleteStored: true })}
+              onDisconnect={() => void disconnectBroker()}
+              onDeleteSaved={() => {
+                void disconnectBroker({ deleteStored: true });
+                onClose();
+              }}
+            />
+          ) : showSavedFirst && primarySaved ? (
+            <SavedBingXConnectionPanel
+              saved={primarySaved}
+              onUseSaved={() => activateSavedBingXConnection(primarySaved.id)}
+              onReplaceKeys={() => setShowReplaceForm(true)}
+              onDeleteSaved={() => {
+                void disconnectBroker({ deleteStored: true });
+                onClose();
+              }}
+              onClose={onClose}
             />
           ) : showBrokerPanel && !apiTabEnabled ? (
             <BrokerLoginPanel

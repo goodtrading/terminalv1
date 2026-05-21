@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AIChatPanel } from "./AIChatPanel";
+import { SystemHealthPanel } from "./health/SystemHealthPanel";
 
 type BottomTabId = "ai" | "logs" | "notes";
 
@@ -148,7 +149,7 @@ export function BottomPanel() {
       <div className="flex items-center justify-between px-2 py-1 border-b border-terminal-border bg-terminal-panel/20">
         <div className="flex items-center gap-1">
           <TabButton id="ai" active={activeTab === "ai"} label="AI Analyst" onClick={() => setActiveTab("ai")} />
-          <TabButton id="logs" active={activeTab === "logs"} label="Logs" onClick={() => setActiveTab("logs")} />
+          <TabButton id="logs" active={activeTab === "logs"} label="System" onClick={() => setActiveTab("logs")} />
           <TabButton id="notes" active={activeTab === "notes"} label="Notes" onClick={() => setActiveTab("notes")} />
         </div>
 
@@ -167,9 +168,14 @@ export function BottomPanel() {
         <div className={activeTab === "ai" ? "h-full min-h-0" : "hidden"}>
           <AIChatPanel />
         </div>
-        {activeTab !== "ai" ? (
+        {activeTab === "logs" ? (
+          <div className="h-full min-h-0">
+            <SystemHealthPanel />
+          </div>
+        ) : null}
+        {activeTab === "notes" ? (
           <div className="h-full min-h-0 flex items-center justify-center text-[11px] text-white/40 font-mono p-2">
-            {activeTab === "logs" ? "Logs panel placeholder" : "Notes panel placeholder"}
+            Notes panel placeholder
           </div>
         ) : null}
       </div>

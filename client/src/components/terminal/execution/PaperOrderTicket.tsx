@@ -11,6 +11,7 @@ import {
   resolveExecutionSymbolForChart,
 } from "./executionContext";
 import { PaperRiskGuardLine } from "./PaperRiskGuardLine";
+import { emitTerminalAudit } from "../health/terminalAuditLog";
 import {
   PAPER_NO_PRICE_MESSAGE,
   PAPER_PRICE_FALLBACK_HINT,
@@ -525,6 +526,10 @@ export function PaperOrderTicket({
           "Simulated BingX Perpetual — no real order sent.",
       };
       onExecuted(fb);
+      emitTerminalAudit(
+        "paper_order_submitted",
+        `${type === "market" ? "Paper market" : "Paper limit"} ${ticketSide} · ${notionalNum ?? "—"} USDT`,
+      );
       onMessage(
         type === "market"
           ? "Paper order filled"

@@ -24,6 +24,7 @@ import {
   invalidatePaperQueries,
 } from "./paperQueryKeys";
 import { PAPER_RISK_GUARD_POLICY } from "./paperRiskGuardConfig";
+import { emitTerminalAudit } from "../health/terminalAuditLog";
 
 type PaperAccountExtended = PaperAccountSnapshot & {
   mode?: string;
@@ -214,6 +215,7 @@ export function PaperTradingExecutionBlock({
         return;
       }
       setMessage(json.message ?? "Paper position closed — realized PnL updated");
+      emitTerminalAudit("paper_position_closed", json.message ?? "Paper position closed");
       await invalidate();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Close failed");
