@@ -13,7 +13,10 @@ export function SessionDataModeBadge({ mode }: { mode: SessionReportDataMode }) 
   }
 }
 
-export function OtherTabsMockBadge() {
+export function OtherTabsMockBadge({ executionLive }: { executionLive?: boolean }) {
+  if (executionLive) {
+    return <ReportBadge variant="partial-data">Edge · Playbook · Intel Mock</ReportBadge>;
+  }
   return <ReportBadge variant="mock">Other Tabs Mock</ReportBadge>;
 }
 

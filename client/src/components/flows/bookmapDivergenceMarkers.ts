@@ -1,19 +1,22 @@
 import type { BookmapTimeViewport } from "@/hooks/useBookmapTimeScale";
 import { HEATMAP_PAD } from "./bookmapHeatmapRenderer";
 import type { SpotPerpDivergenceSignal } from "./bookmapDivergenceEngine";
+import { formatDivergenceContextLabel } from "./bookmapDivergenceQuality";
 
-function markerLabel(type: SpotPerpDivergenceSignal["type"]): string {
-  switch (type) {
-    case "PERP_PRESSURE_NO_SPOT_CONFIRMATION":
+function markerLabel(signal: SpotPerpDivergenceSignal): string {
+  switch (signal.context) {
+    case "trap":
       return "TRAP?";
-    case "SPOT_ABSORPTION_PERP_AGGRESSION":
-      return "DIV";
-    case "SPOT_CONFIRMS_PERP":
+    case "absorption":
+      return "ABS";
+    case "continuation":
       return "S/P";
-    case "PERP_LEADS_SPOT":
-      return "LEAD";
+    case "confluence":
+      return "CONF";
+    case "liquidity_warning":
+      return "WARN";
     default:
-      return "DIV";
+      return formatDivergenceContextLabel(signal.context).slice(0, 4);
   }
 }
 
@@ -53,7 +56,7 @@ export function renderDivergenceMarkers(
     const y = params.priceToY(s.price);
     if (x < plotLeft || x > plotRight || y < plotTop || y > plotBottom) continue;
 
-    const label = markerLabel(s.type);
+    const label = markerLabel(s);
     const textW = ctx.measureText(label).width;
     ctx.fillStyle = "rgba(12, 18, 28, 0.85)";
     ctx.fillRect(x + 2, y - 5, textW + 4, 10);

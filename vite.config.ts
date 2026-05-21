@@ -1,11 +1,28 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import os from "os";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 import { metaImagesPlugin } from "./vite-plugin-meta-images";
 
+const projectRoot = import.meta.dirname;
+const clientRoot = path.resolve(projectRoot, "client");
+const onOneDrive = /OneDrive/i.test(projectRoot);
+
+/** Keep Vite cache outside synced folders (OneDrive breaks dep pre-bundling). */
+const viteCacheDir =
+  process.env.VITE_CACHE_DIR?.trim() ||
+  path.join(os.tmpdir(), "goodtrading-vite-cache");
+
+if (onOneDrive) {
+  console.warn(
+    "[Vite] Project is under OneDrive — move to C:\\Dev\\Terminal-Goodtrading-stable to avoid UNKNOWN read errors.",
+  );
+}
+
 export default defineConfig({
+  cacheDir: viteCacheDir,
   plugins: [
     react(),
     runtimeErrorOverlay(),
@@ -25,19 +42,33 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@": path.resolve(import.meta.dirname, "client", "src"),
-      "@shared": path.resolve(import.meta.dirname, "shared"),
-      "@assets": path.resolve(import.meta.dirname, "attached_assets"),
+      "@": path.resolve(clientRoot, "src"),
+      "@shared": path.resolve(projectRoot, "shared"),
+      "@assets": path.resolve(projectRoot, "attached_assets"),
     },
   },
+  optimizeDeps: onOneDrive
+    ? { noDiscovery: true, include: [], holdUntilCrawlEnd: false }
+    : {
+        entries: [path.resolve(clientRoot, "index.html")],
+        include: [
+          "react",
+          "react-dom",
+          "react-dom/client",
+          "react/jsx-dev-runtime",
+          "@tanstack/react-query",
+          "wouter",
+        ],
+        holdUntilCrawlEnd: false,
+      },
   css: {
     postcss: {
       plugins: [],
     },
   },
-  root: path.resolve(import.meta.dirname, "client"),
+  root: clientRoot,
   build: {
-    outDir: path.resolve(import.meta.dirname, "dist/public"),
+    outDir: path.resolve(projectRoot, "dist/public"),
     emptyOutDir: true,
   },
   server: {
@@ -45,12 +76,16 @@ export default defineConfig({
     port: 5000,
     allowedHosts: true,
     fs: {
-      strict: true,
-      deny: ["**/.*"],
+      strict: false,
+      allow: [projectRoot, clientRoot],
+    },
+    watch: {
+      usePolling:
+        process.env.VITE_USE_POLLING === "true" || process.platform === "win32",
     },
     proxy: {
       "/api": {
-        target: "http://localhost:5002",
+        target: "http://localhost:5000",
         changeOrigin: true,
         secure: false,
         configure: (proxy, _options) => {

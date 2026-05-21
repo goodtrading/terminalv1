@@ -26,7 +26,18 @@ export async function setupVite(server: Server, app: Express) {
       ...viteLogger,
       error: (msg, options) => {
         viteLogger.error(msg, options);
-        process.exit(1);
+        const text = typeof msg === "string" ? msg : String(msg);
+        if (
+          text.includes("error while updating dependencies") ||
+          text.includes("UNKNOWN: unknown error, read") ||
+          text.includes("import-analysis")
+        ) {
+          console.warn(
+            "[Vite] Non-fatal dev error (OneDrive/sync). Run: npm run dev:clean && npm run dev",
+          );
+          return;
+        }
+        console.error("[Vite] Fatal error — server stays up; fix and refresh browser.");
       },
     },
     server: serverOptions,

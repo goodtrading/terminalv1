@@ -333,6 +333,12 @@ export async function registerRoutes(
   app.get("/api/market-state", async (_req, res) => {
     const data = await storage.getMarketState();
     const optionsLastUpdated = storage.getOptionsLastUpdated();
+    if (!data) {
+      return res.status(503).json({
+        error: "MARKET_STATE_UNAVAILABLE",
+        optionsLastUpdated: optionsLastUpdated ?? null,
+      });
+    }
     console.log("[GammaFlipTrace][Route:/api/market-state]", {
       gammaFlip: data?.gammaFlip ?? null,
       distanceToFlip: data?.distanceToFlip ?? null,
@@ -344,16 +350,19 @@ export async function registerRoutes(
 
   app.get("/api/dealer-exposure", async (_req, res) => {
     const data = await storage.getDealerExposure();
+    if (!data) return res.status(503).json({ error: "DEALER_EXPOSURE_UNAVAILABLE" });
     res.json(data);
   });
 
   app.get("/api/options-positioning", async (_req, res) => {
     const data = await storage.getOptionsPositioning();
+    if (!data) return res.status(503).json({ error: "OPTIONS_POSITIONING_UNAVAILABLE" });
     res.json(data);
   });
 
   app.get("/api/key-levels", async (_req, res) => {
     const data = await storage.getKeyLevels();
+    if (!data) return res.status(503).json({ error: "KEY_LEVELS_UNAVAILABLE" });
     res.json(data);
   });
 
@@ -1160,6 +1169,19 @@ export async function registerRoutes(
       });
     }
   });
+
+  const { registerExchangeRoutes } = await import("./routes/exchanges.routes");
+  const { registerExecutionRoutes } = await import("./routes/execution.routes");
+  const { registerBrokerRoutes } = await import("./routes/broker.routes");
+  const { registerBingxApiRoutes } = await import("./routes/bingxApi.routes");
+  const { paperTradingRouter } = await import("./routes/paperTrading.routes");
+  const { reportsRouter } = await import("./routes/reports.routes");
+  registerExchangeRoutes(app);
+  registerExecutionRoutes(app);
+  registerBrokerRoutes(app);
+  registerBingxApiRoutes(app);
+  app.use("/api/paper", paperTradingRouter);
+  app.use("/api/reports", reportsRouter);
 
   return httpServer;
 }

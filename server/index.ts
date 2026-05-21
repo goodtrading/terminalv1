@@ -158,29 +158,18 @@ app.use((req, res, next) => {
   });
   console.log("[BOOT] Health endpoint registered");
 
-  // Start mobile cache before server starts
-  console.log("[BOOT] Starting mobile state cache...");
-  const { startMobileCache } = await import("./mobile-cache");
-  startMobileCache();
-  console.log("[BOOT] Mobile cache started");
-
-  // Start Replit push service
-  console.log("[BOOT] Starting Replit push service...");
-  try {
-    const { replitPushService } = await import("./replit-push");
-    console.log("[BOOT] Replit push service imported successfully");
-    replitPushService.start();
-    console.log("[BOOT] Replit push service start() called");
-  } catch (error) {
-    console.error("[BOOT] Failed to start Replit push service:", error);
-  }
-
-  // ALWAYS serve on port specified in environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
   console.log(`[BOOT] Starting server on port ${port}...`);
+
+  httpServer.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `[BOOT] Port ${port} is already in use. Stop the other dev server (Get-NetTCPConnection -LocalPort ${port}) and run npm run dev again.`,
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
 
   httpServer.listen(
     {
@@ -192,4 +181,21 @@ app.use((req, res, next) => {
       log(`serving on port ${port}`);
     },
   );
+
+  void (async () => {
+    console.log("[BOOT] Starting mobile state cache...");
+    const { startMobileCache } = await import("./mobile-cache");
+    startMobileCache();
+    console.log("[BOOT] Mobile cache started");
+
+    console.log("[BOOT] Starting Replit push service...");
+    try {
+      const { replitPushService } = await import("./replit-push");
+      console.log("[BOOT] Replit push service imported successfully");
+      replitPushService.start();
+      console.log("[BOOT] Replit push service start() called");
+    } catch (error) {
+      console.error("[BOOT] Failed to start Replit push service:", error);
+    }
+  })();
 })();

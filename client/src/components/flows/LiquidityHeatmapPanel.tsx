@@ -19,6 +19,7 @@ import { useBookmapMarketTradeSummary } from "@/hooks/useBookmapMarketTradeSumma
 import {
   detectSpotPerpDivergence,
   filterDivergenceSignals,
+  resetDivergenceCooldown,
 } from "./bookmapDivergenceEngine";
 import { SpotPerpDivergencePanel } from "./SpotPerpDivergencePanel";
 import { BOOKMAP_OB_STALE_MS, isOrderbookStale } from "@shared/bookmapFreshness";
@@ -705,6 +706,13 @@ export function LiquidityHeatmapPanel({
         signals: [],
         debug: {
           candidates: 0,
+          filteredByDistance: 0,
+          filteredByPersistence: 0,
+          filteredByStrength: 0,
+          filteredByType: 0,
+          duplicateSuppressed: 0,
+          filteredByCooldown: 0,
+          filtered: 0,
           activeSignals: 0,
           rejectedLowConfidence: 0,
           strongestSignal: null,
@@ -721,6 +729,11 @@ export function LiquidityHeatmapPanel({
       spotPrice: tickerSpot ?? priceReference,
       perpPrice: perpBookMid ?? priceReference ?? tickerSpot,
       domBucketSize: priceScale.domBucketSize,
+      filterPrefs: {
+        passiveLiquidity: visualSettings.divergence.passiveLiquidity,
+        aggressionDivergence: visualSettings.divergence.aggressionDivergence,
+        confluenceSignals: visualSettings.divergence.confluenceSignals,
+      },
     });
   }, [
     bothModeDivergence,
@@ -734,7 +747,14 @@ export function LiquidityHeatmapPanel({
     priceReference,
     perpBookMid,
     priceScale.domBucketSize,
+    visualSettings.divergence.passiveLiquidity,
+    visualSettings.divergence.aggressionDivergence,
+    visualSettings.divergence.confluenceSignals,
   ]);
+
+  useEffect(() => {
+    if (!bothModeDivergence) resetDivergenceCooldown();
+  }, [bothModeDivergence]);
 
   const divergenceDisplaySignals = useMemo(
     () =>
@@ -756,7 +776,7 @@ export function LiquidityHeatmapPanel({
 
   useEffect(() => {
     if (!import.meta.env.DEV || !bothModeDivergence) return;
-    console.debug("[SPOT_PERP_DIVERGENCE]", divergenceResult.debug);
+    console.debug("[SPOT_PERP_DIVERGENCE_QUALITY]", divergenceResult.debug);
   }, [bothModeDivergence, divergenceResult.debug]);
 
   const normalizeBands = useCallback(
@@ -1609,7 +1629,7 @@ export function LiquidityHeatmapPanel({
       : "";
     const divDbg =
       bothModeDivergence && visualSettings.divergence.enabled
-        ? ` · div candidates ${divergenceResult.debug.candidates} · active ${divergenceDisplaySignals.length} · high ${divergenceDisplaySignals.filter((s) => s.severity === "high").length}`
+        ? ` · div candidates ${divergenceResult.debug.candidates} · filtered ${divergenceResult.debug.filtered} · active ${divergenceDisplaySignals.length} · high ${divergenceDisplaySignals.filter((s) => s.severity === "high").length}`
         : "";
     return (
       `BOOKMAP · ${sourceTag} · ${interactionTag} · ${statusTag} · verticalMode ${priceScale.verticalMode} · depth ${depthPresetLabel(depthRangePreset, localRangeUsd)} · range ${formatBookmapRangeShort(priceScale.visibleMinPrice)}–${formatBookmapRangeShort(priceScale.visibleMaxPrice)} · domWalls ${domWalls} · bands ${st?.visibleBandCount ?? 0}/${st?.renderedBandCount ?? 0} · age ${age}ms${perpFreshnessDbg}${bboPathDbg}${bboDualDbg}${divDbg}${tradeDbg}`
@@ -2037,6 +2057,8 @@ export function LiquidityHeatmapPanel({
               divergenceDisplaySignals.length > 0 && (
                 <SpotPerpDivergencePanel
                   signals={divergenceDisplaySignals}
+                  showInvalidation={visualSettings.divergence.showInvalidation}
+                  showBias={visualSettings.divergence.showBias}
                   className="absolute left-2 bottom-2 z-[18]"
                 />
               )}

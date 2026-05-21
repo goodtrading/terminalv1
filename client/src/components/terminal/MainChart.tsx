@@ -58,6 +58,8 @@ import { renderSqueezeLevels } from "./overlay/renderers/squeezeLevels";
 import { buildChartCoordinateHelpers } from "./chart/buildChartCoordinateHelpers";
 import { MeasurementOverlay } from "./measurement/MeasurementOverlay";
 import { useChartMeasurement } from "./measurement/useChartMeasurement";
+import { PaperChartLimitOrders } from "./paperChart/PaperChartLimitOrders";
+import { PaperTradeOverlay } from "./paperChart/PaperTradeOverlay";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
 type UTCTimestamp = number;
@@ -1987,6 +1989,24 @@ export function MainChart({
                 chartHeight={chartSize.h}
                 isDragging={measurementDragging}
               />
+              {candleSeriesRef.current ? (
+                <>
+                  <PaperChartLimitOrders
+                    chartWidth={timeScaleWidth}
+                    chartHeight={chartSize.h}
+                    viewportVersion={drawingsViewportVersion}
+                    coordinates={chartCoordinates}
+                    candleSeries={candleSeriesRef.current}
+                  />
+                  <PaperTradeOverlay
+                    chartWidth={timeScaleWidth}
+                    chartHeight={chartSize.h}
+                    viewportVersion={drawingsViewportVersion}
+                    coordinates={chartCoordinates}
+                    candleSeries={candleSeriesRef.current}
+                  />
+                </>
+              ) : null}
               <DrawingsLayer
                 ref={drawingsLayerRef}
                 chartWidth={timeScaleWidth}

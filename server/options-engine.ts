@@ -13,6 +13,7 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 export async function refreshOptionsEngine(): Promise<void> {
   try {
+    await storage.ensureBootstrapped();
     const { options, source } = await DeribitOptionsGateway.ingestOptions();
 
     const spot = MarketDataGateway.getCachedTicker()?.price;

@@ -7,6 +7,7 @@
     "generate:gex": "node scripts/deribit-gex.js || true",
     "dev:client": "vite dev --port 5000",
     "dev": "cross-env NODE_ENV=development tsx server/index.ts",
+    "dev:clean": "node -e \"const fs=require('fs');const os=require('os');const p=require('path');const t=p.join(os.tmpdir(),'goodtrading-vite-cache');try{fs.rmSync(t,{recursive:true,force:true});}catch(e){}try{fs.rmSync('node_modules/.vite',{recursive:true,force:true});}catch(e){}console.log('Vite cache cleared');\"",
     "build": "npm run generate:gex && tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",

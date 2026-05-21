@@ -48,6 +48,11 @@ export interface BookmapVisualSettings {
     minSeverity: DivergenceMinSeverity;
     showPanel: boolean;
     showChartMarkers: boolean;
+    passiveLiquidity: boolean;
+    aggressionDivergence: boolean;
+    confluenceSignals: boolean;
+    showInvalidation: boolean;
+    showBias: boolean;
   };
   layout: {
     rightSpacePct: number;
@@ -103,6 +108,11 @@ export const DEFAULT_BOOKMAP_VISUAL_SETTINGS: BookmapVisualSettings = {
     minSeverity: "medium",
     showPanel: true,
     showChartMarkers: false,
+    passiveLiquidity: true,
+    aggressionDivergence: true,
+    confluenceSignals: true,
+    showInvalidation: true,
+    showBias: true,
   },
   layout: {
     rightSpacePct: 20,

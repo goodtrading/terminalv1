@@ -51,6 +51,7 @@ function ReportsTabContent({
 export function ReportsPanel() {
   const [activeTab, setActiveTab] = useState<ReportsTabId>("session");
   const { report: sessionReport, isLoading: sessionLoading } = useSessionReportData();
+  const executionLive = activeTab === "execution";
 
   return (
     <section className="w-full h-full min-h-0 flex flex-col overflow-hidden bg-terminal-bg text-terminal-text">
@@ -66,7 +67,7 @@ export function ReportsPanel() {
               </p>
             </section>
             <section className="flex flex-wrap items-center gap-2">
-              <OtherTabsMockBadge />
+              <OtherTabsMockBadge executionLive={executionLive} />
               <ReportBadge variant="phase">Phase 2 / Session Live</ReportBadge>
             </section>
           </section>

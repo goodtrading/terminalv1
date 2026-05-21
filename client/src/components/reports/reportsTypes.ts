@@ -13,14 +13,19 @@ export type ReportBadgeVariant =
   | "negative";
 
 export type TradeReviewRow = {
+  tradeId: string;
   time: string;
   direction: "Long" | "Short";
   setup: string;
   entry: string;
   exit: string;
   r: string;
+  pnl: string;
   quality: string;
   mistake: string;
+  status: string;
+  notesPreview: string;
+  editable: boolean;
 };
 
 export type SetupPerformance = {

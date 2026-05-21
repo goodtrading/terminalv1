@@ -9,3 +9,5 @@ build
 server/public
 vite.config.ts.*
 *.tar.gz
+server/storage/
+server/storage/*.json

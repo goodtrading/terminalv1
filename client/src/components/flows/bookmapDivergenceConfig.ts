@@ -5,6 +5,11 @@ export type BookmapDivergencePrefs = {
   minSeverity: DivergenceMinSeverity;
   showPanel: boolean;
   showChartMarkers: boolean;
+  passiveLiquidity: boolean;
+  aggressionDivergence: boolean;
+  confluenceSignals: boolean;
+  showInvalidation: boolean;
+  showBias: boolean;
 };
 
 export const DEFAULT_BOOKMAP_DIVERGENCE_PREFS: BookmapDivergencePrefs = {
@@ -12,6 +17,11 @@ export const DEFAULT_BOOKMAP_DIVERGENCE_PREFS: BookmapDivergencePrefs = {
   minSeverity: "medium",
   showPanel: true,
   showChartMarkers: false,
+  passiveLiquidity: true,
+  aggressionDivergence: true,
+  confluenceSignals: true,
+  showInvalidation: true,
+  showBias: true,
 };
 
 export function parseDivergencePrefs(raw: unknown): BookmapDivergencePrefs {
@@ -21,6 +31,11 @@ export function parseDivergencePrefs(raw: unknown): BookmapDivergencePrefs {
     minSeverity: o.minSeverity === "high" ? "high" : "medium",
     showPanel: o.showPanel !== false,
     showChartMarkers: o.showChartMarkers === true,
+    passiveLiquidity: o.passiveLiquidity !== false,
+    aggressionDivergence: o.aggressionDivergence !== false,
+    confluenceSignals: o.confluenceSignals !== false,
+    showInvalidation: o.showInvalidation !== false,
+    showBias: o.showBias !== false,
   };
 }
 

@@ -2,8 +2,9 @@ import { TopNav } from "@/components/terminal/TopNav";
 import { LeftSidebar } from "@/components/terminal/LeftSidebar";
 import RightSidebar from "@/components/terminal/RightSidebar";
 import { MainChart } from "@/components/terminal/MainChart";
-import { GammaProfile } from "@/components/terminal/GammaProfile";
-import { TradingPlan } from "@/components/terminal/TradingPlan";
+import { ExchangeConnectionPanel } from "@/components/terminal/execution/ExchangeConnectionPanel";
+import { TradingExecutionPanel } from "@/components/terminal/execution/TradingExecutionPanel";
+import { BrokerSessionProvider } from "@/components/terminal/execution/useBrokerSession";
 import { MarketStructureBar } from "@/components/terminal/MarketStructureBar";
 import { BottomPanel } from "@/components/terminal/BottomPanel";
 import { useEffect, useState } from "react";
@@ -76,8 +77,10 @@ const viewMode: "PRO" = "PRO";
                 >
                   {bottomPanelsMinimized ? "EXPAND" : "MINIMIZE"}
                 </button>
-                <GammaProfile collapsed={bottomPanelsMinimized} />
-                <TradingPlan collapsed={bottomPanelsMinimized} />
+                <BrokerSessionProvider>
+                  <ExchangeConnectionPanel collapsed={bottomPanelsMinimized} />
+                  <TradingExecutionPanel collapsed={bottomPanelsMinimized} />
+                </BrokerSessionProvider>
               </div>
             </div>
 

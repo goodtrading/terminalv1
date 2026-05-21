@@ -254,7 +254,22 @@ export function LeftSidebar() {
 
       <TerminalPanel title="MARKET STATE">
         <TerminalValue label="Gamma Regime" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge tooltip="Gamma Regime" />
-        <TerminalValue label="Total GEX" value={market ? `${(market.totalGex / 1e9).toFixed(2)}B` : "--"} trend={market && market.totalGex > 0 ? "positive" : "negative"} />
+        <TerminalValue
+          label="Total GEX"
+          value={
+            typeof market?.totalGex === "number" && Number.isFinite(market.totalGex)
+              ? `${(market.totalGex / 1e9).toFixed(2)}B`
+              : typeof opts?.totalGex === "number" && Number.isFinite(opts.totalGex)
+                ? `${(opts.totalGex / 1e9).toFixed(2)}B`
+                : "--"
+          }
+          trend={
+            (typeof market?.totalGex === "number" && market.totalGex > 0) ||
+            (typeof opts?.totalGex === "number" && opts.totalGex > 0)
+              ? "positive"
+              : "negative"
+          }
+        />
         <TerminalValue
           label="GLOBAL FLIP"
           value={(() => {

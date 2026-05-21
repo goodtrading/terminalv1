@@ -30,7 +30,7 @@ function inferSpotFromOptionsData(data: OptionsEntry[]): number | null {
     }
   }
   if (maxOi > 0 && strikeAtMaxOi > 0) return strikeAtMaxOi;
-  const strikes = [...new Set(data.map((d) => d.strike))]
+  const strikes = Array.from(new Set(data.map((d) => d.strike)))
     .filter((s) => Number.isFinite(s) && s > 0)
     .sort((a, b) => a - b);
   if (!strikes.length) return null;
@@ -77,7 +77,113 @@ export class MemStorage implements IStorage {
 
   constructor() {
     const csvPath = path.resolve(process.cwd(), "data", "deribit_options.csv");
-    this.recomputeAll(csvPath).catch(err => console.error("Critical: Analytics initialization failed:", err.message));
+    this.recomputeAll(csvPath).catch((err) =>
+      console.error(
+        "[Storage] CSV bootstrap failed (live Deribit refresh can still populate storage):",
+        err instanceof Error ? err.message : String(err),
+      ),
+    );
+  }
+
+  private isAnalyticsReady(): boolean {
+    return !!(this.marketState && this.optionsPositioning && this.keyLevels && this.dealerExposure);
+  }
+
+  /** Retry CSV bootstrap after data/ is restored (e.g. project moved off OneDrive). */
+  async ensureBootstrapped(): Promise<boolean> {
+    if (this.isAnalyticsReady()) return true;
+    const csvPath = path.resolve(process.cwd(), "data", "deribit_options.csv");
+    try {
+      await this.recomputeAll(csvPath);
+    } catch (err) {
+      console.error(
+        "[Storage][ensureBootstrapped] CSV recompute failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    return this.isAnalyticsReady();
+  }
+
+  /**
+   * When CSV bootstrap never ran, seed in-memory analytics from a live Deribit summary
+   * so /api/market-state and related endpoints can serve real values.
+   */
+  private bootstrapShellFromDeribitSummary(
+    summary: OptionsSummaryUpdate,
+    spotPrice: number,
+  ): void {
+    const gex = summary.totalGex;
+    if (gex == null || !Number.isFinite(gex)) return;
+
+    const flip =
+      summary.gammaFlip != null && Number.isFinite(summary.gammaFlip) && summary.gammaFlip > 0
+        ? summary.gammaFlip
+        : null;
+    const transitionPct = GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000;
+    const callWall = summary.callWall ?? 0;
+    const putWall = summary.putWall ?? 0;
+    const vanna = summary.totalVanna ?? 0;
+    const charm = summary.totalCharm ?? 0;
+    const biasThreshold = 0.05;
+
+    this.marketState = {
+      id: 1,
+      gammaRegime: gex > 0 ? "LONG GAMMA" : "SHORT GAMMA",
+      totalGex: gex,
+      gammaFlip: flip,
+      distanceToFlip:
+        flip != null ? Math.abs(((flip - spotPrice) / spotPrice) * 100) : null,
+      transitionZoneStart: flip != null ? flip * (1 - transitionPct) : null,
+      transitionZoneEnd: flip != null ? flip * (1 + transitionPct) : null,
+      gammaAcceleration: "NEUTRAL",
+      timestamp: new Date(),
+    };
+
+    this.optionsPositioning = {
+      id: 1,
+      callWall: callWall > 0 ? callWall : 0,
+      putWall: putWall > 0 ? putWall : 0,
+      oiConcentration: 0,
+      dealerPivot:
+        callWall > 0 && putWall > 0 ? Math.round((callWall + putWall) / 2) : Math.round(spotPrice),
+      timestamp: new Date(),
+    };
+
+    const magnets = summary.gammaMagnets ?? [];
+    const firstZone = summary.shortGammaZones?.[0];
+    this.keyLevels = {
+      id: 1,
+      gammaMagnets: magnets,
+      shortGammaPocketStart: firstZone?.startStrike ?? spotPrice * 0.98,
+      shortGammaPocketEnd: firstZone?.endStrike ?? spotPrice * 1.02,
+      deepRiskPocketStart: spotPrice * 0.9,
+      deepRiskPocketEnd: spotPrice * 0.95,
+      timestamp: new Date(),
+    };
+
+    this.dealerExposure = {
+      id: 1,
+      vannaExposure: vanna,
+      vannaBias: vanna > biasThreshold ? "BULLISH" : vanna < -biasThreshold ? "BEARISH" : "NEUTRAL",
+      charmExposure: charm,
+      charmBias: charm > biasThreshold ? "BULLISH" : charm < -biasThreshold ? "BEARISH" : "NEUTRAL",
+      gammaPressure: "+0.00",
+      gammaConcentration: 0,
+      timestamp: new Date(),
+    };
+
+    this.dealerHedgingFlow = {
+      id: 1,
+      hedgeFlowBias: "NEUTRAL",
+      hedgeFlowIntensity: "LOW",
+      accelerationRisk: "LOW",
+      flowTriggerUp: spotPrice * 1.01,
+      flowTriggerDown: spotPrice * 0.99,
+      timestamp: new Date(),
+    };
+
+    this.optionsLastUpdated = Date.now();
+    console.log("[Storage] Seeded analytics shell from live Deribit summary");
   }
 
   async recomputeAll(csvPath: string) {
@@ -294,8 +400,15 @@ export class MemStorage implements IStorage {
       totalVanna: summary.totalVanna,
       totalCharm: summary.totalCharm,
     });
-    if (!this.marketState || !this.optionsPositioning || !this.keyLevels) return;
+    if (!this.isAnalyticsReady()) {
+      this.bootstrapShellFromDeribitSummary(summary, spotPrice);
+      if (!this.isAnalyticsReady()) return;
+    }
     let updated = false;
+    const ms = this.marketState;
+    const op = this.optionsPositioning;
+    const kl = this.keyLevels;
+    if (!ms || !op || !kl) return;
 
     const gex = summary.totalGex;
     const flip = summary.gammaFlip;
@@ -305,53 +418,54 @@ export class MemStorage implements IStorage {
     if (gex != null && !Number.isNaN(gex)) {
       console.log(`[Storage][UpdatingGEX] gex=${gex} regime=${gex > 0 ? "LONG GAMMA" : "SHORT GAMMA"}`);
       this.marketState = {
-        ...this.marketState,
+        ...ms,
         totalGex: gex,
         gammaRegime: gex > 0 ? "LONG GAMMA" : "SHORT GAMMA",
-        timestamp: new Date()
+        timestamp: new Date(),
       };
       updated = true;
       console.log(`[Storage][UpdatedMarketState] totalGex=${this.marketState.totalGex}`);
     }
     const transitionPct = GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000;
     const flipValid = flip != null && Number.isFinite(flip) && flip > 0;
+    const msAfterGex = this.marketState ?? ms;
     if (flipValid) {
       this.marketState = {
-        ...this.marketState,
+        ...msAfterGex,
         gammaFlip: flip,
         distanceToFlip: Math.abs(((flip - spotPrice) / spotPrice) * 100),
         transitionZoneStart: flip * (1 - transitionPct),
         transitionZoneEnd: flip * (1 + transitionPct),
-        timestamp: new Date()
+        timestamp: new Date(),
       };
       updated = true;
     } else {
-      // Reset stale flip-derived fields when flip is missing.
       this.marketState = {
-        ...this.marketState,
+        ...msAfterGex,
         gammaFlip: null,
         distanceToFlip: null,
         transitionZoneStart: null,
         transitionZoneEnd: null,
-        timestamp: new Date()
+        timestamp: new Date(),
       };
       updated = true;
     }
+    const msFinal = this.marketState ?? msAfterGex;
     console.log("[GammaFlipTrace][Storage]", {
       incomingFlip: flip,
       flipValid,
-      storedGammaFlip: this.marketState.gammaFlip,
-      storedDistanceToFlip: this.marketState.distanceToFlip,
-      storedTransitionZoneStart: this.marketState.transitionZoneStart,
-      storedTransitionZoneEnd: this.marketState.transitionZoneEnd,
+      storedGammaFlip: msFinal.gammaFlip,
+      storedDistanceToFlip: msFinal.distanceToFlip,
+      storedTransitionZoneStart: msFinal.transitionZoneStart,
+      storedTransitionZoneEnd: msFinal.transitionZoneEnd,
     });
     if (callWall != null && callWall > 0 && putWall != null && putWall > 0) {
       this.optionsPositioning = {
-        ...this.optionsPositioning,
+        ...op,
         callWall,
         putWall,
         dealerPivot: Math.round((callWall + putWall) / 2),
-        timestamp: new Date()
+        timestamp: new Date(),
       } as OptionsPositioning & {
         activeCallWall?: number;
         activePutWall?: number;
@@ -368,12 +482,13 @@ export class MemStorage implements IStorage {
     if (summary.gammaMagnets && summary.gammaMagnets.length > 0) {
       const zones = summary.shortGammaZones;
       const firstZone = zones?.[0];
+      const klCurrent = this.keyLevels ?? kl;
       this.keyLevels = {
-        ...this.keyLevels,
+        ...klCurrent,
         gammaMagnets: summary.gammaMagnets,
-        shortGammaPocketStart: firstZone?.startStrike ?? this.keyLevels.shortGammaPocketStart,
-        shortGammaPocketEnd: firstZone?.endStrike ?? this.keyLevels.shortGammaPocketEnd,
-        timestamp: new Date()
+        shortGammaPocketStart: firstZone?.startStrike ?? klCurrent.shortGammaPocketStart,
+        shortGammaPocketEnd: firstZone?.endStrike ?? klCurrent.shortGammaPocketEnd,
+        timestamp: new Date(),
       };
       updated = true;
     }
