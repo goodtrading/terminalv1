@@ -243,6 +243,10 @@ function mapPositions(data: unknown): BingXAccountSnapshot["positions"] {
           coerceNumber(p.unrealizedProfit ?? p.unrealizedPnl) || undefined,
         leverage: coerceNumber(p.leverage) || undefined,
         marginMode: p.isolated ? "isolated" : p.marginMode ? String(p.marginMode) : undefined,
+        liquidationPrice:
+          coerceNumber(
+            p.liquidationPrice ?? p.liqPrice ?? p.liquidation ?? p.liquidationPx,
+          ) || undefined,
       };
     })
     .filter((p): p is NonNullable<typeof p> => p != null && p.symbol.length > 0);

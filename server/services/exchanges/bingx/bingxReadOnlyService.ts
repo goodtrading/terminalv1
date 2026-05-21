@@ -258,6 +258,7 @@ function mapPositions(
         quantity: qty,
         entryPrice: entry,
         markPrice: mark,
+        liquidationPrice: p.liquidationPrice,
         leverage: p.leverage,
         marginMode: normalizeMarginMode(p.marginMode),
         unrealizedPnlUsdt: p.unrealizedPnl,

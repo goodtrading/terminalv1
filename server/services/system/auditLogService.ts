@@ -20,7 +20,9 @@ export type AuditEventType =
   | "paper_partial_close"
   | "security_guard_event"
   | "market_data_error"
-  | "system_health_error";
+  | "system_health_error"
+  | "risk_mirror_warning"
+  | "risk_mirror_error";
 
 export interface AuditLogEvent {
   id: string;
@@ -54,6 +56,8 @@ const DANGEROUS_KEYS = new Set([
 type StorageFile = { events: AuditLogEvent[] };
 
 const snapshotSyncLastEmit = new Map<string, number>();
+const riskMirrorAuditLastEmit = new Map<string, number>();
+const RISK_MIRROR_AUDIT_THROTTLE_MS = 60_000;
 
 function ensureStorageDir(): void {
   if (!fs.existsSync(STORAGE_DIR)) {
@@ -235,6 +239,33 @@ export async function emitBingXSnapshotSyncedIfAllowed(
       connectionId,
       ...metadata,
     },
+  });
+}
+
+/** Throttle risk mirror audit events to at most once per 60s per userId+warningId. */
+export async function emitRiskMirrorAuditIfAllowed(
+  userId: number,
+  warningId: string,
+  event: {
+    type: "risk_mirror_warning" | "risk_mirror_error";
+    severity: AuditEventSeverity;
+    message: string;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<AuditLogEvent | null> {
+  const key = `${userId}:${warningId}`;
+  const now = Date.now();
+  const last = riskMirrorAuditLastEmit.get(key) ?? 0;
+  if (now - last < RISK_MIRROR_AUDIT_THROTTLE_MS) {
+    return null;
+  }
+  riskMirrorAuditLastEmit.set(key, now);
+  return emitAuditEvent({
+    userId,
+    type: event.type,
+    severity: event.severity,
+    message: event.message,
+    metadata: event.metadata,
   });
 }
 

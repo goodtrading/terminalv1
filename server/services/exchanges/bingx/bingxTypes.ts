@@ -58,6 +58,7 @@ export interface BingXAccountSnapshot {
     unrealizedPnl?: number;
     leverage?: number;
     marginMode?: string;
+    liquidationPrice?: number;
   }>;
   openOrders: Array<{
     orderId: string;

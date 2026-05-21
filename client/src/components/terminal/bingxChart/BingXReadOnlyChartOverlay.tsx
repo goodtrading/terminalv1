@@ -16,6 +16,7 @@ import {
   PRICE_SCALE_INSET,
 } from "./bingxReadOnlyChartHelpers";
 import { useBingXReadOnlyChartData } from "./useBingXReadOnlyChartData";
+import { useBingXReadOnlyRiskMirror } from "../riskMirror/useBingXReadOnlyRiskMirror";
 import { formatOverlayPrice } from "../paperChart/paperTradeOverlayHelpers";
 
 const BAR_HEIGHT = 22;
@@ -139,6 +140,15 @@ export function BingXReadOnlyChartOverlay({
     syncError,
   } = useBingXReadOnlyChartData(chartSymbol);
 
+  const sym = chartSymbol ?? "BTC-USDT";
+  const { snapshot: riskSnapshot } = useBingXReadOnlyRiskMirror(sym);
+  const riskBadge =
+    riskSnapshot?.score.status === "danger"
+      ? "RISK: DANGER"
+      : riskSnapshot?.score.status === "conflicted"
+        ? "CONTEXT: CONFLICTED"
+        : null;
+
   const priceLineRefs = useRef<Map<string, IPriceLine>>(new Map());
 
   const lineSpecs = useMemo(() => {
@@ -258,6 +268,19 @@ export function BingXReadOnlyChartOverlay({
         syncError={syncError}
         hasOverlayContent={hasOverlayContent}
       />
+      {riskBadge ? (
+        <div
+          className={cn(
+            "absolute top-1 left-[min(52%,280px)] z-[11] pointer-events-none rounded border px-1.5 py-0.5",
+            "text-[7px] font-mono font-bold uppercase tracking-wider bg-black/90",
+            riskSnapshot?.score.status === "danger"
+              ? "text-red-300/95 border-red-900/50"
+              : "text-amber-300/90 border-amber-900/45",
+          )}
+        >
+          {riskBadge}
+        </div>
+      ) : null}
 
       {isLoading && !hasOverlayContent ? (
         <div className="absolute top-7 left-1 z-[11] pointer-events-none text-[8px] font-mono text-slate-500">

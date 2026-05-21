@@ -13,6 +13,7 @@ import {
 import { hasPersistedBingXConnection } from "./bingxSession";
 import { DEFAULT_CHART_SYMBOL } from "./executionContext";
 import { ExecutionVenueStrip } from "./ExecutionVenueStrip";
+import { ReadOnlyRiskMirrorPanel } from "../riskMirror/ReadOnlyRiskMirrorPanel";
 
 type BingXReadOnlyExecutionBlockProps = {
   session: BrokerSessionState;
@@ -308,6 +309,8 @@ export function BingXReadOnlyExecutionBlock({
           </div>
         </section>
       ) : null}
+
+      <ReadOnlyRiskMirrorPanel symbol={symbol} />
     </div>
   );
 }

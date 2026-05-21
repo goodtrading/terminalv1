@@ -1175,6 +1175,7 @@ export async function registerRoutes(
   const { registerBrokerRoutes } = await import("./routes/broker.routes");
   const { registerBingxApiRoutes } = await import("./routes/bingxApi.routes");
   const { registerSystemRoutes } = await import("./routes/system.routes");
+  const { registerRiskMirrorRoutes } = await import("./routes/riskMirror.routes");
   const { paperTradingRouter } = await import("./routes/paperTrading.routes");
   const { reportsRouter } = await import("./routes/reports.routes");
   registerExchangeRoutes(app);
@@ -1182,6 +1183,7 @@ export async function registerRoutes(
   registerBrokerRoutes(app);
   registerBingxApiRoutes(app);
   registerSystemRoutes(app);
+  registerRiskMirrorRoutes(app);
   app.use("/api/paper", paperTradingRouter);
   app.use("/api/reports", reportsRouter);
 
