@@ -10,10 +10,12 @@ import { probeBingXApiPermissions } from "../exchanges/bingx/bingxApiPermissionP
 import { getBingXReadOnlySnapshot } from "../exchanges/bingx/bingxReadOnlyService";
 import { isBingxApiConnectionEnabled } from "../exchanges/bingx/bingxAccountService";
 import { readStorageWarmup } from "../system/auditLogService";
+import { buildLiveLockedDryRunWarnings } from "./liveDryRunPolicy";
 import {
   getLiveTradingEnvFlags,
   getRiskGuardStatus,
   isApiConnectionEnabled,
+  isDryRunEnabled,
   isMaxAccountRiskConfigured,
   isMaxOrderSizeConfigured,
   isSlRequiredPolicyConfigured,
@@ -59,19 +61,20 @@ function isAuditWritable(): boolean {
 
 function resolveStatus(
   infraBlockers: string[],
-  flagBlockers: string[],
   flags: ReturnType<typeof getLiveTradingEnvFlags>,
+  readyForLive: boolean,
+  readyForDryRun: boolean,
 ): LiveTradingReadiness["status"] {
   if (infraBlockers.length > 0) {
     return "not_ready";
   }
-  if (!flags.liveTradingEnabled) {
-    return "locked";
+  if (readyForLive) {
+    return "ready_for_live";
   }
-  if (flagBlockers.length > 0) {
-    return flags.apiTradingEnabled ? "ready_for_dry_run" : "not_ready";
+  if (readyForDryRun) {
+    return "ready_for_dry_run";
   }
-  return "ready_for_live";
+  return "locked";
 }
 
 export async function getLiveTradingReadiness(
@@ -115,7 +118,7 @@ export async function getLiveTradingReadiness(
     flagBlockers.push("BINGX_ENABLE_LIVE_TRADING=false");
   }
   if (!flags.apiTradingEnabled) {
-    flagBlockers.push("BINGX_ENABLE_API_TRADING=false");
+    warnings.push("BINGX_ENABLE_API_TRADING=false (live submit only; dry-run OK).");
   }
   if (!flags.orderSubmitEnabled) {
     flagBlockers.push("BINGX_ENABLE_ORDER_SUBMIT=false");
@@ -268,9 +271,8 @@ export async function getLiveTradingReadiness(
             probe.message ?? "Permission probe completed.",
           ),
         );
-        if (probe.tradePermission !== "confirmed" && flags.apiTradingEnabled) {
+        if (probe.tradePermission !== "confirmed") {
           warnings.push("API trading permission not confirmed on exchange key");
-          blockers.push("API trading permission not confirmed");
         }
         checks.push(
           check(
@@ -331,16 +333,24 @@ export async function getLiveTradingReadiness(
     ),
   );
 
+  const liveFlagsOk =
+    flags.liveTradingEnabled &&
+    flags.orderSubmitEnabled &&
+    flags.apiTradingEnabled;
   checks.push(
     check(
       "live_flags",
       "Live execution flags",
-      flagBlockers.length === 0 ? "pass" : "fail",
-      flagBlockers.length === 0
+      liveFlagsOk ? "pass" : "warning",
+      liveFlagsOk
         ? "All live action flags enabled."
-        : `${flagBlockers.join(", ")} (locked in phase 5A).`,
+        : "Live submit flags off by design — dry-run unaffected.",
     ),
   );
+  if (!isDryRunEnabled()) {
+    infraBlockers.push("BINGX_ENABLE_DRY_RUN=false");
+    blockers.push("BINGX_ENABLE_DRY_RUN=false");
+  }
 
   const storageOk = isStorageWritable();
   checks.push(
@@ -442,24 +452,41 @@ export async function getLiveTradingReadiness(
     warnings.push("Live trading enabled while execution not fully wired");
   }
 
-  blockers.push(...infraBlockers, ...flagBlockers);
-  const uniqueBlockers = Array.from(new Set(blockers));
+  warnings.push(...buildLiveLockedDryRunWarnings(flags));
 
-  const status = resolveStatus(infraBlockers, flagBlockers, flags);
-  const readyForLive =
-    status === "ready_for_live" &&
-    uniqueBlockers.length === 0 &&
-    tradePermission !== "denied";
+  const uniqueInfraBlockers = Array.from(new Set(infraBlockers));
+
+  const dryRunLimitsOk =
+    isMaxOrderSizeConfigured() && isMaxAccountRiskConfigured();
   const readyForDryRun =
-    infraBlockers.length === 0 &&
-    (status === "ready_for_dry_run" || status === "locked" || readyForLive);
+    isDryRunEnabled() &&
+    uniqueInfraBlockers.length === 0 &&
+    dryRunLimitsOk &&
+    hasConnection;
+
+  const readyForLive =
+    flags.liveTradingEnabled &&
+    flags.apiTradingEnabled &&
+    flags.orderSubmitEnabled &&
+    flags.orderCancelEnabled &&
+    flags.positionCloseEnabled &&
+    uniqueInfraBlockers.length === 0 &&
+    dryRunLimitsOk &&
+    tradePermission !== "denied";
+
+  const status = resolveStatus(
+    uniqueInfraBlockers,
+    flags,
+    readyForLive,
+    readyForDryRun,
+  );
 
   const result: LiveTradingReadiness = {
     status,
     exchange: "bingx",
     ...flags,
     checks,
-    blockers: uniqueBlockers,
+    blockers: uniqueInfraBlockers,
     warnings: Array.from(new Set(warnings)),
     readyForDryRun,
     readyForLive,

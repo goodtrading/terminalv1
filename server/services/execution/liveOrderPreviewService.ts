@@ -15,6 +15,14 @@ import type {
   LiveOrderPreviewType,
 } from "./liveOrderPreviewTypes";
 import {
+  buildLiveLockedDryRunWarnings,
+  filterDryRunInfraBlockers,
+  isLiveOnlyEnvBlocker,
+} from "./liveDryRunPolicy";
+import {
+  getLiveTradingEnvFlags,
+  getMaxAccountRiskPct,
+  getMaxOrderNotionalUsdt,
   getRiskGuardStatus,
   isDryRunEnabled,
   isMaxAccountRiskConfigured,
@@ -317,17 +325,22 @@ export async function previewBingXLiveOrder(
     return result;
   }
 
-  if (readinessFull.status === "not_ready" || !readinessFull.readyForDryRun) {
+  if (!readinessFull.readyForDryRun) {
+    const infraBlockers = filterDryRunInfraBlockers(readinessFull.blockers);
     result.blockers.push(
-      ...readinessFull.blockers.slice(0, 8),
-      readinessFull.status === "not_ready"
-        ? "Live readiness: not_ready"
-        : "Live readiness: not ready for dry run",
+      ...infraBlockers.slice(0, 8),
+      infraBlockers.length === 0
+        ? "Live readiness: not ready for dry run"
+        : "",
     );
+    result.blockers = result.blockers.filter((b) => b.length > 0);
+    result.warnings.push(...readinessFull.warnings.slice(0, 6));
     result.message = "DRY RUN BLOCKED — risk guard failed";
     await emitLiveOrderPreviewBlocked(uid, request, result);
     return result;
   }
+
+  result.warnings.push(...buildLiveLockedDryRunWarnings(getLiveTradingEnvFlags()));
 
   if (!conn) {
     result.blockers.push("No BingX connection");
@@ -421,24 +434,24 @@ export async function previewBingXLiveOrder(
   result.estimate.estimatedSlippageUsdt =
     slipBps > 0 ? round2((notionalUsdt * slipBps) / 10_000) : undefined;
 
-  const maxNotional = getRiskGuardStatus().maxNotionalUsdt;
+  const maxNotional = getMaxOrderNotionalUsdt();
   if (!isMaxOrderSizeConfigured() || maxNotional == null) {
-    result.blockers.push("MAX_ORDER_NOTIONAL_USDT not configured");
+    result.blockers.push("Max order size not configured (MAX_ORDER_NOTIONAL_USDT)");
   } else if (notionalUsdt > maxNotional) {
     result.blockers.push(
-      `Notional ${notionalUsdt} USDT exceeds max ${maxNotional} USDT`,
+      `Max order size exceeded (${notionalUsdt} USDT > ${maxNotional} USDT)`,
     );
   }
 
-  const maxAccountRiskPct = envNumberLocal("MAX_ACCOUNT_RISK_PCT", 2);
+  const maxAccountRiskPct = getMaxAccountRiskPct() ?? envNumberLocal("MAX_ACCOUNT_RISK_PCT", 1);
   if (!isMaxAccountRiskConfigured()) {
-    result.blockers.push("MAX_ACCOUNT_RISK_PCT not configured");
+    result.blockers.push("Max account risk not configured (MAX_ACCOUNT_RISK_PCT)");
   }
 
   const requireSl = isSlRequiredPolicyConfigured();
   result.risk.requireStopLoss = requireSl;
   if (requireSl && (request.stopLossPrice == null || request.stopLossPrice <= 0)) {
-    result.blockers.push("Stop loss required (REQUIRE_SL_ON_LIVE_ORDERS=true)");
+    result.blockers.push("Stop loss required");
   }
 
   const riskMetrics =
@@ -461,9 +474,11 @@ export async function previewBingXLiveOrder(
     riskMetrics.maxLossAccountPct > maxAccountRiskPct
   ) {
     result.blockers.push(
-      `maxLossAccountPct ${riskMetrics.maxLossAccountPct}% exceeds MAX_ACCOUNT_RISK_PCT ${maxAccountRiskPct}%`,
+      `Max account risk exceeded (${riskMetrics.maxLossAccountPct}% > ${maxAccountRiskPct}%)`,
     );
   }
+
+  result.blockers = result.blockers.filter((b) => !isLiveOnlyEnvBlocker(b));
 
   if (entryPrice != null) {
     result.estimate.liquidationDistancePct = liquidationDistancePct(
@@ -488,10 +503,8 @@ export async function previewBingXLiveOrder(
     result.warnings.push("System health check skipped");
   }
 
-  if (readinessFull.readyForLive) {
-    result.warnings.push(
-      "Readiness reports readyForLive — live submit remains disabled in phase 5B.",
-    );
+  if (!getLiveTradingEnvFlags().orderSubmitEnabled) {
+    result.warnings.push("Live order submit disabled by design.");
   }
 
   const processEnvMarket = process.env.ALLOW_MARKET_ORDERS;

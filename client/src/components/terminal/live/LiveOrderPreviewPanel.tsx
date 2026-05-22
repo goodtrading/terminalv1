@@ -119,6 +119,14 @@ export function LiveOrderPreviewPanel({
       <p className="text-[7px] text-slate-500 leading-snug">
         Simulates a BingX order locally. Nothing is sent to the exchange.
       </p>
+      <div className="flex flex-wrap gap-1 text-[7px]">
+        <span className="rounded border border-amber-500/35 px-1 py-0.5 text-amber-200/90 uppercase font-bold">
+          Live execution locked
+        </span>
+        <span className="rounded border border-cyan-500/35 px-1 py-0.5 text-cyan-300/90 uppercase font-bold">
+          Dry run enabled
+        </span>
+      </div>
 
       <div className="flex flex-wrap gap-1">
         <button
@@ -332,9 +340,15 @@ export function LiveOrderPreviewPanel({
           ) : null}
           {preview.blockers.length > 0 ? (
             <ul className="text-[7px] text-red-300/80 max-h-16 overflow-y-auto">
-              {preview.blockers.map((b) => (
-                <li key={b}>· {b}</li>
-              ))}
+              {preview.blockers
+                .filter(
+                  (b) =>
+                    !b.includes("BINGX_ENABLE_LIVE_TRADING") &&
+                    !b.includes("BINGX_ENABLE_ORDER_SUBMIT"),
+                )
+                .map((b) => (
+                  <li key={b}>· {b}</li>
+                ))}
             </ul>
           ) : null}
           {preview.warnings.length > 0 ? (

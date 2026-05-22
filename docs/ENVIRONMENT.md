@@ -63,8 +63,10 @@ The actual key value is **never** printed in logs.
 See `.env.example` for:
 
 - `BINGX_ENABLE_API_CONNECTION`
-- `BINGX_ENABLE_API_TRADING` (must stay `false` for read-only phase)
+- `BINGX_ENABLE_API_TRADING` (`true` in phase 5B for permission probe; live submit still off)
 - `BINGX_ENABLE_LIVE_TRADING` (must stay `false` until phase 5C)
+- `MAX_ORDER_NOTIONAL_USDT` / `MAX_ACCOUNT_RISK_PCT` (required for dry-run validation; code defaults 25 / 1 if unset when dry-run is on)
+- `BINGX_ESTIMATED_FEE_BPS` / `BINGX_ESTIMATED_SLIPPAGE_BPS` (optional preview estimates)
 - `BINGX_ENABLE_ORDER_SUBMIT` (must stay `false` in phase 5A)
 - `BINGX_ENABLE_ORDER_CANCEL` (must stay `false` in phase 5A)
 - `BINGX_ENABLE_POSITION_CLOSE` (must stay `false` in phase 5A)

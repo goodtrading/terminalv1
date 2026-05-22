@@ -75,14 +75,30 @@ export function getLiveTradingEnvFlags() {
   };
 }
 
-export function isMaxOrderSizeConfigured(): boolean {
+/** Safe defaults when env unset — dry-run validation only (phase 5B). */
+export const DRY_RUN_DEFAULT_MAX_ORDER_NOTIONAL_USDT = 25;
+export const DRY_RUN_DEFAULT_MAX_ACCOUNT_RISK_PCT = 1;
+
+export function getMaxOrderNotionalUsdt(): number | null {
   const n = envNumber("MAX_ORDER_NOTIONAL_USDT");
-  return n != null && n > 0;
+  if (n != null && n > 0) return n;
+  if (isDryRunEnabled()) return DRY_RUN_DEFAULT_MAX_ORDER_NOTIONAL_USDT;
+  return null;
+}
+
+export function getMaxAccountRiskPct(): number | null {
+  const n = envNumber("MAX_ACCOUNT_RISK_PCT");
+  if (n != null && n > 0) return n;
+  if (isDryRunEnabled()) return DRY_RUN_DEFAULT_MAX_ACCOUNT_RISK_PCT;
+  return null;
+}
+
+export function isMaxOrderSizeConfigured(): boolean {
+  return getMaxOrderNotionalUsdt() != null;
 }
 
 export function isMaxAccountRiskConfigured(): boolean {
-  const n = envNumber("MAX_ACCOUNT_RISK_PCT");
-  return n != null && n > 0;
+  return getMaxAccountRiskPct() != null;
 }
 
 export function isSlRequiredPolicyConfigured(): boolean {
@@ -91,7 +107,8 @@ export function isSlRequiredPolicyConfigured(): boolean {
 
 export function getRiskGuardStatus() {
   return {
-    maxNotionalUsdt: envNumber("MAX_ORDER_NOTIONAL_USDT"),
+    maxNotionalUsdt: getMaxOrderNotionalUsdt(),
+    maxAccountRiskPct: getMaxAccountRiskPct(),
     maxLeverage: envNumber("MAX_LEVERAGE"),
     confirmationRequired: envBool("REQUIRE_ORDER_CONFIRMATION", true),
     tradingLocked: !isLiveTradingEnabled(),
