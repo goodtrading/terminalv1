@@ -110,9 +110,15 @@ export function LiveTradingReadinessBlock({
         </span>
       </div>
 
-      <p className="text-[8px] text-red-300/80 font-semibold leading-snug">
-        Real execution is still disabled.
-      </p>
+      {status === "ready_for_live" ? (
+        <p className="text-[8px] text-amber-200/90 font-semibold leading-snug">
+          LIVE TRADING: READY FOR LIVE — LIMIT ONLY · MARKET DISABLED
+        </p>
+      ) : (
+        <p className="text-[8px] text-red-300/80 font-semibold leading-snug">
+          Real limit submit disabled — check readiness and flags.
+        </p>
+      )}
 
       {checks.length > 0 ? (
         <ul className="space-y-0.5 py-0.5">

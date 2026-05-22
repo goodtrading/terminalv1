@@ -11,6 +11,7 @@
     "build": "npm run generate:gex && tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "test:live-submit-blockers": "tsx --test server/services/execution/liveOrderSubmit.blockers.test.ts",
     "db:push": "drizzle-kit push",
     "db:push:saas": "tsx scripts/apply-saas-tables.ts",
     "db:fix:saas-fk-users": "tsx scripts/repoint-saas-fks-to-users.ts",

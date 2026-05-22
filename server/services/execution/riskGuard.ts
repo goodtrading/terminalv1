@@ -60,6 +60,16 @@ export function isPositionCloseEnabled(): boolean {
   return envBool("BINGX_ENABLE_POSITION_CLOSE", false);
 }
 
+/** Phase 5C: live market orders on BingX (must stay false for controlled limit-only). */
+export function isBingxMarketOrdersAllowed(): boolean {
+  return envBool("BINGX_ALLOW_MARKET_ORDERS", false);
+}
+
+/** Phase 5C: emergency block — no live submits while active. */
+export function isKillSwitchActive(): boolean {
+  return envBool("LIVE_TRADING_KILL_SWITCH", false);
+}
+
 /** Phase 5B: internal dry-run preview (never submits to exchange). */
 export function isDryRunEnabled(): boolean {
   return envBool("BINGX_ENABLE_DRY_RUN", true);
@@ -72,6 +82,8 @@ export function getLiveTradingEnvFlags() {
     orderSubmitEnabled: isOrderSubmitEnabled(),
     orderCancelEnabled: isOrderCancelEnabled(),
     positionCloseEnabled: isPositionCloseEnabled(),
+    marketOrdersAllowed: isBingxMarketOrdersAllowed(),
+    killSwitchActive: isKillSwitchActive(),
   };
 }
 

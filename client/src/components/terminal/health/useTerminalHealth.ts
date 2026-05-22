@@ -408,8 +408,12 @@ export function useTerminalHealth() {
       liveTradingLabel: risk.liveTradingEnabled ? "UNLOCKED" : "LOCKED",
       apiTradingTone: liveLocked ? "ok" : "warn",
       apiTradingLabel: risk.permissions === "trading" ? "enabled" : "disabled",
-      endpointsTone: "ok" as HealthTone,
-      endpointsLabel: "real order routes return 403",
+      endpointsTone: (liveReadiness?.readyForLive ? "warn" : "ok") as HealthTone,
+      endpointsLabel: liveReadiness?.readyForLive
+        ? "POST /api/live/order-submit (limit only)"
+        : liveReadiness?.orderSubmitEnabled
+          ? "submit route gated by readiness"
+          : "real order submit off",
       maxNotional: risk.maxNotionalUsdt,
       maxLeverage: risk.maxLeverage,
     },

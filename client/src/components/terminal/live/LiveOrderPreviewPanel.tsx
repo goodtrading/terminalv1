@@ -1,11 +1,18 @@
 import { useCallback, useState } from "react";
 import { cn } from "@/lib/utils";
 import { DEFAULT_TERMINAL_EXECUTION_CONTEXT } from "../execution/executionContext";
+import { useLiveTradingReadiness } from "../health/useLiveTradingReadiness";
 import type { LiveOrderPreviewResult } from "./liveOrderPreviewTypes";
+import {
+  LIVE_LIMIT_CONFIRMATION_TEXT,
+  type LiveOrderSubmitResult,
+} from "./liveOrderSubmitTypes";
 import {
   formatLivePreviewFetchError,
   useLiveOrderPreview,
 } from "./useLiveOrderPreview";
+import { useLiveOrderSubmit } from "./useLiveOrderSubmit";
+import { resolveLiveSubmitUiState } from "./resolveLiveSubmitUiState";
 
 const inputClass =
   "w-full rounded border border-terminal-border bg-terminal-bg px-2 py-1 text-[10px] font-mono text-white focus:border-cyan-500/40 focus:outline-none";
@@ -26,19 +33,28 @@ export function LiveOrderPreviewPanel({
 
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
   const [sizeMode, setSizeMode] = useState<"notional" | "quantity">("notional");
-  const [notionalUsdt, setNotionalUsdt] = useState("100");
+  const [notionalUsdt, setNotionalUsdt] = useState("2");
   const [quantity, setQuantity] = useState("");
   const [limitPrice, setLimitPrice] = useState("");
   const [stopLoss, setStopLoss] = useState("");
   const [takeProfit, setTakeProfit] = useState("");
   const [leverage, setLeverage] = useState("5");
   const [preview, setPreview] = useState<LiveOrderPreviewResult | null>(null);
+  const [previewSide, setPreviewSide] = useState<"buy" | "sell" | null>(null);
+  const [confirmationText, setConfirmationText] = useState("");
+  const [submitResult, setSubmitResult] = useState<LiveOrderSubmitResult | null>(
+    null,
+  );
 
   const mutation = useLiveOrderPreview();
+  const submitMutation = useLiveOrderSubmit();
+  const { readiness } = useLiveTradingReadiness(true);
 
   const runPreview = useCallback(
     async (side: "buy" | "sell") => {
       setPreview(null);
+      setSubmitResult(null);
+      setPreviewSide(side);
       const body = {
         exchange: "bingx" as const,
         symbol: executionSymbol,
@@ -110,6 +126,89 @@ export function LiveOrderPreviewPanel({
   );
 
   const busy = mutation.isPending;
+  const submitBusy = submitMutation.isPending;
+
+  const showLiveSubmit =
+    orderType === "limit" &&
+    preview != null &&
+    !preview.blocked &&
+    preview.validated &&
+    preview.type === "limit" &&
+    previewSide != null;
+
+  const submitUi = resolveLiveSubmitUiState({
+    orderType,
+    preview,
+    readiness,
+    confirmationText,
+    stopLossInput: stopLoss,
+    limitPriceInput: limitPrice,
+    submitBusy,
+  });
+
+  const submitDisabled = !showLiveSubmit || !submitUi.canSubmit;
+
+  const runLiveSubmit = useCallback(async () => {
+    if (!previewSide || !showLiveSubmit) return;
+    setSubmitResult(null);
+    const lp = Number(limitPrice);
+    const sl = Number(stopLoss);
+    if (!Number.isFinite(lp) || lp <= 0 || !Number.isFinite(sl) || sl <= 0) {
+      return;
+    }
+    const body = {
+      exchange: "bingx" as const,
+      symbol: executionSymbol,
+      side: previewSide,
+      type: "limit" as const,
+      limitPrice: lp,
+      stopLossPrice: sl,
+      confirmationText: confirmationText.trim(),
+      takeProfitPrice: takeProfit.trim() ? Number(takeProfit) : undefined,
+      leverage: Number(leverage),
+      ...(sizeMode === "notional"
+        ? { notionalUsdt: Number(notionalUsdt) }
+        : { quantity: Number(quantity) }),
+    };
+    try {
+      const result = await submitMutation.mutateAsync(body);
+      setSubmitResult(result);
+    } catch (err) {
+      setSubmitResult({
+        mode: "live",
+        exchange: "bingx",
+        symbol: executionSymbol,
+        side: previewSide,
+        type: "limit",
+        orderSubmitted: false,
+        status: "failed",
+        blockers: [
+          err instanceof Error ? err.message.slice(0, 200) : "Submit failed",
+        ],
+        warnings: [],
+        estimate: {
+          entryPrice: lp,
+          quantity: preview?.estimate.quantity ?? 0,
+          notionalUsdt: preview?.estimate.notionalUsdt ?? 0,
+        },
+        message: "LIVE ORDER FAILED — request error",
+      });
+    }
+  }, [
+    previewSide,
+    showLiveSubmit,
+    limitPrice,
+    stopLoss,
+    takeProfit,
+    leverage,
+    sizeMode,
+    notionalUsdt,
+    quantity,
+    confirmationText,
+    executionSymbol,
+    preview,
+    submitMutation,
+  ]);
 
   return (
     <section className="rounded border border-cyan-500/25 bg-cyan-950/15 p-2 space-y-1.5">
@@ -117,7 +216,8 @@ export function LiveOrderPreviewPanel({
         Live order preview — dry run
       </div>
       <p className="text-[7px] text-slate-500 leading-snug">
-        Simulates a BingX order locally. Nothing is sent to the exchange.
+        Dry-run simulates risk locally. Live submit (limit only) sends one real
+        order when readiness is ready_for_live and flags 5C are on.
       </p>
       <div className="flex flex-wrap gap-1 text-[7px]">
         <span className="rounded border border-amber-500/35 px-1 py-0.5 text-amber-200/90 uppercase font-bold">
@@ -361,6 +461,146 @@ export function LiveOrderPreviewPanel({
           <p className="text-[7px] text-slate-500 pt-0.5">
             orderWouldBeSent: {String(preview.orderWouldBeSent)} · readiness:{" "}
             {preview.readiness.status}
+          </p>
+
+          {showLiveSubmit || (preview && orderType === "limit") ? (
+            <div className="mt-1.5 rounded border border-amber-500/45 bg-amber-950/25 p-1.5 space-y-1">
+              <p
+                className={cn(
+                  "text-[7px] font-bold uppercase tracking-widest",
+                  submitUi.canSubmit
+                    ? "text-emerald-300/95"
+                    : "text-amber-200/95",
+                )}
+              >
+                {submitUi.statusLabel}
+              </p>
+              {submitUi.lockReason ? (
+                <p className="text-[7px] text-red-300/85">
+                  LIVE SUBMIT LOCKED — {submitUi.lockReason}
+                </p>
+              ) : null}
+              <p className="text-[7px] font-bold uppercase tracking-widest text-amber-200/80">
+                Live submit — limit only
+              </p>
+              <p className="text-[7px] text-slate-500 leading-snug">
+                First live test: 2 USDT, limit far from spot (buy below / sell
+                above), SL set, then {LIVE_LIMIT_CONFIRMATION_TEXT}. Cancel on
+                BingX only.
+              </p>
+              <ul className="text-[7px] text-slate-300 space-y-0.5">
+                <li>
+                  {preview.symbol} · {preview.side.toUpperCase()} · limit{" "}
+                  {limitPrice || preview.estimate.entryPrice?.toFixed(2)}
+                </li>
+                <li>
+                  Qty {preview.estimate.quantity} ·{" "}
+                  {preview.estimate.notionalUsdt.toFixed(2)} USDT
+                </li>
+                <li>SL {stopLoss || "—"}</li>
+                {preview.estimate.maxLossUsdt != null ? (
+                  <li>
+                    Max loss {preview.estimate.maxLossUsdt.toFixed(2)} USDT
+                    {preview.estimate.maxLossAccountPct != null
+                      ? ` (${preview.estimate.maxLossAccountPct}%)`
+                      : ""}
+                  </li>
+                ) : null}
+              </ul>
+              {preview.warnings.length > 0 ? (
+                <ul className="text-[7px] text-amber-200/70">
+                  {preview.warnings.slice(0, 4).map((w) => (
+                    <li key={w}>! {w}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <label className="flex flex-col gap-0.5 text-[8px] text-slate-500">
+                Type {LIVE_LIMIT_CONFIRMATION_TEXT} to submit
+                <input
+                  className={inputClass}
+                  value={confirmationText}
+                  onChange={(e) => setConfirmationText(e.target.value)}
+                  disabled={submitBusy}
+                  placeholder={LIVE_LIMIT_CONFIRMATION_TEXT}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              {showLiveSubmit ? (
+                <button
+                  type="button"
+                  disabled={submitDisabled}
+                  onClick={() => void runLiveSubmit()}
+                  className="w-full rounded border border-amber-500/55 bg-amber-950/40 py-1 text-[9px] font-bold uppercase text-amber-100 hover:bg-amber-950/60 disabled:opacity-40"
+                >
+                  Submit live limit
+                </button>
+              ) : null}
+            </div>
+          ) : orderType === "market" && preview && !preview.blocked ? (
+            <p className="text-[7px] text-amber-200/80 mt-1">
+              Live market orders are disabled in this phase. Use limit orders
+              only.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {submitResult ? (
+        <div
+          className={cn(
+            "rounded border p-1.5 space-y-0.5 text-[8px]",
+            submitResult.status === "submitted"
+              ? "border-amber-400/50 bg-amber-950/30 text-amber-100"
+              : submitResult.status === "blocked"
+                ? "border-red-500/40 bg-red-950/25 text-red-200/90"
+                : "border-red-500/50 bg-red-950/35 text-red-200",
+          )}
+        >
+          <p className="font-bold uppercase tracking-wide text-[7px]">
+            {submitResult.status === "submitted"
+              ? "LIVE LIMIT ORDER SUBMITTED"
+              : submitResult.status === "blocked"
+                ? "LIVE ORDER BLOCKED"
+                : "LIVE ORDER FAILED"}
+          </p>
+          {submitResult.status === "submitted" ? (
+            <p className="text-[7px] text-amber-100/90 leading-snug">
+              Cancel/close from terminal is disabled in this phase. Manage the
+              order directly from BingX.
+            </p>
+          ) : null}
+          {submitResult.orderId ? (
+            <p className="text-[7px]">Order ID: {submitResult.orderId}</p>
+          ) : null}
+          {submitResult.clientOrderId ? (
+            <p className="text-[7px]">Client ID: {submitResult.clientOrderId}</p>
+          ) : null}
+          {submitResult.message &&
+          submitResult.status === "submitted" &&
+          submitResult.message !== "LIVE LIMIT ORDER SUBMITTED" ? (
+            <p className="text-[7px] text-slate-400">{submitResult.message}</p>
+          ) : null}
+          {submitResult.status !== "submitted" && submitResult.message ? (
+            <p className="text-[7px] text-slate-400">{submitResult.message}</p>
+          ) : null}
+          {submitResult.blockers.length > 0 ? (
+            <ul className="text-[7px] text-red-300/80">
+              {submitResult.blockers.map((b) => (
+                <li key={b}>· {b}</li>
+              ))}
+            </ul>
+          ) : null}
+          {submitResult.warnings.length > 0 ? (
+            <ul className="text-[7px] text-amber-200/70">
+              {submitResult.warnings.map((w) => (
+                <li key={w}>! {w}</li>
+              ))}
+            </ul>
+          ) : null}
+          <p className="text-[7px] text-slate-500">
+            mode: {submitResult.mode} · status: {submitResult.status} · submitted:{" "}
+            {String(submitResult.orderSubmitted)}
           </p>
         </div>
       ) : null}

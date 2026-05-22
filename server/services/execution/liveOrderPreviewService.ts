@@ -24,6 +24,7 @@ import {
   getMaxAccountRiskPct,
   getMaxOrderNotionalUsdt,
   getRiskGuardStatus,
+  isBingxMarketOrdersAllowed,
   isDryRunEnabled,
   isMaxAccountRiskConfigured,
   isMaxOrderSizeConfigured,
@@ -507,15 +508,16 @@ export async function previewBingXLiveOrder(
     result.warnings.push("Live order submit disabled by design.");
   }
 
-  const processEnvMarket = process.env.ALLOW_MARKET_ORDERS;
-  if (
-    request.type === "market" &&
-    processEnvMarket !== "true" &&
-    processEnvMarket !== "1"
-  ) {
-    result.warnings.push(
-      "ALLOW_MARKET_ORDERS=false — market orders disabled for live submit (dry-run estimate only).",
-    );
+  if (request.type === "market") {
+    if (isBingxMarketOrdersAllowed()) {
+      result.warnings.push(
+        "BINGX_ALLOW_MARKET_ORDERS=true — live market submit blocked in this phase.",
+      );
+    } else {
+      result.warnings.push(
+        "Live market orders are disabled in this phase. Use limit orders only.",
+      );
+    }
   }
 
   if (request.reduceOnly) {

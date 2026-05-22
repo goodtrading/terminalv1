@@ -15,7 +15,9 @@ import {
   getLiveTradingEnvFlags,
   getRiskGuardStatus,
   isApiConnectionEnabled,
+  isBingxMarketOrdersAllowed,
   isDryRunEnabled,
+  isKillSwitchActive,
   isMaxAccountRiskConfigured,
   isMaxOrderSizeConfigured,
   isSlRequiredPolicyConfigured,
@@ -124,10 +126,16 @@ export async function getLiveTradingReadiness(
     flagBlockers.push("BINGX_ENABLE_ORDER_SUBMIT=false");
   }
   if (!flags.orderCancelEnabled) {
-    flagBlockers.push("BINGX_ENABLE_ORDER_CANCEL=false");
+    warnings.push("BINGX_ENABLE_ORDER_CANCEL=false (cancel disabled in phase 5C).");
   }
   if (!flags.positionCloseEnabled) {
-    flagBlockers.push("BINGX_ENABLE_POSITION_CLOSE=false");
+    warnings.push("BINGX_ENABLE_POSITION_CLOSE=false (close disabled in phase 5C).");
+  }
+  if (isBingxMarketOrdersAllowed()) {
+    flagBlockers.push("BINGX_ALLOW_MARKET_ORDERS=true");
+  }
+  if (isKillSwitchActive()) {
+    flagBlockers.push("LIVE_TRADING_KILL_SWITCH=true");
   }
 
   const connections = listConnectionsForUser(uid);
@@ -327,9 +335,22 @@ export async function getLiveTradingReadiness(
   checks.push(
     check(
       "kill_switch",
-      "Kill switch available",
-      "pass",
-      "Paper kill-switch route active; live kill-switch blocked until flags allow.",
+      "Kill switch",
+      isKillSwitchActive() ? "fail" : "pass",
+      isKillSwitchActive()
+        ? "LIVE_TRADING_KILL_SWITCH=true — all live submits blocked."
+        : "LIVE_TRADING_KILL_SWITCH=false — kill switch off.",
+    ),
+  );
+
+  checks.push(
+    check(
+      "market_orders_policy",
+      "Market orders disabled",
+      !isBingxMarketOrdersAllowed() ? "pass" : "fail",
+      !isBingxMarketOrdersAllowed()
+        ? "BINGX_ALLOW_MARKET_ORDERS=false — limit-only live phase."
+        : "BINGX_ALLOW_MARKET_ORDERS=true — live limit submit blocked.",
     ),
   );
 
@@ -427,29 +448,23 @@ export async function getLiveTradingReadiness(
     warnings.push("REQUIRE_SL_ON_LIVE_ORDERS=false");
   }
 
-  let systemHealthOk = true;
-  if (risk.liveTradingEnabled) {
-    systemHealthOk = false;
-    checks.push(
-      check(
-        "system_health",
-        "System health",
-        "fail",
-        "Live trading flag is ON — system health should report error until wired.",
-      ),
+  checks.push(
+    check(
+      "system_health",
+      "System health",
+      flags.liveTradingEnabled && flags.orderSubmitEnabled ? "pass" : "warning",
+      flags.liveTradingEnabled && flags.orderSubmitEnabled
+        ? "Live limit submit wired (phase 5C) — cancel/close still off."
+        : "Live trading locked by design.",
+    ),
+  );
+
+  if (flags.liveTradingEnabled && flags.orderSubmitEnabled) {
+    warnings.push("LIMIT ONLY · MARKET DISABLED");
+    warnings.push("BINGX_ENABLE_ORDER_CANCEL=false — cancel disabled in phase 5C.");
+    warnings.push(
+      "BINGX_ENABLE_POSITION_CLOSE=false — position close disabled in phase 5C.",
     );
-  } else {
-    checks.push(
-      check(
-        "system_health",
-        "System health",
-        "pass",
-        "Live trading locked by design (phase 5A).",
-      ),
-    );
-  }
-  if (!systemHealthOk) {
-    warnings.push("Live trading enabled while execution not fully wired");
   }
 
   warnings.push(...buildLiveLockedDryRunWarnings(flags));
@@ -468,8 +483,8 @@ export async function getLiveTradingReadiness(
     flags.liveTradingEnabled &&
     flags.apiTradingEnabled &&
     flags.orderSubmitEnabled &&
-    flags.orderCancelEnabled &&
-    flags.positionCloseEnabled &&
+    !isBingxMarketOrdersAllowed() &&
+    !isKillSwitchActive() &&
     uniqueInfraBlockers.length === 0 &&
     dryRunLimitsOk &&
     tradePermission !== "denied";

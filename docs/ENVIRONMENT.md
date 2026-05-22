@@ -64,8 +64,10 @@ See `.env.example` for:
 
 - `BINGX_ENABLE_API_CONNECTION`
 - `BINGX_ENABLE_API_TRADING` (`true` in phase 5B for permission probe; live submit still off)
-- `BINGX_ENABLE_LIVE_TRADING` (must stay `false` until phase 5C)
-- `MAX_ORDER_NOTIONAL_USDT` / `MAX_ACCOUNT_RISK_PCT` (required for dry-run validation; code defaults 25 / 1 if unset when dry-run is on)
+- `BINGX_ENABLE_LIVE_TRADING` (`false` by default; set `true` only for controlled phase 5C limit submit)
+- `BINGX_ALLOW_MARKET_ORDERS` (must stay `false` for phase 5C — live market blocked)
+- `LIVE_TRADING_KILL_SWITCH` (`false` by default; set `true` to block all live submits)
+- `MAX_ORDER_NOTIONAL_USDT` / `MAX_ACCOUNT_RISK_PCT` (required for dry-run and live; phase 5C first test: `2` / `0.5`)
 - `BINGX_ESTIMATED_FEE_BPS` / `BINGX_ESTIMATED_SLIPPAGE_BPS` (optional preview estimates)
 - `BINGX_ENABLE_ORDER_SUBMIT` (must stay `false` in phase 5A)
 - `BINGX_ENABLE_ORDER_CANCEL` (must stay `false` in phase 5A)
@@ -75,6 +77,16 @@ See `.env.example` for:
 - `MAX_ACCOUNT_RISK_PCT` (required for live readiness)
 - `REQUIRE_SL_ON_LIVE_ORDERS` (default `true`)
 - `BINGX_ENABLE_DRY_RUN` (default `true` — phase 5B preview only, no exchange submit)
+
+### Phase 5C — first live LIMIT order
+
+See [LIVE_LIMIT_SUBMIT_5C.md](./LIVE_LIMIT_SUBMIT_5C.md) for flags, readiness, Network tab expectations, and the step-by-step first real test (2 USDT, limit far from spot, manual cancel on BingX).
+
+Run blocker checks before enabling live flags:
+
+```bash
+npm run test:live-submit-blockers
+```
 
 ### Storage layout (development)
 

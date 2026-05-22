@@ -21,6 +21,8 @@ export interface LiveTradingReadiness {
   orderSubmitEnabled: boolean;
   orderCancelEnabled: boolean;
   positionCloseEnabled: boolean;
+  marketOrdersAllowed?: boolean;
+  killSwitchActive?: boolean;
   checks: LiveReadinessCheck[];
   blockers: string[];
   warnings: string[];

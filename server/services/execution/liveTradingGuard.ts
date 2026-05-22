@@ -1,6 +1,8 @@
 import {
   getLiveTradingEnvFlags,
   isApiTradingEnabled,
+  isBingxMarketOrdersAllowed,
+  isKillSwitchActive,
   isLiveTradingEnabled,
   isOrderCancelEnabled,
   isOrderSubmitEnabled,
@@ -56,9 +58,33 @@ function buildBlockers(action: LiveTradingAction): string[] {
   return blockers;
 }
 
+export function checkLiveMarketOrderAllowed(): LiveTradingGuardResult {
+  if (!isBingxMarketOrdersAllowed()) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    code: "LIVE_TRADING_BLOCKED",
+    message:
+      "Live market orders are disabled in this phase. Use limit orders only.",
+    action: "submit_order",
+    blockers: ["BINGX_ALLOW_MARKET_ORDERS=true"],
+  };
+}
+
 export function checkLiveTradingActionAllowed(
   action: LiveTradingAction,
 ): LiveTradingGuardResult {
+  if (isKillSwitchActive()) {
+    return {
+      allowed: false,
+      code: "LIVE_TRADING_BLOCKED",
+      message: "Live trading kill switch is active.",
+      action,
+      blockers: ["LIVE_TRADING_KILL_SWITCH=true"],
+    };
+  }
+
   const blockers = buildBlockers(action);
   if (blockers.length === 0) {
     return { allowed: true };

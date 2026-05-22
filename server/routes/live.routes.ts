@@ -3,6 +3,8 @@ import { requireSaasAuth } from "../middleware/saasAuth";
 import { getLiveTradingReadiness } from "../services/execution/liveTradingReadinessService";
 import { previewBingXLiveOrder } from "../services/execution/liveOrderPreviewService";
 import type { LiveOrderPreviewRequest } from "../services/execution/liveOrderPreviewTypes";
+import { submitBingXLiveLimitOrder } from "../services/execution/liveOrderSubmitService";
+import { parseLiveOrderSubmitBody } from "../services/execution/liveOrderSubmitParse";
 import { emitLiveReadinessFailed } from "../services/system/liveReadinessAudits";
 import { isDryRunEnabled } from "../services/execution/riskGuard";
 
@@ -115,6 +117,55 @@ liveApiRouter.post(
   },
 );
 
+liveApiRouter.post(
+  "/order-submit",
+  requireSaasAuth,
+  async (req: Request, res: Response) => {
+    console.log(`${LIVE_ROUTES_LOG} POST /api/live/order-submit hit`);
+    try {
+      const userId = resolveUserId(req);
+      if (userId == null) {
+        return jsonResponse(res, 401, {
+          success: false,
+          code: "UNAUTHORIZED",
+          message: "Authentication required.",
+        });
+      }
+
+      const body = req.body as Record<string, unknown> | undefined;
+      if (body?.mode === "dry_run") {
+        return jsonResponse(res, 403, {
+          success: false,
+          code: "DRY_RUN_FORBIDDEN",
+          message: "Dry-run mode is not allowed on the live submit endpoint.",
+        });
+      }
+
+      const parsed = parseLiveOrderSubmitBody(body);
+      if (!parsed.ok) {
+        return jsonResponse(res, 400, {
+          success: false,
+          code: "INVALID_LIVE_ORDER_SUBMIT_REQUEST",
+          message: parsed.message,
+        });
+      }
+
+      const result = await submitBingXLiveLimitOrder(userId, parsed.data);
+
+      jsonResponse(res, 200, { success: true, result });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Live submit failed";
+      console.error(`${LIVE_ROUTES_LOG} POST /order-submit error:`, message);
+      jsonResponse(res, 500, {
+        success: false,
+        code: "LIVE_ORDER_SUBMIT_FAILED",
+        message: "Failed to submit live limit order.",
+      });
+    }
+  },
+);
+
 let liveRoutesMounted = false;
 
 /** Mount GET/POST /api/live/* — safe to call once. */
@@ -124,7 +175,7 @@ export function registerLiveRoutes(app: Express): void {
 
   app.use("/api/live", liveApiRouter);
   console.log(
-    `${LIVE_ROUTES_LOG} mounted GET /api/live/readiness, POST /api/live/order-preview`,
+    `${LIVE_ROUTES_LOG} mounted GET /api/live/readiness, POST /api/live/order-preview, POST /api/live/order-submit`,
   );
 }
 

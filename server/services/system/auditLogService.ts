@@ -30,7 +30,11 @@ export type AuditEventType =
   | "live_guard_blocked"
   | "live_order_preview_requested"
   | "live_order_preview_blocked"
-  | "live_order_preview_passed";
+  | "live_order_preview_passed"
+  | "live_order_submit_requested"
+  | "live_order_submit_blocked"
+  | "live_order_submitted"
+  | "live_order_submit_failed";
 
 export interface AuditLogEvent {
   id: string;

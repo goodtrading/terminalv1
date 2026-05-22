@@ -38,6 +38,12 @@ export function buildLiveLockedDryRunWarnings(flags: LiveEnvFlags): string[] {
       "BINGX_ENABLE_API_TRADING=false — permission probe limited; read-only sync still allowed.",
     );
   }
+  if (flags.marketOrdersAllowed) {
+    warnings.push("BINGX_ALLOW_MARKET_ORDERS=true — live limit submit blocked.");
+  }
+  if (flags.killSwitchActive) {
+    warnings.push("LIVE_TRADING_KILL_SWITCH=true — live submit blocked.");
+  }
   if (isDryRunEnabled()) {
     warnings.push("Dry-run preview enabled — no orders sent to BingX.");
   }
