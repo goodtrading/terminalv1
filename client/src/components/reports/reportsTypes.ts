@@ -12,6 +12,12 @@ export type ReportBadgeVariant =
   | "positive"
   | "negative";
 
+import type {
+  ExecutionContextSnapshot,
+  PlaybookEntryExitDelta,
+  PlaybookMatchResult,
+} from "./execution/executionReportTypes";
+
 export type TradeReviewRow = {
   tradeId: string;
   time: string;
@@ -26,6 +32,11 @@ export type TradeReviewRow = {
   status: string;
   notesPreview: string;
   editable: boolean;
+  context?: ExecutionContextSnapshot | null;
+  playbook?: PlaybookMatchResult | null;
+  playbookLabel?: string;
+  playbookDelta?: PlaybookEntryExitDelta | null;
+  deltaLabel?: string;
 };
 
 export type SetupPerformance = {

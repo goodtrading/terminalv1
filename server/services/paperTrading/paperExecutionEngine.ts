@@ -10,6 +10,7 @@ import {
   syncOpenTradeUnrealized,
   upsertPaperTradeLedgerEntry,
 } from "./paperLedger";
+import { schedulePaperEntryContextRefresh } from "./paperContextCapture";
 import { checkPaperStops } from "./paperStopEngine";
 import {
   appendLog,
@@ -600,6 +601,10 @@ export function updatePaperPositionRisk(body: {
   if (nextTp !== undefined) parts.push(`TP ${nextTp ?? "—"}`);
   appendLog(state, "fill", `Paper risk updated — ${parts.join(" · ")}`);
   savePaperState(state);
+
+  if (pos.openTradeId && (nextSl !== undefined || nextTp !== undefined)) {
+    schedulePaperEntryContextRefresh(pos.openTradeId);
+  }
 
   const positionOut = getPaperPosition();
   if (!positionOut) {

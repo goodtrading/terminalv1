@@ -1,4 +1,13 @@
 import { getPaperState } from "../paperTrading/paperStore";
+import { applyContextToExecutionScore } from "./executionContextScoring";
+import { matchExecutionPlaybook } from "./playbookMatchEngine";
+import { applyPlaybookDeltaToExecutionScore, applyPlaybookToExecutionScore } from "./playbookScoring";
+import {
+  computeOpenPositionPlaybookDelta,
+  computePlaybookEntryExitDelta,
+} from "./playbookDeltaEngine";
+import type { PlaybookMatchResult } from "./playbookMatchTypes";
+import type { ExecutionContextSnapshot } from "./executionContextTypes";
 import type {
   ExecutionDiagnostics,
   ExecutionGrade,
@@ -201,11 +210,176 @@ function buildCancelledRows(logs: PaperExecutionLogEntry[]): TradeReviewRow[] {
   return rows;
 }
 
+function ledgerStopPrice(v: unknown): number | undefined {
+  if (v == null) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Align context risk with ledger SL/TP when capture ran before stops were set. */
+function enrichPaperContextFromLedger(
+  ctx: ExecutionContextSnapshot | undefined,
+  entry: PaperTradeLedgerEntry,
+  accountEquityUsdt: number,
+): ExecutionContextSnapshot | undefined {
+  if (!ctx || !ctx.risk) return ctx;
+
+  const sl = ledgerStopPrice(entry.stopLoss);
+  const tp = ledgerStopPrice(entry.takeProfit);
+  if (sl == null && tp == null) return ctx;
+
+  const stopLossDetected =
+    (sl != null && sl > 0) || Boolean(ctx.risk.stopLossDetected);
+  const takeProfitDetected =
+    (tp != null && tp > 0) || Boolean(ctx.risk.takeProfitDetected);
+  const stopLossPrice = sl ?? ctx.risk.stopLossPrice;
+  const takeProfitPrice = tp ?? ctx.risk.takeProfitPrice;
+
+  const risk = { ...ctx.risk, stopLossDetected, takeProfitDetected, stopLossPrice, takeProfitPrice };
+
+  const entryPx = entry.entryPrice;
+  const qty = entry.quantity;
+  if (entryPx > 0 && qty > 0 && stopLossPrice != null && stopLossPrice > 0) {
+    const lossPerUnit =
+      entry.side === "long" ? entryPx - stopLossPrice : stopLossPrice - entryPx;
+    if (lossPerUnit > 0) {
+      risk.estimatedLossUsdt = Math.round(lossPerUnit * qty * 100) / 100;
+      if (accountEquityUsdt > 0) {
+        risk.estimatedLossAccountPct =
+          Math.round((risk.estimatedLossUsdt / accountEquityUsdt) * 10000) / 100;
+      }
+    }
+  }
+  if (entryPx > 0 && qty > 0 && takeProfitPrice != null && takeProfitPrice > 0) {
+    const gainPerUnit =
+      entry.side === "long" ? takeProfitPrice - entryPx : entryPx - takeProfitPrice;
+    if (gainPerUnit > 0) {
+      risk.estimatedGainUsdt = Math.round(gainPerUnit * qty * 100) / 100;
+      if (accountEquityUsdt > 0) {
+        risk.estimatedGainAccountPct =
+          Math.round((risk.estimatedGainUsdt / accountEquityUsdt) * 10000) / 100;
+      }
+    }
+  }
+
+  const positives = [...(ctx.diagnostics?.positives ?? [])];
+  const warnings = (ctx.diagnostics?.warnings ?? []).filter(
+    (w) => w !== "No stop loss detected.",
+  );
+  if (risk.stopLossDetected && !positives.some((p) => p.includes("stop loss"))) {
+    positives.push("Trade has real stop loss protection.");
+  }
+
+  return {
+    ...ctx,
+    risk,
+    diagnostics: {
+      ...ctx.diagnostics,
+      positives,
+      warnings,
+    },
+  };
+}
+
+function resolveLedgerPlaybookForPhase(
+  entry: PaperTradeLedgerEntry,
+  phase: "entry" | "exit",
+  ctxOverride?: ExecutionContextSnapshot,
+  forceRematch = false,
+): PlaybookMatchResult | undefined {
+  const stored = phase === "entry" ? entry.playbookAtEntry : entry.playbookAtExit;
+  const ctx =
+    ctxOverride ??
+    (phase === "entry" ? entry.contextAtEntry : entry.contextAtExit);
+  if (stored && !forceRematch) return stored;
+  if (!ctx) return undefined;
+  try {
+    return matchExecutionPlaybook({
+      side: entry.side,
+      entryPrice: entry.entryPrice,
+      context: ctx,
+      source: "paper",
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 function ledgerEntryToRow(entry: PaperTradeLedgerEntry): TradeReviewRow {
   const isOpen = entry.status === "open";
   const pnl = isOpen ? entry.unrealizedPnlUsdt : entry.realizedPnlUsdt;
   const mistakes = entry.mistakes?.length ? entry.mistakes.join(", ") : "None";
   const tags = entry.tags?.length ? entry.tags.join(", ") : "";
+  const state = getPaperState();
+  const equity = state.account.equityUsdt;
+
+  let ctxEntry = entry.contextAtEntry;
+  const ctxExit = entry.contextAtExit;
+  const ledgerSl = ledgerStopPrice(entry.stopLoss);
+  const contextMissingSl =
+    ledgerSl != null && !(ctxEntry?.risk?.stopLossDetected === true);
+
+  if (ctxEntry && (ledgerSl != null || ledgerStopPrice(entry.takeProfit) != null)) {
+    try {
+      ctxEntry = enrichPaperContextFromLedger(ctxEntry, entry, equity) ?? ctxEntry;
+    } catch (err) {
+      console.warn(
+        "[paper-report] enrich context failed",
+        entry.id,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  const playbookAtEntry = resolveLedgerPlaybookForPhase(
+    entry,
+    "entry",
+    ctxEntry,
+    contextMissingSl,
+  );
+  const playbookAtExit = isOpen
+    ? undefined
+    : resolveLedgerPlaybookForPhase(entry, "exit", ctxExit ?? undefined);
+  const playbook = isOpen ? playbookAtEntry : playbookAtExit ?? playbookAtEntry;
+
+  let playbookDelta;
+  try {
+    playbookDelta = isOpen
+      ? computeOpenPositionPlaybookDelta({
+          playbookAtEntry,
+          contextAtEntry: ctxEntry,
+          source: "paper",
+        })
+      : computePlaybookEntryExitDelta({
+          playbookAtEntry,
+          playbookAtExit,
+          contextAtEntry: ctxEntry,
+          contextAtExit: ctxExit,
+          pnlUsdt: entry.realizedPnlUsdt,
+          rMultiple: entry.rMultiple,
+          status: "closed",
+          source: "paper",
+        });
+  } catch (err) {
+    console.warn(
+      "[paper-report] playbook delta failed",
+      entry.id,
+      err instanceof Error ? err.message : err,
+    );
+    playbookDelta = undefined;
+  }
+
+  let quality: TradeReviewRow["quality"] = isOpen ? "—" : gradeFromR(entry.rMultiple ?? null, pnl);
+  const ctx = isOpen ? ctxEntry : ctxExit ?? ctxEntry;
+  if (ctx) {
+    let score = isOpen ? 65 : 70;
+    score = applyContextToExecutionScore(score, ctx, entry.side);
+    score = applyPlaybookToExecutionScore(score, playbook, ctx);
+    if (!isOpen) {
+      score = applyPlaybookDeltaToExecutionScore(score, playbookDelta, pnl);
+    }
+    quality = gradeFromScore(score);
+  }
   return {
     id: entry.id,
     time: formatTime(isOpen ? entry.entryTime : entry.exitTime ?? entry.entryTime),
@@ -215,7 +389,7 @@ function ledgerEntryToRow(entry: PaperTradeLedgerEntry): TradeReviewRow {
     exit: entry.exitPrice ?? null,
     r: entry.rMultiple ?? null,
     pnlUsdt: pnl,
-    quality: isOpen ? "—" : gradeFromR(entry.rMultiple ?? null, pnl),
+    quality,
     mistakes,
     notes: entry.notes?.trim() || "",
     tags,
@@ -227,7 +401,23 @@ function ledgerEntryToRow(entry: PaperTradeLedgerEntry): TradeReviewRow {
           : isOpen
             ? "open"
             : "closed",
+    source: "paper",
+    contextAtEntry: ctxEntry ?? entry.contextAtEntry,
+    contextAtExit: entry.contextAtExit,
+    playbookMatch: playbook,
+    playbookAtEntry: playbookAtEntry ?? entry.playbookAtEntry,
+    playbookAtExit: playbookAtExit ?? entry.playbookAtExit,
+    playbookDelta,
   };
+}
+
+function aggregateContextScore(
+  trades: TradeReviewRow[],
+): ExecutionContextSnapshot | undefined {
+  const withCtx = trades
+    .map((t) => t.contextAtEntry ?? t.contextAtExit)
+    .filter((c): c is ExecutionContextSnapshot => c != null);
+  return withCtx[0];
 }
 
 function ledgerToCycles(ledger: PaperTradeLedgerEntry[]): ParsedCycle[] {
@@ -500,14 +690,29 @@ export function getPaperExecutionReport(): ExecutionReportResponse {
   const realizedPnl = state.account.realizedPnlUsdt;
   const unrealizedPnl = state.account.unrealizedPnlUsdt;
 
-  const executionQualityScore = empty
+  let executionQualityScore = empty
     ? 0
     : computeExecutionScore(closedWithPnl, events, winRate, realizedPnl);
+
+  const sessionContext = aggregateContextScore(tradeRows);
+  if (!empty && sessionContext) {
+    executionQualityScore = applyContextToExecutionScore(
+      executionQualityScore,
+      sessionContext,
+    );
+    const openPb = tradeRows.find((t) => t.playbookMatch)?.playbookMatch;
+    executionQualityScore = applyPlaybookToExecutionScore(
+      executionQualityScore,
+      openPb,
+      sessionContext,
+    );
+  }
 
   const grade = empty ? "C" : gradeFromScore(executionQualityScore);
 
   const summary: ExecutionReportSummary = {
     source: "paper",
+    mode: "simulated",
     generatedAt: new Date().toISOString(),
     totalTrades: tradeRows.length + cancelledRows.length,
     closedTrades: closed.length,

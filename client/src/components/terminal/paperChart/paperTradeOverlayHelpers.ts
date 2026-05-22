@@ -141,6 +141,8 @@ export {
   formatSignedUsd,
   formatSignedPct,
   buildRiskLevelNetMetrics,
+  createEmptyRiskLevelMetrics,
+  EMPTY_RISK_LEVEL_NET_METRICS,
 } from "../chartRisk/riskLevelMetrics";
 
 export function formatQtyBtc(value: unknown): string {

@@ -46,6 +46,8 @@ export interface PositionRiskOverlayProps {
   onRequestClosePosition?: () => void;
   onRequestAddStopLoss?: () => void;
   onRequestAddTakeProfit?: () => void;
+  /** BingX locked controls: audit / telemetry when user clicks a blocked action. */
+  onBlockedRealAction?: (action: "close" | "add_sl" | "add_tp") => void;
   /** Optional liquidation line (BingX read-only). */
   liquidationPrice?: number | null;
   chartWidth: number;

@@ -8,6 +8,7 @@ import type {
   PaperTradingState,
 } from "./paperTypes";
 import { appendLog } from "./paperStore";
+import { schedulePaperContextCapture } from "./paperContextCapture";
 
 const TEMP_R_USDT = 100; // Temporary fallback until risk model is connected.
 
@@ -143,6 +144,7 @@ export function recordFillAndLedger(params: {
       mistakes: [],
     };
     upsertPaperTradeLedgerEntry(state, entry);
+    schedulePaperContextCapture(tradeId, "entry", intent, state, fillPrice, markPrice, quantity);
     return { tradeId, fill };
   }
 
@@ -197,6 +199,9 @@ export function recordFillAndLedger(params: {
       }
     }
     upsertPaperTradeLedgerEntry(state, openTrade);
+    if (action === "close" || (action === "reduce" && openTrade.status === "closed")) {
+      schedulePaperContextCapture(tradeId, "exit", intent, state, fillPrice, markPrice, quantity);
+    }
     return { tradeId, fill };
   }
 
@@ -248,6 +253,27 @@ export function closeLedgerTrade(
   );
   if (reason) openTrade.mistakes = [reason];
   upsertPaperTradeLedgerEntry(state, openTrade);
+  schedulePaperContextCapture(
+    openTrade.id,
+    "exit",
+    {
+      symbol: pos.symbol,
+      side: pos.side === "long" ? "short" : "long",
+      type: "market",
+      size: String(pos.quantity),
+      sizeUnit: "BTC",
+      leverage: String(pos.leverage),
+      marginMode: pos.marginMode,
+      reduceOnly: true,
+      postOnly: false,
+      stopLoss: pos.stopLoss != null ? String(pos.stopLoss) : undefined,
+      takeProfit: pos.takeProfit != null ? String(pos.takeProfit) : undefined,
+    },
+    state,
+    closePrice,
+    closePrice,
+    pos.quantity,
+  );
 }
 
 export function syncOpenTradeUnrealized(
@@ -311,5 +337,6 @@ export function openNewTradeAfterFlip(
     feesUsdt: feeUsdt,
     setup: setupFromIntent(intent),
   });
+  schedulePaperContextCapture(tradeId, "entry", intent, state, fillPrice, fillPrice, quantity);
   return tradeId;
 }

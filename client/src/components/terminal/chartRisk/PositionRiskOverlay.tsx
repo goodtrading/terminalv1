@@ -9,6 +9,7 @@ import {
   BAR_HEIGHT,
   BINGX_ENTRY_LONG,
   BINGX_ENTRY_SHORT,
+  BINGX_BAR_ABOVE_ENTRY,
   BINGX_LIQ_LINE,
   ENTRY_LONG,
   ENTRY_SHORT,
@@ -36,6 +37,7 @@ export function PositionRiskOverlay({
   onRequestClosePosition,
   onRequestAddStopLoss,
   onRequestAddTakeProfit,
+  onBlockedRealAction,
   liquidationPrice,
   chartWidth,
   chartHeight,
@@ -197,10 +199,14 @@ export function PositionRiskOverlay({
 
   const barTop = useMemo(() => {
     if (yEntry != null && Number.isFinite(yEntry)) {
-      return Math.min(Math.max(yEntry - BAR_HEIGHT / 2, 4), chartHeight - BAR_HEIGHT - 4);
+      const offset =
+        mode === "bingx_read_only"
+          ? yEntry - BAR_HEIGHT - BINGX_BAR_ABOVE_ENTRY
+          : yEntry - BAR_HEIGHT / 2;
+      return Math.min(Math.max(offset, 4), chartHeight - BAR_HEIGHT - 4);
     }
     return 12;
-  }, [yEntry, chartHeight]);
+  }, [yEntry, chartHeight, mode]);
 
   const hasSl = slPrice != null && Number.isFinite(slPrice) && slPrice > 0;
   const hasTp = tpPrice != null && Number.isFinite(tpPrice) && tpPrice > 0;
@@ -213,6 +219,7 @@ export function PositionRiskOverlay({
       <BingxLockedPositionControls
         hasStopLoss={hasSl}
         hasTakeProfit={hasTp}
+        onBlockedRealAction={onBlockedRealAction}
         onRequestClosePosition={onRequestClosePosition}
         onRequestAddStopLoss={onRequestAddStopLoss}
         onRequestAddTakeProfit={onRequestAddTakeProfit}

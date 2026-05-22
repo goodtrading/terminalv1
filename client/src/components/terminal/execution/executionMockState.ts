@@ -10,6 +10,22 @@ export const BINGX_REFERRAL_URL =
 
 export const DEFAULT_EXCHANGE_CONNECTIONS: ExchangeConnectionState[] = [
   {
+    id: "paper",
+    name: "GoodTrading Paper Trading",
+    status: "not_connected",
+    health: "ready",
+    logoUrl: EXCHANGE_LOGO_URLS.paper,
+    ratingLabel: "SIM",
+    badge: "PAPER",
+    description: "Internal simulated broker · No real funds",
+    supportsBrokerLogin: false,
+    supportsReadOnly: true,
+    supportsTrading: true,
+    tradingLocked: false,
+    brokerLoginAvailable: false,
+    accountMode: "perpetual_futures",
+  },
+  {
     id: "bingx",
     name: "BingX",
     status: "not_connected",
@@ -42,22 +58,6 @@ export const DEFAULT_EXCHANGE_CONNECTIONS: ExchangeConnectionState[] = [
     tradingLocked: true,
     brokerLoginAvailable: false,
     accountMode: "unknown",
-  },
-  {
-    id: "paper",
-    name: "GoodTrading Paper Trading",
-    status: "not_connected",
-    health: "ready",
-    logoUrl: EXCHANGE_LOGO_URLS.paper,
-    ratingLabel: "SIM",
-    badge: "PAPER",
-    description: "Internal simulated broker · No real funds",
-    supportsBrokerLogin: false,
-    supportsReadOnly: true,
-    supportsTrading: true,
-    tradingLocked: false,
-    brokerLoginAvailable: false,
-    accountMode: "perpetual_futures",
   },
 ];
 

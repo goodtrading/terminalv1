@@ -11,7 +11,10 @@ import type { DrawingsCoordinateHelpers } from "../drawings/DrawingsLayer";
 import { PositionRiskOverlay } from "../chartRisk/PositionRiskOverlay";
 import { PlacementPreviewLine } from "../chartRisk/positionRiskOverlayShared";
 import type { IPriceLine } from "lightweight-charts";
-import { buildRiskLevelNetMetrics } from "../chartRisk/riskLevelMetrics";
+import {
+  buildRiskLevelNetMetrics,
+  createEmptyRiskLevelMetrics,
+} from "../chartRisk/riskLevelMetrics";
 import {
   normalizePaperQuantity,
   initialPlacementPreviewPrice,
@@ -311,6 +314,8 @@ export function PaperTradeOverlay({
   );
 
   const qtyForMetrics = qty != null && qty > 0 ? qty : 0;
+
+  const emptyMetrics = createEmptyRiskLevelMetrics();
 
   const previewMetrics =
     placementMode != null && previewRiskPrice != null && qtyForMetrics > 0

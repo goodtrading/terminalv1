@@ -2,9 +2,12 @@ import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { getCurrentPaperUserId } from "./paperUserContext";
+import type { ExecutionContextSnapshot } from "../reports/executionContextTypes";
+import type { PlaybookMatchResult } from "../reports/playbookMatchTypes";
 import type {
   PaperFill,
   PaperLogType,
+  PaperPosition,
   PaperTradeLedgerEntry,
   PaperTradingSettings,
   PaperTradingState,
@@ -85,12 +88,128 @@ function mergeSettings(raw: Partial<PaperTradingSettings> | undefined): PaperTra
   };
 }
 
+function isValidContextSnapshot(v: unknown): v is ExecutionContextSnapshot {
+  if (!v || typeof v !== "object") return false;
+  const c = v as ExecutionContextSnapshot;
+  return (
+    typeof c.timestamp === "number" &&
+    c.risk != null &&
+    typeof c.risk.stopLossDetected === "boolean" &&
+    c.diagnostics != null &&
+    Array.isArray(c.diagnostics.warnings) &&
+    Array.isArray(c.diagnostics.positives)
+  );
+}
+
+function isValidPlaybookMatch(v: unknown): v is PlaybookMatchResult {
+  if (!v || typeof v !== "object") return false;
+  const p = v as PlaybookMatchResult;
+  return p.primary != null && typeof p.primary.id === "string";
+}
+
+function normalizePosition(raw: unknown): PaperPosition | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as PaperPosition;
+  if (p.side === "flat") return null;
+  if (p.side !== "long" && p.side !== "short") return null;
+  return {
+    symbol: String(p.symbol ?? "BTC-USDT"),
+    side: p.side,
+    quantity: Number(p.quantity) || 0,
+    entryPrice: p.entryPrice != null ? Number(p.entryPrice) : null,
+    markPrice: p.markPrice != null ? Number(p.markPrice) : null,
+    unrealizedPnl: Number(p.unrealizedPnl) || 0,
+    leverage: Number(p.leverage) > 0 ? Number(p.leverage) : 5,
+    marginMode: p.marginMode === "cross" ? "cross" : "isolated",
+    stopLoss: p.stopLoss != null ? Number(p.stopLoss) : null,
+    takeProfit: p.takeProfit != null ? Number(p.takeProfit) : null,
+    openTradeId:
+      typeof p.openTradeId === "string" && p.openTradeId.length > 0
+        ? p.openTradeId
+        : null,
+  };
+}
+
+function normalizeLedgerEntry(raw: unknown): PaperTradeLedgerEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const t = raw as PaperTradeLedgerEntry;
+  if (typeof t.id !== "string" || typeof t.symbol !== "string") return null;
+  const side = t.side === "short" ? "short" : "long";
+  const status =
+    t.status === "open" ||
+    t.status === "closed" ||
+    t.status === "cancelled" ||
+    t.status === "rejected"
+      ? t.status
+      : "closed";
+
+  return {
+    id: t.id,
+    symbol: t.symbol,
+    venue: t.venue === "bingx" ? "bingx" : "bingx",
+    marketType: t.marketType ?? "perpetual",
+    chartSymbol: typeof t.chartSymbol === "string" ? t.chartSymbol : undefined,
+    side,
+    status,
+    entryOrderId: typeof t.entryOrderId === "string" ? t.entryOrderId : undefined,
+    exitOrderId: typeof t.exitOrderId === "string" ? t.exitOrderId : undefined,
+    entryTime: t.entryTime ?? new Date().toISOString(),
+    exitTime: t.exitTime,
+    entryPrice: Number(t.entryPrice) || 0,
+    exitPrice: t.exitPrice != null ? Number(t.exitPrice) : undefined,
+    quantity: Number(t.quantity) || 0,
+    notionalUsdt: Number(t.notionalUsdt) || 0,
+    leverage: Number(t.leverage) > 0 ? Number(t.leverage) : 5,
+    marginMode: t.marginMode === "cross" ? "cross" : "isolated",
+    stopLoss: t.stopLoss != null ? Number(t.stopLoss) : null,
+    takeProfit: t.takeProfit != null ? Number(t.takeProfit) : null,
+    realizedPnlUsdt: Number(t.realizedPnlUsdt) || 0,
+    unrealizedPnlUsdt: Number(t.unrealizedPnlUsdt) || 0,
+    feesUsdt: Number(t.feesUsdt) || 0,
+    rMultiple: t.rMultiple != null ? Number(t.rMultiple) : null,
+    setup: typeof t.setup === "string" ? t.setup : undefined,
+    tags: Array.isArray(t.tags) ? t.tags.map(String) : undefined,
+    mistakes: Array.isArray(t.mistakes) ? t.mistakes.map(String) : undefined,
+    notes: typeof t.notes === "string" ? t.notes : undefined,
+    contextAtEntry: isValidContextSnapshot(t.contextAtEntry)
+      ? t.contextAtEntry
+      : undefined,
+    contextAtExit: isValidContextSnapshot(t.contextAtExit)
+      ? t.contextAtExit
+      : undefined,
+    playbookAtEntry: isValidPlaybookMatch(t.playbookAtEntry)
+      ? t.playbookAtEntry
+      : undefined,
+    playbookAtExit: isValidPlaybookMatch(t.playbookAtExit)
+      ? t.playbookAtExit
+      : undefined,
+  };
+}
+
+function backupCorruptFile(file: string): void {
+  try {
+    if (!fs.existsSync(file)) return;
+    const bak = `${file}.corrupt.${Date.now()}.bak`;
+    fs.copyFileSync(file, bak);
+    console.warn("[storage] repaired corrupted paper state", path.basename(bak));
+  } catch {
+    // ignore backup failure
+  }
+}
+
 function normalizeState(parsed: Partial<PaperTradingState>): PaperTradingState {
   const settings = mergeSettings(parsed.settings);
   if (settings.defaultLeverage > settings.maxLeverage) {
     settings.defaultLeverage = settings.maxLeverage;
   }
   const account = parsed.account ?? createDefaultAccount(settings.initialBalanceUsdt);
+  const tradeLedger = Array.isArray(parsed.tradeLedger)
+    ? parsed.tradeLedger
+        .map(normalizeLedgerEntry)
+        .filter((t): t is PaperTradeLedgerEntry => t != null)
+        .slice(0, 200)
+    : [];
+
   return {
     account: {
       balanceUsdt: Number(account.balanceUsdt) || settings.initialBalanceUsdt,
@@ -104,12 +223,12 @@ function normalizeState(parsed: Partial<PaperTradingState>): PaperTradingState {
         settings.initialBalanceUsdt,
       updatedAt: account.updatedAt ?? new Date().toISOString(),
     },
-    position: parsed.position ?? null,
+    position: normalizePosition(parsed.position),
     orders: Array.isArray(parsed.orders) ? parsed.orders : [],
     logs: Array.isArray(parsed.logs) ? parsed.logs.slice(0, 100) : [],
     settings,
     fills: Array.isArray(parsed.fills) ? parsed.fills.slice(0, 500) : [],
-    tradeLedger: Array.isArray(parsed.tradeLedger) ? parsed.tradeLedger.slice(0, 200) : [],
+    tradeLedger,
   };
 }
 
@@ -128,6 +247,7 @@ export function getPaperState(): PaperTradingState {
   ensureStorageDir();
   const file = activeStorageFile();
   if (!fs.existsSync(file)) {
+    console.log("[storage] created missing storage file", path.basename(file));
     const initial = createDefaultPaperState();
     savePaperState(initial);
     return initial;
@@ -137,7 +257,13 @@ export function getPaperState(): PaperTradingState {
     const parsed = JSON.parse(raw) as Partial<PaperTradingState>;
     if (!parsed.account) return createDefaultPaperState();
     return normalizeState(parsed);
-  } catch {
+  } catch (err) {
+    console.warn(
+      "[storage] repaired corrupted paper state",
+      path.basename(file),
+      err instanceof Error ? err.message : err,
+    );
+    backupCorruptFile(file);
     return createDefaultPaperState();
   }
 }
@@ -145,7 +271,17 @@ export function getPaperState(): PaperTradingState {
 export function savePaperState(state: PaperTradingState): void {
   ensureStorageDir();
   state.account.updatedAt = new Date().toISOString();
-  fs.writeFileSync(activeStorageFile(), JSON.stringify(state, null, 2), "utf8");
+  const file = activeStorageFile();
+  try {
+    fs.writeFileSync(file, JSON.stringify(state, null, 2), "utf8");
+  } catch (err) {
+    console.error(
+      "[paper-storage] write failed",
+      path.basename(file),
+      err instanceof Error ? err.message : err,
+    );
+    throw new Error("PAPER_STORAGE_WRITE_FAILED");
+  }
 }
 
 export function getPaperSettings(): PaperTradingSettings {

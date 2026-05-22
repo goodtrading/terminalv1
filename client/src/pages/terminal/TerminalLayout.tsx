@@ -12,6 +12,7 @@ import DeribitOptionsBook from "@/components/options/DeribitOptionsBook";
 import { FlowsPanel } from "@/components/flows/FlowsPanel";
 import { VolatilityEnginePanel } from "@/components/terminal/VolatilityEnginePanel";
 import { ReportsPanel } from "@/components/reports/ReportsPanel";
+import { TerminalErrorBoundary } from "@/components/common/TerminalErrorBoundary";
 
 export default function TerminalLayout() {
   const [activeScenario, setActiveScenario] = useState<"BASE" | "ALT" | "VOL">("BASE");
@@ -55,11 +56,16 @@ const viewMode: "PRO" = "PRO";
               <div className="flex flex-wrap items-start gap-2 shrink-0 min-h-0">
                                               </div>
               <div className="flex-1 min-h-0 relative overflow-hidden">
-                <MainChart
-                  activeScenario={activeScenario}
-                  onActiveScenarioChange={setActiveScenario}
-                  viewMode={viewMode}
-                />
+                <TerminalErrorBoundary
+                  name="main-chart"
+                  fallbackMessage="Chart module crashed. Reload terminal or switch panel."
+                >
+                  <MainChart
+                    activeScenario={activeScenario}
+                    onActiveScenarioChange={setActiveScenario}
+                    viewMode={viewMode}
+                  />
+                </TerminalErrorBoundary>
               </div>
 
               <div
@@ -77,8 +83,18 @@ const viewMode: "PRO" = "PRO";
                 >
                   {bottomPanelsMinimized ? "EXPAND" : "MINIMIZE"}
                 </button>
-                <ExchangeConnectionPanel collapsed={bottomPanelsMinimized} />
-                <TradingExecutionPanel collapsed={bottomPanelsMinimized} />
+                <TerminalErrorBoundary
+                  name="exchange-connection"
+                  fallbackMessage="Connection panel crashed. Reload terminal."
+                >
+                  <ExchangeConnectionPanel collapsed={bottomPanelsMinimized} />
+                </TerminalErrorBoundary>
+                <TerminalErrorBoundary
+                  name="paper-execution"
+                  fallbackMessage="Paper module crashed. Reload or switch broker."
+                >
+                  <TradingExecutionPanel collapsed={bottomPanelsMinimized} />
+                </TerminalErrorBoundary>
               </div>
             </div>
 
@@ -111,7 +127,12 @@ const viewMode: "PRO" = "PRO";
 
         {activeTab === "REPORTS" && (
           <section className="flex-1 min-h-0 min-w-0 overflow-hidden">
-            <ReportsPanel />
+            <TerminalErrorBoundary
+              name="reports"
+              fallbackMessage="Reports module crashed. Reload or switch tab."
+            >
+              <ReportsPanel />
+            </TerminalErrorBoundary>
           </section>
         )}
       </div>

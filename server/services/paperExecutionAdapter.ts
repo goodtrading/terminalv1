@@ -289,7 +289,14 @@ export class PaperExecutionAdapter {
     if (!guard.success) return guard;
 
     return runWithPaperUserAsync(userId, async () => {
+      console.log("[paper] submit received", { userId, symbol: order.symbol, side: order.side });
       const intent = toPaperIntent(order);
+      console.log("[paper] intent normalized", {
+        userId,
+        symbol: intent.symbol,
+        side: intent.side,
+        type: intent.type,
+      });
       const result = await submitPaperOrder(intent);
       if (!result.success) {
         return {
@@ -298,6 +305,9 @@ export class PaperExecutionAdapter {
           message: result.error ?? result.message ?? "Paper order rejected",
         };
       }
+      console.log("[paper] fill applied", { userId });
+      console.log("[paper] ledger updated", { userId });
+      console.log("[paper] success", { userId });
       return {
         success: true,
         data: {

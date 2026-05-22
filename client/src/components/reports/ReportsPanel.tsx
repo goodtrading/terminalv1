@@ -8,6 +8,7 @@ import { useSessionReportData } from "./session/useSessionReportData";
 import type { ReportsTabId } from "./reportsTypes";
 import { SessionTab } from "./tabs/SessionTab";
 import { ExecutionTab } from "./tabs/ExecutionTab";
+import { TerminalErrorBoundary } from "@/components/common/TerminalErrorBoundary";
 import { EdgeTab } from "./tabs/EdgeTab";
 import { PlaybookTab } from "./tabs/PlaybookTab";
 import { IntelligenceTab } from "./tabs/IntelligenceTab";
@@ -36,7 +37,14 @@ function ReportsTabContent({
 
   switch (tab) {
     case "execution":
-      return <ExecutionTab />;
+      return (
+        <TerminalErrorBoundary
+          name="reports-execution"
+          fallbackMessage="Execution report crashed. Reload or switch tab."
+        >
+          <ExecutionTab />
+        </TerminalErrorBoundary>
+      );
     case "edge":
       return <EdgeTab />;
     case "playbook":

@@ -46,14 +46,36 @@ function readFile(): StorageFile {
           typeof (c as StoredBingXConnection).userId === "number",
       ) as StoredBingXConnection[],
     };
-  } catch {
+  } catch (err) {
+    console.warn(
+      "[bingx-storage] connections file corrupt; resetting",
+      err instanceof Error ? err.message : err,
+    );
+    try {
+      if (fs.existsSync(STORAGE_FILE)) {
+        fs.copyFileSync(
+          STORAGE_FILE,
+          `${STORAGE_FILE}.corrupt.${Date.now()}.bak`,
+        );
+      }
+    } catch {
+      // ignore
+    }
     return { connections: [] };
   }
 }
 
 function writeFile(data: StorageFile): void {
   ensureStorageDir();
-  fs.writeFileSync(STORAGE_FILE, JSON.stringify(data, null, 2), "utf8");
+  try {
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error(
+      "[bingx-storage] write failed",
+      err instanceof Error ? err.message : err,
+    );
+    throw new Error("BINGX_STORAGE_WRITE_FAILED");
+  }
 }
 
 function normalizeUserId(userId: number): number {

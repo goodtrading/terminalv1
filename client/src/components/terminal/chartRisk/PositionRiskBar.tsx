@@ -1,20 +1,25 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import {
-  formatBingxMarginModeShort,
+  formatBingxBarStatusLabel,
+  formatBingxCompactEntryPrice,
   formatBingxPositionAccountPct,
   formatEntryPrice,
   formatMarginMode,
   formatOverlayPnlUsdt,
   formatOverlayQty,
-  resolveBingxExecutionBadge,
 } from "./positionRiskOverlayShared";
 import type {
   PositionRiskOverlayAccount,
   PositionRiskOverlayMode,
   PositionRiskOverlayPosition,
 } from "./positionRiskOverlayTypes";
-import { BAR_HEIGHT, PRICE_SCALE_INSET } from "./positionRiskOverlayStyles";
+import {
+  BAR_HEIGHT,
+  BINGX_BAR_MAX_WIDTH,
+  BINGX_BAR_RIGHT_OFFSET,
+  PRICE_SCALE_INSET,
+} from "./positionRiskOverlayStyles";
 
 type PositionRiskBarProps = {
   mode: PositionRiskOverlayMode;
@@ -58,47 +63,46 @@ export function PositionRiskBar({
   const levMargin = [lev, margin].filter(Boolean).join(" ");
 
   if (mode === "bingx_read_only" && readonly) {
-    const bingxLev =
-      position.leverage != null && position.leverage > 0
-        ? `${position.leverage}x`
-        : null;
-    const bingxMargin = formatBingxMarginModeShort(position.marginMode);
-    const bingxLevMargin = [bingxLev, bingxMargin].filter(Boolean).join(" ");
     const accountPctLabel = formatBingxPositionAccountPct(position, account);
-    const executionBadge = resolveBingxExecutionBadge(mode, liveTradingEnabled);
+    const compact = chartWidth < 760;
+    const statusLabel = formatBingxBarStatusLabel(liveTradingEnabled, compact);
 
     const parts = [
-      "BINGX REAL",
+      "REAL BINGX",
       sideLabel,
-      `ENTRY ${entryStr}`,
+      `ENTRY ${formatBingxCompactEntryPrice(position.entryPrice)}`,
       formatOverlayPnlUsdt(position.unrealizedPnlUsdt),
       accountPctLabel,
-      bingxLevMargin,
-      executionBadge,
+      statusLabel,
     ].filter((p) => p && p !== "—");
+
+    const rightAnchor = Math.max(
+      PRICE_SCALE_INSET + 8,
+      BINGX_BAR_RIGHT_OFFSET,
+    );
 
     return (
       <div
-        className="group absolute z-[16] pointer-events-auto flex items-stretch font-mono text-[9px] leading-none shadow-md"
+        className="group absolute z-[16] pointer-events-auto font-mono text-[8px] leading-none"
         style={{
           top: barTop,
-          right: PRICE_SCALE_INSET + 4,
+          right: rightAnchor,
           height: BAR_HEIGHT,
-          maxWidth: chartWidth - PRICE_SCALE_INSET - 12,
+          width: "max-content",
+          maxWidth: Math.min(BINGX_BAR_MAX_WIDTH, chartWidth - rightAnchor - 8),
         }}
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div
           className={cn(
-            "flex items-center gap-1.5 rounded-l border border-r-0 px-1.5 py-0.5 max-w-full min-w-0 shrink",
-            "border-slate-600/50 bg-[#080808]/95",
+            "relative flex w-max max-w-full items-center gap-0.5 overflow-hidden whitespace-nowrap rounded border px-1 py-px shadow-sm",
+            "border-slate-600/45 bg-[#080808]/92 backdrop-blur-[1px]",
             position.side === "long" ? "text-cyan-300/95" : "text-orange-300/95",
-            !bingxLockedControls && "rounded-r",
           )}
         >
-          <span className="truncate tabular-nums">{parts.join(" · ")}</span>
+          <span className="min-w-0 truncate tabular-nums">{parts.join(" · ")}</span>
+          {bingxLockedControls}
         </div>
-        {bingxLockedControls}
       </div>
     );
   }

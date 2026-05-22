@@ -2,6 +2,13 @@
 export const PRICE_SCALE_INSET = 108;
 export const BAR_HEIGHT = 22;
 
+/** BingX main position label: anchor from right (near price scale, like Paper) */
+export const BINGX_BAR_RIGHT_OFFSET = 120;
+/** BingX main position label: max content width */
+export const BINGX_BAR_MAX_WIDTH = 420;
+/** Vertical gap above entry line (px) */
+export const BINGX_BAR_ABOVE_ENTRY = 6;
+
 export const ENTRY_LONG = "rgba(34, 211, 238, 0.7)";
 export const ENTRY_SHORT = "rgba(249, 115, 22, 0.7)";
 export const BINGX_ENTRY_LONG = "rgba(56, 189, 248, 0.65)";

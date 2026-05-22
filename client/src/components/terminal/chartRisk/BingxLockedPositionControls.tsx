@@ -1,30 +1,20 @@
-import type { MouseEvent, PointerEvent } from "react";
+import { useCallback, useState, type MouseEvent, type PointerEvent } from "react";
 import { cn } from "@/lib/utils";
 import {
-  emitBlockedRealChartActionAudit,
-  type BlockedRealChartAction,
-} from "./blockedRealActionAudit";
+  blockedActionControlTitle,
+  blockedActionHintMessage,
+  type BlockedRealActionKind,
+} from "./blockedActionHint";
+import { emitBlockedRealChartActionAudit } from "./blockedRealActionAudit";
 
-const LOCKED_BTN =
-  "px-1.5 border-y border-l-0 font-bold uppercase tracking-wider shrink-0 touch-none cursor-not-allowed opacity-55 select-none";
-const LOCKED_CLOSE =
-  "px-1.5 rounded-r border border-l-0 border-slate-600/50 bg-[#080808]/95 text-slate-500 shrink-0 touch-none cursor-not-allowed opacity-0 group-hover:opacity-55 transition-opacity select-none";
-
-function blockClick(
-  e: MouseEvent | PointerEvent,
-  action: BlockedRealChartAction,
-  onRequest?: () => void,
-): void {
-  e.preventDefault();
-  e.stopPropagation();
-  emitBlockedRealChartActionAudit(action);
-  onRequest?.();
-}
+const MINI_BADGE =
+  "px-1 py-px rounded border font-bold uppercase tracking-wide shrink-0 touch-none cursor-not-allowed opacity-70 select-none text-[8px] leading-none";
 
 type BingxLockedPositionControlsProps = {
   hasStopLoss: boolean;
   hasTakeProfit: boolean;
   showClose?: boolean;
+  onBlockedRealAction?: (action: BlockedRealActionKind) => void;
   onRequestClosePosition?: () => void;
   onRequestAddStopLoss?: () => void;
   onRequestAddTakeProfit?: () => void;
@@ -34,54 +24,92 @@ export function BingxLockedPositionControls({
   hasStopLoss,
   hasTakeProfit,
   showClose = true,
+  onBlockedRealAction,
   onRequestClosePosition,
   onRequestAddStopLoss,
   onRequestAddTakeProfit,
 }: BingxLockedPositionControlsProps) {
+  const [hint, setHint] = useState<string | null>(null);
+
+  const showBlockedActionHint = useCallback((action: BlockedRealActionKind) => {
+    setHint(blockedActionHintMessage(action));
+    window.setTimeout(() => setHint(null), 2400);
+  }, []);
+
+  const blockClick = useCallback(
+    (
+      e: MouseEvent | PointerEvent,
+      action: BlockedRealActionKind,
+      onRequest?: () => void,
+    ) => {
+      e.preventDefault();
+      e.stopPropagation();
+      emitBlockedRealChartActionAudit(action);
+      onBlockedRealAction?.(action);
+      showBlockedActionHint(action);
+      onRequest?.();
+    },
+    [onBlockedRealAction, showBlockedActionHint],
+  );
+
+  const hasAny = !hasStopLoss || !hasTakeProfit || showClose;
+  if (!hasAny) return null;
+
   return (
-    <>
+    <span className="inline-flex items-center gap-0.5 shrink-0 border-l border-slate-600/45 pl-1 ml-0.5">
       {!hasStopLoss ? (
         <button
           type="button"
           aria-disabled="true"
-          title="Adding real stop loss from GoodTrading is locked in this build."
-          onClick={(e) => blockClick(e, "blocked_real_add_sl", onRequestAddStopLoss)}
+          title={blockedActionControlTitle("add_sl")}
+          onClick={(e) => blockClick(e, "add_sl", onRequestAddStopLoss)}
           onPointerDown={(e) => e.stopPropagation()}
           className={cn(
-            LOCKED_BTN,
-            "border-dashed border-amber-900/50 text-amber-500/50 bg-[#0a0a0a]/95",
+            MINI_BADGE,
+            "border-dashed border-amber-800/55 text-amber-500/70 bg-amber-950/25",
           )}
         >
-          +SL LOCKED
+          +SL
         </button>
       ) : null}
       {!hasTakeProfit ? (
         <button
           type="button"
           aria-disabled="true"
-          title="Adding real take profit from GoodTrading is locked in this build."
-          onClick={(e) => blockClick(e, "blocked_real_add_tp", onRequestAddTakeProfit)}
+          title={blockedActionControlTitle("add_tp")}
+          onClick={(e) => blockClick(e, "add_tp", onRequestAddTakeProfit)}
           onPointerDown={(e) => e.stopPropagation()}
           className={cn(
-            LOCKED_BTN,
-            "border-dashed border-emerald-900/50 text-emerald-500/50 bg-[#0a0a0a]/95",
+            MINI_BADGE,
+            "border-dashed border-emerald-800/55 text-emerald-500/70 bg-emerald-950/25",
           )}
         >
-          +TP LOCKED
+          +TP
         </button>
       ) : null}
       {showClose ? (
         <button
           type="button"
           aria-disabled="true"
-          title="Real close is locked. Live trading is disabled."
-          onClick={(e) => blockClick(e, "blocked_real_close", onRequestClosePosition)}
+          title={blockedActionControlTitle("close")}
+          onClick={(e) => blockClick(e, "close", onRequestClosePosition)}
           onPointerDown={(e) => e.stopPropagation()}
-          className={LOCKED_CLOSE}
+          className={cn(
+            MINI_BADGE,
+            "border-slate-600/50 text-slate-500 bg-[#0a0a0a]/90 opacity-0 group-hover:opacity-70 transition-opacity",
+          )}
         >
           ×
         </button>
       ) : null}
-    </>
+      {hint ? (
+        <span
+          className="absolute left-0 top-full mt-0.5 z-[20] max-w-[min(100%,240px)] truncate rounded border border-amber-900/45 bg-black/92 px-1.5 py-0.5 text-[8px] font-mono text-amber-200/90 pointer-events-none whitespace-nowrap"
+          role="status"
+        >
+          {hint}
+        </span>
+      ) : null}
+    </span>
   );
 }

@@ -70,6 +70,9 @@ export interface PaperFill {
   timestamp: string;
 }
 
+import type { ExecutionContextSnapshot } from "../reports/executionContextTypes";
+import type { PlaybookMatchResult } from "../reports/playbookMatchTypes";
+
 export interface PaperTradeLedgerEntry {
   id: string;
   symbol: string;
@@ -98,6 +101,10 @@ export interface PaperTradeLedgerEntry {
   tags?: string[];
   mistakes?: string[];
   notes?: string;
+  contextAtEntry?: ExecutionContextSnapshot;
+  contextAtExit?: ExecutionContextSnapshot;
+  playbookAtEntry?: PlaybookMatchResult;
+  playbookAtExit?: PlaybookMatchResult;
 }
 
 export interface PaperOrder {

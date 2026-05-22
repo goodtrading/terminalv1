@@ -61,6 +61,7 @@ import { useChartMeasurement } from "./measurement/useChartMeasurement";
 import { BingXReadOnlyChartOverlay } from "./bingxChart/BingXReadOnlyChartOverlay";
 import { PaperChartLimitOrders } from "./paperChart/PaperChartLimitOrders";
 import { PaperTradeOverlay } from "./paperChart/PaperTradeOverlay";
+import { TerminalErrorBoundary } from "./TerminalErrorBoundary";
 import {
   BROKER_SESSION_STORAGE_KEY,
   loadBrokerSession,
@@ -2040,26 +2041,36 @@ export function MainChart({
                         coordinates={chartCoordinates}
                         candleSeries={candleSeriesRef.current}
                       />
-                      <PaperTradeOverlay
+                      <TerminalErrorBoundary
+                        name="paper-chart-overlay"
+                        fallbackMessage="Paper module crashed. Reload or switch broker."
+                      >
+                        <PaperTradeOverlay
+                          chartWidth={timeScaleWidth}
+                          chartHeight={chartSize.h}
+                          viewportVersion={drawingsViewportVersion}
+                          coordinates={chartCoordinates}
+                          candleSeries={candleSeriesRef.current}
+                        />
+                      </TerminalErrorBoundary>
+                    </>
+                  ) : null}
+                  {showBingXReadOnlyChartOverlay ? (
+                    <TerminalErrorBoundary
+                      name="bingx-chart-overlay"
+                      fallbackMessage="BingX overlay crashed. Reload or switch broker."
+                    >
+                      <BingXReadOnlyChartOverlay
+                        brokerSession={brokerSession}
                         chartWidth={timeScaleWidth}
                         chartHeight={chartSize.h}
                         viewportVersion={drawingsViewportVersion}
                         coordinates={chartCoordinates}
+                        chartSymbol="BTCUSDT"
+                        visible
                         candleSeries={candleSeriesRef.current}
                       />
-                    </>
-                  ) : null}
-                  {showBingXReadOnlyChartOverlay ? (
-                    <BingXReadOnlyChartOverlay
-                      brokerSession={brokerSession}
-                      chartWidth={timeScaleWidth}
-                      chartHeight={chartSize.h}
-                      viewportVersion={drawingsViewportVersion}
-                      coordinates={chartCoordinates}
-                      chartSymbol="BTCUSDT"
-                      visible
-                      candleSeries={candleSeriesRef.current}
-                    />
+                    </TerminalErrorBoundary>
                   ) : null}
                 </>
               ) : null}

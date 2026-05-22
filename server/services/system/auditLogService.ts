@@ -22,7 +22,9 @@ export type AuditEventType =
   | "market_data_error"
   | "system_health_error"
   | "risk_mirror_warning"
-  | "risk_mirror_error";
+  | "risk_mirror_error"
+  | "execution_context_captured"
+  | "execution_context_warning";
 
 export interface AuditLogEvent {
   id: string;
@@ -150,6 +152,16 @@ function readStorage(): StorageFile {
       "[audit] audit-log.json corrupt or unreadable; resetting storage",
       err instanceof Error ? err.message : err,
     );
+    try {
+      if (fs.existsSync(STORAGE_FILE)) {
+        fs.copyFileSync(
+          STORAGE_FILE,
+          `${STORAGE_FILE}.corrupt.${Date.now()}.bak`,
+        );
+      }
+    } catch {
+      // ignore backup failure
+    }
     return { events: [] };
   }
 }
@@ -160,7 +172,14 @@ function writeStorage(data: StorageFile): void {
     data.events.length > MAX_EVENTS
       ? { events: data.events.slice(-MAX_EVENTS) }
       : data;
-  fs.writeFileSync(STORAGE_FILE, JSON.stringify(trimmed, null, 2), "utf8");
+  try {
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify(trimmed, null, 2), "utf8");
+  } catch (err) {
+    console.error(
+      "[audit] write failed",
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 export async function clearOldAuditEvents(): Promise<void> {

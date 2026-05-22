@@ -230,8 +230,13 @@ paperTradingRouter.post("/preview", withPaperUser(async (req, res, userId) => {
 }));
 
 async function handlePaperOrderSubmit(req: Request, res: Response, userId: number) {
+  console.log("[paper] received", { userId, path: "/api/paper/order" });
   const normalized = normalizePaperOrderBody((req.body ?? {}) as Record<string, unknown>);
   if ("error" in normalized) {
+    console.warn("[paper] failed", {
+      code: normalized.code,
+      message: normalized.error,
+    });
     res.status(400).json({
       success: false,
       code: normalized.code,
@@ -239,11 +244,22 @@ async function handlePaperOrderSubmit(req: Request, res: Response, userId: numbe
     });
     return;
   }
+  console.log("[paper] normalized intent", {
+    userId,
+    symbol: normalized.symbol,
+    side: normalized.side,
+    orderType: normalized.orderType,
+  });
   const result = await paperExecutionAdapter.submitOrder(userId, normalized);
   if (!result.success) {
+    console.warn("[paper] failed", {
+      code: result.code,
+      message: result.message,
+    });
     res.status(400).json(result);
     return;
   }
+  console.log("[paper] success", { userId, symbol: normalized.symbol });
   void emitAuditEvent({
     userId,
     type: "paper_order_submitted",
@@ -269,9 +285,20 @@ async function handlePaperOrderSubmit(req: Request, res: Response, userId: numbe
 paperTradingRouter.post("/order", withPaperUser(handlePaperOrderSubmit));
 paperTradingRouter.post("/submit", withPaperUser(async (req, res, userId) => {
   try {
+    console.log("[paper] received", { userId, path: "/api/paper/submit" });
     const body = normalizeOrderBody((req.body ?? {}) as Record<string, unknown>);
+    console.log("[paper] normalized intent", {
+      userId,
+      symbol: body.symbol,
+      side: body.side,
+      type: body.type,
+    });
     const result = await submitPaperOrder(body);
     if (!result.success) {
+      console.warn("[paper] failed", {
+        code: result.code,
+        message: result.error ?? result.message,
+      });
       res.status(400).json({
         success: false,
         code: result.code ?? "PAPER_ORDER_REJECTED",
@@ -279,6 +306,8 @@ paperTradingRouter.post("/submit", withPaperUser(async (req, res, userId) => {
       });
       return;
     }
+    console.log("[paper] fill applied", { userId });
+    console.log("[paper] success", { userId });
     void emitAuditEvent({
       userId,
       type: "paper_order_submitted",
@@ -303,7 +332,7 @@ paperTradingRouter.post("/submit", withPaperUser(async (req, res, userId) => {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Submit failed";
-    console.error("[paper-execution] submit failed", message);
+    console.error("[paper] failed", { code: "PAPER_SUBMIT_FAILED", message });
     res.status(500).json({ success: false, code: "PAPER_SUBMIT_FAILED", message });
   }
 }));

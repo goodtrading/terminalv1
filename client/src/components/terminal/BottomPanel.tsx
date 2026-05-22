@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AIChatPanel } from "./AIChatPanel";
 import { SystemHealthPanel } from "./health/SystemHealthPanel";
+import { TerminalErrorBoundary } from "@/components/common/TerminalErrorBoundary";
 
 type BottomTabId = "ai" | "logs" | "notes";
 
@@ -170,7 +171,12 @@ export function BottomPanel() {
         </div>
         {activeTab === "logs" ? (
           <div className="h-full min-h-0">
-            <SystemHealthPanel />
+            <TerminalErrorBoundary
+              name="system-health"
+              fallbackMessage="Health panel crashed. Reload terminal."
+            >
+              <SystemHealthPanel />
+            </TerminalErrorBoundary>
           </div>
         ) : null}
         {activeTab === "notes" ? (

@@ -121,6 +121,24 @@ export function formatSignedPct(value: number): string | null {
   return `${sign}${value.toFixed(decimals)}%`;
 }
 
+export type RiskLevelNetMetricsDisplay = {
+  netPnlUsdt: number | null;
+  accountPct: number | null;
+};
+
+/** Fresh empty metrics per render (avoids shared-object mutation). */
+export function createEmptyRiskLevelMetrics(): RiskLevelNetMetricsDisplay {
+  return {
+    netPnlUsdt: null,
+    accountPct: null,
+  };
+}
+
+/** Frozen singleton for modules that need a stable empty reference. */
+export const EMPTY_RISK_LEVEL_NET_METRICS: RiskLevelNetMetricsDisplay = Object.freeze(
+  createEmptyRiskLevelMetrics(),
+);
+
 export function buildRiskLevelNetMetrics(
   side: "long" | "short",
   entryPrice: number,
@@ -128,7 +146,7 @@ export function buildRiskLevelNetMetrics(
   levelPrice: number,
   accountEquityUsdt: number,
   feeSettings: ChartFeeSettings,
-): { netPnlUsdt: number | null; accountPct: number | null } {
+): RiskLevelNetMetricsDisplay {
   const net = calculateRiskLevelNetPnl({
     side,
     entryPrice,

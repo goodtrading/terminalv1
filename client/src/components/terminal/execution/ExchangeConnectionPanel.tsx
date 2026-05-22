@@ -16,6 +16,7 @@ import { BingXReadOnlyConnectionCard } from "./BingXReadOnlyConnectionCard";
 import { BingXSavedConnectionCard } from "./BingXSavedConnectionCard";
 import { isBingXReadOnlySession } from "./bingxSession";
 import { useBrokerSession } from "./useBrokerSession";
+import { EXCHANGE_PANEL_SLOT_ORDER } from "./exchangeVisualOrder";
 
 function openReferral(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
@@ -352,10 +353,15 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
     void loadStatus();
   }, [loadStatus]);
 
-  const bingx = useMemo(
-    () => exchanges.find((e) => e.id === "bingx"),
-    [exchanges],
-  );
+  const exchangesById = useMemo(() => {
+    const map = new Map<string, ExchangeConnectionState>();
+    for (const ex of exchanges) {
+      map.set(ex.id, ex);
+    }
+    return map;
+  }, [exchanges]);
+
+  const bingx = exchangesById.get("bingx");
 
   const bingxPhase =
     session.exchange === "bingx" ? session.phase : ("not_connected" as BrokerConnectionPhase);
@@ -374,35 +380,50 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
         className="flex-[0.35] h-full min-w-0 max-[1000px]:flex-1"
       >
         <div className="flex flex-col gap-2 p-2 overflow-y-auto max-h-full">
-          {bingxReadOnly ? (
-            <BingXReadOnlyConnectionCard
-              session={session}
-              onManage={() => setBingxModalOpen(true)}
-              onDisconnect={() => void disconnectBroker()}
-              onDeleteSaved={() =>
-                void deleteSavedBingXConnection(session.connectionId)
+          {EXCHANGE_PANEL_SLOT_ORDER.map((slotId) => {
+            const ex = exchangesById.get(slotId);
+            if (!ex) return null;
+
+            if (ex.id === "bingx") {
+              if (bingxReadOnly) {
+                return (
+                  <BingXReadOnlyConnectionCard
+                    key="bingx-read-only"
+                    session={session}
+                    onManage={() => setBingxModalOpen(true)}
+                    onDisconnect={() => void disconnectBroker()}
+                    onDeleteSaved={() =>
+                      void deleteSavedBingXConnection(session.connectionId)
+                    }
+                  />
+                );
               }
-            />
-          ) : null}
-          {showSavedBingxInactive && primarySavedBingX ? (
-            <BingXSavedConnectionCard
-              session={session}
-              saved={primarySavedBingX}
-              paperActive={paperActive}
-              onUseSaved={() => activateSavedBingXConnection(primarySavedBingX.id)}
-              onManage={() => setBingxModalOpen(true)}
-              onDeleteSaved={() =>
-                void deleteSavedBingXConnection(primarySavedBingX.id)
+              if (showSavedBingxInactive && primarySavedBingX) {
+                return (
+                  <BingXSavedConnectionCard
+                    key="bingx-saved-inactive"
+                    session={session}
+                    saved={primarySavedBingX}
+                    paperActive={paperActive}
+                    onUseSaved={() =>
+                      activateSavedBingXConnection(primarySavedBingX.id)
+                    }
+                    onManage={() => setBingxModalOpen(true)}
+                    onDeleteSaved={() =>
+                      void deleteSavedBingXConnection(primarySavedBingX.id)
+                    }
+                  />
+                );
               }
-            />
-          ) : null}
-          {exchanges.map((ex) => {
+            }
+
             if (ex.id === "bingx" && (bingxReadOnly || showSavedBingxInactive)) {
               return null;
             }
+
             return (
               <ExchangeCard
-                key={ex.id}
+                key={`exchange-card-${ex.id}`}
                 exchange={ex}
                 bingxPhase={ex.id === "bingx" ? bingxPhase : undefined}
                 bingxConnected={ex.id === "bingx" ? session.connected : false}

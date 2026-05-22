@@ -15,16 +15,20 @@ function safeErrorStack(err: unknown): string | undefined {
 }
 
 process.on("uncaughtException", (err) => {
-  console.error("[fatal] uncaughtException:", safeErrorMessage(err));
-  const stack = safeErrorStack(err);
-  if (stack) console.error(stack.split("\n").slice(0, 12).join("\n"));
-  process.exit(1);
+  console.error("[process] uncaughtException", {
+    message: safeErrorMessage(err),
+    stack: safeErrorStack(err)?.split("\n").slice(0, 16).join("\n"),
+  });
+  if (process.env.NODE_ENV !== "production") {
+    process.exit(1);
+  }
 });
 
 process.on("unhandledRejection", (reason) => {
-  console.error("[fatal] unhandledRejection:", safeErrorMessage(reason));
-  const stack = safeErrorStack(reason);
-  if (stack) console.error(stack.split("\n").slice(0, 12).join("\n"));
+  console.error("[process] unhandledRejection", {
+    message: safeErrorMessage(reason),
+    stack: safeErrorStack(reason)?.split("\n").slice(0, 16).join("\n"),
+  });
 });
 
 console.log("[startup] GoodTrading server starting");
@@ -126,6 +130,11 @@ app.use((req, res, next) => {
   console.log("[BOOT] Routes and endpoints imported");
 
   try {
+    const { logBootEnvSummary, logGoodTradingBuildStamp, warmupPaperStorage } =
+      await import("./services/system/bootDiagnostics");
+    logGoodTradingBuildStamp();
+    logBootEnvSummary();
+    warmupPaperStorage();
     const { readStorageWarmup } = await import("./services/system/auditLogService");
     readStorageWarmup();
     console.log("[storage] ready");

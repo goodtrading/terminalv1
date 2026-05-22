@@ -281,13 +281,28 @@ export function PlacementPreviewLine({
   );
 }
 
-/** BingX chart position bar: LIVE vs LOCKED (never READ ONLY on main bar). */
+/** BingX chart position bar: LIVE vs locked status label. */
 export function resolveBingxExecutionBadge(
   mode: PositionRiskOverlayMode,
   liveTradingEnabled?: boolean,
 ): "LIVE" | "LOCKED" | null {
   if (mode !== "bingx_read_only") return null;
   return liveTradingEnabled ? "LIVE" : "LOCKED";
+}
+
+export function formatBingxBarStatusLabel(
+  liveTradingEnabled?: boolean,
+  compact?: boolean,
+): string {
+  if (liveTradingEnabled) return "LIVE";
+  return compact ? "RO" : "READ ONLY";
+}
+
+export function formatBingxCompactEntryPrice(price: number): string {
+  return price.toLocaleString("en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
 }
 
 export function formatBingxMarginModeShort(mode?: string): string {
