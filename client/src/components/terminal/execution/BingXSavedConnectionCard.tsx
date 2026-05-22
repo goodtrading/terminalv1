@@ -32,7 +32,13 @@ export function BingXSavedConnectionCard({
         <div>
           <div className="text-[11px] font-bold text-white">BingX</div>
           <div className="text-slate-400 mt-0.5">
-            {paperActive ? "Saved read-only · inactive" : "Saved read-only"}
+            {saved.connectionMode === "secure-api" || saved.tradingPermissionConfirmed
+              ? paperActive
+                ? "Saved secure API · inactive"
+                : "Saved secure API"
+              : paperActive
+                ? "Saved read-only · inactive"
+                : "Saved read-only"}
           </div>
         </div>
         <div className="flex flex-col gap-1 shrink-0">

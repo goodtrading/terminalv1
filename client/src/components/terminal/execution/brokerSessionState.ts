@@ -50,7 +50,11 @@ export function normalizeBrokerSession(
     return {
       ...session,
       phase: "connected",
-      message: session.message ?? "BingX connected read-only.",
+      message:
+        session.message ??
+        (session.connectionMode === "secure-api"
+          ? "BingX secure API connected."
+          : "BingX connected read-only."),
     };
   }
   return {
@@ -82,9 +86,7 @@ export function loadBrokerSession(): BrokerSessionState {
       ...parsed,
     };
     if (merged.connectionMode === "secure_api") {
-      merged.connectionMode = "read-only";
-      merged.readOnly = true;
-      merged.tradingEnabled = false;
+      merged.connectionMode = "secure-api";
     }
     return normalizeBrokerSession(merged);
   } catch {

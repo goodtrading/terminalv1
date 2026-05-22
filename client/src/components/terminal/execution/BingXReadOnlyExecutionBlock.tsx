@@ -10,7 +10,9 @@ import {
   bingxReadOnlyErrorMessage,
   formatLastSyncAgo,
 } from "./bingxReadOnlyMessages";
-import { hasPersistedBingXConnection } from "./bingxSession";
+import { hasPersistedBingXConnection, isBingXSecureApiSession } from "./bingxSession";
+import { bingXConnectionDisplay } from "./bingxConnectionUi";
+import { useBrokerSession } from "./useBrokerSession";
 import { DEFAULT_CHART_SYMBOL } from "./executionContext";
 import { ExecutionVenueStrip } from "./ExecutionVenueStrip";
 import { ReadOnlyRiskMirrorPanel } from "../riskMirror/ReadOnlyRiskMirrorPanel";
@@ -45,8 +47,11 @@ export function BingXReadOnlyExecutionBlock({
   onSwitchToPaper,
 }: BingXReadOnlyExecutionBlockProps) {
   const queryClient = useQueryClient();
+  const { loginStatus } = useBrokerSession();
   const connectionId = session.connectionId;
   const canSync = hasPersistedBingXConnection(session);
+  const secureApi = isBingXSecureApiSession(session);
+  const display = bingXConnectionDisplay(session, loginStatus);
 
   const {
     data: snapshot,
@@ -122,19 +127,25 @@ export function BingXReadOnlyExecutionBlock({
 
       <section className="rounded border border-emerald-500/30 bg-emerald-950/20 p-2 space-y-1.5">
         <div className="text-[8px] font-bold uppercase tracking-widest text-emerald-400/90">
-          BingX Real Account — Read Only
+          {secureApi ? "BingX Real Account — Secure API" : "BingX Real Account — Read Only"}
         </div>
 
         <div className="flex flex-wrap gap-1">
-          <span className="rounded border border-emerald-500/35 px-1 py-0.5 text-[7px] font-bold uppercase text-emerald-300">
-            Read only
-          </span>
-          <span className="rounded border border-amber-500/35 px-1 py-0.5 text-[7px] font-bold uppercase text-amber-200">
-            Real account
-          </span>
-          <span className="rounded border border-red-900/50 px-1 py-0.5 text-[7px] font-bold uppercase text-red-300/80">
-            Trading locked
-          </span>
+          {display.badges.map((badge) => (
+            <span
+              key={badge}
+              className={cn(
+                "rounded border px-1 py-0.5 text-[7px] font-bold uppercase",
+                badge.includes("Secure") || badge.includes("guarded")
+                  ? "border-amber-500/35 text-amber-200"
+                  : badge.includes("Limit")
+                    ? "border-cyan-500/35 text-cyan-200"
+                    : "border-emerald-500/35 text-emerald-300",
+              )}
+            >
+              {badge}
+            </span>
+          ))}
           {connectionHealth ? (
             <span
               className={cn(
@@ -171,7 +182,9 @@ export function BingXReadOnlyExecutionBlock({
           <span>Broker</span>
           <span className="text-right text-slate-200">BingX</span>
           <span>Connection</span>
-          <span className="text-right text-emerald-300/90">Connected read-only</span>
+          <span className="text-right text-emerald-300/90">
+            {secureApi ? "Connected secure API" : "Connected read-only"}
+          </span>
           {session.apiKeyMasked ? (
             <>
               <span>API</span>
@@ -215,7 +228,9 @@ export function BingXReadOnlyExecutionBlock({
             {snapshot ? String(openOrders.length) : "--"}
           </span>
           <span>Trading permissions</span>
-          <span className="text-right text-amber-400/90">Read-only</span>
+          <span className="text-right text-amber-400/90">
+            {secureApi && liveTradingEnabled ? "Trade (guarded)" : "Read-only"}
+          </span>
           <span>Last sync</span>
           <span className="text-right text-slate-500">{syncLabel}</span>
         </div>
@@ -233,7 +248,11 @@ export function BingXReadOnlyExecutionBlock({
         ) : null}
 
         <p className="text-[8px] text-slate-500 border-t border-terminal-border/40 pt-1.5">
-          Risk guard: Live trading locked · Read-only mode
+          {secureApi
+            ? liveTradingEnabled
+              ? "Live limit submit guarded · Market/cancel/close disabled"
+              : "Secure API · Live flags off or kill switch"
+            : "Risk guard: Live trading locked · Read-only mode"}
         </p>
 
         <button

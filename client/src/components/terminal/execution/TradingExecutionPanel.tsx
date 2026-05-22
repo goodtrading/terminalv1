@@ -21,7 +21,8 @@ import {
 import { ExecutionVenueStrip } from "./ExecutionVenueStrip";
 import { BingXReadOnlyExecutionBlock } from "./BingXReadOnlyExecutionBlock";
 import { PaperTradingExecutionBlock } from "./PaperTradingExecutionBlock";
-import { isBingXReadOnlySession } from "./bingxSession";
+import { isBingXReadOnlySession, isBingXSecureApiSession } from "./bingxSession";
+import { bingXConnectionDisplay } from "./bingxConnectionUi";
 import { useBrokerSession } from "./useBrokerSession";
 import { PaperClosePositionModal } from "./PaperClosePositionModal";
 import { PaperRiskManagementSection } from "./PaperRiskManagementSection";
@@ -274,7 +275,11 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
   }, [isPaper, paperSettings, paperTicketInitialized]);
 
   const isBingXReadOnly = isBingXReadOnlySession(session);
-  const liveTradingLocked = !isPaper && (isBingXReadOnly || risk.tradingLocked);
+  const isBingXSecureApi = isBingXSecureApiSession(session);
+  const isBingXApiActive = isBingXReadOnly || isBingXSecureApi;
+  const liveTradingLocked =
+    !isPaper &&
+    (isBingXReadOnly || (!isBingXSecureApi && risk.tradingLocked));
   const {
     data: paperAccount,
     isLoading: paperAccountLoading,
@@ -391,6 +396,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
   const connectionLabel = (() => {
     if (isPaper) return "Connected · Simulated";
     if (session.connected && session.demo) return "Connected demo";
+    if (isBingXSecureApi) return "Connected secure API";
     if (isBingXReadOnly) return "Connected read-only";
     if (session.connected && session.phase === "connected") return "Connected";
     if (session.phase === "connecting" || session.phase === "checking") {
@@ -403,6 +409,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
   const permissionsLabel = (() => {
     if (isPaper) return "Paper simulated";
     if (session.demo) return "Demo / Live locked";
+    if (isBingXSecureApi) return "Secure API";
     if (isBingXReadOnly) return "Read-only";
     if (session.connected && session.phase === "connected") return "Pending / Live locked";
     return "Locked";
@@ -415,6 +422,11 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
     }
     if (isPaper) {
       return "Paper mode — simulated orders only. No real funds. Live trading OFF.";
+    }
+    if (isBingXSecureApi) {
+      return session.tradingEnabled
+        ? "BingX secure API — live limit submit guarded (preview + confirm). Market/cancel/close disabled."
+        : "BingX secure API — trading permission OK; enable live flags for submit.";
     }
     if (isBingXReadOnly) {
       return "BingX connected read-only. Live trading locked — use Paper Trading to simulate orders.";
@@ -617,14 +629,18 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
             Demo · Not live
           </span>
         ) : null}
-        {isBingXReadOnly ? (
+        {isBingXSecureApi ? (
+          <span className="text-[7px] font-bold uppercase tracking-wider text-amber-200 border border-amber-500/40 px-1 rounded">
+            BingX secure API
+          </span>
+        ) : isBingXReadOnly ? (
           <span className="text-[7px] font-bold uppercase tracking-wider text-emerald-300 border border-emerald-500/40 px-1 rounded">
             BingX read-only
           </span>
         ) : null}
       </div>
     ),
-    [isPaper, session.demo, isBingXReadOnly],
+    [isPaper, session.demo, isBingXReadOnly, isBingXSecureApi],
   );
 
   return (
@@ -646,11 +662,15 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
                 : undefined
             }
           />
-        ) : isBingXReadOnly ? (
+        ) : isBingXApiActive ? (
           <BingXReadOnlyExecutionBlock
             session={session}
             symbol={ticket.symbol}
-            liveTradingEnabled={risk.liveTradingEnabled}
+            liveTradingEnabled={
+              isBingXSecureApi
+                ? session.tradingEnabled ?? risk.liveTradingEnabled
+                : false
+            }
             onSwitchToPaper={() => connectPaperTrading()}
           />
         ) : (
@@ -661,7 +681,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
         )}
 
         {/* Account — non-paper, non–BingX read-only */}
-        {!isPaper && !isBingXReadOnly ? (
+        {!isPaper && !isBingXApiActive ? (
           <section className="rounded border border-terminal-border bg-[#0a0a0a] p-2 space-y-1">
             <div className="text-[8px] font-bold uppercase tracking-widest text-cyan-500/80 mb-1">
               Account / Broker
@@ -1059,7 +1079,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
         </p>
 
         {/* Position mgmt — non-paper */}
-        {!isPaper && !isBingXReadOnly ? (
+        {!isPaper && !isBingXApiActive ? (
         <section className="rounded border border-terminal-border p-2 space-y-1">
           <div className="text-[8px] font-bold uppercase tracking-widest text-slate-500">
             Position management

@@ -2,6 +2,8 @@ import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import type { BingXReadOnlyHealthResponse, BrokerSessionState } from "./executionTypes";
+import { bingXConnectionDisplay } from "./bingxConnectionUi";
+import { useBrokerSession } from "./useBrokerSession";
 import { bingxApiFetch } from "./bingxApiClient";
 import {
   bingxReadOnlyErrorMessage,
@@ -38,8 +40,10 @@ export function BingXReadOnlyConnectionCard({
 }: BingXReadOnlyConnectionCardProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const queryClient = useQueryClient();
+  const { loginStatus } = useBrokerSession();
   const connectionId = session.connectionId;
   const canSync = hasPersistedBingXConnection(session);
+  const display = bingXConnectionDisplay(session, loginStatus);
 
   const { data: healthData, isFetching: healthFetching } =
     useQuery<BingXReadOnlyHealthResponse>({
@@ -93,7 +97,13 @@ export function BingXReadOnlyConnectionCard({
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="text-[11px] font-bold text-white">BingX</div>
-          <div className="text-slate-400 mt-0.5">Status: Connected Read-Only</div>
+          <div className="text-slate-400 mt-0.5">{display.headline}</div>
+          <div className="text-slate-500 mt-0.5 text-[8px]">
+            Mode: {display.modeLabel} · Live trading: {display.liveTradingLabel}
+          </div>
+          <div className="text-slate-500 text-[8px]">
+            Execution: {display.executionLabel}
+          </div>
           <div className={cn("mt-0.5 uppercase font-bold", healthColor(health))}>
             Health: {health === "checking" ? "Checking…" : health}
             {healthData?.latencyMs != null ? (
@@ -108,15 +118,21 @@ export function BingXReadOnlyConnectionCard({
           </div>
         </div>
         <div className="flex flex-col gap-1 shrink-0">
-          <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1 py-0.5 text-[7px] font-bold uppercase text-emerald-300">
-            Read only
-          </span>
-          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1 py-0.5 text-[7px] font-bold uppercase text-amber-200">
-            Real account
-          </span>
-          <span className="rounded border border-red-900/50 bg-red-950/30 px-1 py-0.5 text-[7px] font-bold uppercase text-red-300/90">
-            Trading locked
-          </span>
+          {display.badges.map((badge) => (
+            <span
+              key={badge}
+              className={cn(
+                "rounded border px-1 py-0.5 text-[7px] font-bold uppercase",
+                badge.includes("Secure") || badge.includes("guarded")
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                  : badge.includes("Limit")
+                    ? "border-cyan-500/35 bg-cyan-950/30 text-cyan-200"
+                    : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+              )}
+            >
+              {badge}
+            </span>
+          ))}
         </div>
       </div>
 

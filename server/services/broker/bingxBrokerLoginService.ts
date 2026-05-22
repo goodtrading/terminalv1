@@ -1,5 +1,10 @@
 import type { BingxCallbackResult, BingxLoginStatusResponse } from "./brokerTypes";
-import { isApiConnectionEnabled } from "../execution/riskGuard";
+import {
+  getLiveTradingEnvFlags,
+  isApiConnectionEnabled,
+  isBingxMarketOrdersAllowed,
+  isKillSwitchActive,
+} from "../execution/riskGuard";
 
 function envBool(key: string, fallback = false): boolean {
   const v = process.env[key];
@@ -42,6 +47,8 @@ export function getBingxLoginStatus(): BingxLoginStatusResponse {
     ? "BingX broker login is available."
     : "BingX broker login is prepared but not available yet.";
 
+  const flags = getLiveTradingEnvFlags();
+
   return {
     exchange: "bingx",
     brokerLoginAvailable,
@@ -50,6 +57,13 @@ export function getBingxLoginStatus(): BingxLoginStatusResponse {
     demoAvailable,
     liveTradingEnabled,
     apiConnectionEnabled: isApiConnectionEnabled(),
+    liveExecutionFlags: {
+      liveTradingEnabled: flags.liveTradingEnabled,
+      apiTradingEnabled: flags.apiTradingEnabled,
+      orderSubmitEnabled: flags.orderSubmitEnabled,
+      marketOrdersAllowed: isBingxMarketOrdersAllowed(),
+      killSwitchActive: isKillSwitchActive(),
+    },
     message,
   };
 }

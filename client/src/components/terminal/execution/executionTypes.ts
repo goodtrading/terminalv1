@@ -19,6 +19,7 @@ export type BrokerConnectionPhase =
 export type BrokerConnectionMode =
   | "broker_login"
   | "secure_api"
+  | "secure-api"
   | "read-only"
   | "demo"
   | "paper"
@@ -34,6 +35,7 @@ export interface BrokerSessionState {
   apiKeyMasked?: string;
   readOnly?: boolean;
   tradingEnabled?: boolean;
+  tradingPermissionConfirmed?: boolean;
   message?: string;
   brokerLoginUrl?: string | null;
   connectedAt?: string;
@@ -181,9 +183,12 @@ export interface BingXSavedConnection {
   exchange: "bingx";
   label: string;
   apiKeyMasked: string;
-  mode: "read-only";
-  readOnly: true;
-  tradingEnabled: false;
+  mode?: "read-only" | "secure-api";
+  connectionMode?: "read-only" | "secure-api";
+  readOnly?: boolean;
+  tradingPermissionConfirmed?: boolean;
+  tradingEnabled?: boolean;
+  permissions?: { readOnly: boolean; trading: boolean };
   connected: boolean;
   status: string;
   lastHealth?: BingXReadOnlyHealth;
@@ -198,12 +203,14 @@ export interface BingXConnectResponse {
   connection?: {
     id: string;
     exchange: "bingx";
-    mode?: "read-only";
+    mode?: "read-only" | "secure-api";
+    connectionMode?: "read-only" | "secure-api";
     status?: string;
     apiKeyMasked: string;
     connected?: boolean;
     readOnly?: boolean;
-    tradingEnabled?: false;
+    tradingPermissionConfirmed?: boolean;
+    tradingEnabled?: boolean;
     permissions?: { readOnly: boolean; trading: boolean };
     label?: string;
     createdAt?: string;
@@ -215,6 +222,14 @@ export interface BingXConnectResponse {
   message?: string;
 }
 
+export interface BingxLiveExecutionFlags {
+  liveTradingEnabled: boolean;
+  apiTradingEnabled: boolean;
+  orderSubmitEnabled: boolean;
+  marketOrdersAllowed: boolean;
+  killSwitchActive: boolean;
+}
+
 export interface BingxLoginStatusResponse {
   exchange: "bingx";
   brokerLoginAvailable: boolean;
@@ -223,6 +238,7 @@ export interface BingxLoginStatusResponse {
   demoAvailable: boolean;
   liveTradingEnabled: boolean;
   apiConnectionEnabled?: boolean;
+  liveExecutionFlags?: BingxLiveExecutionFlags;
   message: string;
 }
 

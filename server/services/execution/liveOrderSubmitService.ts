@@ -218,6 +218,26 @@ export async function submitBingXLiveLimitOrder(
     return result;
   }
 
+  if (
+    conn.readOnly ||
+    conn.connectionMode === "read-only" ||
+    !conn.tradingPermissionConfirmed
+  ) {
+    const result = baseBlockedResult(
+      request,
+      [
+        conn.readOnly || conn.connectionMode === "read-only"
+          ? "Live submit blocked: BingX connection is read-only."
+          : "BingX API trading permission not confirmed.",
+      ],
+      "LIVE ORDER BLOCKED — connection not live-capable",
+      estimate,
+    );
+    result.clientOrderId = clientOrderId;
+    await emitLiveOrderSubmitBlocked(uid, request, result);
+    return result;
+  }
+
   const credentials = getCredentialsForUser(conn.id, uid);
   if (!credentials) {
     const result = baseBlockedResult(

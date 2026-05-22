@@ -2,6 +2,12 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import {
+  normalizeStoredConnectionFields,
+  resolveConnectionCapability,
+  resolveTradingEnabledFromStored,
+} from "./bingxConnectionCapability";
+import { probeBingXApiPermissions } from "./bingxApiPermissionProbe";
 import type {
   BingXApiCredentials,
   BingXConnectionHealth,
@@ -118,32 +124,24 @@ function decrypt(payload: string): string {
   return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
 }
 
-function normalizeStoredRow(raw: StoredBingXConnection): StoredBingXConnection {
-  return {
-    ...raw,
-    mode: "read-only",
-    tradingEnabled: false,
-    permissions: { readOnly: true, trading: false },
-  };
-}
-
 export function toPublicConnection(c: StoredBingXConnection): BingXPublicConnection {
-  const row = normalizeStoredRow(c);
+  const row = normalizeStoredConnectionFields(c);
   return {
     id: row.id,
     exchange: row.exchange,
     label: row.label,
     apiKeyMasked: row.apiKeyMasked,
-    mode: "read-only",
-    readOnly: true,
-    tradingEnabled: false,
+    connectionMode: row.connectionMode,
+    readOnly: row.readOnly,
+    tradingPermissionConfirmed: row.tradingPermissionConfirmed,
+    tradingEnabled: row.tradingEnabled,
     connected: row.status === "connected",
-    permissions: { readOnly: true, trading: false },
+    permissions: row.permissions,
     status: row.status,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     lastCheckedAt: row.lastCheckedAt,
-    lastValidatedAt: row.lastValidatedAt ?? row.lastCheckedAt,
+    lastValidatedAt: row.lastValidatedAt,
     lastHealth: row.lastHealth,
     lastError: row.lastError,
   };
@@ -153,7 +151,7 @@ export function listConnectionsForUser(userId: number): BingXPublicConnection[] 
   const uid = normalizeUserId(userId);
   return readFile()
     .connections.filter((c) => c.userId === uid)
-    .map(toPublicConnection);
+    .map((c) => toPublicConnection(normalizeStoredConnectionFields(c)));
 }
 
 export function getConnectionForUser(
@@ -162,7 +160,7 @@ export function getConnectionForUser(
 ): StoredBingXConnection | null {
   const uid = normalizeUserId(userId);
   const row = readFile().connections.find((c) => c.id === id && c.userId === uid);
-  return row ? normalizeStoredRow(row) : null;
+  return row ? normalizeStoredConnectionFields(row) : null;
 }
 
 export function getCredentialsForUser(
@@ -202,6 +200,7 @@ export function saveConnectionForUser(input: {
   status: StoredBingXConnection["status"];
   lastError?: string;
   lastHealth?: BingXConnectionHealth;
+  capability: ReturnType<typeof resolveConnectionCapability>;
 }): SaveConnectionForUserResult {
   if (!hasEncryptionKey()) {
     return {
@@ -214,6 +213,8 @@ export function saveConnectionForUser(input: {
 
   const uid = normalizeUserId(input.userId);
   const now = new Date().toISOString();
+  const cap = input.capability;
+
   const row: StoredBingXConnection = {
     id: randomUUID(),
     userId: uid,
@@ -222,9 +223,11 @@ export function saveConnectionForUser(input: {
     apiKeyMasked: maskApiKey(input.credentials.apiKey),
     encryptedApiKey: encrypt(input.credentials.apiKey.trim()),
     encryptedApiSecret: encrypt(input.credentials.apiSecret.trim()),
-    mode: "read-only",
-    tradingEnabled: false,
-    permissions: { readOnly: true, trading: false },
+    connectionMode: cap.connectionMode,
+    readOnly: cap.readOnly,
+    tradingPermissionConfirmed: cap.tradingPermissionConfirmed,
+    tradingEnabled: cap.tradingEnabled,
+    permissions: cap.permissions,
     status: input.status,
     createdAt: now,
     updatedAt: now,
@@ -244,6 +247,60 @@ export function saveConnectionForUser(input: {
   return { ok: true, connection: toPublicConnection(row) };
 }
 
+export async function refreshConnectionPermissionsForUser(
+  id: string,
+  userId: number,
+): Promise<BingXPublicConnection | null> {
+  const uid = normalizeUserId(userId);
+  const file = readFile();
+  const row = file.connections.find((c) => c.id === id && c.userId === uid);
+  if (!row) return null;
+
+  const credentials = getCredentialsForUser(id, uid);
+  if (!credentials) {
+    return toPublicConnection(normalizeStoredConnectionFields(row));
+  }
+
+  const probe = await probeBingXApiPermissions(credentials);
+  const cap = resolveConnectionCapability(probe);
+  const now = new Date().toISOString();
+
+  row.connectionMode = cap.connectionMode;
+  row.readOnly = cap.readOnly;
+  row.tradingPermissionConfirmed = cap.tradingPermissionConfirmed;
+  row.tradingEnabled = cap.tradingEnabled;
+  row.permissions = cap.permissions;
+  row.updatedAt = now;
+  row.lastCheckedAt = now;
+  row.lastValidatedAt = now;
+
+  writeFile(file);
+  return toPublicConnection(row);
+}
+
+export async function listConnectionsForUserRefreshed(
+  userId: number,
+): Promise<BingXPublicConnection[]> {
+  const uid = normalizeUserId(userId);
+  const list = readFile().connections.filter((c) => c.userId === uid);
+  const out: BingXPublicConnection[] = [];
+
+  for (const row of list) {
+    if (row.status === "connected" && hasEncryptionKey()) {
+      try {
+        const refreshed = await refreshConnectionPermissionsForUser(row.id, uid);
+        out.push(refreshed ?? toPublicConnection(row));
+      } catch {
+        out.push(toPublicConnection(row));
+      }
+    } else {
+      out.push(toPublicConnection(row));
+    }
+  }
+
+  return out;
+}
+
 export function updateConnectionStatusForUser(
   id: string,
   userId: number,
@@ -255,12 +312,16 @@ export function updateConnectionStatusForUser(
   const file = readFile();
   const row = file.connections.find((c) => c.id === id && c.userId === uid);
   if (!row) return;
-  row.status = status;
-  row.updatedAt = new Date().toISOString();
-  row.lastCheckedAt = new Date().toISOString();
-  row.lastValidatedAt = row.lastCheckedAt;
-  row.lastError = lastError;
-  if (lastHealth) row.lastHealth = lastHealth;
+  const normalized = normalizeStoredConnectionFields(row);
+  normalized.status = status;
+  normalized.updatedAt = new Date().toISOString();
+  normalized.lastCheckedAt = normalized.updatedAt;
+  normalized.lastValidatedAt = normalized.lastCheckedAt;
+  normalized.lastError = lastError;
+  if (lastHealth) normalized.lastHealth = lastHealth;
+  normalized.tradingEnabled = resolveTradingEnabledFromStored(normalized);
+  const idx = file.connections.findIndex((c) => c.id === id && c.userId === uid);
+  file.connections[idx] = normalized;
   writeFile(file);
 }
 
@@ -288,12 +349,13 @@ export function getFirstConnectedConnectionForUser(
 
 /** @deprecated Use user-scoped helpers. Kept for internal migration only. */
 export function listConnections(): BingXPublicConnection[] {
-  return readFile().connections.map(toPublicConnection);
+  return readFile().connections.map((c) => toPublicConnection(c));
 }
 
 /** @deprecated Use getConnectionForUser */
 export function getConnection(id: string): StoredBingXConnection | null {
-  return readFile().connections.find((c) => c.id === id) ?? null;
+  const row = readFile().connections.find((c) => c.id === id);
+  return row ? normalizeStoredConnectionFields(row) : null;
 }
 
 /** @deprecated Use getCredentialsForUser */

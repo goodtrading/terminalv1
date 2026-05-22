@@ -13,13 +13,14 @@ import {
   mapBingXErrorToSafe,
 } from "../services/exchanges/bingx/bingxReadOnlyService";
 import { isBingxRiskDebugEnabled } from "../services/exchanges/bingx/bingxRiskFieldExtractors";
+import { probeBingXApiPermissions } from "../services/exchanges/bingx/bingxApiPermissionProbe";
+import { resolveConnectionCapability } from "../services/exchanges/bingx/bingxConnectionCapability";
 import {
   deleteConnectionForUser,
   getConnectionForUser,
   hasEncryptionKey,
-  listConnectionsForUser,
+  listConnectionsForUserRefreshed,
   saveConnectionForUser,
-  toPublicConnection,
 } from "../services/exchanges/bingx/bingxCredentialStore";
 import type { BingXConnectResponseConnection } from "../services/exchanges/bingx/bingxTypes";
 import {
@@ -88,17 +89,31 @@ function requireUserId(
   return null;
 }
 
-function toConnectResponse(
-  c: ReturnType<typeof toPublicConnection>,
-): BingXConnectResponseConnection {
+function toConnectResponse(c: {
+  id: string;
+  apiKeyMasked: string;
+  status: string;
+  connectionMode: BingXConnectResponseConnection["connectionMode"];
+  readOnly: boolean;
+  tradingPermissionConfirmed: boolean;
+  tradingEnabled: boolean;
+  permissions: BingXConnectResponseConnection["permissions"];
+  label: string;
+  createdAt: string;
+  lastValidatedAt?: string;
+  lastHealth?: BingXConnectResponseConnection["lastHealth"];
+}): BingXConnectResponseConnection {
   return {
     id: c.id,
     exchange: "bingx",
-    mode: "read-only",
+    mode: c.connectionMode,
+    connectionMode: c.connectionMode,
     apiKeyMasked: c.apiKeyMasked,
     connected: c.status === "connected",
-    tradingEnabled: false,
-    readOnly: true,
+    tradingPermissionConfirmed: c.tradingPermissionConfirmed,
+    tradingEnabled: c.tradingEnabled,
+    readOnly: c.readOnly,
+    permissions: c.permissions,
     label: c.label,
     createdAt: c.createdAt,
     lastValidatedAt: c.lastValidatedAt,
@@ -156,14 +171,6 @@ export function registerBingxApiRoutes(app: Express): void {
         });
       }
 
-      if (parsed.requestedTrading) {
-        return res.status(403).json({
-          success: false,
-          code: "TRADING_LOCKED",
-          message: "Live trading is disabled in this build.",
-        });
-      }
-
       const isProd = process.env.NODE_ENV === "production";
       if ((parsed.save || isProd) && !hasEncryptionKey()) {
         return res.status(503).json({
@@ -185,35 +192,48 @@ export function registerBingxApiRoutes(app: Express): void {
         });
       }
 
+      const probe = await probeBingXApiPermissions({ apiKey, apiSecret });
+      const capability = resolveConnectionCapability(probe);
+
       if (!save) {
+        const sessionConn = toConnectResponse({
+          id: "session-only",
+          apiKeyMasked: test.apiKeyMasked!,
+          status: "connected",
+          connectionMode: capability.connectionMode,
+          readOnly: capability.readOnly,
+          tradingPermissionConfirmed: capability.tradingPermissionConfirmed,
+          tradingEnabled: capability.tradingEnabled,
+          permissions: capability.permissions,
+          label: label ?? "BingX API",
+          createdAt: new Date().toISOString(),
+        });
         void emitAuditEvent({
           userId,
           type: "bingx_connected",
           severity: "info",
-          message: "BingX read-only connected (session only)",
+          message:
+            capability.connectionMode === "secure-api"
+              ? "BingX secure API connected (session only)"
+              : "BingX read-only connected (session only)",
           metadata: {
             exchange: "bingx",
-            mode: "read-only",
+            mode: capability.connectionMode,
             apiKeyMasked: test.apiKeyMasked,
+            tradingPermissionConfirmed: capability.tradingPermissionConfirmed,
             saved: false,
           },
         });
         return res.json({
           success: true,
           saved: false,
-          connection: {
-            id: "session-only",
-            exchange: "bingx",
-            mode: "read-only",
-            apiKeyMasked: test.apiKeyMasked!,
-            connected: true,
-            tradingEnabled: false,
-            readOnly: true,
-            createdAt: new Date().toISOString(),
-          },
+          connection: sessionConn,
           warning:
             "Connected for this session only. Credentials were not saved.",
-          message: "BingX API verified (session only).",
+          message:
+            capability.connectionMode === "secure-api"
+              ? "BingX API verified with trading permission (session only)."
+              : "BingX API verified (read-only, session only).",
         });
       }
 
@@ -223,6 +243,7 @@ export function registerBingxApiRoutes(app: Express): void {
         label,
         status: "connected",
         lastHealth: "healthy",
+        capability,
       });
 
       if (!saved.ok) {
@@ -238,12 +259,16 @@ export function registerBingxApiRoutes(app: Express): void {
         userId,
         type: "bingx_connected",
         severity: "info",
-        message: "BingX read-only connected",
+        message:
+          conn.connectionMode === "secure-api"
+            ? "BingX secure API connected"
+            : "BingX read-only connected",
         metadata: {
           exchange: "bingx",
-          mode: "read-only",
+          mode: conn.connectionMode,
           apiKeyMasked: conn.apiKeyMasked,
           connectionId: conn.id,
+          tradingPermissionConfirmed: conn.tradingPermissionConfirmed,
         },
       });
       void emitAuditEvent({
@@ -277,14 +302,16 @@ export function registerBingxApiRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/bingx/connections", requireSaasAuth, (req: Request, res: Response) => {
+  app.get("/api/bingx/connections", requireSaasAuth, async (req: Request, res: Response) => {
     try {
       const userId = requireUserId(req, res, "/api/bingx/connections");
       if (userId == null) return;
 
+      const connections = await listConnectionsForUserRefreshed(userId);
+
       res.json({
         success: true,
-        connections: listConnectionsForUser(userId),
+        connections,
         encryptionAvailable: hasEncryptionKey(),
       });
     } catch (error: unknown) {

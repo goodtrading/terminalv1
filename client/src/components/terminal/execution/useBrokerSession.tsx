@@ -36,6 +36,10 @@ import {
   saveBrokerSession,
 } from "./brokerSessionState";
 import { emitTerminalAudit } from "../health/terminalAuditLog";
+import {
+  computeSessionTradingEnabled,
+  mapApiModeToSessionMode,
+} from "./bingxConnectionUi";
 
 const BINGX_LOADING_WATCHDOG_MS = 10_000;
 const BINGX_RESTORE_TIMEOUT_MS = 10_000;
@@ -83,18 +87,35 @@ function applySession(next: BrokerSessionState) {
   return next;
 }
 
-function sessionFromSavedConnection(saved: BingXSavedConnection): BrokerSessionState {
+function sessionFromSavedConnection(
+  saved: BingXSavedConnection,
+  loginStatus: BingxLoginStatusResponse | null,
+): BrokerSessionState {
+  const mode = mapApiModeToSessionMode(
+    saved.connectionMode ?? saved.mode,
+  );
+  const readOnly = saved.readOnly ?? mode === "read-only";
+  const tradingPermissionConfirmed =
+    saved.tradingPermissionConfirmed ?? !readOnly;
+  const tradingEnabled = computeSessionTradingEnabled(saved, loginStatus);
+
   return {
     exchange: "bingx",
     phase: "connected",
     connected: true,
     demo: false,
-    connectionMode: "read-only",
+    connectionMode: mode,
     connectionId: saved.id,
     apiKeyMasked: saved.apiKeyMasked,
-    readOnly: true,
-    tradingEnabled: false,
-    message: "BingX read-only active (saved credentials).",
+    readOnly,
+    tradingPermissionConfirmed,
+    tradingEnabled,
+    message:
+      mode === "secure-api"
+        ? tradingEnabled
+          ? "BingX secure API active — live limit submit guarded."
+          : "BingX secure API active — live flags off or kill switch."
+        : "BingX read-only active (saved credentials).",
     connectedAt: new Date().toISOString(),
     lastError: undefined,
   };
@@ -383,7 +404,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
             mode: "read-only",
           },
         );
-        return applySession(sessionFromSavedConnection(saved));
+        return applySession(sessionFromSavedConnection(saved, loginStatus));
       });
     };
 
@@ -408,7 +429,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       setRestoreLoading(false);
       setLastBrokerAction("restore_done");
     }
-  }, [authReady, authenticated, user, refreshSavedBingXConnections]);
+  }, [authReady, authenticated, user, refreshSavedBingXConnections, loginStatus]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -600,7 +621,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
             save: input.save,
             requestedPermissions: {
               readOnly: true,
-              trading: false,
+              trading: true,
             },
           }),
         });
@@ -628,6 +649,21 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
         }
 
         const conn = data.connection;
+        const mode = mapApiModeToSessionMode(
+          conn.connectionMode ?? conn.mode,
+        );
+        const readOnly = conn.readOnly ?? mode === "read-only";
+        const tradingPermissionConfirmed =
+          conn.tradingPermissionConfirmed ?? !readOnly;
+        const tradingEnabled =
+          conn.tradingEnabled ??
+          computeSessionTradingEnabled(
+            {
+              tradingPermissionConfirmed,
+              tradingEnabled: conn.tradingEnabled,
+            },
+            loginStatus,
+          );
         const persisted =
           Boolean(data.saved) &&
           conn.id &&
@@ -646,11 +682,12 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
             phase: "connected",
             connected: true,
             demo: false,
-            connectionMode: "read-only",
+            connectionMode: mode,
             connectionId: persisted ? conn.id : undefined,
             apiKeyMasked: conn.apiKeyMasked,
-            readOnly: true,
-            tradingEnabled: false,
+            readOnly,
+            tradingPermissionConfirmed,
+            tradingEnabled,
             connectedAt: new Date().toISOString(),
             message: successMessage,
             lastError: undefined,
@@ -661,7 +698,12 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
           void restoreSavedBingXConnection();
           emitTerminalAudit("credential_saved", "BingX API credentials saved (encrypted server-side)");
         }
-        emitTerminalAudit("bingx_connected", "BingX read-only session established");
+        emitTerminalAudit(
+          "bingx_connected",
+          mode === "secure-api"
+            ? "BingX secure API session established"
+            : "BingX read-only session established",
+        );
 
         return data;
       } catch (err) {
@@ -733,21 +775,26 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       if (import.meta.env.DEV) {
         console.debug("[broker] activating saved BingX connection", saved.id);
       }
-      setSession(applySession(sessionFromSavedConnection(saved)));
+      setSession(applySession(sessionFromSavedConnection(saved, loginStatus)));
+      const mode = mapApiModeToSessionMode(
+        saved.connectionMode ?? saved.mode,
+      );
       emitTerminalAudit(
         "bingx_saved_connection_restored",
-        `Activated read-only · ${saved.apiKeyMasked}`,
+        mode === "secure-api"
+          ? `Activated secure API · ${saved.apiKeyMasked}`
+          : `Activated read-only · ${saved.apiKeyMasked}`,
         "info",
         {
           exchange: "bingx",
           connectionId: saved.id,
           apiKeyMasked: saved.apiKeyMasked,
-          mode: "read-only",
+          mode,
         },
       );
       return true;
     },
-    [savedConnections, session.bingxReferenceConnectionId],
+    [savedConnections, session.bingxReferenceConnectionId, loginStatus],
   );
 
   const deactivateBingXSession = useCallback(() => {

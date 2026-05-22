@@ -1,3 +1,11 @@
+export interface BingxLiveExecutionFlags {
+  liveTradingEnabled: boolean;
+  apiTradingEnabled: boolean;
+  orderSubmitEnabled: boolean;
+  marketOrdersAllowed: boolean;
+  killSwitchActive: boolean;
+}
+
 export interface BingxLoginStatusResponse {
   exchange: "bingx";
   brokerLoginAvailable: boolean;
@@ -6,6 +14,7 @@ export interface BingxLoginStatusResponse {
   demoAvailable: boolean;
   liveTradingEnabled: boolean;
   apiConnectionEnabled?: boolean;
+  liveExecutionFlags: BingxLiveExecutionFlags;
   message: string;
 }
 

@@ -1,9 +1,16 @@
+import type { BingXConnectionMode } from "./bingxConnectionCapability";
+
 export interface BingXApiCredentials {
   apiKey: string;
   apiSecret: string;
 }
 
 export type BingXConnectionHealth = "healthy" | "degraded" | "error";
+
+export interface BingXConnectionPermissions {
+  readOnly: boolean;
+  trading: boolean;
+}
 
 export interface StoredBingXConnection {
   id: string;
@@ -13,12 +20,11 @@ export interface StoredBingXConnection {
   apiKeyMasked: string;
   encryptedApiKey: string;
   encryptedApiSecret: string;
-  mode: "read-only";
-  tradingEnabled: false;
-  permissions: {
-    readOnly: true;
-    trading: false;
-  };
+  connectionMode: BingXConnectionMode;
+  readOnly: boolean;
+  tradingPermissionConfirmed: boolean;
+  tradingEnabled: boolean;
+  permissions: BingXConnectionPermissions;
   status: "not_connected" | "checking" | "connected" | "error";
   createdAt: string;
   updatedAt: string;
@@ -82,14 +88,12 @@ export interface BingXPublicConnection {
   exchange: "bingx";
   label: string;
   apiKeyMasked: string;
-  mode: "read-only";
-  readOnly: true;
-  tradingEnabled: false;
+  connectionMode: BingXConnectionMode;
+  readOnly: boolean;
+  tradingPermissionConfirmed: boolean;
+  tradingEnabled: boolean;
   connected: boolean;
-  permissions: {
-    readOnly: true;
-    trading: false;
-  };
+  permissions: BingXConnectionPermissions;
   status: StoredBingXConnection["status"];
   createdAt: string;
   updatedAt: string;
@@ -102,11 +106,14 @@ export interface BingXPublicConnection {
 export interface BingXConnectResponseConnection {
   id: string;
   exchange: "bingx";
-  mode: "read-only";
+  mode: BingXConnectionMode;
+  connectionMode: BingXConnectionMode;
   apiKeyMasked: string;
   connected: boolean;
-  tradingEnabled: false;
-  readOnly: true;
+  tradingPermissionConfirmed: boolean;
+  tradingEnabled: boolean;
+  readOnly: boolean;
+  permissions: BingXConnectionPermissions;
   label?: string;
   createdAt: string;
   lastValidatedAt?: string;

@@ -5,6 +5,7 @@ import {
   getCredentialsForUser,
   hasEncryptionKey,
   listConnectionsForUser,
+  refreshConnectionPermissionsForUser,
 } from "../exchanges/bingx/bingxCredentialStore";
 import { probeBingXApiPermissions } from "../exchanges/bingx/bingxApiPermissionProbe";
 import { getBingXReadOnlySnapshot } from "../exchanges/bingx/bingxReadOnlyService";
@@ -138,9 +139,23 @@ export async function getLiveTradingReadiness(
     flagBlockers.push("LIVE_TRADING_KILL_SWITCH=true");
   }
 
+  const initialConnected = getFirstConnectedConnectionForUser(uid);
+  if (initialConnected?.status === "connected") {
+    try {
+      await refreshConnectionPermissionsForUser(initialConnected.id, uid);
+    } catch {
+      /* use last stored capability if probe fails */
+    }
+  }
+
   const connections = listConnectionsForUser(uid);
   const connected = getFirstConnectedConnectionForUser(uid);
   const hasConnection = Boolean(connected);
+  const connectionReadOnly =
+    connected != null &&
+    (connected.readOnly ||
+      connected.connectionMode === "read-only" ||
+      !connected.tradingPermissionConfirmed);
 
   checks.push(
     check(
@@ -155,6 +170,12 @@ export async function getLiveTradingReadiness(
   if (!hasConnection) {
     infraBlockers.push("No BingX connection");
     blockers.push("No BingX connection");
+  } else if (connected!.readOnly || connected!.connectionMode === "read-only") {
+    infraBlockers.push("BingX connection is read-only.");
+    blockers.push("BingX connection is read-only.");
+  } else if (!connected!.tradingPermissionConfirmed) {
+    infraBlockers.push("BingX API trading permission not confirmed.");
+    blockers.push("BingX API trading permission not confirmed.");
   }
 
   const apiKeySaved = connections.some((c) => c.apiKeyMasked?.includes("*"));
@@ -487,7 +508,9 @@ export async function getLiveTradingReadiness(
     !isKillSwitchActive() &&
     uniqueInfraBlockers.length === 0 &&
     dryRunLimitsOk &&
-    tradePermission !== "denied";
+    tradePermission !== "denied" &&
+    hasConnection &&
+    !connectionReadOnly;
 
   const status = resolveStatus(
     uniqueInfraBlockers,

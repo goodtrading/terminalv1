@@ -14,7 +14,7 @@ import {
 import { BingXConnectionModal } from "./BingXConnectionModal";
 import { BingXReadOnlyConnectionCard } from "./BingXReadOnlyConnectionCard";
 import { BingXSavedConnectionCard } from "./BingXSavedConnectionCard";
-import { isBingXReadOnlySession } from "./bingxSession";
+import { isBingXReadOnlySession, isBingXSecureApiSession } from "./bingxSession";
 import { useBrokerSession } from "./useBrokerSession";
 import { EXCHANGE_PANEL_SLOT_ORDER } from "./exchangeVisualOrder";
 
@@ -366,9 +366,15 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
   const bingxPhase =
     session.exchange === "bingx" ? session.phase : ("not_connected" as BrokerConnectionPhase);
   const bingxReadOnly = isBingXReadOnlySession(session);
+  const bingxSecureApi = isBingXSecureApiSession(session);
+  const bingxApiConnected =
+    session.exchange === "bingx" &&
+    session.connected &&
+    (bingxReadOnly || bingxSecureApi);
   const paperActive =
     session.exchange === "paper" && session.connected && session.connectionMode === "paper";
-  const showSavedBingxInactive = Boolean(primarySavedBingX) && !bingxReadOnly;
+  const showSavedBingxInactive =
+    Boolean(primarySavedBingX) && !bingxApiConnected;
   const brokerBackgroundBusy = restoreLoading || loginStatusLoading;
 
   return (
@@ -385,10 +391,10 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
             if (!ex) return null;
 
             if (ex.id === "bingx") {
-              if (bingxReadOnly) {
+              if (bingxApiConnected) {
                 return (
                   <BingXReadOnlyConnectionCard
-                    key="bingx-read-only"
+                    key="bingx-api-connected"
                     session={session}
                     onManage={() => setBingxModalOpen(true)}
                     onDisconnect={() => void disconnectBroker()}
