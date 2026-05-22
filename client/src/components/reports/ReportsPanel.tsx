@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ReportBadge } from "./ReportBadge";
 import { OtherTabsMockBadge, TabMockDataBadge } from "./ReportDataModeBadge";
 import { ReportSnapshot } from "./ReportSnapshot";
@@ -12,6 +12,7 @@ import { TerminalErrorBoundary } from "@/components/common/TerminalErrorBoundary
 import { EdgeTab } from "./tabs/EdgeTab";
 import { PlaybookTab } from "./tabs/PlaybookTab";
 import { IntelligenceTab } from "./tabs/IntelligenceTab";
+import { useReportsDrilldown } from "./useReportsDrilldown";
 
 const PANEL_MAX_WIDTH = "max-w-[1280px]";
 
@@ -19,10 +20,14 @@ function ReportsTabContent({
   tab,
   sessionReport,
   sessionLoading,
+  onDrilldown,
+  drilldownFilter,
 }: {
   tab: ReportsTabId;
   sessionReport: ReturnType<typeof useSessionReportData>["report"];
   sessionLoading: boolean;
+  onDrilldown?: (filter: import("./useReportsDrilldown").ExecutionDrilldownFilter) => void;
+  drilldownFilter?: import("./useReportsDrilldown").ExecutionDrilldownFilter;
 }) {
   if (tab === "session") {
     if (sessionLoading && sessionReport.dataMode === "mock") {
@@ -32,7 +37,7 @@ function ReportsTabContent({
         </p>
       );
     }
-    return <SessionTab report={sessionReport} />;
+    return <SessionTab report={sessionReport} onDrilldown={onDrilldown} />;
   }
 
   switch (tab) {
@@ -42,7 +47,7 @@ function ReportsTabContent({
           name="reports-execution"
           fallbackMessage="Execution report crashed. Reload or switch tab."
         >
-          <ExecutionTab />
+          <ExecutionTab drilldownFilter={drilldownFilter} />
         </TerminalErrorBoundary>
       );
     case "edge":
@@ -59,7 +64,19 @@ function ReportsTabContent({
 export function ReportsPanel() {
   const [activeTab, setActiveTab] = useState<ReportsTabId>("session");
   const { report: sessionReport, isLoading: sessionLoading } = useSessionReportData();
+  const { activeFilter, setDrilldownFilter, clearDrilldownFilter, targetTab } = useReportsDrilldown();
   const executionLive = activeTab === "execution";
+
+  // Auto-switch to execution tab when drilldown filter is set
+  useEffect(() => {
+    if (activeFilter && activeTab !== targetTab) {
+      setActiveTab(targetTab);
+    }
+  }, [activeFilter, targetTab, activeTab]);
+
+  const handleDrilldown = (filter: import("./useReportsDrilldown").ExecutionDrilldownFilter) => {
+    setDrilldownFilter(filter);
+  };
 
   return (
     <section className="w-full h-full min-h-0 flex flex-col overflow-hidden bg-terminal-bg text-terminal-text">
@@ -101,6 +118,8 @@ export function ReportsPanel() {
             tab={activeTab}
             sessionReport={sessionReport}
             sessionLoading={sessionLoading}
+            onDrilldown={handleDrilldown}
+            drilldownFilter={activeFilter}
           />
         </section>
       </main>

@@ -102,6 +102,7 @@ export function mapTradeToTableRow(
     playbookLabel,
     playbookDelta,
     deltaLabel,
+    timeline: row.timeline ?? null,
   };
 }
 

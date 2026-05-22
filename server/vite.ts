@@ -45,23 +45,29 @@ export async function setupVite(server: Server, app: Express) {
   });
 
   app.use((req, res, next) => {
-    // Skip "/health" requests - let Express handle them
-    if (req.path === "/health") {
+    if (req.path === "/health" || req.path.startsWith("/api")) {
       return next();
     }
-    // Pass other requests to Vite
     return vite.middlewares(req, res, next);
   });
 
-  // Fallback to serve index.html for frontend routes
   app.use((req, res, next) => {
-    // Skip API routes and health
     if (req.path.startsWith("/api") || req.path === "/health") {
-      return next();
+      if (!res.headersSent) {
+        res.status(404).type("application/json").json({
+          success: false,
+          code: "API_NOT_FOUND",
+          message: `No API handler for ${req.method} ${req.path}`,
+        });
+      }
+      return;
     }
-    // Serve frontend HTML for all other routes
-    return vite.transformIndexHtml(req.url, fs.readFileSync(path.resolve(__dirname, "../client/index.html"), "utf-8"))
-      .then(html => res.send(html))
+    return vite
+      .transformIndexHtml(
+        req.url,
+        fs.readFileSync(path.resolve(__dirname, "../client/index.html"), "utf-8"),
+      )
+      .then((html) => res.type("html").send(html))
       .catch(next);
   });
 }

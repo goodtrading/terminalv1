@@ -14,6 +14,7 @@ export type ReportBadgeVariant =
 
 import type {
   ExecutionContextSnapshot,
+  ExecutionTimelineReplay,
   PlaybookEntryExitDelta,
   PlaybookMatchResult,
 } from "./execution/executionReportTypes";
@@ -37,6 +38,7 @@ export type TradeReviewRow = {
   playbookLabel?: string;
   playbookDelta?: PlaybookEntryExitDelta | null;
   deltaLabel?: string;
+  timeline?: ExecutionTimelineReplay | null;
 };
 
 export type SetupPerformance = {

@@ -2,6 +2,7 @@ import { Fragment, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { ExecutionContextPanel } from "./execution/ExecutionContextPanel";
 import { ExecutionPlaybookPanel } from "./execution/ExecutionPlaybookPanel";
+import { ExecutionTimelinePanel } from "./execution/ExecutionTimelinePanel";
 import type { TradeReviewRow } from "./reportsTypes";
 
 const COLUMNS = [
@@ -183,6 +184,7 @@ export function TradeReviewTable({
                         playbook={row.playbook}
                         delta={row.playbookDelta}
                       />
+                      <ExecutionTimelinePanel timeline={row.timeline} />
                       <ExecutionContextPanel context={row.context} />
                     </td>
                   </tr>

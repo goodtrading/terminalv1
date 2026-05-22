@@ -140,11 +140,15 @@ export type SessionReportData = {
 
 export type SessionReportDataMode = "live" | "partial" | "mock";
 
+import type { SessionExecutionNarrative } from "../execution/executionReportTypes";
+
 export type SessionReportResult = SessionReportData & {
   dataMode: SessionReportDataMode;
   spot: number | null;
   /** True when any field was filled from Phase 1 mock merge. */
   usedMockFallback: boolean;
+  /** Session-level execution narrative from trade ledger (Phase 4K). */
+  executionNarrative?: SessionExecutionNarrative | null;
 };
 
 export type SessionTerminalInput = TerminalState & {

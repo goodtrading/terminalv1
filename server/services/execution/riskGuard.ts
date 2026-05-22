@@ -48,6 +48,47 @@ export function isApiTradingEnabled(): boolean {
   return envBool("BINGX_ENABLE_API_TRADING", false);
 }
 
+export function isOrderSubmitEnabled(): boolean {
+  return envBool("BINGX_ENABLE_ORDER_SUBMIT", false);
+}
+
+export function isOrderCancelEnabled(): boolean {
+  return envBool("BINGX_ENABLE_ORDER_CANCEL", false);
+}
+
+export function isPositionCloseEnabled(): boolean {
+  return envBool("BINGX_ENABLE_POSITION_CLOSE", false);
+}
+
+/** Phase 5B: internal dry-run preview (never submits to exchange). */
+export function isDryRunEnabled(): boolean {
+  return envBool("BINGX_ENABLE_DRY_RUN", true);
+}
+
+export function getLiveTradingEnvFlags() {
+  return {
+    liveTradingEnabled: isLiveTradingEnabled(),
+    apiTradingEnabled: isApiTradingEnabled(),
+    orderSubmitEnabled: isOrderSubmitEnabled(),
+    orderCancelEnabled: isOrderCancelEnabled(),
+    positionCloseEnabled: isPositionCloseEnabled(),
+  };
+}
+
+export function isMaxOrderSizeConfigured(): boolean {
+  const n = envNumber("MAX_ORDER_NOTIONAL_USDT");
+  return n != null && n > 0;
+}
+
+export function isMaxAccountRiskConfigured(): boolean {
+  const n = envNumber("MAX_ACCOUNT_RISK_PCT");
+  return n != null && n > 0;
+}
+
+export function isSlRequiredPolicyConfigured(): boolean {
+  return envBool("REQUIRE_SL_ON_LIVE_ORDERS", true);
+}
+
 export function getRiskGuardStatus() {
   return {
     maxNotionalUsdt: envNumber("MAX_ORDER_NOTIONAL_USDT"),

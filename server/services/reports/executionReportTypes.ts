@@ -44,6 +44,7 @@ export interface ExecutionDiagnostics {
 import type { ExecutionContextSnapshot } from "./executionContextTypes";
 import type { PlaybookMatchResult } from "./playbookMatchTypes";
 import type { PlaybookEntryExitDelta } from "./playbookDeltaTypes";
+import type { ExecutionTimelineReplay } from "./executionTimelineTypes";
 
 export type { ExecutionContextSnapshot } from "./executionContextTypes";
 export type { PlaybookMatchResult, ExecutionPlaybookMatch } from "./playbookMatchTypes";
@@ -52,6 +53,12 @@ export type {
   PlaybookDeltaStatus,
   ExitQuality,
 } from "./playbookDeltaTypes";
+export type {
+  ExecutionTimelineEvent,
+  ExecutionTimelineReplay,
+  ExecutionTimelineEventType,
+  ExecutionTimelineSeverity,
+} from "./executionTimelineTypes";
 
 export type TradeReviewStatus =
   | "open"
@@ -83,6 +90,7 @@ export interface TradeReviewRow {
   playbookAtEntry?: PlaybookMatchResult;
   playbookAtExit?: PlaybookMatchResult;
   playbookDelta?: PlaybookEntryExitDelta;
+  timeline?: ExecutionTimelineReplay;
 }
 
 export interface ExecutionReportPayload {

@@ -24,7 +24,13 @@ export type AuditEventType =
   | "risk_mirror_warning"
   | "risk_mirror_error"
   | "execution_context_captured"
-  | "execution_context_warning";
+  | "execution_context_warning"
+  | "live_readiness_checked"
+  | "live_readiness_failed"
+  | "live_guard_blocked"
+  | "live_order_preview_requested"
+  | "live_order_preview_blocked"
+  | "live_order_preview_passed";
 
 export interface AuditLogEvent {
   id: string;

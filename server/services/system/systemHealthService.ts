@@ -11,6 +11,11 @@ import { buildReadOnlyRiskMirrorSnapshot } from "../riskMirror/riskMirrorService
 import type { ReadOnlyRiskMirrorSnapshot } from "../riskMirror/riskMirrorTypes";
 import { getAuditEvents } from "./auditLogService";
 import { emitRiskMirrorAuditsFromSnapshotSafe } from "./riskMirrorAudits";
+import {
+  getLiveTradingReadiness,
+  toLiveTradingHealthSummary,
+} from "../execution/liveTradingReadinessService";
+import type { LiveTradingHealthSummary } from "../execution/liveTradingReadinessTypes";
 
 export type SystemHealthOverallStatus =
   | "healthy"
@@ -64,6 +69,7 @@ export interface SystemHealthSnapshot {
     liveTradingEnabled: boolean;
     tradingLocked: boolean;
   };
+  liveTrading: LiveTradingHealthSummary;
   riskMirror: RiskMirrorSystemHealth;
 }
 
@@ -297,6 +303,29 @@ export async function buildSystemHealthSnapshot(
     tickerFresh,
   );
 
+  let liveTrading: LiveTradingHealthSummary = {
+    status: "locked",
+    liveTradingEnabled: securityGuard.liveTradingEnabled,
+    apiTradingEnabled: false,
+    blockersCount: 0,
+    readyForDryRun: false,
+    readyForLive: false,
+  };
+
+  try {
+    const readiness = await getLiveTradingReadiness(userId, "bingx");
+    liveTrading = toLiveTradingHealthSummary(readiness);
+  } catch {
+    liveTrading = {
+      status: "not_ready",
+      liveTradingEnabled: securityGuard.liveTradingEnabled,
+      apiTradingEnabled: false,
+      blockersCount: 1,
+      readyForDryRun: false,
+      readyForLive: false,
+    };
+  }
+
   return {
     timestamp: now,
     overall,
@@ -307,6 +336,7 @@ export async function buildSystemHealthSnapshot(
       orderbookLevels,
     },
     securityGuard,
+    liveTrading,
     riskMirror,
   };
 }

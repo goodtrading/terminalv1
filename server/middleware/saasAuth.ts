@@ -45,7 +45,8 @@ function requestRoute(req: Request): string {
 }
 
 function isBingxApiRoute(req: Request): boolean {
-  return requestRoute(req).includes("/api/bingx");
+  const route = requestRoute(req);
+  return route.includes("/api/bingx") || route.includes("/api/live");
 }
 
 function isPaperApiRoute(req: Request): boolean {

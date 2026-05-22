@@ -2,6 +2,50 @@ export type ExecutionGrade = "A+" | "A" | "B+" | "B" | "C+" | "C" | "D";
 
 export type ExecutionReportSource = "paper" | "bingx" | "all";
 
+export interface SessionExecutionNarrative {
+  status: "available" | "partial" | "unavailable";
+  generatedAt: number;
+  source: ExecutionReportSource;
+  symbol: string;
+  summary: string;
+  dominantBehavior: {
+    title: string;
+    description: string;
+    severity: "positive" | "neutral" | "warning" | "danger";
+  };
+  bestBehavior: {
+    title: string;
+    description: string;
+  };
+  worstBehavior: {
+    title: string;
+    description: string;
+  };
+  playbookStats: Array<{
+    playbookId: string;
+    name: string;
+    count: number;
+    winRate?: number;
+    avgPnlUsdt?: number;
+    avgR?: number;
+    avgConfidence?: number;
+  }>;
+  repeatedMistakes: Array<{
+    id: string;
+    label: string;
+    count: number;
+    impact: "low" | "medium" | "high";
+  }>;
+  positives: string[];
+  warnings: string[];
+  nextSessionFocus: string[];
+}
+
+export interface SessionNarrativeApiResponse {
+  success: boolean;
+  narrative: SessionExecutionNarrative;
+}
+
 export type BingxHistoryStatus = "loaded" | "unavailable" | "empty";
 
 export interface ExecutionReportSummary {
@@ -136,6 +180,51 @@ export type ExitQuality =
   | "unjustified_hold"
   | "unknown";
 
+export type ExecutionTimelineEventType =
+  | "entry"
+  | "context_captured"
+  | "playbook_detected"
+  | "risk_update"
+  | "sl_tp_update"
+  | "exit"
+  | "playbook_delta"
+  | "diagnosis";
+
+export type ExecutionTimelineSeverity =
+  | "info"
+  | "positive"
+  | "warning"
+  | "danger"
+  | "neutral";
+
+export interface ExecutionTimelineEvent {
+  id: string;
+  timestamp?: number;
+  type: ExecutionTimelineEventType;
+  severity: ExecutionTimelineSeverity;
+  title: string;
+  message: string;
+  metadata?: {
+    price?: number;
+    pnlUsdt?: number;
+    accountPct?: number;
+    playbook?: string;
+    confidence?: number;
+    riskStatus?: string;
+    contextAlignment?: string;
+    stopLossDetected?: boolean;
+    takeProfitDetected?: boolean;
+    deltaStatus?: string;
+    exitQuality?: string;
+  };
+}
+
+export interface ExecutionTimelineReplay {
+  status: "available" | "partial" | "unavailable";
+  summary: string;
+  events: ExecutionTimelineEvent[];
+}
+
 export interface PlaybookEntryExitDelta {
   status: PlaybookDeltaStatus;
   exitQuality: ExitQuality;
@@ -190,6 +279,7 @@ export interface ExecutionTradeReviewRow {
   playbookAtEntry?: PlaybookMatchResult;
   playbookAtExit?: PlaybookMatchResult;
   playbookDelta?: PlaybookEntryExitDelta;
+  timeline?: ExecutionTimelineReplay;
 }
 
 export interface ExecutionReportPayload {

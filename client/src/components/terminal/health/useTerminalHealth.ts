@@ -38,6 +38,7 @@ import {
   riskMirrorStatusTone,
 } from "./healthMappers";
 import { useSystemHealth } from "./useSystemHealth";
+import { useLiveTradingReadiness } from "./useLiveTradingReadiness";
 
 function agoFromTs(ts?: number): string {
   if (!ts || !Number.isFinite(ts)) return "—";
@@ -318,12 +319,19 @@ export function useTerminalHealth() {
     refetch: refetchSystemHealth,
   } = useSystemHealth(true);
 
+  const {
+    readiness: liveReadiness,
+    isLoading: liveReadinessLoading,
+    refetch: refetchLiveReadiness,
+  } = useLiveTradingReadiness(bingxActive);
+
   const refresh = useCallback(() => {
     setMarketTick((n) => n + 1);
     setBrokerSession(loadBrokerSession());
     void refetchPersistentAudit();
     void refetchSystemHealth();
-  }, [refetchPersistentAudit, refetchSystemHealth]);
+    void refetchLiveReadiness();
+  }, [refetchPersistentAudit, refetchSystemHealth, refetchLiveReadiness]);
 
   const riskMirrorBadgeLabel = riskMirrorGlobalBadgeLabel(serverRiskMirror);
   const riskMirrorBadgeTone = riskMirrorGlobalBadgeTone(serverRiskMirror);
@@ -432,6 +440,9 @@ export function useTerminalHealth() {
       globalBadgeTone: riskMirrorBadgeTone,
     },
     serverHealth,
+    liveReadiness,
+    liveReadinessLoading,
+    liveTradingSummary: serverHealth?.liveTrading ?? null,
     refresh,
   };
 }

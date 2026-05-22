@@ -13,6 +13,7 @@ import { matchExecutionPlaybook } from "./playbookMatchEngine";
 import { applyPlaybookDeltaToExecutionScore, applyPlaybookToExecutionScore } from "./playbookScoring";
 import { computeOpenPositionPlaybookDelta } from "./playbookDeltaEngine";
 import { emitPlaybookAuditsIfNeeded } from "./playbookAudits";
+import { buildExecutionTimelineReplay } from "./executionTimelineBuilder";
 import type { ExecutionContextSnapshot } from "./executionContextTypes";
 import {
   normalizeBingxFillsToRows,
@@ -258,12 +259,47 @@ export async function getBingxExecutionReport(
         contextSnapshot,
       );
     }
+    openRow.timeline = buildExecutionTimelineReplay({
+      tradeId: openRow.id,
+      source: "bingx",
+      side: pos!.side === "short" ? "short" : "long",
+      entryPrice: openRow.entry ?? undefined,
+      exitPrice: openRow.exit,
+      pnlUsdt: openRow.pnlUsdt,
+      accountPct: openRow.pnlAccountPct,
+      status: "open",
+      entryTime: Date.now(),
+      contextAtEntry: contextSnapshot,
+      playbookAtEntry: playbookMatch,
+      playbookMatch,
+      playbookDelta: openRow.playbookDelta,
+    });
   }
 
   const trades: TradeReviewRow[] = [
     ...(openRow ? [openRow] : []),
     ...historyRows.filter((r) => r.status !== "open" || !openRow),
   ];
+
+  for (const row of trades) {
+    if (row.timeline) continue;
+    row.timeline = buildExecutionTimelineReplay({
+      tradeId: row.id,
+      source: "bingx",
+      side: row.direction === "Short" ? "short" : "long",
+      entryPrice: row.entry ?? undefined,
+      exitPrice: row.exit,
+      pnlUsdt: row.pnlUsdt,
+      accountPct: row.pnlAccountPct,
+      status: row.status,
+      contextAtEntry: row.contextAtEntry,
+      contextAtExit: row.contextAtExit,
+      playbookAtEntry: row.playbookAtEntry ?? row.playbookMatch,
+      playbookAtExit: row.playbookAtExit,
+      playbookMatch: row.playbookMatch,
+      playbookDelta: row.playbookDelta,
+    });
+  }
 
   const openPosition = pos != null && pos.side !== "flat" && pos.quantity > 0;
   const openOrders = snapshot.openOrders.length;

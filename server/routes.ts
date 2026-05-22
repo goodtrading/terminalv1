@@ -815,6 +815,8 @@ export async function registerRoutes(
     app.post("/api/admin/users/:id/activate-access", saasNotConfigured);
     app.post("/api/admin/users/:id/subscription", saasNotConfigured);
     app.post("/api/admin/users/:id/subscription/deactivate", saasNotConfigured);
+    app.get("/api/live/readiness", saasNotConfigured);
+    app.post("/api/live/order-preview", saasNotConfigured);
   }
 
   // --- Deribit Options Ticker Enrichment Endpoint ---
@@ -1175,6 +1177,7 @@ export async function registerRoutes(
   const { registerBrokerRoutes } = await import("./routes/broker.routes");
   const { registerBingxApiRoutes } = await import("./routes/bingxApi.routes");
   const { registerSystemRoutes } = await import("./routes/system.routes");
+  const { registerLiveRoutes } = await import("./routes/live.routes");
   const { registerRiskMirrorRoutes } = await import("./routes/riskMirror.routes");
   const { paperTradingRouter } = await import("./routes/paperTrading.routes");
   const { reportsRouter } = await import("./routes/reports.routes");
@@ -1184,7 +1187,9 @@ export async function registerRoutes(
   registerBingxApiRoutes(app);
   console.log("[routes] bingx read-only registered");
   registerSystemRoutes(app);
+  registerLiveRoutes(app);
   console.log("[routes] system registered");
+  console.log("[routes] live readiness registered");
   registerRiskMirrorRoutes(app);
   console.log("[routes] risk mirror registered");
   app.use("/api/paper", paperTradingRouter);

@@ -6,6 +6,7 @@ import {
   computeOpenPositionPlaybookDelta,
   computePlaybookEntryExitDelta,
 } from "./playbookDeltaEngine";
+import { buildExecutionTimelineReplay } from "./executionTimelineBuilder";
 import type { PlaybookMatchResult } from "./playbookMatchTypes";
 import type { ExecutionContextSnapshot } from "./executionContextTypes";
 import type {
@@ -380,6 +381,27 @@ function ledgerEntryToRow(entry: PaperTradeLedgerEntry): TradeReviewRow {
     }
     quality = gradeFromScore(score);
   }
+
+  const timeline = buildExecutionTimelineReplay({
+    tradeId: entry.id,
+    source: "paper",
+    side: entry.side,
+    entryPrice: entry.entryPrice,
+    exitPrice: entry.exitPrice ?? null,
+    pnlUsdt: pnl,
+    accountPct:
+      equity > 0 && pnl != null ? (pnl / equity) * 100 : null,
+    status: isOpen ? "open" : "closed",
+    entryTime: entry.entryTime,
+    exitTime: entry.exitTime ?? undefined,
+    contextAtEntry: ctxEntry ?? entry.contextAtEntry,
+    contextAtExit: entry.contextAtExit,
+    playbookAtEntry: playbookAtEntry ?? entry.playbookAtEntry,
+    playbookAtExit: playbookAtExit ?? entry.playbookAtExit,
+    playbookMatch: playbook,
+    playbookDelta,
+  });
+
   return {
     id: entry.id,
     time: formatTime(isOpen ? entry.entryTime : entry.exitTime ?? entry.entryTime),
@@ -408,6 +430,7 @@ function ledgerEntryToRow(entry: PaperTradeLedgerEntry): TradeReviewRow {
     playbookAtEntry: playbookAtEntry ?? entry.playbookAtEntry,
     playbookAtExit: playbookAtExit ?? entry.playbookAtExit,
     playbookDelta,
+    timeline,
   };
 }
 
@@ -455,6 +478,17 @@ function cycleToRow(cycle: ParsedCycle): TradeReviewRow {
     notes: "",
     tags: "",
     status: isOpen ? "open" : "closed",
+    timeline: buildExecutionTimelineReplay({
+      tradeId: cycle.id,
+      source: "paper",
+      side: cycle.side,
+      entryPrice: cycle.entryPrice,
+      exitPrice: cycle.exitPrice,
+      pnlUsdt: cycle.pnlUsdt,
+      status: isOpen ? "open" : "closed",
+      entryTime: cycle.entryTime,
+      exitTime: cycle.exitTime ?? undefined,
+    }),
   };
 }
 

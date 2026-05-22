@@ -6,6 +6,7 @@ import { ReportSection } from "../ReportSection";
 import { TradeReviewTable } from "../TradeReviewTable";
 import { TerminalValue } from "@/components/terminal/TerminalPanel";
 import { TradeEditModal } from "../execution/TradeEditModal";
+import { ExecutionDrilldownBanner } from "../ExecutionDrilldownBanner";
 import {
   mapTradeToTableRow,
   tradeHighlight,
@@ -15,6 +16,9 @@ import type {
   ExecutionReportSource,
   ExecutionTradeReviewRow,
 } from "../execution/executionReportTypes";
+import { matchTradeAgainstDrilldown } from "../execution/matchExecutionDrilldownFilter";
+import type { ExecutionDrilldownFilter } from "../useReportsDrilldown";
+import { useReportsDrilldown } from "../useReportsDrilldown";
 
 const SOURCE_TABS: { id: ExecutionReportSource; label: string }[] = [
   { id: "paper", label: "Paper" },
@@ -32,18 +36,28 @@ function downloadCsv(url: string, filename: string): void {
   a.remove();
 }
 
-export function ExecutionTab() {
+export function ExecutionTab({ drilldownFilter }: { drilldownFilter?: ExecutionDrilldownFilter }) {
   const [source, setSource] = useState<ExecutionReportSource>("paper");
   const { data, isLoading, isError } = useExecutionReportData(source, true);
   const [editTrade, setEditTrade] = useState<ExecutionTradeReviewRow | null>(null);
+  const { clearDrilldownFilter } = useReportsDrilldown();
 
   const isPaperOnly = source === "paper";
   const isBingx = source === "bingx";
 
-  const tableRows = useMemo(
-    () => (data?.trades ?? []).map((t) => mapTradeToTableRow(t, source)),
-    [data?.trades, source],
-  );
+  const tableRows = useMemo(() => {
+    const allRows = (data?.trades ?? []).map((t) => mapTradeToTableRow(t, source));
+    
+    if (!drilldownFilter) return allRows;
+    
+    const filtered = allRows.filter((row) => {
+      const trade = data?.trades.find((t) => t.id === row.tradeId);
+      if (!trade) return false;
+      return matchTradeAgainstDrilldown(trade, drilldownFilter);
+    });
+    
+    return filtered;
+  }, [data?.trades, source, drilldownFilter]);
 
   const handleEdit = (tradeId: string) => {
     if (!isPaperOnly) return;
@@ -212,15 +226,26 @@ export function ExecutionTab() {
         </section>
       ) : null}
 
+      {drilldownFilter && (
+        <ExecutionDrilldownBanner
+          filter={drilldownFilter}
+          filteredCount={tableRows.length}
+          totalCount={data?.trades.length ?? 0}
+          onClear={clearDrilldownFilter}
+        />
+      )}
+
       <ReportSection title="Trade Review · Journal" bodyClassName="p-0">
         <TradeReviewTable
           rows={tableRows}
           emptyMessage={
-            empty
-              ? isBingx
-                ? "No BingX position or history for this symbol."
-                : "No paper trades yet."
-              : undefined
+            drilldownFilter && tableRows.length === 0 && !empty
+              ? "No trades match this session insight. Some legacy trades may lack captured context."
+              : empty
+                ? isBingx
+                  ? "No BingX position or history for this symbol."
+                  : "No paper trades yet."
+                : undefined
           }
           onEdit={isPaperOnly ? handleEdit : undefined}
         />

@@ -55,6 +55,14 @@ const visiblePrefix = rawKey ? rawKey.slice(0, 8) : "";
 console.log("[ENV] OPENAI key prefix:", visiblePrefix);
 console.log("[ENV] OPENAI key length:", rawKey.length);
 
+function jsonApiNotFound(res: Response, method: string, path: string): void {
+  res.status(404).type("application/json").json({
+    success: false,
+    code: "API_NOT_FOUND",
+    message: `No API handler for ${method} ${path}`,
+  });
+}
+
 console.log("[BOOT] Creating Express app and HTTP server...");
 const app = express();
 const httpServer = createServer(app);
@@ -145,11 +153,21 @@ app.use((req, res, next) => {
     );
   }
 
-  // Register ALL API routes FIRST - before any Vite middleware
+  console.log("[BOOT] Registering live API routes (early)...");
+  const { registerLiveRoutes } = await import("./routes/live.routes");
+  registerLiveRoutes(app);
+
   console.log("[BOOT] Registering API routes...");
   await registerRoutes(httpServer, app);
   setupMobileDirectEndpoint(app);
   console.log("[BOOT] API routes registered");
+
+  app.use((req, res, next) => {
+    if (res.headersSent) return next();
+    const p = req.path ?? "";
+    if (!p.startsWith("/api")) return next();
+    jsonApiNotFound(res, req.method, p);
+  });
   
   // Log all registered routes for debugging
   console.log("[Server] Registered API routes:");

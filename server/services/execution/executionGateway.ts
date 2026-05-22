@@ -6,6 +6,7 @@ import type {
 } from "./executionTypes";
 import {
   checkLiveTradingEnabled,
+  getLiveTradingEnvFlags,
   getBingxReferralUrl,
   getBrokerLoginUrl,
   getRiskGuardStatus,
@@ -17,6 +18,8 @@ import {
 } from "./riskGuard";
 import { getTerminalExecutionContext, routeIntentToExecutionAdapter } from "./executionVenue";
 import { getFirstConnectedConnectionForUser } from "../exchanges/bingx/bingxCredentialStore";
+import { checkLiveTradingActionAllowed } from "./liveTradingGuard";
+import { emitLiveGuardBlocked } from "../system/liveReadinessAudits";
 
 export function getExchangeStatus(userId?: number): ExchangeStatusResponse {
   const brokerLoginAvailable = isBrokerLoginAvailable();
@@ -144,8 +147,21 @@ export async function submitOrder(intent: Partial<OrderIntent>) {
     };
   }
 
+  const guard = checkLiveTradingActionAllowed("submit_order");
+  if (!guard.allowed) {
+    void emitLiveGuardBlocked(undefined, guard.action, guard.blockers);
+    return {
+      success: false as const,
+      code: guard.code,
+      message: guard.message,
+    };
+  }
+
   const blocked = checkLiveTradingEnabled();
   if (blocked) {
+    void emitLiveGuardBlocked(undefined, "submit_order", [
+      "BINGX_ENABLE_LIVE_TRADING=false",
+    ]);
     return { success: false as const, ...blocked };
   }
 
@@ -153,8 +169,22 @@ export async function submitOrder(intent: Partial<OrderIntent>) {
 }
 
 export function killSwitch() {
+  const guard = checkLiveTradingActionAllowed("close_position");
+  if (!guard.allowed) {
+    void emitLiveGuardBlocked(undefined, guard.action, guard.blockers);
+    return {
+      success: false as const,
+      code: guard.code,
+      message: guard.message,
+    };
+  }
+
   const blocked = checkLiveTradingEnabled();
   if (blocked) {
+    void emitLiveGuardBlocked(undefined, "close_position", getLiveTradingEnvFlags()
+      .liveTradingEnabled
+      ? []
+      : ["BINGX_ENABLE_LIVE_TRADING=false"]);
     return { success: false as const, ...blocked };
   }
   return {

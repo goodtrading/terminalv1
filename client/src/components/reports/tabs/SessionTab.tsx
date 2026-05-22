@@ -8,7 +8,9 @@ import { ReportSection } from "../ReportSection";
 import { SessionDataModeBadge } from "../ReportDataModeBadge";
 import { TerminalValue } from "@/components/terminal/TerminalPanel";
 import { formatReportPct, formatReportPrice } from "../session/formatReportValues";
+import { SessionExecutionNarrativeSection } from "../session/SessionExecutionNarrativeSection";
 import type { SessionReportResult } from "../session/sessionReportTypes";
+import type { ExecutionDrilldownFilter } from "../useReportsDrilldown";
 
 const EVENT_BORDER: Record<string, string> = {
   sweep: "border-terminal-accent/50",
@@ -22,7 +24,7 @@ const EVENT_BORDER: Record<string, string> = {
   generic: "border-terminal-border/60",
 };
 
-export function SessionTab({ report }: { report: SessionReportResult }) {
+export function SessionTab({ report, onDrilldown }: { report: SessionReportResult; onDrilldown?: (filter: ExecutionDrilldownFilter) => void }) {
   const { regime, structure, liquidityEvents, resolution, sessionSummary, risks, snapshot } =
     report;
   const h = regime.levelHierarchy;
@@ -34,6 +36,8 @@ export function SessionTab({ report }: { report: SessionReportResult }) {
       </header>
 
       <MarketRegimeCard regime={regime} />
+
+      <SessionExecutionNarrativeSection narrative={report.executionNarrative} onDrilldown={onDrilldown} />
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ReportSection title="Session Summary">

@@ -57,6 +57,14 @@ export interface SystemHealthSnapshot {
     liveTradingEnabled: boolean;
     tradingLocked: boolean;
   };
+  liveTrading?: {
+    status: "locked" | "not_ready" | "ready_for_dry_run" | "ready_for_live";
+    liveTradingEnabled: boolean;
+    apiTradingEnabled: boolean;
+    blockersCount: number;
+    readyForDryRun: boolean;
+    readyForLive: boolean;
+  };
   riskMirror: RiskMirrorSystemHealth;
 }
 

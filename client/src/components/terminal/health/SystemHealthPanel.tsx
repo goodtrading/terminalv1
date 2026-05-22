@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { HealthRow, HealthSection, StatusDot, healthToneClass } from "./healthUi";
 import type { HealthTone } from "./healthUi";
 import { useTerminalHealth } from "./useTerminalHealth";
+import { LiveTradingReadinessBlock } from "./LiveTradingReadinessBlock";
 import { formatAuditTime } from "./terminalAuditLog";
 import type { TerminalAuditEntry } from "./auditTypes";
 import { registerTerminalAuditBridge } from "./terminalAuditBridge";
@@ -198,11 +199,27 @@ export function SystemHealthPanel() {
           )}
         </HealthSection>
 
+        <LiveTradingReadinessBlock
+          readiness={h.liveReadiness}
+          isLoading={h.liveReadinessLoading}
+          isPaperMode={h.paper.active && !h.bingx.active}
+        />
+
         <HealthSection title="5 · Security guard">
           <HealthRow
             label="Live trading"
-            value={h.security.liveTradingLabel}
-            tone={h.security.liveTradingTone}
+            value={
+              h.liveTradingSummary
+                ? h.liveTradingSummary.status.replace(/_/g, " ").toUpperCase()
+                : h.security.liveTradingLabel
+            }
+            tone={
+              h.liveTradingSummary?.status === "locked"
+                ? "ok"
+                : h.liveTradingSummary?.status === "ready_for_live"
+                  ? "error"
+                  : h.security.liveTradingTone
+            }
           />
           <HealthRow
             label="API trading"

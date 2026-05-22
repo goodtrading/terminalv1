@@ -14,6 +14,9 @@ import { hasPersistedBingXConnection } from "./bingxSession";
 import { DEFAULT_CHART_SYMBOL } from "./executionContext";
 import { ExecutionVenueStrip } from "./ExecutionVenueStrip";
 import { ReadOnlyRiskMirrorPanel } from "../riskMirror/ReadOnlyRiskMirrorPanel";
+import { LiveTradingReadinessBlock } from "../health/LiveTradingReadinessBlock";
+import { useLiveTradingReadiness } from "../health/useLiveTradingReadiness";
+import { LiveOrderPreviewPanel } from "../live/LiveOrderPreviewPanel";
 
 type BingXReadOnlyExecutionBlockProps = {
   session: BrokerSessionState;
@@ -106,6 +109,9 @@ export function BingXReadOnlyExecutionBlock({
     (p) => p.side !== "flat" && p.quantity > 0,
   );
   const openOrders = snapshot?.openOrders ?? [];
+
+  const { readiness: liveReadiness, isLoading: liveReadinessLoading } =
+    useLiveTradingReadiness(canSync);
 
   return (
     <div className="space-y-2">
@@ -309,6 +315,23 @@ export function BingXReadOnlyExecutionBlock({
           </div>
         </section>
       ) : null}
+
+      <div className="rounded border border-terminal-border/60 bg-terminal-panel/20 p-1.5">
+        <LiveTradingReadinessBlock
+          readiness={liveReadiness}
+          isLoading={liveReadinessLoading}
+          compact
+        />
+      </div>
+
+      <LiveOrderPreviewPanel
+        symbol={symbol}
+        markPrice={
+          openPositions?.[0]?.markPrice ??
+          snapshot?.positions.find((p) => p.markPrice != null)?.markPrice ??
+          null
+        }
+      />
 
       <ReadOnlyRiskMirrorPanel brokerSession={session} symbol={symbol} />
     </div>

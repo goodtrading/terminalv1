@@ -64,9 +64,15 @@ See `.env.example` for:
 
 - `BINGX_ENABLE_API_CONNECTION`
 - `BINGX_ENABLE_API_TRADING` (must stay `false` for read-only phase)
-- `BINGX_ENABLE_LIVE_TRADING` (must stay `false`)
+- `BINGX_ENABLE_LIVE_TRADING` (must stay `false` until phase 5C)
+- `BINGX_ENABLE_ORDER_SUBMIT` (must stay `false` in phase 5A)
+- `BINGX_ENABLE_ORDER_CANCEL` (must stay `false` in phase 5A)
+- `BINGX_ENABLE_POSITION_CLOSE` (must stay `false` in phase 5A)
 - `BINGX_API_BASE_URL`
 - `BINGX_DEFAULT_SYMBOL`
+- `MAX_ACCOUNT_RISK_PCT` (required for live readiness)
+- `REQUIRE_SL_ON_LIVE_ORDERS` (default `true`)
+- `BINGX_ENABLE_DRY_RUN` (default `true` — phase 5B preview only, no exchange submit)
 
 ### Storage layout (development)
 
