@@ -7,6 +7,7 @@ import { submitBingXLiveLimitOrder } from "../services/execution/liveOrderSubmit
 import { parseLiveOrderSubmitBody } from "../services/execution/liveOrderSubmitParse";
 import { emitLiveReadinessFailed } from "../services/system/liveReadinessAudits";
 import { isDryRunEnabled } from "../services/execution/riskGuard";
+import { getBingXSymbolRules, clearSymbolRulesCache } from "../services/exchanges/bingx/bingxSymbolRulesService";
 
 const LIVE_ROUTES_LOG = "[live-routes]";
 
@@ -166,6 +167,65 @@ liveApiRouter.post(
   },
 );
 
+liveApiRouter.get(
+  "/symbol-rules",
+  requireSaasAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = resolveUserId(req);
+      if (userId == null) {
+        return jsonResponse(res, 401, {
+          success: false,
+          code: "UNAUTHORIZED",
+          message: "Authentication required.",
+        });
+      }
+
+      const exchange = typeof req.query.exchange === "string" ? req.query.exchange.trim().toLowerCase() : "bingx";
+      if (exchange !== "bingx") {
+        return jsonResponse(res, 400, {
+          success: false,
+          code: "INVALID_EXCHANGE",
+          message: 'exchange must be "bingx".',
+        });
+      }
+
+      const symbol = typeof req.query.symbol === "string" ? req.query.symbol.trim() : "";
+      if (!symbol) {
+        return jsonResponse(res, 400, {
+          success: false,
+          code: "INVALID_SYMBOL",
+          message: "symbol is required.",
+        });
+      }
+
+      const forceRefresh = req.query.refresh === "true";
+      if (forceRefresh) {
+        clearSymbolRulesCache();
+      }
+
+      const rules = await getBingXSymbolRules(symbol);
+
+      jsonResponse(res, 200, {
+        success: true,
+        exchange: "bingx",
+        symbol,
+        rules,
+        cached: !forceRefresh,
+      });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Failed to fetch symbol rules";
+      console.error(`${LIVE_ROUTES_LOG} GET /symbol-rules error:`, message);
+      jsonResponse(res, 500, {
+        success: false,
+        code: "SYMBOL_RULES_FETCH_FAILED",
+        message,
+      });
+    }
+  },
+);
+
 let liveRoutesMounted = false;
 
 /** Mount GET/POST /api/live/* — safe to call once. */
@@ -175,7 +235,7 @@ export function registerLiveRoutes(app: Express): void {
 
   app.use("/api/live", liveApiRouter);
   console.log(
-    `${LIVE_ROUTES_LOG} mounted GET /api/live/readiness, POST /api/live/order-preview, POST /api/live/order-submit`,
+    `${LIVE_ROUTES_LOG} mounted GET /api/live/readiness, POST /api/live/order-preview, POST /api/live/order-submit, GET /api/live/symbol-rules`,
   );
 }
 
@@ -222,6 +282,8 @@ function parseLiveOrderPreviewBody(
     return { ok: false, message: "leverage must be > 0." };
   }
 
+  const sizingMode = body.sizingMode === "margin" || body.sizingMode === "notional" ? body.sizingMode : undefined;
+
   return {
     ok: true,
     data: {
@@ -231,6 +293,8 @@ function parseLiveOrderPreviewBody(
       type,
       quantity: num("quantity"),
       notionalUsdt: num("notionalUsdt"),
+      marginUsdt: num("marginUsdt"),
+      sizingMode,
       limitPrice: num("limitPrice"),
       stopLossPrice: num("stopLossPrice"),
       takeProfitPrice: num("takeProfitPrice"),

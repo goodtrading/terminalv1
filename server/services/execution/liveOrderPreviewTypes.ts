@@ -3,6 +3,8 @@ export type LiveOrderPreviewType = "market" | "limit";
 
 export type LiveOrderPreviewSource = "manual" | "paper_mirror" | "risk_panel";
 
+export type LiveOrderSizingMode = "margin" | "notional" | "quantity";
+
 export interface LiveOrderPreviewRequest {
   exchange: "bingx";
   symbol: string;
@@ -10,6 +12,8 @@ export interface LiveOrderPreviewRequest {
   type: LiveOrderPreviewType;
   quantity?: number;
   notionalUsdt?: number;
+  marginUsdt?: number;
+  sizingMode?: LiveOrderSizingMode;
   limitPrice?: number;
   stopLossPrice?: number;
   takeProfitPrice?: number;
@@ -43,6 +47,10 @@ export interface LiveOrderPreviewResult {
     takeProfitGainUsdt?: number;
     takeProfitAccountPct?: number;
     liquidationDistancePct?: number;
+    rawQuantity?: number;
+    normalizedQuantity?: number;
+    minQuantity?: number;
+    requiredMinNotional?: number;
   };
   risk: {
     hasStopLoss: boolean;
@@ -56,6 +64,38 @@ export interface LiveOrderPreviewResult {
     status: string;
     readyForDryRun: boolean;
     readyForLive: boolean;
+  };
+  systemHealth?: {
+    overallStatus: "healthy" | "degraded" | "error" | "unknown";
+    marketDataStatus: "healthy" | "degraded" | "error" | "unknown";
+    bingxStatus: "healthy" | "degraded" | "error" | "unknown";
+    securityGuardStatus: "healthy" | "degraded" | "error" | "unknown";
+    liveTradingStatus: "healthy" | "degraded" | "error" | "unknown";
+    blockers: string[];
+  };
+  symbolRules?: {
+    symbol: string;
+    minQty: number;
+    maxQty: number;
+    stepSize: number;
+    quantityPrecision: number;
+    pricePrecision: number;
+    minNotional: number;
+    available: boolean;
+  };
+  liveLimitTestMode?: boolean;
+  debug?: {
+    liveLimitTestMode: boolean;
+    envValue?: string;
+    maxOrderNotional?: string;
+  };
+  nonMarketableCheck?: {
+    side: "buy" | "sell";
+    limitPrice: number;
+    referencePrice: number;
+    referencePriceSource: string;
+    valid: boolean;
+    blocker?: string;
   };
   message: string;
 }

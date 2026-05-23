@@ -19,6 +19,7 @@ import {
   isBingxMarketOrdersAllowed,
   isDryRunEnabled,
   isKillSwitchActive,
+  isLiveLimitTestMode,
   isMaxAccountRiskConfigured,
   isMaxOrderSizeConfigured,
   isSlRequiredPolicyConfigured,
@@ -434,22 +435,35 @@ export async function getLiveTradingReadiness(
     ),
   );
   if (!maxOrder) {
-    infraBlockers.push("MAX_ORDER_NOTIONAL_USDT not configured");
-    blockers.push("Max order size not configured");
+    const testMode = isLiveLimitTestMode();
+    if (!testMode) {
+      infraBlockers.push("MAX_ORDER_NOTIONAL_USDT not configured");
+      blockers.push("Max order size not configured");
+    } else {
+      checks.push(
+        check(
+          "max_order_size",
+          "Max order size configured",
+          "warning",
+          "MAX_ORDER_NOTIONAL_USDT not configured. Ignored in test mode.",
+        ),
+      );
+    }
   }
 
   const maxRisk = isMaxAccountRiskConfigured();
+  const testMode = isLiveLimitTestMode();
   checks.push(
     check(
       "max_account_risk",
       "Max account risk configured",
-      maxRisk ? "pass" : "fail",
+      maxRisk ? "pass" : (testMode ? "warning" : "fail"),
       maxRisk
         ? "MAX_ACCOUNT_RISK_PCT configured."
-        : "MAX_ACCOUNT_RISK_PCT not set or invalid.",
+        : (testMode ? "MAX_ACCOUNT_RISK_PCT not set. Ignored in test mode." : "MAX_ACCOUNT_RISK_PCT not set or invalid."),
     ),
   );
-  if (!maxRisk) {
+  if (!maxRisk && !testMode) {
     infraBlockers.push("MAX_ACCOUNT_RISK_PCT not configured");
     blockers.push("Max account risk not configured");
   }

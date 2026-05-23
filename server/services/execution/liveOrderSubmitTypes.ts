@@ -5,6 +5,8 @@ export interface LiveOrderSubmitRequest {
   type: "limit";
   quantity?: number;
   notionalUsdt?: number;
+  marginUsdt?: number;
+  sizingMode?: "notional" | "margin";
   limitPrice: number;
   stopLossPrice: number;
   takeProfitPrice?: number;

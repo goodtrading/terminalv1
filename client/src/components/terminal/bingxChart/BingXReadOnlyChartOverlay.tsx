@@ -318,6 +318,16 @@ export function BingXReadOnlyChartOverlay({
           />
         );
       })}
+
+      {ordersForSymbol.map((order) => (
+        <LimitOrderBadge
+          key={`bingx-order-${order.id}`}
+          order={order}
+          chartWidth={chartWidth}
+          chartHeight={chartHeight}
+          coordinates={coordinates}
+        />
+      ))}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { DEFAULT_TERMINAL_EXECUTION_CONTEXT } from "../execution/executionContext";
 import { useLiveTradingReadiness } from "../health/useLiveTradingReadiness";
@@ -32,8 +33,9 @@ export function LiveOrderPreviewPanel({
     "BTC-USDT";
 
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
-  const [sizeMode, setSizeMode] = useState<"notional" | "quantity">("notional");
+  const [sizeMode, setSizeMode] = useState<"notional" | "margin">("margin");
   const [notionalUsdt, setNotionalUsdt] = useState("2");
+  const [marginUsdt, setMarginUsdt] = useState("2");
   const [quantity, setQuantity] = useState("");
   const [limitPrice, setLimitPrice] = useState("");
   const [stopLoss, setStopLoss] = useState("");
@@ -49,6 +51,7 @@ export function LiveOrderPreviewPanel({
   const mutation = useLiveOrderPreview();
   const submitMutation = useLiveOrderSubmit();
   const { readiness } = useLiveTradingReadiness(true);
+  const queryClient = useQueryClient();
 
   const runPreview = useCallback(
     async (side: "buy" | "sell") => {
@@ -67,9 +70,10 @@ export function LiveOrderPreviewPanel({
           orderType === "limit" && limitPrice.trim()
             ? Number(limitPrice)
             : undefined,
+        sizingMode: sizeMode as "notional" | "margin",
         ...(sizeMode === "notional"
           ? { notionalUsdt: Number(notionalUsdt) }
-          : { quantity: Number(quantity) }),
+          : { marginUsdt: Number(marginUsdt) }),
         leverage: Number(leverage),
       };
 
@@ -116,7 +120,7 @@ export function LiveOrderPreviewPanel({
       orderType,
       sizeMode,
       notionalUsdt,
-      quantity,
+      marginUsdt,
       limitPrice,
       stopLoss,
       takeProfit,
@@ -166,13 +170,21 @@ export function LiveOrderPreviewPanel({
       confirmationText: confirmationText.trim(),
       takeProfitPrice: takeProfit.trim() ? Number(takeProfit) : undefined,
       leverage: Number(leverage),
+      sizingMode: sizeMode as "notional" | "margin",
       ...(sizeMode === "notional"
         ? { notionalUsdt: Number(notionalUsdt) }
-        : { quantity: Number(quantity) }),
+        : { marginUsdt: Number(marginUsdt) }),
     };
     try {
       const result = await submitMutation.mutateAsync(body);
       setSubmitResult(result);
+
+      // Auto-refresh BingX snapshot after successful submit to sync open orders
+      if (result.orderSubmitted && result.status === "submitted") {
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/bingx/read-only/snapshot"] });
+        }, 1500);
+      }
     } catch (err) {
       setSubmitResult({
         mode: "live",
@@ -203,7 +215,7 @@ export function LiveOrderPreviewPanel({
     leverage,
     sizeMode,
     notionalUsdt,
-    quantity,
+    marginUsdt,
     confirmationText,
     executionSymbol,
     preview,
@@ -267,15 +279,15 @@ export function LiveOrderPreviewPanel({
         </button>
         <button
           type="button"
-          onClick={() => setSizeMode("quantity")}
+          onClick={() => setSizeMode("margin")}
           className={cn(
             "px-1.5 py-0.5 text-[7px] uppercase rounded border",
-            sizeMode === "quantity"
+            sizeMode === "margin"
               ? "border-slate-500/50 text-slate-300"
               : "border-terminal-border text-slate-600",
           )}
         >
-          Qty
+          Margin
         </button>
       </div>
 
@@ -293,12 +305,12 @@ export function LiveOrderPreviewPanel({
           </label>
         ) : (
           <label className="col-span-2 flex flex-col gap-0.5 text-[8px] text-slate-500">
-            Quantity (BTC)
+            Margin USDT
             <input
               className={inputClass}
               inputMode="decimal"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
+              value={marginUsdt}
+              onChange={(e) => setMarginUsdt(e.target.value)}
               disabled={busy}
             />
           </label>
@@ -387,9 +399,16 @@ export function LiveOrderPreviewPanel({
               : "border-emerald-500/35 bg-emerald-950/20 text-emerald-100/90",
           )}
         >
-          <p className="font-bold uppercase tracking-wide text-[7px]">
-            {preview.message}
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="font-bold uppercase tracking-wide text-[7px]">
+              {preview.message}
+            </p>
+            {preview.liveLimitTestMode && (
+              <span className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-300 text-[6px] font-semibold rounded border border-yellow-500/30">
+                BINGX-LIKE LIVE LIMIT TEST
+              </span>
+            )}
+          </div>
           {!preview.blocked ? (
             <ul className="text-slate-300 space-y-0.5">
               <li>
@@ -400,6 +419,26 @@ export function LiveOrderPreviewPanel({
                   ? ` · ${preview.estimate.leverage}x`
                   : ""}
               </li>
+              {preview.liveLimitTestMode && (
+                <li className="text-emerald-300/90">
+                  READY FOR LIVE LIMIT TEST
+                </li>
+              )}
+              {preview.estimate.rawQuantity != null && preview.estimate.normalizedQuantity != null ? (
+                <li>
+                  Raw qty: {preview.estimate.rawQuantity} · Normalized: {preview.estimate.normalizedQuantity}
+                </li>
+              ) : null}
+              {preview.estimate.minQuantity != null ? (
+                <li>
+                  Min qty: {preview.estimate.minQuantity}
+                </li>
+              ) : null}
+              {preview.estimate.requiredMinNotional != null ? (
+                <li>
+                  Required min notional: {preview.estimate.requiredMinNotional.toFixed(2)} USDT
+                </li>
+              ) : null}
               {preview.estimate.requiredMarginUsdt != null ? (
                 <li>
                   Req. margin: {preview.estimate.requiredMarginUsdt.toFixed(2)}{" "}
@@ -436,6 +475,25 @@ export function LiveOrderPreviewPanel({
                   Liq distance (est.): {preview.estimate.liquidationDistancePct}%
                 </li>
               ) : null}
+              {preview.symbolRules && (
+                <li className="mt-2 pt-2 border-t border-slate-700/50">
+                  <div className="font-semibold text-slate-300 mb-1">Symbol rules:</div>
+                  {preview.symbolRules.available ? (
+                    <ul className="space-y-0.5 ml-2">
+                      <li>Min qty: {preview.symbolRules.minQty}</li>
+                      <li>Step size: {preview.symbolRules.stepSize}</li>
+                      <li>Qty precision: {preview.symbolRules.quantityPrecision}</li>
+                      <li>Min notional: {preview.symbolRules.minNotional} USDT</li>
+                    </ul>
+                  ) : (
+                    <div className={preview.liveLimitTestMode ? "text-amber-300" : "text-red-400"}>
+                      {preview.liveLimitTestMode
+                        ? "Symbol rules unavailable — BingX will validate quantity."
+                        : "Symbol rules unavailable — live submit disabled"}
+                    </div>
+                  )}
+                </li>
+              )}
             </ul>
           ) : null}
           {preview.blockers.length > 0 ? (
@@ -451,11 +509,29 @@ export function LiveOrderPreviewPanel({
                 ))}
             </ul>
           ) : null}
+          {preview.systemHealth?.blockers && preview.systemHealth.blockers.length > 0 ? (
+            <ul className="text-[7px] text-red-300/80 max-h-16 overflow-y-auto">
+              {preview.systemHealth.blockers.map((b: string) => (
+                <li key={b}>· {b}</li>
+              ))}
+            </ul>
+          ) : null}
           {preview.warnings.length > 0 ? (
             <ul className="text-[7px] text-amber-200/70">
               {preview.warnings.map((w) => (
                 <li key={w}>! {w}</li>
               ))}
+            </ul>
+          ) : null}
+          {preview.liveLimitTestMode ? (
+            <ul className="text-[7px] text-yellow-300/80 border-t border-yellow-500/20 pt-1 mt-1">
+              <li>! This submits a pure BingX LIMIT order.</li>
+              <li>! SL/TP are not sent in this phase.</li>
+              <li>! Set protection manually on BingX after fill.</li>
+              <li>! Internal risk caps ignored in BingX-like mode.</li>
+              <li>! Symbol rules unavailable — BingX will validate.</li>
+              <li>! Cancel manually on BingX.</li>
+              <li>! Market orders disabled.</li>
             </ul>
           ) : null}
           <p className="text-[7px] text-slate-500 pt-0.5">
@@ -575,6 +651,13 @@ export function LiveOrderPreviewPanel({
           ) : null}
           {submitResult.clientOrderId ? (
             <p className="text-[7px]">Client ID: {submitResult.clientOrderId}</p>
+          ) : null}
+          {submitResult.status === "submitted" ? (
+            <div className="mt-1 pt-1 border-t border-amber-500/30">
+              <p className="text-[7px] font-bold uppercase text-amber-200/80">
+                Click SYNC to refresh open orders from BingX
+              </p>
+            </div>
           ) : null}
           {submitResult.message &&
           submitResult.status === "submitted" &&

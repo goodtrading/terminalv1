@@ -3,11 +3,17 @@ import {
   getCredentialsForUser,
 } from "../exchanges/bingx/bingxCredentialStore";
 import {
+  formatQuantityForBingX,
+  getBingXSymbolRules,
+  validateQuantityAgainstRules,
+} from "../exchanges/bingx/bingxSymbolRulesService";
+import {
   generateLiveClientOrderId,
   submitBingXLimitOrder,
   LiveMarketOrdersDisabledError,
 } from "../exchanges/bingx/bingxLiveExecutionAdapter";
 import { BingXApiError } from "../exchanges/bingx/bingxHttpClient";
+import { clearBingXReadOnlyCache } from "../exchanges/bingx/bingxReadOnlyService";
 import { previewBingXLiveOrder } from "./liveOrderPreviewService";
 import type { LiveOrderPreviewRequest } from "./liveOrderPreviewTypes";
 import { getLiveTradingReadiness } from "./liveTradingReadinessService";
@@ -22,6 +28,8 @@ import {
   validateLiveSubmitPreviewRisk,
   validateLiveSubmitReadiness,
   validateLiveSubmitShape,
+  validateNonMarketableOrder,
+  isCriticalBingXLiveBlocker,
 } from "./liveOrderSubmitGuards";
 import {
   emitLiveOrderSubmitBlocked,
@@ -34,6 +42,7 @@ import type {
   LiveOrderSubmitResult,
 } from "./liveOrderSubmitTypes";
 import type { LiveOrderPreviewResult } from "./liveOrderPreviewTypes";
+import { isLiveLimitTestMode } from "./riskGuard";
 
 function normalizeSymbol(symbol: string): string {
   return symbol.trim().toUpperCase().replace(/\s+/g, "");
@@ -72,6 +81,8 @@ function toPreviewRequest(request: LiveOrderSubmitRequest): LiveOrderPreviewRequ
     type: "limit",
     quantity: request.quantity,
     notionalUsdt: request.notionalUsdt,
+    marginUsdt: request.marginUsdt,
+    sizingMode: request.sizingMode,
     limitPrice: request.limitPrice,
     stopLossPrice: request.stopLossPrice,
     takeProfitPrice: request.takeProfitPrice,
@@ -184,9 +195,27 @@ export async function submitBingXLiveLimitOrder(
 
   const preview = await previewBingXLiveOrder(uid, toPreviewRequest(request));
   const estimate = buildEstimateFromPreview(preview, request.limitPrice);
+  const testMode = isLiveLimitTestMode();
 
-  const previewBlockers = validateLiveSubmitPreviewRisk(preview);
-  if (previewBlockers.length > 0) {
+  // In test mode, warn if SL/TP provided but not sent
+  if (testMode) {
+    if (request.stopLossPrice != null && request.stopLossPrice > 0) {
+      preview.warnings.push("SL provided but not sent in live limit test mode. Manage SL manually on BingX after fill.");
+    }
+    if (request.takeProfitPrice != null && request.takeProfitPrice > 0) {
+      preview.warnings.push("TP provided but not sent in live limit test mode. Manage TP manually on BingX after fill.");
+    }
+  }
+
+  // Validate non-marketable for LIMIT orders (always enforced, even in test mode)
+  // Use mark price from preview estimate, which is now always the market price (not limit price)
+  const markPrice = preview.estimate.entryPrice;
+  const nonMarketableBlockers = validateNonMarketableOrder(
+    request.side,
+    request.limitPrice,
+    markPrice,
+  );
+  if (nonMarketableBlockers.length > 0) {
     const result: LiveOrderSubmitResult = {
       mode: "live",
       exchange: "bingx",
@@ -196,13 +225,116 @@ export async function submitBingXLiveLimitOrder(
       orderSubmitted: false,
       clientOrderId,
       status: "blocked",
-      blockers: previewBlockers,
+      blockers: nonMarketableBlockers,
       warnings: preview.warnings.slice(0, 8),
+      estimate,
+      message: "LIVE ORDER BLOCKED — marketable limit order",
+    };
+    await emitLiveOrderSubmitBlocked(uid, request, result);
+    return result;
+  }
+
+  const previewBlockers = validateLiveSubmitPreviewRisk(preview);
+
+  // Final filter for test mode: remove artificial blockers, move to warnings
+  let finalBlockers = previewBlockers;
+  let additionalWarnings: string[] = [];
+
+  if (testMode) {
+    const originalBlockers = [...previewBlockers];
+    finalBlockers = originalBlockers.filter(isCriticalBingXLiveBlocker);
+    additionalWarnings = originalBlockers
+      .filter((b) => !isCriticalBingXLiveBlocker(b))
+      .map((b) => `[test mode warning] ${b}`);
+  }
+
+  if (finalBlockers.length > 0) {
+    const result: LiveOrderSubmitResult = {
+      mode: "live",
+      exchange: "bingx",
+      symbol: normalizeSymbol(request.symbol),
+      side: request.side,
+      type: "limit",
+      orderSubmitted: false,
+      clientOrderId,
+      status: "blocked",
+      blockers: finalBlockers,
+      warnings: [...preview.warnings.slice(0, 8), ...additionalWarnings],
       estimate,
       message: "LIVE ORDER BLOCKED — risk guard failed",
     };
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
+  }
+
+  // Validate and normalize quantity against BingX symbol rules before submit
+  let submitQuantity = estimate.quantity;
+
+  try {
+    const symbolRules = await getBingXSymbolRules(normalizeSymbol(request.symbol));
+    const validation = validateQuantityAgainstRules(
+      estimate.quantity,
+      request.limitPrice,
+      symbolRules,
+    );
+    if (!validation.valid) {
+      if (testMode) {
+        // In test mode, warn but allow submit - BingX will validate
+        console.warn("[live-submit] quantity validation warning in test mode", {
+          symbol: normalizeSymbol(request.symbol),
+          error: validation.error,
+        });
+        submitQuantity = estimate.quantity;
+      } else {
+        const result: LiveOrderSubmitResult = {
+          mode: "live",
+          exchange: "bingx",
+          symbol: normalizeSymbol(request.symbol),
+          side: request.side,
+          type: "limit",
+          orderSubmitted: false,
+          clientOrderId,
+          status: "blocked",
+          blockers: [validation.error || "Quantity validation failed"],
+          warnings: preview.warnings.slice(0, 8),
+          estimate,
+          message: "LIVE ORDER BLOCKED — quantity invalid",
+        };
+        await emitLiveOrderSubmitBlocked(uid, request, result);
+        return result;
+      }
+    } else {
+      submitQuantity = validation.normalizedQty ?? estimate.quantity;
+    }
+  } catch (err) {
+    // If symbol rules fetch fails, block live submit with explicit error (unless test mode)
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.warn("[live-submit] symbol rules fetch failed", {
+      symbol: normalizeSymbol(request.symbol),
+      error: errorMsg,
+    });
+    if (testMode) {
+      // In test mode, warn but allow submit - BingX will validate
+      console.warn("[live-submit] symbol rules unavailable in test mode, allowing submit");
+      submitQuantity = estimate.quantity;
+    } else {
+      const result: LiveOrderSubmitResult = {
+        mode: "live",
+        exchange: "bingx",
+        symbol: normalizeSymbol(request.symbol),
+        side: request.side,
+        type: "limit",
+        orderSubmitted: false,
+        clientOrderId,
+        status: "blocked",
+        blockers: [`Live submit blocked: BingX symbol rules unavailable. Error: ${errorMsg}`],
+        warnings: preview.warnings.slice(0, 8),
+        estimate,
+        message: "LIVE ORDER BLOCKED — symbol rules unavailable",
+      };
+      await emitLiveOrderSubmitBlocked(uid, request, result);
+      return result;
+    }
   }
 
   const conn = getFirstConnectedConnectionForUser(uid);
@@ -271,7 +403,7 @@ export async function submitBingXLiveLimitOrder(
       symbol: request.symbol,
       side: request.side,
       type: "limit",
-      quantity: estimate.quantity,
+      quantity: submitQuantity,
       limitPrice: request.limitPrice,
       clientOrderId,
       stopLossPrice: request.stopLossPrice,
@@ -306,6 +438,17 @@ export async function submitBingXLiveLimitOrder(
     };
 
     await emitLiveOrderSubmitted(uid, request, result);
+
+    // Auto-refresh BingX snapshot after successful submit to sync open orders
+    // Cache clear errors should not convert a successful submit to failed
+    try {
+      console.log("[bingx-live-submit] auto-refreshing snapshot after submit");
+      clearBingXReadOnlyCache(conn.id, uid);
+    } catch (err) {
+      warnings.push("Order submitted, but local cache refresh failed. Click Sync to refresh.");
+      console.warn("[bingx-live-submit] cache clear failed", err);
+    }
+
     return result;
   } catch (err) {
     if (err instanceof LiveMarketOrdersDisabledError) {

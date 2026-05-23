@@ -68,6 +68,8 @@ export function parseLiveOrderSubmitBody(
       ? body.previewId.trim()
       : undefined;
 
+  const sizingMode = body.sizingMode === "margin" || body.sizingMode === "notional" ? body.sizingMode : undefined;
+
   return {
     ok: true,
     data: {
@@ -77,6 +79,8 @@ export function parseLiveOrderSubmitBody(
       type: "limit",
       quantity: num("quantity"),
       notionalUsdt: num("notionalUsdt"),
+      marginUsdt: num("marginUsdt"),
+      sizingMode,
       limitPrice,
       stopLossPrice,
       takeProfitPrice: num("takeProfitPrice"),

@@ -75,6 +75,11 @@ export function isDryRunEnabled(): boolean {
   return envBool("BINGX_ENABLE_DRY_RUN", true);
 }
 
+/** Phase 5C: live limit test mode — relaxes artificial guards for first real order test. */
+export function isLiveLimitTestMode(): boolean {
+  return envBool("BINGX_LIVE_LIMIT_TEST_MODE", false);
+}
+
 export function getLiveTradingEnvFlags() {
   return {
     liveTradingEnabled: isLiveTradingEnabled(),
@@ -84,6 +89,7 @@ export function getLiveTradingEnvFlags() {
     positionCloseEnabled: isPositionCloseEnabled(),
     marketOrdersAllowed: isBingxMarketOrdersAllowed(),
     killSwitchActive: isKillSwitchActive(),
+    liveLimitTestMode: isLiveLimitTestMode(),
   };
 }
 
