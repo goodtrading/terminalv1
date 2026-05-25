@@ -3,6 +3,7 @@ import { createServer } from "http";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
+import cors from "cors";
 
 function safeErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -81,6 +82,43 @@ console.log("[BOOT] Creating Express app and HTTP server...");
 const app = express();
 const httpServer = createServer(app);
 console.log("[BOOT] Express app and HTTP server created");
+
+// CORS configuration - must be before routes
+const allowedOrigins = [
+  "http://localhost:8081",
+  "http://localhost:8082",
+  "http://localhost:8083",
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:19006",
+  "http://127.0.0.1:8081",
+  "http://127.0.0.1:8082",
+  "http://127.0.0.1:8083",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5174",
+  "https://terminalv1-production.up.railway.app",
+];
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Permitir requests sin Origin: mobile native apps, curl, server-to-server, healthchecks
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`CORS blocked origin: ${origin}`));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  })
+);
+
+app.options("*", cors());
+console.log("[BOOT] CORS middleware configured");
 
 declare module "http" {
   interface IncomingMessage {
