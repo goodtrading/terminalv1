@@ -529,10 +529,7 @@ async function syncSnapshotCore(
   }
 
   try {
-    const rawOpenOrders = await getOpenOrders(credentials, sym);
-    console.log("[bingx-snapshot] openOrders raw", rawOpenOrders?.length);
-    openOrders = mapOrders(rawOpenOrders);
-    console.log("[bingx-snapshot] openOrders normalized", openOrders);
+    openOrders = mapOrders(await getOpenOrders(credentials, sym));
   } catch {
     connectionHealth = "degraded";
     warnings.push("Open orders could not be loaded.");

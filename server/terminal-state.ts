@@ -11,6 +11,7 @@ import { computeGravityMap } from "./lib/gravityMapEngine";
 import { updateTimeline, getTimeline, getTimelineSummary } from "./lib/stateTimeline";
 import { computeStateCoherence } from "./lib/stateCoherence";
 import { getOrderBook } from "./services/orderbookService";
+import { detectShortGammaPockets, type ShortGammaPocketsSignal } from "./lib/shortGammaPocketEngine";
 
 export const terminalStateSchema = z.object({
   market: z.any(),
@@ -26,7 +27,8 @@ export const terminalStateSchema = z.object({
   gravityMap: z.any().optional(),
   timeline: z.array(z.any()).optional(),
   timelineSummary: z.any().optional(),
-  coherence: z.any().optional()
+  coherence: z.any().optional(),
+  shortGammaPockets: z.any().optional()
 });
 
 export type TerminalState = z.infer<typeof terminalStateSchema>;
@@ -489,6 +491,38 @@ export async function getTerminalState(): Promise<TerminalState> {
     putWallUsd: finalOptions.putWallUsd,
   });
 
+  // ── Short Gamma Pockets Detection ─────────────────────────────────────
+  let shortGammaPockets: ShortGammaPocketsSignal | null = null;
+  try {
+    const spot = ticker?.price ?? finalOptions.spot ?? 0;
+    if (spot > 0) {
+      shortGammaPockets = detectShortGammaPockets({
+        spotPrice: spot,
+        gammaRegime: (marketForClient?.gammaRegime as "LONG GAMMA" | "SHORT GAMMA" | "NEUTRAL" | null) ?? null,
+        gammaFlip: gammaFlipForEngines,
+        transitionZoneStart: transitionZoneStartForEngines,
+        transitionZoneEnd: transitionZoneEndForEngines,
+        gammaMagnets: levels?.gammaMagnets ?? [],
+        callWall: positioning?.callWall ?? null,
+        putWall: positioning?.putWall ?? null,
+        shortGammaPocketStart: levels?.shortGammaPocketStart ?? null,
+        shortGammaPocketEnd: levels?.shortGammaPocketEnd ?? null,
+        marketMode: liveMarketMode?.marketMode,
+        marketModeConfidence: liveMarketMode?.marketModeConfidence,
+        expansionProbability: liveVolExpansion?.expansionProbability,
+      });
+      DEBUG_TERMINAL_STATE_ENGINE && console.log("[ShortGammaPockets] status=" + shortGammaPockets.status + " summary=" + shortGammaPockets.summary);
+    }
+  } catch (sgpErr) {
+    console.warn("[TerminalState] Short gamma pockets detection failed:", sgpErr);
+    shortGammaPockets = {
+      status: "NONE",
+      nearest: null,
+      pockets: [],
+      summary: "Short gamma pockets detection error",
+    };
+  }
+
     return {
       market: marketForClient,
       exposure,
@@ -504,6 +538,7 @@ export async function getTerminalState(): Promise<TerminalState> {
       timeline,
       timelineSummary,
       coherence,
+      shortGammaPockets,
     };
   } finally {
     if (__suppressLogs) restoreTerminalStateConsoleLog();

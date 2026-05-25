@@ -771,8 +771,10 @@ export async function registerRoutes(
 
   if (process.env.DATABASE_URL) {
     try {
+      console.log("[SaaS] DATABASE_URL present, registering SaaS routes...");
       const { registerSaasRoutes } = await import("./routes/saasRoutes");
       registerSaasRoutes(app);
+      console.log("[SaaS] SaaS routes registered successfully");
       const { startExpireSubscriptionsJob } = await import("./jobs/expireSubscriptions");
       startExpireSubscriptionsJob();
     } catch (e) {

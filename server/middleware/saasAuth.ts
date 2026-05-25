@@ -460,17 +460,38 @@ export async function requireSaasAdmin(
   res: Response,
   next: NextFunction,
 ) {
-  const { user } = await resolveAuthenticatedUser(req, {
+  const logPrefix = "[admin-auth]";
+  const route = requestRoute(req);
+  console.log(logPrefix, "route:", route);
+  
+  const { user, diagnostic } = await resolveAuthenticatedUser(req, {
     enforceMayAuthenticate: true,
   });
+  
+  console.log(logPrefix, "session/user exists:", !!user);
+  if (user) {
+    console.log(logPrefix, "userId:", user.id);
+    console.log(logPrefix, "role:", user.role);
+  } else {
+    console.log(logPrefix, "failureReason:", diagnostic.failureReason);
+  }
+  
   if (!user) {
+    console.log(logPrefix, "allowed: false (no user)");
     saasUnauthorized(res, "UNAUTHORIZED");
     return;
   }
-  if (!isAdminRole(user.role)) {
+  
+  const isAdmin = isAdminRole(user.role);
+  console.log(logPrefix, "isAdmin:", isAdmin);
+  
+  if (!isAdmin) {
+    console.log(logPrefix, "allowed: false (not admin)");
     res.status(403).json({ error: "FORBIDDEN" });
     return;
   }
+  
+  console.log(logPrefix, "allowed: true");
   attachAuthUser(req, user);
   next();
 }

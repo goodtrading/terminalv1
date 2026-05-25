@@ -99,6 +99,14 @@ function getRiskColor(val: string): string {
   return "";
 }
 
+function getShortGammaPocketStatusColor(status: string): string {
+  if (status === "ACTIVE") return "red";
+  if (status === "WATCH") return "orange";
+  if (status === "EXPANDING") return "purple";
+  if (status === "IDLE") return "yellow";
+  return "gray";
+}
+
 function deriveEdge(positioning: any, market: any): string {
   const trade = positioning?.tradeDecisionEngine;
   const squeeze = positioning?.squeezeProbabilityEngine;
@@ -117,6 +125,85 @@ function deriveEdge(positioning: any, market: any): string {
   if (score >= 5) return "HIGH";
   if (score >= 3) return "MEDIUM";
   return "LOW";
+}
+
+// Short Gamma Pockets Panel Component
+function ShortGammaPocketsPanel() {
+  const { data: terminalData } = useTerminalState();
+  const shortGammaPockets = (terminalData as any)?.shortGammaPockets;
+
+  if (!shortGammaPockets) {
+    return (
+      <div className="text-[10px] text-white/30 italic py-2">Short gamma pockets unavailable</div>
+    );
+  }
+
+  const { status, nearest, summary } = shortGammaPockets;
+  const statusColor = getShortGammaPocketStatusColor(status);
+
+  const fmtK = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(Math.round(p));
+
+  return (
+    <div className="flex flex-col gap-2">
+      <StatusValue label="Status" value={status} color={statusColor} />
+      
+      {nearest && (
+        <>
+          <StatusValue 
+            label="Direction" 
+            value={nearest.direction} 
+            color={nearest.direction === "UPPER" ? "green" : "red"} 
+          />
+          <StatusValue 
+            label="Range" 
+            value={`${fmtK(nearest.rangeLow)}-${fmtK(nearest.rangeHigh)}`} 
+            color="gray" 
+          />
+          <StatusValue 
+            label="Risk" 
+            value={nearest.risk} 
+            color={getRiskColor(nearest.risk)} 
+          />
+          <StatusValue 
+            label="Confidence" 
+            value={`${nearest.confidence}%`} 
+            color={nearest.confidence >= 70 ? "green" : nearest.confidence >= 50 ? "yellow" : "gray"} 
+          />
+          <StatusValue 
+            label="Relation to Flip" 
+            value={nearest.relationToFlip.replace(/_/g, " ")} 
+            color="gray" 
+          />
+          {nearest.relatedMagnet && (
+            <StatusValue 
+              label="Related Magnet" 
+              value={fmtK(nearest.relatedMagnet)} 
+              color="purple" 
+            />
+          )}
+          {nearest.relatedWall && (
+            <StatusValue 
+              label="Related Wall" 
+              value={nearest.relatedWall.replace(/_/g, " ")} 
+              color="blue" 
+            />
+          )}
+          <div className="flex flex-col gap-1 mt-1">
+            <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Activation Condition</span>
+            <span className="text-[10px] text-white/50 font-mono leading-snug">{nearest.activationCondition}</span>
+          </div>
+          <div className="flex flex-col gap-1 mt-1">
+            <span className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Explanation</span>
+            <span className="text-[10px] text-white/50 font-mono leading-snug">{nearest.explanation}</span>
+          </div>
+        </>
+      )}
+      
+      {status === "NONE" && (
+        <div className="text-[10px] text-white/50 font-mono leading-snug mt-1">{summary}</div>
+      )}
+    </div>
+  );
 }
 
 // Liquidity Map Panel Component
@@ -693,6 +780,11 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
       <SidebarPanel title="Liquidity Map">
         <LiquidityMapPanel />
         <LearnExplanation text="PRESSURE: bid/ask imbalance. VACUUM RISK/TYPE/SCORE: thin liquidity zones and breakout potential. ACCEL ZONES/BIAS: gamma acceleration zones and directional bias." />
+      </SidebarPanel>
+
+      <SidebarPanel title="Short Gamma Pockets">
+        <ShortGammaPocketsPanel />
+        <LearnExplanation text="SHORT GAMMA POCKETS: zones where BTC can become structurally fragile. These are risk/fragility zones, not entry signals. Status: NONE (no pocket), IDLE (pocket exists but price distant), WATCH (price approaching), ACTIVE (price in zone), EXPANDING (acceleration confirmed)." />
       </SidebarPanel>
 
       <SidebarPanel title="Options Snapshot">

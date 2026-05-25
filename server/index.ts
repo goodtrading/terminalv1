@@ -42,6 +42,20 @@ console.log("[ENV] cwd:", process.cwd());
 console.log("[ENV] OPENAI key exists:", !!process.env.OPENAI_API_KEY);
 console.log("[ENV] DATABASE_URL exists:", !!process.env.DATABASE_URL);
 console.log("[ENV] DATABASE_URL length:", process.env.DATABASE_URL?.length || 0);
+console.log("[ENV] SESSION_SECRET exists:", !!process.env.SESSION_SECRET);
+console.log("[ENV] JWT_SECRET exists:", !!process.env.JWT_SECRET);
+
+// Log DATABASE_URL host hint (censored) for Railway debugging
+if (process.env.DATABASE_URL) {
+  try {
+    const url = new URL(process.env.DATABASE_URL);
+    const hostname = url.hostname;
+    const censoredHostname = hostname.replace(/^[^.]+\./, "***.");
+    console.log("[ENV] DATABASE_URL host hint:", censoredHostname);
+  } catch {
+    console.log("[ENV] DATABASE_URL host hint: (invalid URL format)");
+  }
+}
 
 const bingxEncKey = process.env.BINGX_CREDENTIAL_ENCRYPTION_KEY?.trim() ?? "";
 console.log(

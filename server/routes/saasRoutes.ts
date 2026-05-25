@@ -172,62 +172,81 @@ export function registerSaasRoutes(app: Express): void {
   });
 
   app.post("/api/auth/login", async (req: Request, res: Response) => {
-    const logPrefix = "[auth/login]";
-    console.log(logPrefix, "Request received:", { 
-      email: req.body?.email, 
-      hasPassword: !!req.body?.password,
-      userAgent: req.get('User-Agent')
-    });
+    const logPrefix = "[auth-login]";
+    console.log(logPrefix, "request received");
+    console.log(logPrefix, "email provided:", !!req.body?.email);
+    console.log(logPrefix, "password provided:", !!req.body?.password);
 
     try {
-      // Test DB connection first
       const { pool } = await import("../db");
+      console.log(logPrefix, "DATABASE_URL present:", !!process.env.DATABASE_URL);
+      console.log(logPrefix, "DB pool initialized:", !!pool);
+      
       if (!pool) {
-        console.error(logPrefix, "Database pool is null");
+        console.error(logPrefix, "DB pool is null - DATABASE_URL missing or invalid");
         return res.status(500).json({ error: "DATABASE_NOT_CONFIGURED" });
       }
       
+      // Test DB connection
+      console.log(logPrefix, "testing DB connection with SELECT 1");
       const dbTest = await pool.query('SELECT 1');
       console.log(logPrefix, "DB connection test:", dbTest.rows.length > 0 ? "OK" : "FAILED");
 
       const parsed = loginBody.safeParse(req.body);
       if (!parsed.success) {
-        console.warn(logPrefix, "Validation failed:", parsed.error.flatten());
+        console.warn(logPrefix, "validation failed:", parsed.error.flatten());
         res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
         return;
       }
       
       const { email, password } = parsed.data;
-      console.log(logPrefix, "Looking up user:", email);
+      console.log(logPrefix, "normalized email:", email);
+      console.log(logPrefix, "DB query started");
       
       const user = await findUserByEmail(email);
+      console.log(logPrefix, "user found:", !!user);
+      
       if (!user) {
-        console.warn(logPrefix, "User not found:", email);
+        console.warn(logPrefix, "user not found");
         res.status(401).json({ error: "INVALID_CREDENTIALS" });
         return;
       }
       
-      console.log(logPrefix, "User found:", { id: user.id, email: user.email, role: user.role });
+      console.log(logPrefix, "user role:", user.role);
+      console.log(logPrefix, "user status:", user.status);
+      console.log(logPrefix, "password_hash present:", !!user.passwordHash);
       
+      // Check password hash format
+      const hashFormat = user.passwordHash?.substring(0, 4) || "unknown";
+      console.log(logPrefix, "password hash format starts with:", hashFormat);
+      
+      console.log(logPrefix, "password compare started");
       const passwordValid = verifyPassword(password, user.passwordHash);
+      console.log(logPrefix, "password compare result:", passwordValid);
+      
       if (!passwordValid) {
-        console.warn(logPrefix, "Invalid password for user:", email);
+        console.warn(logPrefix, "invalid password");
         res.status(401).json({ error: "INVALID_CREDENTIALS" });
         return;
       }
       
-      console.log(logPrefix, "Password validated for user:", email);
-      
+      console.log(logPrefix, "token generation started");
       const token = signUserToken({
         id: user.id,
         email: user.email,
         role: dbRoleToApiRole(user.role),
       });
+      console.log(logPrefix, "token generated successfully");
       
+      console.log(logPrefix, "fetching access for user");
       const access = await getAccessForUserId(user.id);
-      res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
+      console.log(logPrefix, "access fetched:", access.allowed);
       
-      console.log(logPrefix, "Login successful:", { 
+      console.log(logPrefix, "setting cookie");
+      res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
+      console.log(logPrefix, "cookie set successfully");
+      
+      console.log(logPrefix, "response sent", { 
         userId: user.id, 
         email: user.email, 
         accessAllowed: access.allowed 
@@ -239,15 +258,17 @@ export function registerSaasRoutes(app: Express): void {
         access,
       });
     } catch (e: any) {
-      console.error(logPrefix, "Login failed:", {
+      console.error(logPrefix, "login failed:", {
         message: e?.message,
-        stack: e?.stack,
         code: e?.code,
-        detail: e?.detail
+        detail: e?.detail,
+        constraint: e?.constraint,
+        table: e?.table,
+        column: e?.column,
       });
       res.status(500).json({ 
-        error: "LOGIN_FAILED",
-        message: e?.message || "Internal server error"
+        error: "AUTH_LOGIN_FAILED",
+        reason: e?.message || "Internal server error"
       });
     }
   });
@@ -258,16 +279,26 @@ export function registerSaasRoutes(app: Express): void {
   });
 
   app.get("/api/auth/me", optionalSaasAuth, async (req: Request, res: Response) => {
+    const logPrefix = "[auth-me]";
+    console.log(logPrefix, "request received");
+    console.log(logPrefix, "session exists:", !!req.session);
+    console.log(logPrefix, "session userId:", req.session?.userId);
+    
     res.set({
       "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
       Pragma: "no-cache",
       Expires: "0",
     });
     try {
+      console.log(logPrefix, "resolving authenticated user");
       const { user, tokenSource, diagnostic } = await resolveAuthenticatedUser(req, {
         enforceMayAuthenticate: false,
       });
       const authenticated = Boolean(user);
+      console.log(logPrefix, "authenticated:", authenticated);
+      console.log(logPrefix, "tokenSource:", tokenSource);
+      console.log(logPrefix, "user found:", !!user);
+      
       logAuthMeDiagnostic(
         req,
         authenticated,
@@ -275,15 +306,27 @@ export function registerSaasRoutes(app: Express): void {
         tokenSource,
         diagnostic,
       );
+      
       if (!user) {
+        console.log(logPrefix, "no user - returning unauthenticated");
         res.json({ authenticated: false, user: null, access: null });
         return;
       }
+      
+      console.log(logPrefix, "user id:", user.id);
+      console.log(logPrefix, "user email:", user.email);
+      console.log(logPrefix, "user role:", user.role);
+      
       if (req.saasUser?.id !== user.id) {
         req.saasUser = user;
         req.user = user;
       }
+      
+      console.log(logPrefix, "fetching access for user");
       const access = await getAccessForUserId(user.id);
+      console.log(logPrefix, "access fetched:", access.allowed);
+      console.log(logPrefix, "response sent");
+      
       res.json({
         authenticated: true,
         user: {
@@ -294,8 +337,18 @@ export function registerSaasRoutes(app: Express): void {
         access,
       });
     } catch (e: any) {
-      console.error("[SaaS] /api/auth/me", e);
-      res.status(500).json({ error: "ME_FAILED" });
+      console.error(logPrefix, "error:", {
+        message: e?.message,
+        code: e?.code,
+        detail: e?.detail,
+        constraint: e?.constraint,
+        table: e?.table,
+        column: e?.column,
+      });
+      res.status(500).json({ 
+        error: "AUTH_ME_FAILED",
+        reason: e?.message || "Internal server error"
+      });
     }
   });
 
@@ -336,8 +389,22 @@ export function registerSaasRoutes(app: Express): void {
   });
 
   app.get("/api/admin/users", requireSaasAdmin, async (_req: Request, res: Response) => {
+    const logPrefix = "[admin-users]";
+    console.log(logPrefix, "request received");
     try {
+      const { pool } = await import("../db");
+      console.log(logPrefix, "DATABASE_URL present:", !!process.env.DATABASE_URL);
+      console.log(logPrefix, "DB pool initialized:", !!pool);
+      
+      if (!pool) {
+        console.error(logPrefix, "DB pool is null - DATABASE_URL missing or invalid");
+        return res.status(500).json({ error: "DATABASE_NOT_CONFIGURED" });
+      }
+      
+      console.log(logPrefix, "DB query started");
       const users = await listUsersForAdmin();
+      console.log(logPrefix, "DB query success count:", users.length);
+      
       const out = await Promise.all(
         users.map(async (u) => {
           const access = await getAccessForUserId(u.id);
@@ -364,8 +431,101 @@ export function registerSaasRoutes(app: Express): void {
       );
       res.json({ users: out });
     } catch (e: any) {
-      console.error("[SaaS] admin users", e);
-      res.status(500).json({ error: "ADMIN_LIST_FAILED" });
+      console.error(logPrefix, "DB query failed:", {
+        message: e?.message,
+        code: e?.code,
+        detail: e?.detail,
+        constraint: e?.constraint,
+        table: e?.table,
+      });
+      res.status(500).json({ error: "ADMIN_LIST_FAILED", detail: e?.message });
+    }
+  });
+
+  app.get("/api/admin/db-health", requireSaasAdmin, async (_req: Request, res: Response) => {
+    const logPrefix = "[admin-db-health]";
+    console.log(logPrefix, "request received");
+    try {
+      const { pool } = await import("../db");
+      console.log(logPrefix, "DATABASE_URL present:", !!process.env.DATABASE_URL);
+      console.log(logPrefix, "DB pool initialized:", !!pool);
+      
+      if (!pool) {
+        console.error(logPrefix, "DB pool is null - DATABASE_URL missing or invalid");
+        return res.status(500).json({ 
+          ok: false, 
+          reason: "DATABASE_URL_MISSING" 
+        });
+      }
+      
+      // Test basic connection
+      console.log(logPrefix, "testing DB connection with SELECT 1");
+      const testResult = await pool.query('SELECT 1');
+      console.log(logPrefix, "SELECT 1 result:", testResult.rows.length > 0 ? "OK" : "FAILED");
+      
+      if (!testResult.rows || testResult.rows.length === 0) {
+        return res.status(500).json({ 
+          ok: false, 
+          reason: "DB_CONNECTION_FAILED" 
+        });
+      }
+      
+      // Check if users table exists
+      console.log(logPrefix, "checking users table existence");
+      const tableCheck = await pool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_schema = 'public' 
+          AND table_name = 'users'
+        );
+      `);
+      const usersTableExists = tableCheck.rows[0]?.exists === true;
+      console.log(logPrefix, "users table exists:", usersTableExists);
+      
+      if (!usersTableExists) {
+        return res.status(500).json({ 
+          ok: false, 
+          reason: "USERS_TABLE_MISSING" 
+        });
+      }
+      
+      // Count users
+      console.log(logPrefix, "counting users");
+      const countResult = await pool.query('SELECT COUNT(*) as count FROM users');
+      const usersCount = parseInt(countResult.rows[0]?.count || '0', 10);
+      console.log(logPrefix, "users count:", usersCount);
+      
+      // Check subscriptions table
+      console.log(logPrefix, "checking subscriptions table existence");
+      const subTableCheck = await pool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_schema = 'public' 
+          AND table_name = 'subscriptions'
+        );
+      `);
+      const subsTableExists = subTableCheck.rows[0]?.exists === true;
+      console.log(logPrefix, "subscriptions table exists:", subsTableExists);
+      
+      res.json({
+        ok: true,
+        dbConnected: true,
+        usersTableExists,
+        usersCount,
+        subscriptionsTableExists: subsTableExists,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (e: any) {
+      console.error(logPrefix, "DB health check failed:", {
+        message: e?.message,
+        code: e?.code,
+        detail: e?.detail,
+      });
+      res.status(500).json({ 
+        ok: false, 
+        reason: "QUERY_FAILED",
+        detail: e?.message
+      });
     }
   });
 

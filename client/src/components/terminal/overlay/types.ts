@@ -51,7 +51,8 @@ export const OVERLAY_TYPES = {
   SQUEEZE_LEVELS: 'squeezeLevels',
   VACUUM_ZONES: 'vacuumZones',
   THIN_LIQUIDITY: 'thinLiquidity',
-  HEATMAP_LIQUIDITY: 'heatmapLiquidity'
+  HEATMAP_LIQUIDITY: 'heatmapLiquidity',
+  SHORT_GAMMA_POCKETS: 'shortGammaPockets'
 } as const;
 
 export const DEFAULT_TAB_CONFIGS: TabOverlayConfig[] = [
@@ -62,15 +63,17 @@ export const DEFAULT_TAB_CONFIGS: TabOverlayConfig[] = [
       { id: OVERLAY_TYPES.GAMMA_LEVELS, name: 'Gamma Levels', shortLabel: 'GAM', enabled: true, priority: 2 },
       { id: OVERLAY_TYPES.SWEEP_ZONES, name: 'Sweep Zones', shortLabel: 'SWP', enabled: true, priority: 3 },
       { id: OVERLAY_TYPES.VACUUM_ZONES, name: 'Vacuum Zones', shortLabel: 'VAC', enabled: true, priority: 4 },
-      { id: OVERLAY_TYPES.THIN_LIQUIDITY, name: 'Thin Liquidity', shortLabel: 'THIN', enabled: true, priority: 5 }
+      { id: OVERLAY_TYPES.SHORT_GAMMA_POCKETS, name: 'Short Gamma Pockets', shortLabel: 'SGP', enabled: true, priority: 5 },
+      { id: OVERLAY_TYPES.THIN_LIQUIDITY, name: 'Thin Liquidity', shortLabel: 'THIN', enabled: true, priority: 6 }
     ]
   },
   {
     tabId: 'GAMMA',
     overlays: [
       { id: OVERLAY_TYPES.GAMMA_LEVELS, name: 'Gamma Levels', shortLabel: 'GAM', enabled: true, priority: 1 },
-      { id: OVERLAY_TYPES.SWEEP_ZONES, name: 'Sweep Zones', shortLabel: 'SWP', enabled: false, priority: 2 },
-      { id: OVERLAY_TYPES.VACUUM_ZONES, name: 'Vacuum Zones', shortLabel: 'VAC', enabled: false, priority: 3 }
+      { id: OVERLAY_TYPES.SHORT_GAMMA_POCKETS, name: 'Short Gamma Pockets', shortLabel: 'SGP', enabled: true, priority: 2 },
+      { id: OVERLAY_TYPES.SWEEP_ZONES, name: 'Sweep Zones', shortLabel: 'SWP', enabled: false, priority: 3 },
+      { id: OVERLAY_TYPES.VACUUM_ZONES, name: 'Vacuum Zones', shortLabel: 'VAC', enabled: false, priority: 4 }
     ]
   },
   {

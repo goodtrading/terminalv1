@@ -170,7 +170,6 @@ export function useBingXReadOnlyChartData(
       riskOrders: riskOrdersForSymbol.length,
       totalPositions: snapshot?.positions?.length ?? 0,
       totalOpenOrders: snapshot?.openOrders?.length ?? 0,
-      snapshotOpenOrders: snapshot?.openOrders,
     });
   }
 

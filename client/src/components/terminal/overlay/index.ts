@@ -4,6 +4,7 @@ import { renderSweepLevels } from "./renderers/sweepLevels";
 import { renderCliffLevels } from "./renderers/cliffLevels";
 import { renderCascadeLevels } from "./renderers/cascadeLevels";
 import { renderSqueezeLevels } from "./renderers/squeezeLevels";
+import { renderShortGammaPockets } from "./renderers/shortGammaPockets";
 import { OverlayRenderer } from "./types";
 import { OverlayType } from "./overlayState";
 
@@ -14,5 +15,6 @@ export const OVERLAY_RENDERERS: Record<OverlayType, OverlayRenderer> = {
   cliffLevels: renderCliffLevels,
   cascadeLevels: renderCascadeLevels,
   squeezeLevels: renderSqueezeLevels,
+  shortGammaPockets: renderShortGammaPockets,
   heatmap: () => [], // Handled separately by canvas renderer
 };

@@ -652,13 +652,6 @@ export function LiveOrderPreviewPanel({
           {submitResult.clientOrderId ? (
             <p className="text-[7px]">Client ID: {submitResult.clientOrderId}</p>
           ) : null}
-          {submitResult.status === "submitted" ? (
-            <div className="mt-1 pt-1 border-t border-amber-500/30">
-              <p className="text-[7px] font-bold uppercase text-amber-200/80">
-                Click SYNC to refresh open orders from BingX
-              </p>
-            </div>
-          ) : null}
           {submitResult.message &&
           submitResult.status === "submitted" &&
           submitResult.message !== "LIVE LIMIT ORDER SUBMITTED" ? (

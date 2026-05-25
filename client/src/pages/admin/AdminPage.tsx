@@ -105,6 +105,7 @@ export default function AdminPage() {
     const token = getAuthToken();
     if (!token) {
       setLoading(false);
+      setErr("No autenticado - falta token");
       return;
     }
     try {
@@ -114,7 +115,22 @@ export default function AdminPage() {
         fetch("/api/plans", { credentials: "include" }),
       ]);
       if (!uRes.ok) {
-        setErr(uRes.status === 403 ? "No autorizado para panel admin" : `Error users: ${uRes.status}`);
+        if (uRes.status === 401) {
+          setErr("No autorizado (401) - sesión expirada o inválida");
+        } else if (uRes.status === 403) {
+          setErr("No autorizado para panel admin (403) - no sos admin");
+        } else if (uRes.status === 500) {
+          const errorData = await uRes.json().catch(() => ({}));
+          if (errorData.error === "DATABASE_NOT_CONFIGURED") {
+            setErr("Error de base de datos: DATABASE_URL no configurada");
+          } else if (errorData.error === "ADMIN_LIST_FAILED") {
+            setErr(`Error de base de datos: ${errorData.detail || "fallo al listar usuarios"}`);
+          } else {
+            setErr(`Error del servidor (500): ${errorData.error || "desconocido"}`);
+          }
+        } else {
+          setErr(`Error users: ${uRes.status}`);
+        }
         setRows([]);
         return;
       }
@@ -126,8 +142,9 @@ export default function AdminPage() {
       if (plist.length) {
         setGrantPlanId((prev) => (plist.some((p) => p.id === prev) ? prev : plist[0]!.id));
       }
-    } catch {
-      setErr("No se pudo cargar usuarios/planes");
+    } catch (e) {
+      console.error("[admin load] error:", e);
+      setErr("No se pudo cargar usuarios/planes - error de red o servidor");
     } finally {
       setLoading(false);
     }
