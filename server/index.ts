@@ -171,6 +171,52 @@ app.use((req, res, next) => {
   const { registerLiveRoutes } = await import("./routes/live.routes");
   registerLiveRoutes(app);
 
+  // Health check endpoints - register IMMEDIATELY for Railway healthcheck
+  console.log("[BOOT] Registering health endpoints...");
+  app.get("/health", (_req, res) => {
+    res.status(200).json({
+      status: "ok",
+      message: "GoodTrading backend is running",
+      timestamp: new Date().toISOString(),
+    });
+  });
+  app.get("/api/healthz", (_req, res) => {
+    res.status(200).json({
+      ok: true,
+      status: "healthy",
+      service: "terminal",
+      timestamp: new Date().toISOString(),
+    });
+  });
+  console.log("[BOOT] Health endpoints registered");
+
+  // Start listening IMMEDIATELY - Railway healthcheck needs this
+  const port = parseInt(process.env.PORT || "5000", 10);
+  console.log(`[BOOT] Starting server on port ${port}...`);
+
+  httpServer.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `[BOOT] Port ${port} is already in use. Stop the other dev server (Get-NetTCPConnection -LocalPort ${port}) and run npm run dev again.`,
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
+
+  httpServer.listen(
+    {
+      port,
+      host: "0.0.0.0",
+    },
+    () => {
+      console.log(`[startup] listening on port ${port}`);
+      console.log(`[BOOT] Server listening on port ${port}`);
+      log(`serving on port ${port}`);
+    },
+  );
+
+  // Continue with async initialization AFTER server is listening
   console.log("[BOOT] Registering API routes...");
   await registerRoutes(httpServer, app);
   setupMobileDirectEndpoint(app);
@@ -230,43 +276,7 @@ app.use((req, res, next) => {
   }
   console.log("[BOOT] Middleware setup complete");
 
-  // Health check endpoint
-  console.log("[BOOT] Registering health endpoint...");
-  app.get("/health", (_req, res) => {
-    console.log("[Server] Health endpoint hit");
-    res.status(200).json({
-      status: "ok",
-      message: "GoodTrading backend is running",
-      timestamp: new Date().toISOString(),
-    });
-  });
-  console.log("[BOOT] Health endpoint registered");
-
-  const port = parseInt(process.env.PORT || "5000", 10);
-  console.log(`[BOOT] Starting server on port ${port}...`);
-
-  httpServer.on("error", (err: NodeJS.ErrnoException) => {
-    if (err.code === "EADDRINUSE") {
-      console.error(
-        `[BOOT] Port ${port} is already in use. Stop the other dev server (Get-NetTCPConnection -LocalPort ${port}) and run npm run dev again.`,
-      );
-      process.exit(1);
-    }
-    throw err;
-  });
-
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-    },
-    () => {
-      console.log(`[startup] listening on port ${port}`);
-      console.log(`[BOOT] Server listening on port ${port}`);
-      log(`serving on port ${port}`);
-    },
-  );
-
+  // Background services (start after server is listening)
   void (async () => {
     console.log("[BOOT] Starting mobile state cache...");
     const { startMobileCache } = await import("./mobile-cache");
