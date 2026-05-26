@@ -19,6 +19,45 @@ import { GammaCard } from "@/components/GammaCard";
 // NO mock imports. Every value shown comes from the API or shows explicit
 // "awaiting data" state. If you see real-looking numbers here, the terminal pushed them.
 
+// Helper functions for formatting
+const formatUsdPrice = (value: unknown) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return `$${n.toLocaleString("es-AR", {
+    maximumFractionDigits: 0,
+  })}`;
+};
+
+const normalizeGammaLabel = (value: unknown) => {
+  const text = String(value ?? "").toUpperCase();
+
+  if (text.includes("SHORT")) return "SHORT GAMMA";
+  if (text.includes("LONG")) return "LONG GAMMA";
+  if (text.includes("TRANSITION")) return "TRANSITION GAMMA";
+
+  return "UNKNOWN GAMMA";
+};
+
+const formatCompactUsd = (value: unknown) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+
+  if (abs >= 1_000_000_000) return `${sign}$${(abs / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(2)}K`;
+
+  return `${sign}$${abs.toFixed(0)}`;
+};
+
+const formatPercent = (value: unknown) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return `${Math.round(n)}%`;
+};
+
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -35,23 +74,36 @@ export default function HomeScreen() {
   const raw = market as any; // this is now the unwrapped data.data object
   const btcPrice = raw?.market?.spot;
   const bias = raw?.bias?.type ?? "NEUTRAL";
-  const gamma = raw?.market?.gammaRegime ?? "NEUTRAL";
+  const gammaRaw = raw?.market?.gammaRegime ?? "NEUTRAL";
+  const gamma = normalizeGammaLabel(gammaRaw);
   const dealerPivot = raw?.levels?.dealerPivot;
   const scenario = raw?.scenarios?.[0]?.thesis ?? "—";
   const outlook = raw?.bias?.outlook;
   const timeframe = raw?.bias?.horizon ?? "—";
   const tags = raw?.bias?.drivers ?? [];
-  const probability = raw?.bias?.confidence ?? 0;
+  const probabilityRaw = raw?.bias?.confidence ?? 0;
+  const probability = formatPercent(probabilityRaw);
   const gammaLevel = raw?.market?.gammaLevel ?? 0;
-  const netGamma = raw?.market?.totalGex ?? "—";
-  const flipPoint = raw?.market?.gammaFlip ?? "—";
+  const netGammaRaw = raw?.market?.totalGex ?? "—";
+  const netGamma = formatCompactUsd(netGammaRaw);
+  const flipPointRaw = raw?.market?.gammaFlip ?? "—";
+  const flipPoint = formatUsdPrice(flipPointRaw);
   const dominantExpiry = raw?.market?.dominantExpiry ?? "—";
   const lastUpdate = raw?.market?.lastUpdate ?? new Date().toISOString();
 
-  // Build zones array from levels
+  // Dev logs for scenario source
+  if (__DEV__) {
+    console.log("[GoodTrading Mobile] scenario source:", {
+      scenarioFromScenarios: raw?.scenarios?.[0]?.thesis,
+      scenarioDirect: raw?.scenario,
+      scenarios: raw?.scenarios,
+    });
+  }
+
+  // Build zones array from levels with formatted prices
   const zones = [
-    ...(raw?.levels?.callWall ? [{ label: "CALL WALL", price: raw.levels.callWall, type: "resistance" as const, distance: "—" }] : []),
-    ...(raw?.levels?.putWall ? [{ label: "PUT WALL", price: raw.levels.putWall, type: "support" as const, distance: "—" }] : []),
+    ...(raw?.levels?.callWall ? [{ label: "CALL WALL", price: formatUsdPrice(raw.levels.callWall), type: "resistance" as const, distance: "—" }] : []),
+    ...(raw?.levels?.putWall ? [{ label: "PUT WALL", price: formatUsdPrice(raw.levels.putWall), type: "support" as const, distance: "—" }] : []),
   ];
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
@@ -109,12 +161,12 @@ export default function HomeScreen() {
         <>
           {/* CommandBlock: asset · bias · gamma · zone · setup · probability · lastUpdate */}
           <CommandBlock
-            asset={btcPrice ?? "BTC"}
+            asset={formatUsdPrice(btcPrice) ?? "BTC"}
             bias={bias}
             gamma={gamma}
-            zone={dealerPivot ?? "—"}
+            zone={formatUsdPrice(dealerPivot) ?? "—"}
             setup=""
-            probability={probability}
+            probability={probabilityRaw}
             lastUpdate={new Date(lastUpdate).toLocaleString("es-ES", {
               day: "2-digit",
               month: "short",
@@ -127,7 +179,7 @@ export default function HomeScreen() {
           <ScenarioCard
             title={scenario}
             description=""
-            probability={probability}
+            probability={probabilityRaw}
             outlook={outlook ?? "—"}
             timeframe={timeframe ?? "—"}
             tags={tags}

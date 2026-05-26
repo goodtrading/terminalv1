@@ -21,7 +21,8 @@ export function GammaCard({
 }: GammaCardProps) {
   const colors = useColors();
   const isShort = state === "SHORT";
-  const stateColor = isShort ? colors.primary : colors.success;
+  const isTransition = state === "TRANSITION";
+  const stateColor = isShort ? colors.primary : isTransition ? colors.gold : colors.success;
   const absLevel = Math.abs(level);
   const barWidth = `${absLevel}%` as const;
 
