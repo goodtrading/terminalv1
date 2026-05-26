@@ -99,25 +99,34 @@ const allowedOrigins = [
   "https://terminalv1-production.up.railway.app",
 ];
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      // Permitir requests sin Origin: mobile native apps, curl, server-to-server, healthchecks
-      if (!origin) return callback(null, true);
+const corsOptions = {
+  origin(origin: string | undefined, callback: (err: Error | null, allow: boolean) => void) {
+    // Permitir requests sin Origin: mobile native apps, curl, server-to-server, healthchecks
+    if (!origin) return callback(null, true);
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-      return callback(new Error(`CORS blocked origin: ${origin}`));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  })
-);
+    console.warn("[cors] blocked origin:", origin);
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+};
 
-app.options("*", cors());
+app.use(cors(corsOptions));
+
+// Manual OPTIONS handler - avoids path-to-regexp issues with app.options("*", cors())
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
+
 console.log("[BOOT] CORS middleware configured");
 
 declare module "http" {
