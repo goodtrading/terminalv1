@@ -116,7 +116,7 @@ export function useHealthCheck<
  * @summary Get current market state
  */
 export const getGetMarketStateUrl = () => {
-  return `/api/market/state`;
+  return `/api/mobile/state`;
 };
 
 export const getMarketState = async (
@@ -129,7 +129,7 @@ export const getMarketState = async (
 };
 
 export const getGetMarketStateQueryKey = () => {
-  return [`/api/market/state`] as const;
+  return [`/api/mobile/state`] as const;
 };
 
 export const getGetMarketStateQueryOptions = <

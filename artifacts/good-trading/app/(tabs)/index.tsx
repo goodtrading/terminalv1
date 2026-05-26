@@ -25,10 +25,34 @@ export default function HomeScreen() {
 
   const { data: market, isLoading, isError } = useGetMarketState({
     query: {
+      queryKey: ["market-state"],
       refetchInterval: 7_000,
       staleTime: 5_000,
     },
   });
+
+  // Map real API response structure to UI fields
+  const raw = market as any; // this is now the unwrapped data.data object
+  const btcPrice = raw?.market?.spot;
+  const bias = raw?.bias?.type ?? "NEUTRAL";
+  const gamma = raw?.market?.gammaRegime ?? "NEUTRAL";
+  const dealerPivot = raw?.levels?.dealerPivot;
+  const scenario = raw?.scenarios?.[0]?.thesis ?? "—";
+  const outlook = raw?.bias?.outlook;
+  const timeframe = raw?.bias?.horizon ?? "—";
+  const tags = raw?.bias?.drivers ?? [];
+  const probability = raw?.bias?.confidence ?? 0;
+  const gammaLevel = raw?.market?.gammaLevel ?? 0;
+  const netGamma = raw?.market?.totalGex ?? "—";
+  const flipPoint = raw?.market?.gammaFlip ?? "—";
+  const dominantExpiry = raw?.market?.dominantExpiry ?? "—";
+  const lastUpdate = raw?.market?.lastUpdate ?? new Date().toISOString();
+
+  // Build zones array from levels
+  const zones = [
+    ...(raw?.levels?.callWall ? [{ label: "CALL WALL", price: raw.levels.callWall, type: "resistance" as const, distance: "—" }] : []),
+    ...(raw?.levels?.putWall ? [{ label: "PUT WALL", price: raw.levels.putWall, type: "support" as const, distance: "—" }] : []),
+  ];
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 + 84 : insets.bottom + 84;
@@ -64,7 +88,7 @@ export default function HomeScreen() {
         {isPending && (
           <ActivityIndicator size="small" color={colors.primary} style={styles.loader} />
         )}
-        {isError && !market && (
+        {isError && (
           <View style={[styles.offlinePill, { borderColor: colors.primary }]}>
             <Text style={[styles.offlineText, { color: colors.primary }]}>SIN SEÑAL</Text>
           </View>
@@ -85,13 +109,13 @@ export default function HomeScreen() {
         <>
           {/* CommandBlock: asset · bias · gamma · zone · setup · probability · lastUpdate */}
           <CommandBlock
-            asset={market.asset ?? "BTC"}
-            bias={market.bias}
-            gamma={market.gamma}
-            zone={market.zone}
-            setup={market.setup}
-            probability={market.probability}
-            lastUpdate={new Date(market.lastUpdate).toLocaleString("es-ES", {
+            asset={btcPrice ?? "BTC"}
+            bias={bias}
+            gamma={gamma}
+            zone={dealerPivot ?? "—"}
+            setup=""
+            probability={probability}
+            lastUpdate={new Date(lastUpdate).toLocaleString("es-ES", {
               day: "2-digit",
               month: "short",
               hour: "2-digit",
@@ -101,19 +125,17 @@ export default function HomeScreen() {
 
           {/* ScenarioCard: scenario · probability · outlook · timeframe · tags */}
           <ScenarioCard
-            title={market.scenario}
-            description={`Escenario activo: ${market.scenario}. Outlook: ${
-              market.outlook ?? "—"
-            }. Timeframe: ${market.timeframe ?? "—"}.`}
-            probability={market.probability}
-            outlook={market.outlook ?? "—"}
-            timeframe={market.timeframe ?? "—"}
-            tags={market.tags ?? []}
+            title={scenario}
+            description=""
+            probability={probability}
+            outlook={outlook ?? "—"}
+            timeframe={timeframe ?? "—"}
+            tags={tags}
           />
 
           {/* KeyZonesCard: zones from terminal push — empty if terminal hasn't sent them */}
-          {market.zones && market.zones.length > 0 ? (
-            <KeyZonesCard zones={market.zones} />
+          {zones.length > 0 ? (
+            <KeyZonesCard zones={zones} />
           ) : (
             <View style={[styles.emptyZones, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <Text style={[styles.emptyZonesText, { color: colors.mutedForeground }]}>
@@ -127,24 +149,18 @@ export default function HomeScreen() {
 
           {/* GammaCard: gamma · gammaLevel · netGamma · flipPoint · dominantExpiry */}
           <GammaCard
-            state={market.gamma}
-            level={market.gammaLevel ?? 0}
-            netGamma={market.netGamma ?? "—"}
-            flipPoint={market.flipPoint ?? "—"}
-            description={
-              market.gammaLevel !== undefined
-                ? `Gamma ${market.gammaLevel > 0 ? "larga" : "corta"}. Net gamma: ${
-                    market.netGamma ?? "—"
-                  }. Flip point: ${market.flipPoint ?? "—"}.`
-                : "Datos de gamma no enviados por el terminal."
-            }
-            dominantExpiry={market.dominantExpiry ?? "—"}
+            state={gamma}
+            level={gammaLevel}
+            netGamma={netGamma}
+            flipPoint={flipPoint}
+            description=""
+            dominantExpiry={dominantExpiry}
           />
         </>
       )}
 
       {/* ── Error state (no market + error) ───────────────────── */}
-      {isError && !market && !isPending && (
+      {isError && !isPending && (
         <View style={[styles.errorBlock, { backgroundColor: "#0d0000", borderColor: colors.primary }]}>
           <Text style={[styles.errorTitle, { color: colors.primary }]}>SIN CONEXIÓN</Text>
           <Text style={[styles.errorBody, { color: colors.mutedForeground }]}>

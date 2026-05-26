@@ -304,7 +304,18 @@ async function parseSuccessBody(
 
   switch (effectiveType) {
     case "json":
-      return parseJsonBody(response, requestInfo);
+      const parsed = await parseJsonBody(response, requestInfo);
+      // Unwrap API responses with { status: "success", data: {...} } structure
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "status" in parsed &&
+        "data" in parsed &&
+        parsed.status === "success"
+      ) {
+        return (parsed as { data: unknown }).data;
+      }
+      return parsed;
 
     case "text": {
       const text = await response.text();
