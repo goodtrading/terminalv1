@@ -32,18 +32,10 @@ const formatUsdPrice = (value: unknown) => {
 
 const normalizeGammaLabel = (value: unknown) => {
   const text = String(value ?? "").toUpperCase();
-
-  // If the value already contains "GAMMA", return it as-is
-  if (text.includes("GAMMA")) {
-    return text;
-  }
-
-  // Otherwise, normalize and add GAMMA suffix
   if (text.includes("SHORT")) return "SHORT GAMMA";
   if (text.includes("LONG")) return "LONG GAMMA";
   if (text.includes("TRANSITION")) return "TRANSITION GAMMA";
-
-  return "UNKNOWN GAMMA";
+  return "UNKNOWN";
 };
 
 const formatCompactUsd = (value: unknown) => {
@@ -207,8 +199,15 @@ export default function HomeScreen() {
   const bias = biasRaw.replace(/_/g, " "); // Replace underscores with spaces
   const gammaRaw = raw?.market?.gammaRegime ?? "NEUTRAL";
   const gamma = normalizeGammaLabel(gammaRaw);
+  const gammaLabel = gamma;
   const dealerPivot = raw?.levels?.dealerPivot;
   const scenario = raw?.scenarios?.[0]?.thesis ?? "—";
+  const setup = raw?.setup ?? raw?.playbook?.setup ?? (
+    gammaLabel === "SHORT GAMMA" ? "Volatility expansion risk" :
+    gammaLabel === "LONG GAMMA" ? "Mean reversion regime" :
+    gammaLabel === "TRANSITION GAMMA" ? "Transition / flip watch" :
+    "Waiting for setup"
+  );
   const outlook = raw?.bias?.horizon ?? "—";
   const timeframe = raw?.bias?.horizon ?? "—";
   const tags = raw?.bias?.drivers ?? [];
@@ -331,16 +330,7 @@ export default function HomeScreen() {
       </View>
 
       {/* ── Market State Bar ───────────────────────────────────── */}
-      {market && (
-        <View style={[styles.marketStateBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Text style={[styles.spotPrice, { color: colors.foreground }]}>
-            BTC {formatUsdPrice(btcPrice)}
-          </Text>
-          <MarketStateBadge label={gamma} color={getGammaColor()} />
-          <MarketStateBadge label={volatilityState} color={getVolatilityColor()} />
-          <MarketStateBadge label={dealerStructure} color={getStructureColor()} />
-        </View>
-      )}
+      {/* REMOVED: Tags moved to CommandBlock component */}
 
       {/* ── Loading skeleton ───────────────────────────────────── */}
       {isPending && (
@@ -358,9 +348,9 @@ export default function HomeScreen() {
           <CommandBlock
             asset={formatUsdPrice(btcPrice) ?? "BTC"}
             bias={bias}
-            gamma={gamma}
+            gamma={gammaLabel}
             zone={formatUsdPrice(dealerPivot) ?? "—"}
-            setup=""
+            setup={setup}
             probability={probabilityRaw}
             lastUpdate={new Date(lastUpdate).toLocaleString("es-ES", {
               day: "2-digit",
@@ -368,6 +358,8 @@ export default function HomeScreen() {
               hour: "2-digit",
               minute: "2-digit",
             }).toUpperCase() + " UTC"}
+            volatilityState={volatilityState}
+            dealerStructure={dealerStructure}
           />
 
           {/* ScenarioCard: scenario · probability · outlook · timeframe · tags */}
@@ -404,7 +396,7 @@ export default function HomeScreen() {
 
           {/* GammaCard: gamma · gammaLevel · netGamma · flipPoint · dominantExpiry */}
           <GammaCard
-            state={gamma}
+            state={gammaLabel}
             level={gammaLevel}
             netGamma={netGamma}
             flipPoint={flipPoint}

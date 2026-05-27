@@ -10,6 +10,8 @@ interface CommandBlockProps {
   bias: string;
   probability: number;
   lastUpdate: string;
+  volatilityState?: string;
+  dealerStructure?: string;
 }
 
 export function CommandBlock({
@@ -20,6 +22,8 @@ export function CommandBlock({
   bias,
   probability,
   lastUpdate,
+  volatilityState,
+  dealerStructure,
 }: CommandBlockProps) {
   const colors = useColors();
   const pulse = useRef(new Animated.Value(1)).current;
@@ -73,7 +77,7 @@ export function CommandBlock({
 
       <View style={styles.dataRow}>
         <View style={styles.dataCell}>
-          <Text style={[styles.dataCellLabel, { color: colors.mutedForeground }]}>ZONA</Text>
+          <Text style={[styles.dataCellLabel, { color: colors.mutedForeground }]}>DEALER PIVOT</Text>
           <Text style={[styles.dataCellValue, { color: colors.gold }]}>{zone}</Text>
         </View>
         <View style={[styles.dataCellDivider, { backgroundColor: "#1a0005" }]} />
@@ -82,6 +86,25 @@ export function CommandBlock({
           <Text style={[styles.setupValue, { color: colors.foreground }]}>{setup}</Text>
         </View>
       </View>
+
+      {(volatilityState || dealerStructure) && (
+        <View style={[styles.divider, { backgroundColor: "#1a0005" }]} />
+      )}
+
+      {(volatilityState || dealerStructure) && (
+        <View style={styles.tagsRow}>
+          {volatilityState && (
+            <View style={[styles.tagPill, { borderColor: colors.primary }]}>
+              <Text style={[styles.tagText, { color: colors.primary }]}>{volatilityState}</Text>
+            </View>
+          )}
+          {dealerStructure && (
+            <View style={[styles.tagPill, { borderColor: colors.primary }]}>
+              <Text style={[styles.tagText, { color: colors.primary }]}>{dealerStructure}</Text>
+            </View>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -201,5 +224,22 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     letterSpacing: 0.5,
     lineHeight: 19,
+  },
+  tagsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  tagPill: {
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 2,
+  },
+  tagText: {
+    fontSize: 8,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 1,
   },
 });
