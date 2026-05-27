@@ -295,8 +295,16 @@ export default function HomeScreen() {
   }
 
   // Build zones array from levels with formatted prices
-  const globalFlip = raw?.levels?.globalFlip ?? raw?.market?.globalFlip ?? null;
-  const localFlip = raw?.levels?.localFlip ?? raw?.market?.localFlip ?? raw?.market?.gammaFlip ?? null;
+  const globalFlip =
+    raw?.options?.gammaFlipGlobal ??
+    raw?.levels?.globalFlip ??
+    null;
+
+  const localFlip =
+    raw?.options?.gammaFlipLocal ??
+    raw?.levels?.localFlip ??
+    raw?.market?.gammaFlip ??
+    null;
   const callWall = raw?.levels?.callWall ?? null;
   const putWall = raw?.levels?.putWall ?? null;
 
