@@ -4,6 +4,7 @@ import { useColors } from "@/hooks/useColors";
 
 interface ScenarioCardProps {
   title: string;
+  label?: string;
   description: string;
   probability: number;
   outlook: string;
@@ -13,6 +14,7 @@ interface ScenarioCardProps {
 
 export function ScenarioCard({
   title,
+  label,
   description,
   probability,
   outlook,
@@ -30,6 +32,7 @@ export function ScenarioCard({
         </View>
       </View>
 
+      {label && <Text style={[styles.label, { color: colors.primary }]}>{label}</Text>}
       <Text style={[styles.title, { color: colors.primary }]}>{title}</Text>
 
       <Text style={[styles.description, { color: colors.secondaryForeground }]}>{description}</Text>
@@ -88,6 +91,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: "Inter_700Bold",
     letterSpacing: 1,
+  },
+  label: {
+    fontSize: 9,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 1.5,
+    marginBottom: 4,
   },
   title: {
     fontSize: 16,

@@ -230,7 +230,7 @@ export default function HomeScreen() {
   const netGamma = formatCompactUsd(netGammaRaw);
   const flipPointRaw = raw?.market?.gammaFlip ?? "—";
   const flipPoint = formatUsdPrice(flipPointRaw);
-  const dominantExpiry = raw?.market?.dominantExpiry ?? "—";
+  const dominantExpiry = raw?.market?.dominantExpiry ?? "N/A";
   const lastUpdate = raw?.market?.lastUpdate ?? new Date().toISOString();
 
   // Dev logs for scenario source
@@ -386,7 +386,8 @@ export default function HomeScreen() {
 
           {/* ScenarioCard: scenario · probability · outlook · timeframe · tags */}
           <ScenarioCard
-            title={remoteScenario ? `ESCENARIO MACRO / REMOTO: ${scenario}` : scenario}
+            title={scenario}
+            label={remoteScenario ? "ESCENARIO MACRO / REMOTO" : undefined}
             description=""
             probability={probabilityRaw}
             outlook={outlook ?? "—"}
