@@ -214,19 +214,6 @@ const deriveFlipStates = (gammaFlip: unknown, dealerPivot: unknown) => {
   };
 };
 
-const extractScenarioTarget = (text: string) => {
-  const match = text.match(/(\d+(?:\.\d+)?)\s*k/i);
-  if (!match) return null;
-  return Number(match[1]) * 1000;
-};
-
-const isRemoteScenario = (spot: unknown, scenarioText: string) => {
-  const spotNumber = Number(spot);
-  const target = extractScenarioTarget(scenarioText);
-  if (!Number.isFinite(spotNumber) || !target) return false;
-  return Math.abs(target - spotNumber) / spotNumber > 0.08;
-};
-
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -248,7 +235,6 @@ export default function HomeScreen() {
   const gamma = normalizeGammaLabel(gammaRaw);
   const gammaLabel = gamma;
   const dealerPivot = raw?.levels?.dealerPivot;
-  const scenario = raw?.scenarios?.[0]?.thesis ?? "—";
   const setup = raw?.setup ?? raw?.playbook?.setup ?? (
     gammaLabel === "SHORT GAMMA" ? "Volatility expansion risk" :
     gammaLabel === "LONG GAMMA" ? "Mean reversion regime" :
@@ -270,12 +256,61 @@ export default function HomeScreen() {
 
   // Dev logs for scenario source
   if (__DEV__) {
-    console.log("[GoodTrading Mobile] scenario source:", {
-      scenarioFromScenarios: raw?.scenarios?.[0]?.thesis,
-      scenarioDirect: raw?.scenario,
+    console.log("[GoodTrading Mobile] scenario payload fields:", {
       scenarios: raw?.scenarios,
+      playbook: raw?.playbook,
+      scenario: raw?.scenario,
+      intradayScenario: raw?.intradayScenario,
+      macroScenario: raw?.macroScenario,
+      localScenario: raw?.localScenario,
     });
   }
+
+  // Select scenario from explicit fields only - no inference
+  const explicitIntradayScenario =
+    raw?.intradayScenario ??
+    raw?.localScenario ??
+    raw?.scenarios?.intraday ??
+    null;
+
+  const explicitMacroScenario =
+    raw?.macroScenario ??
+    raw?.scenarios?.macro ??
+    null;
+
+  const firstScenario =
+    Array.isArray(raw?.scenarios) ? raw.scenarios[0] : null;
+
+  const selectedScenario =
+    explicitIntradayScenario ??
+    explicitMacroScenario ??
+    firstScenario ??
+    raw?.playbook?.scenario ??
+    raw?.scenario ??
+    null;
+
+  // Extract scenario text without inventing
+  const scenarioText =
+    typeof selectedScenario === "string"
+      ? selectedScenario
+      : selectedScenario?.thesis ??
+        selectedScenario?.scenario ??
+        selectedScenario?.title ??
+        selectedScenario?.description ??
+        "Sin escenario disponible";
+
+  // Extract scenario label from explicit fields only - no inference
+  const scenarioLabel =
+    selectedScenario?.label ??
+    selectedScenario?.type ??
+    selectedScenario?.scope ??
+    selectedScenario?.timeframe ??
+    undefined;
+
+  // Normalize label if it exists
+  const normalizedScenarioLabel = scenarioLabel
+    ? String(scenarioLabel).replace(/_/g, " ").toUpperCase()
+    : undefined;
 
   // Derive institutional market states
   const volatilityState = deriveVolatilityState(gamma, gammaLevel);
@@ -283,8 +318,22 @@ export default function HomeScreen() {
   const marketModeNarrative = deriveMarketModeNarrative(gamma, probabilityRaw, bias, tags, outlook);
   const flipStates = deriveFlipStates(flipPointRaw, dealerPivot);
 
-  // Driver sources - use derived states
-  const rawDrivers = raw?.bias?.drivers ?? [];
+  // Driver sources - use raw API values
+  const rawDrivers =
+    raw?.bias?.drivers ??
+    raw?.market?.drivers ??
+    raw?.drivers ??
+    [];
+
+  const volatilityStateDriver =
+    raw?.market?.volatilityState ??
+    raw?.volatilityState ??
+    null;
+
+  const structureStateDriver =
+    raw?.market?.structureState ??
+    raw?.structureState ??
+    null;
 
   const vannaBias =
     raw?.market?.vannaBias ??
@@ -301,8 +350,8 @@ export default function HomeScreen() {
     new Set(
       [
         ...(Array.isArray(rawDrivers) ? rawDrivers : []),
-        volatilityState,
-        dealerStructure,
+        volatilityStateDriver,
+        structureStateDriver,
         vannaBias ? `VANNA ${vannaBias}` : null,
         gammaAccel ? `GAMMA ACCEL ${gammaAccel}` : null,
       ]
@@ -390,8 +439,6 @@ export default function HomeScreen() {
     ...(putWall ? [{ label: "PUT WALL", price: formatUsdPrice(putWall), type: "support" as const, distance: "—" }] : []),
   ];
 
-  const remoteScenario = isRemoteScenario(btcPrice, scenario);
-
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 + 84 : insets.bottom + 84;
 
@@ -468,8 +515,8 @@ export default function HomeScreen() {
           <View style={styles.contextRow}>
             <View style={styles.contextColumn}>
               <ScenarioCard
-                label={remoteScenario ? "ESCENARIO MACRO / REMOTO" : undefined}
-                title={scenario}
+                label={normalizedScenarioLabel}
+                title={scenarioText}
                 description=""
                 probability={probabilityRaw}
               />

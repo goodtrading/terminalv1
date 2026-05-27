@@ -54,14 +54,16 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 4,
     borderWidth: 1,
-    padding: 16,
+    padding: 20,
     marginBottom: 12,
+    flex: 1,
+    height: "100%",
   },
   title: {
     fontSize: 10,
     fontFamily: "Inter_600SemiBold",
     letterSpacing: 1.5,
-    marginBottom: 10,
+    marginBottom: 12,
   },
   empty: {
     fontSize: 11,
@@ -71,15 +73,15 @@ const styles = StyleSheet.create({
   chipsWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 6,
+    gap: 8,
   },
   chip: {
     fontSize: 9,
     fontFamily: "Inter_600SemiBold",
     letterSpacing: 1,
     borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 2,
   },
 });

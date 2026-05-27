@@ -54,9 +54,6 @@ export function CommandBlock({
           <Text style={[styles.liveText, { color: colors.primary }]}>LIVE</Text>
         </View>
         <Text style={[styles.updateText, { color: colors.mutedForeground }]}>{lastUpdate}</Text>
-        <View style={[styles.probPill, { backgroundColor: colors.primary }]}>
-          <Text style={styles.probText}>{probability}%</Text>
-        </View>
       </View>
 
       <View style={styles.assetRow}>
@@ -78,6 +75,15 @@ export function CommandBlock({
         <View style={styles.dataCell}>
           <Text style={[styles.dataCellLabel, { color: colors.mutedForeground }]}>CONFIDENCE</Text>
           <Text style={[styles.dataCellValue, { color: colors.gold }]}>{confidence !== null ? `${confidence}%` : "—"}</Text>
+        </View>
+      </View>
+
+      <View style={[styles.divider, { backgroundColor: "#1a0005" }]} />
+
+      <View style={styles.dataRow}>
+        <View style={styles.dataCell}>
+          <Text style={[styles.dataCellLabel, { color: colors.mutedForeground }]}>SETUP ACTIVO</Text>
+          <Text style={[styles.setupValue, { color: colors.foreground }]}>{setup}</Text>
         </View>
       </View>
     </View>
