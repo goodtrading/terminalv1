@@ -924,12 +924,14 @@ export function MainChart({
       const axisLabel =
         !isBandFill &&
         timing?.state !== "invalidated";
+      // Suppress timing suffix for Short Gamma Pocket labels to keep them clean
+      const isShortGammaPocket = label.startsWith("SHORT GAMMA POCKET");
       const labelWithTiming =
-        !isBandFill && timing
+        !isBandFill && timing && !isShortGammaPocket
           ? `${label} ${horizonTag} ${urgencyTag}${timingTitleSuffix(timing)}`
           : label;
       const shortWithTiming =
-        !isBandFill && timing ? `${shortLabel} ${horizonTag}` : shortLabel;
+        !isBandFill && timing && !isShortGammaPocket ? `${shortLabel} ${horizonTag}` : shortLabel;
       const finalEntry = {
         price: p,
         priority,
@@ -1196,7 +1198,7 @@ export function MainChart({
               displayStatus = "WATCH";
             }
             
-            const label = `SHORT Γ POCKET · ${displayStatus} · ${fmtK(rangeLow)}-${fmtK(rangeHigh)}`;
+            const label = `SHORT GAMMA POCKET · ${displayStatus} · ${fmtK(rangeLow)}-${fmtK(rangeHigh)}`;
             
             // Visual hierarchy: nearest pocket more visible
             const isNearest = index === 0;
