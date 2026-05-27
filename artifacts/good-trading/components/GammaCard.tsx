@@ -30,9 +30,6 @@ export function GammaCard({
     <View style={[styles.container, { backgroundColor: colors.card, borderColor: colors.border }]}>
       <View style={styles.header}>
         <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>GAMMA EXPOSURE</Text>
-        <View style={[styles.stateBadge, { borderColor: stateColor }]}>
-          <Text style={[styles.stateText, { color: stateColor }]}>{state}</Text>
-        </View>
       </View>
 
       <View style={styles.barContainer}>
@@ -93,17 +90,6 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontFamily: "Inter_600SemiBold",
     letterSpacing: 1.5,
-  },
-  stateBadge: {
-    borderWidth: 1,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 2,
-  },
-  stateText: {
-    fontSize: 8,
-    fontFamily: "Inter_700Bold",
-    letterSpacing: 1,
   },
   barContainer: {
     paddingHorizontal: 12,

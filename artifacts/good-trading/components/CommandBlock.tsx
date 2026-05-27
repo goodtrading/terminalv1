@@ -5,25 +5,25 @@ import { useColors } from "@/hooks/useColors";
 interface CommandBlockProps {
   asset: string;
   gamma: string;
-  zone: string;
   setup: string;
-  bias: string;
   probability: number;
   lastUpdate: string;
   volatilityState?: string;
   dealerStructure?: string;
+  marketMode?: string;
+  confidence?: number | null;
 }
 
 export function CommandBlock({
   asset,
   gamma,
-  zone,
   setup,
-  bias,
   probability,
   lastUpdate,
   volatilityState,
   dealerStructure,
+  marketMode,
+  confidence,
 }: CommandBlockProps) {
   const colors = useColors();
   const pulse = useRef(new Animated.Value(1)).current;
@@ -47,8 +47,6 @@ export function CommandBlock({
     return () => animation.stop();
   }, [pulse]);
 
-  const isBearish = bias === "BEARISH";
-  const biasColor = isBearish ? colors.primary : colors.success;
 
   return (
     <View style={[styles.container, { borderColor: colors.primary }]}>
@@ -70,20 +68,20 @@ export function CommandBlock({
         <View style={[styles.arrow, { backgroundColor: "#1a0005" }]}>
           <Text style={[styles.arrowText, { color: colors.primary }]}>→</Text>
         </View>
-        <Text style={[styles.gammaLabel, { color: biasColor }]}>{bias} · {gamma}</Text>
+        <Text style={[styles.gammaLabel, { color: colors.primary }]}>{gamma}</Text>
       </View>
 
       <View style={[styles.divider, { backgroundColor: "#1a0005" }]} />
 
       <View style={styles.dataRow}>
-        <View style={styles.dataCell}>
-          <Text style={[styles.dataCellLabel, { color: colors.mutedForeground }]}>DEALER PIVOT</Text>
-          <Text style={[styles.dataCellValue, { color: colors.gold }]}>{zone}</Text>
+        <View style={[styles.dataCell, { flex: 2 }]}>
+          <Text style={[styles.dataCellLabel, { color: colors.mutedForeground }]}>MARKET MODE</Text>
+          <Text style={[styles.dataCellValue, { color: colors.foreground }]}>{marketMode ?? "—"}</Text>
         </View>
         <View style={[styles.dataCellDivider, { backgroundColor: "#1a0005" }]} />
-        <View style={[styles.dataCell, { flex: 2 }]}>
-          <Text style={[styles.dataCellLabel, { color: colors.mutedForeground }]}>SETUP ACTIVO</Text>
-          <Text style={[styles.setupValue, { color: colors.foreground }]}>{setup}</Text>
+        <View style={styles.dataCell}>
+          <Text style={[styles.dataCellLabel, { color: colors.mutedForeground }]}>CONFIDENCE</Text>
+          <Text style={[styles.dataCellValue, { color: colors.gold }]}>{confidence !== null ? `${confidence}%` : "—"}</Text>
         </View>
       </View>
 

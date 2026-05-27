@@ -374,12 +374,10 @@ export default function HomeScreen() {
       {/* ── Data layer — only renders when market has arrived ──── */}
       {market && (
         <>
-          {/* CommandBlock: asset · bias · gamma · zone · setup · probability · lastUpdate */}
+          {/* CommandBlock: asset · gamma · setup · probability · lastUpdate */}
           <CommandBlock
             asset={formatUsdPrice(btcPrice) ?? "BTC"}
-            bias={bias}
             gamma={gammaLabel}
-            zone={formatUsdPrice(dealerPivot) ?? "—"}
             setup={setup}
             probability={probabilityRaw}
             lastUpdate={new Date(lastUpdate).toLocaleString("es-ES", {
@@ -390,6 +388,8 @@ export default function HomeScreen() {
             }).toUpperCase() + " UTC"}
             volatilityState={volatilityState}
             dealerStructure={dealerStructure}
+            marketMode={bias}
+            confidence={probabilityRaw}
           />
 
           {/* ScenarioCard: scenario · probability · outlook · timeframe · tags */}
