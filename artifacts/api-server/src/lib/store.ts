@@ -15,6 +15,14 @@ export interface PriceZone {
   distance: string;
 }
 
+export interface MarketLevels {
+  globalFlip?: number | null;
+  localFlip?: number | null;
+  dealerPivot?: number | null;
+  callWall?: number | null;
+  putWall?: number | null;
+}
+
 export interface MarketState {
   bias: "BULLISH" | "BEARISH" | "NEUTRAL";
   gamma: "LONG" | "SHORT" | "NEUTRAL";
@@ -33,6 +41,7 @@ export interface MarketState {
   dominantExpiry?: string;
   lastUpdate: string;
   zones?: PriceZone[];
+  levels?: MarketLevels;
 }
 
 export interface Alert {

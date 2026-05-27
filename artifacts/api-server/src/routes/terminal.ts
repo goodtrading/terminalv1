@@ -42,16 +42,22 @@ router.post("/terminal/push", (req, res) => {
   // zones may arrive at body root (Windsurf format) or inside marketState.
   // Merge both so either format works.
   const zonesFromRoot = req.body.zones;
+  const levelsFromRoot = req.body.levels;
   const resolvedState = {
     ...marketState,
     zones:
       zonesFromRoot !== undefined
         ? zonesFromRoot       // prefer root-level zones (Windsurf)
         : marketState.zones,  // fall back to zones inside marketState
+    levels:
+      levelsFromRoot !== undefined
+        ? levelsFromRoot      // prefer root-level levels (Windsurf)
+        : marketState.levels, // fall back to levels inside marketState
   };
 
   console.log("PUSH DATA RECEIVED:", JSON.stringify(req.body, null, 2));
   console.log("RESOLVED zones:", JSON.stringify(resolvedState.zones));
+  console.log("RESOLVED levels:", JSON.stringify(resolvedState.levels));
   logger.info({ resolvedState, alerts }, "PUSH DATA RECEIVED");
 
   updateMarketState(resolvedState);
