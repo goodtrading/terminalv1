@@ -309,9 +309,9 @@ export default function HomeScreen() {
   const putWall = raw?.levels?.putWall ?? null;
 
   const zones = [
-    ...(globalFlip ? [{ label: "GLOBAL FLIP", price: formatUsdPrice(globalFlip), type: "resistance" as const, distance: "—" }] : []),
-    ...(localFlip ? [{ label: "LOCAL FLIP", price: formatUsdPrice(localFlip), type: "resistance" as const, distance: "—" }] : []),
-    ...(dealerPivot ? [{ label: "DEALER PIVOT", price: formatUsdPrice(dealerPivot), type: "resistance" as const, distance: "—" }] : []),
+    ...(globalFlip ? [{ label: "GLOBAL FLIP", price: formatUsdPrice(globalFlip), type: "neutral" as const, distance: "—" }] : []),
+    ...(localFlip ? [{ label: "LOCAL FLIP", price: formatUsdPrice(localFlip), type: "neutral" as const, distance: "—" }] : []),
+    ...(dealerPivot ? [{ label: "DEALER PIVOT", price: formatUsdPrice(dealerPivot), type: "neutral" as const, distance: "—" }] : []),
     ...(callWall ? [{ label: "CALL WALL", price: formatUsdPrice(callWall), type: "resistance" as const, distance: "—" }] : []),
     ...(putWall ? [{ label: "PUT WALL", price: formatUsdPrice(putWall), type: "support" as const, distance: "—" }] : []),
   ];
@@ -398,9 +398,6 @@ export default function HomeScreen() {
             label={remoteScenario ? "ESCENARIO MACRO / REMOTO" : undefined}
             description=""
             probability={probabilityRaw}
-            outlook={outlook ?? "—"}
-            timeframe={timeframe ?? "—"}
-            tags={tags}
           />
 
           {/* KeyZonesCard: zones from terminal push — empty if terminal hasn't sent them */}

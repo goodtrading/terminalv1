@@ -5,7 +5,7 @@ import { useColors } from "@/hooks/useColors";
 interface Zone {
   label: string;
   price: string;
-  type: "resistance" | "support" | "current";
+  type: "resistance" | "support" | "current" | "neutral";
   distance: string;
 }
 
@@ -19,6 +19,7 @@ export function KeyZonesCard({ zones }: KeyZonesCardProps) {
   const getZoneColor = (type: Zone["type"]) => {
     if (type === "resistance") return colors.primary;
     if (type === "support") return colors.success;
+    if (type === "neutral") return "transparent";
     return colors.gold;
   };
 
@@ -60,7 +61,9 @@ export function KeyZonesCard({ zones }: KeyZonesCardProps) {
                   },
                 ]}
               >
-                {zone.distance}
+                {zone.distance && zone.distance !== "—" && zone.distance !== "-"
+                  ? zone.distance
+                  : null}
               </Text>
             </View>
           </View>
