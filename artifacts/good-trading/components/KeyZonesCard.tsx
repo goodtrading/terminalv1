@@ -45,7 +45,7 @@ export function KeyZonesCard({ zones }: KeyZonesCardProps) {
             <Text style={[styles.zoneLabel, { color: colors.mutedForeground }]}>{zone.label}</Text>
             <View style={styles.rightSide}>
               <Text style={[styles.price, { color: zone.type === "current" ? colors.gold : colors.foreground }]}>
-                ${zone.price}
+                {zone.price}
               </Text>
               <Text
                 style={[
