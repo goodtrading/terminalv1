@@ -56,9 +56,22 @@ type MarketTradeCache = {
   version: number;
 };
 
+type MarketOrderbookCache = {
+  snapshot: LiquiditySnapshot | null;
+  receivedAt: number | null;
+  exchange: string;
+  pipelineStats: HeatmapPipelineStats;
+  version: number;
+};
+
 function tradeBufferKey(symbol: string, market: BookmapMarketSource): string {
   const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
   return `binance:${sym}:${market}`;
+}
+
+function orderbookCacheKey(symbol: string, market: BookmapMarketSource): string {
+  const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
+  return `${sym}:${market}`;
 }
 
 function tradeIngestFloor(market: BookmapMarketSource): number {
@@ -104,6 +117,7 @@ export function useLiquidityHeatmapFeed(
     spot: { trades: [], received: 0, latestTs: null, version: 0 },
     perp: { trades: [], received: 0, latestTs: null, version: 0 },
   });
+  const orderbookCachesRef = useRef<Record<string, MarketOrderbookCache>>({});
   const [tradeTick, setTradeTick] = useState(0);
   const [tradeVersion, setTradeVersion] = useState(0);
   const [tradeBufferCount, setTradeBufferCount] = useState(0);
@@ -178,6 +192,38 @@ export function useLiquidityHeatmapFeed(
     setTradeTick((n) => n + 1);
   }, []);
 
+  const persistOrderbookCache = useCallback((
+    market: BookmapMarketSource,
+    snapshot: LiquiditySnapshot,
+    receivedAt: number,
+    nextExchange: string,
+    nextPipelineStats: HeatmapPipelineStats,
+  ) => {
+    const key = orderbookCacheKey(symbol, market);
+    orderbookCachesRef.current[key] = {
+      snapshot,
+      receivedAt,
+      exchange: nextExchange,
+      pipelineStats: nextPipelineStats,
+      version: (orderbookCachesRef.current[key]?.version ?? 0) + 1,
+    };
+  }, [symbol]);
+
+  const restoreOrderbookCache = useCallback((market: BookmapMarketSource): LiquiditySnapshot | null => {
+    const key = orderbookCacheKey(symbol, market);
+    const cached = orderbookCachesRef.current[key];
+    if (!cached.snapshot) return null;
+
+    const ageMs = Date.now() - (cached.receivedAt ?? 0);
+    if (ageMs > 30_000) return null;
+
+    pushSnapshot(cached.snapshot);
+    setOrderbookReceivedAt(cached.receivedAt);
+    setExchange(cached.exchange);
+    setPipelineStats(cached.pipelineStats);
+    return cached.snapshot;
+  }, [pushSnapshot, symbol]);
+
   const flushTradeStats = useCallback(() => {
     flushScheduledRef.current = false;
     const buffered = tradesRef.current.length;
@@ -215,7 +261,17 @@ export function useLiquidityHeatmapFeed(
     snapshotsRef.current = [];
     setSnapshotCount(0);
     setOrderbookReceivedAt(null);
-  }, [marketForOrderbook]);
+    
+    const cached = restoreOrderbookCache(marketForOrderbook);
+    if (cached && import.meta.env?.DEV) {
+      const key = orderbookCacheKey(symbol, marketForOrderbook);
+      console.debug("[BOOKMAP_ORDERBOOK] Restored from cache", {
+        symbol,
+        market: marketForOrderbook,
+        ageMs: Date.now() - (orderbookCachesRef.current[key]?.receivedAt ?? 0),
+      });
+    }
+  }, [symbol, marketForOrderbook, restoreOrderbookCache]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -246,16 +302,15 @@ export function useLiquidityHeatmapFeed(
           });
         }
 
-        if (raw.exchange) {
-          setExchange(raw.exchange === "kraken" ? "Kraken" : "Binance");
-        }
+        const nextExchange = raw.exchange === "kraken" ? "Kraken" : "Binance";
+        if (raw.exchange) setExchange(nextExchange);
 
         const obTs = Number(raw.timestamp);
-        setOrderbookReceivedAt(
-          Number.isFinite(obTs) && obTs > 0 ? obTs : Date.now(),
-        );
+        const nextOrderbookReceivedAt =
+          Number.isFinite(obTs) && obTs > 0 ? obTs : Date.now();
+        setOrderbookReceivedAt(nextOrderbookReceivedAt);
 
-        setPipelineStats({
+        const nextPipelineStats = {
           rawBids: raw.bids?.length ?? 0,
           rawAsks: raw.asks?.length ?? 0,
           normalizedBids: snap.bids.length,
@@ -271,7 +326,8 @@ export function useLiquidityHeatmapFeed(
           domBuckets: 0,
           nonZeroBidBuckets: 0,
           nonZeroAskBuckets: 0,
-        });
+        };
+        setPipelineStats(nextPipelineStats);
 
         if (snap.bids.length === 0 && snap.asks.length === 0) {
           const prev = snapshotsRef.current[snapshotsRef.current.length - 1];
@@ -282,6 +338,13 @@ export function useLiquidityHeatmapFeed(
           }
         } else {
           pushSnapshot(snap);
+          persistOrderbookCache(
+            marketForOrderbook,
+            snap,
+            nextOrderbookReceivedAt,
+            nextExchange,
+            nextPipelineStats,
+          );
         }
       } catch {
         if (!cancelled) {
@@ -298,7 +361,7 @@ export function useLiquidityHeatmapFeed(
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [enabled, symbol, marketForOrderbook, pushSnapshot]);
+  }, [enabled, symbol, marketForOrderbook, pushSnapshot, persistOrderbookCache, restoreOrderbookCache]);
 
   useEffect(() => {
     if (!enabled) return;
