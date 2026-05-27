@@ -266,6 +266,23 @@ export default function HomeScreen() {
     });
   }
 
+  // Dev logs for market mode audit
+  if (__DEV__) {
+    console.log("[GoodTrading Mobile] market mode audit:", {
+      marketMode: raw?.marketMode,
+      marketModeBlock: raw?.market?.marketMode,
+      mode: raw?.market?.mode,
+      bias: raw?.bias,
+      drivers: raw?.drivers,
+      marketDrivers: raw?.market?.drivers,
+      biasDrivers: raw?.bias?.drivers,
+      confidenceRoot: raw?.confidence,
+      confidenceMarket: raw?.market?.confidence,
+      confidenceMarketMode: raw?.marketMode?.confidence,
+      confidenceBias: raw?.bias?.confidence,
+    });
+  }
+
   // Select scenario from explicit fields only - no inference
   const explicitIntradayScenario =
     raw?.intradayScenario ??
@@ -312,48 +329,54 @@ export default function HomeScreen() {
     ? String(scenarioLabel).replace(/_/g, " ").toUpperCase()
     : undefined;
 
+  // Market Mode from explicit fields - no inference
+  const marketModeSource =
+    raw?.marketMode ??
+    raw?.market?.marketMode ??
+    raw?.market?.mode ??
+    null;
+
+  const marketMode =
+    typeof marketModeSource === "string"
+      ? marketModeSource
+      : marketModeSource?.type ??
+        marketModeSource?.mode ??
+        marketModeSource?.name ??
+        raw?.bias?.type ??
+        "N/A";
+
+  // Normalize market mode label
+  const normalizedMarketMode = String(marketMode).replace(/_/g, " ");
+
+  // Confidence from Market Mode if exists, otherwise fallback
+  const confidence =
+    marketModeSource?.confidence ??
+    raw?.market?.marketModeConfidence ??
+    raw?.market?.confidence ??
+    raw?.confidence ??
+    raw?.bias?.confidence ??
+    null;
+
   // Derive institutional market states
   const volatilityState = deriveVolatilityState(gamma, gammaLevel);
   const dealerStructure = deriveDealerStructure(gamma, probabilityRaw, bias);
   const marketModeNarrative = deriveMarketModeNarrative(gamma, probabilityRaw, bias, tags, outlook);
   const flipStates = deriveFlipStates(flipPointRaw, dealerPivot);
 
-  // Driver sources - use raw API values
-  const rawDrivers =
-    raw?.bias?.drivers ??
+  // Driver sources - use Market Mode drivers if they exist, otherwise fallback
+  const marketModeDrivers =
+    marketModeSource?.drivers ??
+    raw?.market?.marketModeDrivers ??
     raw?.market?.drivers ??
     raw?.drivers ??
     [];
 
-  const volatilityStateDriver =
-    raw?.market?.volatilityState ??
-    raw?.volatilityState ??
-    null;
-
-  const structureStateDriver =
-    raw?.market?.structureState ??
-    raw?.structureState ??
-    null;
-
-  const vannaBias =
-    raw?.market?.vannaBias ??
-    raw?.options?.vannaBias ??
-    raw?.vannaBias ??
-    null;
-
-  const gammaAccel =
-    raw?.market?.gammaAccel ??
-    raw?.gamma?.accel ??
-    null;
+  const rawDrivers = marketModeDrivers.length > 0 ? marketModeDrivers : raw?.bias?.drivers ?? [];
 
   const driverLabels = Array.from(
     new Set(
       [
         ...(Array.isArray(rawDrivers) ? rawDrivers : []),
-        volatilityStateDriver,
-        structureStateDriver,
-        vannaBias ? `VANNA ${vannaBias}` : null,
-        gammaAccel ? `GAMMA ACCEL ${gammaAccel}` : null,
       ]
         .filter(Boolean)
         .map(normalizeDriverLabel)
@@ -507,8 +530,8 @@ export default function HomeScreen() {
               hour: "2-digit",
               minute: "2-digit",
             }).toUpperCase() + " UTC"}
-            marketMode={bias}
-            confidence={probabilityRaw}
+            marketMode={normalizedMarketMode}
+            confidence={confidence}
           />
 
           {/* ScenarioCard and DriversCard side by side */}
