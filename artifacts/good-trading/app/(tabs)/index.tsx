@@ -16,7 +16,6 @@ import { ScenarioCard } from "@/components/ScenarioCard";
 import { KeyZonesCard } from "@/components/KeyZonesCard";
 import { GammaCard } from "@/components/GammaCard";
 import { MarketStateBadge } from "@/components/MarketStateBadge";
-import { CorePositioningGrid } from "@/components/CorePositioningGrid";
 
 // NO mock imports. Every value shown comes from the API or shows explicit
 // "awaiting data" state. If you see real-looking numbers here, the terminal pushed them.
@@ -180,6 +179,19 @@ const deriveFlipStates = (gammaFlip: unknown, dealerPivot: unknown) => {
   };
 };
 
+const extractScenarioTarget = (text: string) => {
+  const match = text.match(/(\d+(?:\.\d+)?)\s*k/i);
+  if (!match) return null;
+  return Number(match[1]) * 1000;
+};
+
+const isRemoteScenario = (spot: unknown, scenarioText: string) => {
+  const spotNumber = Number(spot);
+  const target = extractScenarioTarget(scenarioText);
+  if (!Number.isFinite(spotNumber) || !target) return false;
+  return Math.abs(target - spotNumber) / spotNumber > 0.08;
+};
+
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -283,10 +295,20 @@ export default function HomeScreen() {
   }
 
   // Build zones array from levels with formatted prices
+  const globalFlip = raw?.levels?.globalFlip ?? raw?.market?.globalFlip ?? null;
+  const localFlip = raw?.levels?.localFlip ?? raw?.market?.localFlip ?? raw?.market?.gammaFlip ?? null;
+  const callWall = raw?.levels?.callWall ?? null;
+  const putWall = raw?.levels?.putWall ?? null;
+
   const zones = [
-    ...(raw?.levels?.callWall ? [{ label: "CALL WALL", price: formatUsdPrice(raw.levels.callWall), type: "resistance" as const, distance: "—" }] : []),
-    ...(raw?.levels?.putWall ? [{ label: "PUT WALL", price: formatUsdPrice(raw.levels.putWall), type: "support" as const, distance: "—" }] : []),
+    ...(globalFlip ? [{ label: "GLOBAL FLIP", price: formatUsdPrice(globalFlip), type: "resistance" as const, distance: "—" }] : []),
+    ...(localFlip ? [{ label: "LOCAL FLIP", price: formatUsdPrice(localFlip), type: "resistance" as const, distance: "—" }] : []),
+    ...(dealerPivot ? [{ label: "DEALER PIVOT", price: formatUsdPrice(dealerPivot), type: "resistance" as const, distance: "—" }] : []),
+    ...(callWall ? [{ label: "CALL WALL", price: formatUsdPrice(callWall), type: "resistance" as const, distance: "—" }] : []),
+    ...(putWall ? [{ label: "PUT WALL", price: formatUsdPrice(putWall), type: "support" as const, distance: "—" }] : []),
   ];
+
+  const remoteScenario = isRemoteScenario(btcPrice, scenario);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 + 84 : insets.bottom + 84;
@@ -364,7 +386,7 @@ export default function HomeScreen() {
 
           {/* ScenarioCard: scenario · probability · outlook · timeframe · tags */}
           <ScenarioCard
-            title={scenario}
+            title={remoteScenario ? `ESCENARIO MACRO / REMOTO: ${scenario}` : scenario}
             description=""
             probability={probabilityRaw}
             outlook={outlook ?? "—"}
@@ -386,13 +408,7 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* CorePositioningGrid: global flip · local flip · dealer pivot · current zone */}
-          <CorePositioningGrid
-            globalFlip={flipStates.globalFlip}
-            localFlip={flipStates.localFlip}
-            dealerPivot={formatUsdPrice(dealerPivot) ?? "—"}
-            currentZone={formatUsdPrice(btcPrice) ?? "—"}
-          />
+          {/* CorePositioningGrid removed - unified into KeyZonesCard */}
 
           {/* GammaCard: gamma · gammaLevel · netGamma · flipPoint · dominantExpiry */}
           <GammaCard

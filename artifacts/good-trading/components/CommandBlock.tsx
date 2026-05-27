@@ -70,7 +70,7 @@ export function CommandBlock({
         <View style={[styles.arrow, { backgroundColor: "#1a0005" }]}>
           <Text style={[styles.arrowText, { color: colors.primary }]}>→</Text>
         </View>
-        <Text style={[styles.gammaLabel, { color: biasColor }]}>{bias} · GAMMA {gamma}</Text>
+        <Text style={[styles.gammaLabel, { color: biasColor }]}>{bias} · {gamma}</Text>
       </View>
 
       <View style={[styles.divider, { backgroundColor: "#1a0005" }]} />
