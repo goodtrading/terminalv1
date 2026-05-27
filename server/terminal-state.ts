@@ -24,6 +24,8 @@ import { computeStateCoherence } from "./lib/stateCoherence";
 
 import { getOrderBook } from "./services/orderbookService";
 
+import { detectShortGammaPockets, type ShortGammaPocketsSignal } from "./lib/shortGammaPocketEngine";
+
 
 
 export const terminalStateSchema = z.object({
@@ -54,7 +56,9 @@ export const terminalStateSchema = z.object({
 
   timelineSummary: z.any().optional(),
 
-  coherence: z.any().optional()
+  coherence: z.any().optional(),
+
+  shortGammaPockets: z.any().optional(),
 
 });
 
@@ -870,6 +874,38 @@ export async function getTerminalState(): Promise<TerminalState> {
 
   const strikesArray = Array.isArray(enrichedOptionsSnapshot?.strikes) ? enrichedOptionsSnapshot.strikes : [];
 
+  // ── Short Gamma Pockets Detection ─────────────────────────────────────
+  let shortGammaPockets: ShortGammaPocketsSignal | null = null;
+  try {
+    const spot = ticker?.price ?? enrichedOptionsSnapshot?.spot ?? 0;
+    if (spot > 0) {
+      shortGammaPockets = detectShortGammaPockets({
+        spotPrice: spot,
+        gammaRegime: (marketForClient?.gammaRegime as "LONG GAMMA" | "SHORT GAMMA" | "NEUTRAL" | null) ?? null,
+        gammaFlip: gammaFlipForEngines,
+        transitionZoneStart: transitionZoneStartForEngines,
+        transitionZoneEnd: transitionZoneEndForEngines,
+        gammaMagnets: levels?.gammaMagnets ?? [],
+        callWall: positioning?.callWall ?? null,
+        putWall: positioning?.putWall ?? null,
+        shortGammaPocketStart: levels?.shortGammaPocketStart ?? null,
+        shortGammaPocketEnd: levels?.shortGammaPocketEnd ?? null,
+        marketMode: liveMarketMode?.marketMode,
+        marketModeConfidence: liveMarketMode?.marketModeConfidence,
+        expansionProbability: liveVolExpansion?.expansionProbability,
+      });
+      DEBUG_TERMINAL_STATE_ENGINE && console.log("[ShortGammaPockets] status=" + shortGammaPockets.status + " summary=" + shortGammaPockets.summary);
+    }
+  } catch (sgpErr) {
+    console.warn("[TerminalState] Short gamma pockets detection failed:", sgpErr);
+    shortGammaPockets = {
+      status: "NONE",
+      nearest: null,
+      pockets: [],
+      summary: "Short gamma pockets detection error",
+    };
+  }
+
   const finalOptions = {
 
     asOf: enrichedOptionsSnapshot?.asOf ?? null,
@@ -919,6 +955,8 @@ export async function getTerminalState(): Promise<TerminalState> {
     callWall: positioning?.callWall ?? null,
 
     putWall: positioning?.putWall ?? null,
+
+    shortGammaPockets,
 
   };
 

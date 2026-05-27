@@ -74,6 +74,16 @@ export function LeftSidebar() {
   });
   const opts = terminalState?.options;
 
+  // Debug logging for shortGammaPockets
+  if (import.meta.env.DEV) {
+    console.debug("[gamma-ui] shortGammaPockets", {
+      hasOptions: Boolean(opts),
+      status: opts?.shortGammaPockets?.status,
+      count: opts?.shortGammaPockets?.pockets?.length ?? 0,
+      nearest: opts?.shortGammaPockets?.nearest,
+    });
+  }
+
   // Derived alerts logic
   const alerts = useMemo(() => {
     const list: Alert[] = [];
@@ -339,6 +349,59 @@ export function LeftSidebar() {
         />
         <TerminalValue label="Gamma Accel" value={market?.gammaAcceleration ?? "--"} trend="positive" />
         <OptionsDataFreshness market={market as (MarketState & { optionsLastUpdated?: number }) | undefined} />
+      </TerminalPanel>
+
+      <TerminalPanel title="SHORT GAMMA POCKETS">
+        {opts?.shortGammaPockets ? (
+          (() => {
+            const { status, nearest, pockets, summary } = opts.shortGammaPockets;
+            if (status === "NONE" || !nearest || pockets.length === 0) {
+              return (
+                <div className="text-[10px] text-white/40 leading-tight">
+                  No active short gamma pockets detected near spot.
+                </div>
+              );
+            }
+            const spot = market?.gammaFlip || 0;
+            const fmtK = (p: number) => p >= 1000 ? (p / 1000).toFixed(p % 1000 === 0 ? 0 : 1) + "k" : String(p);
+            return (
+              <div className="space-y-2">
+                {pockets.slice(0, 3).map((pocket: any) => {
+                  const center = (pocket.rangeLow + pocket.rangeHigh) / 2;
+                  const distancePct = spot > 0 ? ((center - spot) / spot * 100).toFixed(2) : "0.00";
+                  const direction = center > spot ? "above" : "below";
+                  return (
+                    <div key={pocket.id} className="border-t border-white/[0.06] pt-2 mt-2">
+                      <div className="text-[10px] font-mono text-white/70 mb-1">
+                        {fmtK(pocket.rangeLow)} - {fmtK(pocket.rangeHigh)}
+                      </div>
+                      <div className="text-[9px] text-white/50 mb-1">
+                        {Math.abs(distancePct)}% {direction} spot
+                      </div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-[9px] font-medium ${
+                          pocket.risk === "HIGH" ? "text-red-400" :
+                          pocket.risk === "MEDIUM" ? "text-orange-400" :
+                          "text-white/60"
+                        }`}>
+                          {pocket.status}
+                        </span>
+                        <span className="text-[9px] text-white/40">
+                          · {pocket.risk} RISK
+                        </span>
+                      </div>
+                      <div className="text-[8px] text-white/35 leading-tight">{pocket.explanation}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()
+        ) : (
+          <div className="text-[10px] text-white/40 leading-tight">
+            No active short gamma pockets detected near spot.
+          </div>
+        )}
       </TerminalPanel>
 
       <TerminalPanel title="DEALER EXPOSURE">

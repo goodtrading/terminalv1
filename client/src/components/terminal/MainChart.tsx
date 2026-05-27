@@ -1107,6 +1107,108 @@ export function MainChart({
           pushEntry(cliff.strike, isStrongest ? 3 : 4, `↓${fmtK(cliff.strike)}`, "↓", `rgba(56, 189, 248, ${opacity})`, LineStyle.Dotted, isStrongest ? 2 : 1);
         });
       }
+
+      // Short Gamma Pockets
+      const shortGammaPockets = terminalState?.options?.shortGammaPockets;
+      if (import.meta.env.DEV) {
+        console.debug("[chart-gamma-pocket-labels]", {
+          status: shortGammaPockets?.status,
+          count: shortGammaPockets?.pockets?.length ?? 0,
+        });
+      }
+      if (shortGammaPockets && shortGammaPockets.status !== "NONE" && shortGammaPockets.status !== "IDLE") {
+        const { pockets, nearest } = shortGammaPockets;
+        
+        // Deduplicate pockets: if overlap >60% or centers <300 USD apart, keep higher priority
+        const statusPriority: Record<string, number> = { ACTIVE: 4, EXPANDING: 3, WATCH: 2, IDLE: 1 };
+        const deduplicatedPockets: any[] = [];
+        const sortedByPriority = [...pockets].sort((a: any, b: any) => {
+          const priorityDiff = (statusPriority[b.status] || 0) - (statusPriority[a.status] || 0);
+          if (priorityDiff !== 0) return priorityDiff;
+          return (b.confidence || 0) - (a.confidence || 0);
+        });
+        
+        for (const pocket of sortedByPriority) {
+          if (pocket.status === "FAILED") continue;
+          const center = (pocket.rangeLow + pocket.rangeHigh) / 2;
+          const isDuplicate = deduplicatedPockets.some((existing: any) => {
+            const existingCenter = (existing.rangeLow + existing.rangeHigh) / 2;
+            const centerDistance = Math.abs(center - existingCenter);
+            const overlap = Math.min(pocket.rangeHigh, existing.rangeHigh) - Math.max(pocket.rangeLow, existing.rangeLow);
+            const pocketRange = pocket.rangeHigh - pocket.rangeLow;
+            const existingRange = existing.rangeHigh - existing.rangeLow;
+            const overlapRatio = overlap / Math.max(pocketRange, existingRange, 1);
+            return centerDistance < 300 || overlapRatio > 0.6;
+          });
+          if (!isDuplicate) {
+            deduplicatedPockets.push(pocket);
+          }
+        }
+        
+        // Show max 2 pockets: nearest upper + nearest lower
+        const pocketsToRender: any[] = [];
+        const spot = price;
+        
+        // Separate pockets by direction relative to spot
+        const upperPockets = deduplicatedPockets.filter((p: any) => {
+          const center = (p.rangeLow + p.rangeHigh) / 2;
+          return center > spot;
+        }).sort((a: any, b: any) => {
+          const centerA = (a.rangeLow + a.rangeHigh) / 2;
+          const centerB = (b.rangeLow + b.rangeHigh) / 2;
+          return (centerA - spot) - (centerB - spot); // Sort by distance to spot (ascending)
+        });
+        
+        const lowerPockets = deduplicatedPockets.filter((p: any) => {
+          const center = (p.rangeLow + p.rangeHigh) / 2;
+          return center < spot;
+        }).sort((a: any, b: any) => {
+          const centerA = (a.rangeLow + a.rangeHigh) / 2;
+          const centerB = (b.rangeLow + b.rangeHigh) / 2;
+          return (spot - centerA) - (spot - centerB); // Sort by distance to spot (ascending)
+        });
+        
+        // Add nearest upper pocket if exists
+        if (upperPockets.length > 0) {
+          pocketsToRender.push(upperPockets[0]);
+        }
+        
+        // Add nearest lower pocket if exists
+        if (lowerPockets.length > 0) {
+          pocketsToRender.push(lowerPockets[0]);
+        }
+        
+        // If we have less than 2 pockets, add nearest as fallback
+        if (pocketsToRender.length === 0 && nearest) {
+          pocketsToRender.push(nearest);
+        } else if (pocketsToRender.length === 1 && nearest && !pocketsToRender.includes(nearest)) {
+          pocketsToRender.push(nearest);
+        }
+        
+        pocketsToRender.slice(0, 2).forEach((pocket: any, index: number) => {
+          const { rangeLow, rangeHigh, risk, status } = pocket;
+          if (rangeLow && rangeHigh && Math.abs(rangeHigh - rangeLow) > 0) {
+            const center = (rangeLow + rangeHigh) / 2;
+            
+            // Map IDLE to WATCH for display (no distance filter)
+            let displayStatus = status;
+            if (status === "IDLE") {
+              displayStatus = "WATCH";
+            }
+            
+            const label = `SHORT Γ POCKET · ${displayStatus} · ${fmtK(rangeLow)}-${fmtK(rangeHigh)}`;
+            
+            // Visual hierarchy: nearest pocket more visible
+            const isNearest = index === 0;
+            const opacity = isNearest ? 0.85 : 0.55;
+            const color = risk === "HIGH" ? `rgba(255, 100, 100, ${opacity})` : risk === "MEDIUM" ? `rgba(255, 165, 0, ${opacity})` : `rgba(255, 255, 255, ${opacity})`;
+            
+            pushEntry(center, 3, label, "SGP", color, LineStyle.Solid, isNearest ? 2 : 1, false, false, "short_gamma_pocket" as any, "gamma", opacity, true);
+            pushEntry(rangeLow, 4, "", "", color, LineStyle.Dashed, 1, false, true, "short_gamma_pocket_band" as any, "gamma", opacity * 0.6, false);
+            pushEntry(rangeHigh, 4, "", "", color, LineStyle.Dashed, 1, false, true, "short_gamma_pocket_band" as any, "gamma", opacity * 0.6, false);
+          }
+        });
+      }
     }
 
     if (activePanels.has("CASCADE")) {

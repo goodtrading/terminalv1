@@ -175,4 +175,36 @@ export type TerminalStateOptionsGammaExtras = {
   localTransitionZoneEnd?: number | null;
   localFlipReason?: string | null;
   gammaFlipOperationalLegacy?: number | null;
+  shortGammaPockets?: {
+    status: "NONE" | "IDLE" | "WATCH" | "ACTIVE" | "FAILED" | "EXPANDING";
+    nearest: {
+      id: string;
+      direction: "UPPER" | "LOWER";
+      rangeLow: number;
+      rangeHigh: number;
+      status: "NONE" | "IDLE" | "WATCH" | "ACTIVE" | "FAILED" | "EXPANDING";
+      risk: "LOW" | "MEDIUM" | "HIGH";
+      confidence: number;
+      relationToFlip: "ABOVE_FLIP" | "BELOW_FLIP" | "NEAR_FLIP" | "INSIDE_TRANSITION";
+      relatedMagnet?: number;
+      relatedWall: "CALL_WALL" | "PUT_WALL" | null;
+      explanation: string;
+      activationCondition: string;
+    } | null;
+    pockets: Array<{
+      id: string;
+      direction: "UPPER" | "LOWER";
+      rangeLow: number;
+      rangeHigh: number;
+      status: "NONE" | "IDLE" | "WATCH" | "ACTIVE" | "FAILED" | "EXPANDING";
+      risk: "LOW" | "MEDIUM" | "HIGH";
+      confidence: number;
+      relationToFlip: "ABOVE_FLIP" | "BELOW_FLIP" | "NEAR_FLIP" | "INSIDE_TRANSITION";
+      relatedMagnet?: number;
+      relatedWall: "CALL_WALL" | "PUT_WALL" | null;
+      explanation: string;
+      activationCondition: string;
+    }>;
+    summary: string;
+  } | null;
 };
