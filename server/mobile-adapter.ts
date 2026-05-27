@@ -13,6 +13,12 @@ export interface MobileTerminalState {
     gammaRegime: "LONG_GAMMA" | "SHORT_GAMMA" | "TRANSITION" | "NEUTRAL";
     gammaFlip: number | null;
     distanceToFlip: number | null;
+    marketMode: {
+      type: string | null;
+      description: string | null;
+      confidence: number | null;
+      drivers: string[];
+    };
     transitionZone: {
       start: number | null;
       end: number | null;
@@ -97,7 +103,23 @@ export function adaptTerminalStateForMobile(terminalState: TerminalState): Mobil
   const cascadeEngine = terminalState.positioning?.liquidityCascadeEngine;
   const squeezeEngine = terminalState.positioning?.squeezeProbabilityEngine;
   const gammaEngine = terminalState.positioning?.gammaCurveEngine;
+  const marketModeEngine = terminalState.positioning?.marketModeEngine;
   const marketRegime = gammaEngine?.dealerRegime || "TRANSITION";
+  const marketMode = {
+    type: typeof marketModeEngine?.marketMode === "string" ? marketModeEngine.marketMode : null,
+    description:
+      typeof marketModeEngine?.marketModeDescription === "string"
+        ? marketModeEngine.marketModeDescription
+        : null,
+    confidence:
+      typeof marketModeEngine?.marketModeConfidence === "number" &&
+      Number.isFinite(marketModeEngine.marketModeConfidence)
+        ? marketModeEngine.marketModeConfidence
+        : null,
+    drivers: Array.isArray(marketModeEngine?.marketModeReason)
+      ? marketModeEngine.marketModeReason.filter((reason: unknown): reason is string => typeof reason === "string")
+      : [],
+  };
   
   const risk = {
     cascadeRisk: (cascadeEngine?.cascadeRisk as "LOW" | "MEDIUM" | "HIGH" | "EXTREME") ?? "LOW",
@@ -172,6 +194,7 @@ export function adaptTerminalStateForMobile(terminalState: TerminalState): Mobil
       gammaRegime: terminalState.market?.gammaRegime ?? "NEUTRAL",
       gammaFlip: terminalState.market?.gammaFlip ?? null,
       distanceToFlip: terminalState.market?.distanceToFlip ?? null,
+      marketMode,
       transitionZone: {
         start: terminalState.market?.transitionZoneStart ?? null,
         end: terminalState.market?.transitionZoneEnd ?? null
