@@ -16,6 +16,7 @@ import { ScenarioCard } from "@/components/ScenarioCard";
 import { KeyZonesCard } from "@/components/KeyZonesCard";
 import { GammaCard } from "@/components/GammaCard";
 import { MarketStateBadge } from "@/components/MarketStateBadge";
+import { DriversCard } from "@/components/DriversCard";
 
 // NO mock imports. Every value shown comes from the API or shows explicit
 // "awaiting data" state. If you see real-looking numbers here, the terminal pushed them.
@@ -55,6 +56,40 @@ const formatPercent = (value: unknown) => {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
   return `${Math.round(n)}%`;
+};
+
+// Driver helper functions
+const normalizeDriverLabel = (value: unknown) => {
+  return String(value ?? "")
+    .replace(/_/g, " ")
+    .trim()
+    .toUpperCase();
+};
+
+const classifyDriverImpact = (driver: string): "high" | "medium" | "low" => {
+  const text = driver.toUpperCase();
+
+  if (
+    text.includes("FRAGILE") ||
+    text.includes("NEAR GAMMA FLIP") ||
+    text.includes("VOLATILITY EXPANSION") ||
+    text.includes("HIGH VOLATILITY") ||
+    text.includes("RISK")
+  ) {
+    return "high";
+  }
+
+  if (
+    text.includes("TRANSITION") ||
+    text.includes("MIXED") ||
+    text.includes("LOW CONFIDENCE") ||
+    text.includes("ACCEL") ||
+    text.includes("VANNA")
+  ) {
+    return "medium";
+  }
+
+  return "low";
 };
 
 // Institutional market state derivation functions
@@ -248,6 +283,45 @@ export default function HomeScreen() {
   const marketModeNarrative = deriveMarketModeNarrative(gamma, probabilityRaw, bias, tags, outlook);
   const flipStates = deriveFlipStates(flipPointRaw, dealerPivot);
 
+  // Driver sources - use derived states
+  const rawDrivers = raw?.bias?.drivers ?? [];
+
+  const vannaBias =
+    raw?.market?.vannaBias ??
+    raw?.options?.vannaBias ??
+    raw?.vannaBias ??
+    null;
+
+  const gammaAccel =
+    raw?.market?.gammaAccel ??
+    raw?.gamma?.accel ??
+    null;
+
+  const driverLabels = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(rawDrivers) ? rawDrivers : []),
+        volatilityState,
+        dealerStructure,
+        vannaBias ? `VANNA ${vannaBias}` : null,
+        gammaAccel ? `GAMMA ACCEL ${gammaAccel}` : null,
+      ]
+        .filter(Boolean)
+        .map(normalizeDriverLabel)
+        .filter(
+          (driver) =>
+            driver !== "SHORT GAMMA" &&
+            driver !== "LONG GAMMA" &&
+            driver !== "TRANSITION GAMMA"
+        )
+    )
+  );
+
+  const drivers = driverLabels.map((label) => ({
+    label,
+    impact: classifyDriverImpact(label),
+  }));
+
   // Color mapping for derived states
   const getGammaColor = () => {
     const gammaUpper = gamma.toUpperCase();
@@ -386,19 +460,25 @@ export default function HomeScreen() {
               hour: "2-digit",
               minute: "2-digit",
             }).toUpperCase() + " UTC"}
-            volatilityState={volatilityState}
-            dealerStructure={dealerStructure}
             marketMode={bias}
             confidence={probabilityRaw}
           />
 
-          {/* ScenarioCard: scenario · probability · outlook · timeframe · tags */}
-          <ScenarioCard
-            title={scenario}
-            label={remoteScenario ? "ESCENARIO MACRO / REMOTO" : undefined}
-            description=""
-            probability={probabilityRaw}
-          />
+          {/* ScenarioCard and DriversCard side by side */}
+          <View style={styles.contextRow}>
+            <View style={styles.contextColumn}>
+              <ScenarioCard
+                label={remoteScenario ? "ESCENARIO MACRO / REMOTO" : undefined}
+                title={scenario}
+                description=""
+                probability={probabilityRaw}
+              />
+            </View>
+
+            <View style={styles.contextColumn}>
+              <DriversCard drivers={drivers} />
+            </View>
+          </View>
 
           {/* KeyZonesCard: zones from terminal push — empty if terminal hasn't sent them */}
           {zones.length > 0 ? (
@@ -479,6 +559,17 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontFamily: "Inter_700Bold",
     letterSpacing: 1.5,
+  },
+  contextRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    width: "100%",
+    alignItems: "stretch",
+  },
+  contextColumn: {
+    flex: 1,
+    minWidth: 280,
   },
   marketStateBar: {
     flexDirection: "row",

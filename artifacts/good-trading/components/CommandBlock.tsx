@@ -8,8 +8,6 @@ interface CommandBlockProps {
   setup: string;
   probability: number;
   lastUpdate: string;
-  volatilityState?: string;
-  dealerStructure?: string;
   marketMode?: string;
   confidence?: number | null;
 }
@@ -20,8 +18,6 @@ export function CommandBlock({
   setup,
   probability,
   lastUpdate,
-  volatilityState,
-  dealerStructure,
   marketMode,
   confidence,
 }: CommandBlockProps) {
@@ -84,25 +80,6 @@ export function CommandBlock({
           <Text style={[styles.dataCellValue, { color: colors.gold }]}>{confidence !== null ? `${confidence}%` : "—"}</Text>
         </View>
       </View>
-
-      {(volatilityState || dealerStructure) && (
-        <View style={[styles.divider, { backgroundColor: "#1a0005" }]} />
-      )}
-
-      {(volatilityState || dealerStructure) && (
-        <View style={styles.tagsRow}>
-          {volatilityState && (
-            <View style={[styles.tagPill, { borderColor: colors.primary }]}>
-              <Text style={[styles.tagText, { color: colors.primary }]}>{volatilityState}</Text>
-            </View>
-          )}
-          {dealerStructure && (
-            <View style={[styles.tagPill, { borderColor: colors.primary }]}>
-              <Text style={[styles.tagText, { color: colors.primary }]}>{dealerStructure}</Text>
-            </View>
-          )}
-        </View>
-      )}
     </View>
   );
 }
