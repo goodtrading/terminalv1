@@ -212,7 +212,7 @@ export function useLiquidityHeatmapFeed(
   const restoreOrderbookCache = useCallback((market: BookmapMarketSource): LiquiditySnapshot | null => {
     const key = orderbookCacheKey(symbol, market);
     const cached = orderbookCachesRef.current[key];
-    if (!cached.snapshot) return null;
+    if (!cached?.snapshot) return null;
 
     const ageMs = Date.now() - (cached.receivedAt ?? 0);
     if (ageMs > 30_000) return null;
