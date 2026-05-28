@@ -6,7 +6,7 @@ import {
 } from "./liquidityHeatmapUtils";
 
 /** Rolling buffer cap — not trimmed by zoom/pan/toggles. */
-export const MAX_TRADE_BUBBLES = 3000;
+export const MAX_TRADE_BUBBLES = 6000;
 
 export const TRADE_INGEST_FLOOR_BTC = 0.01;
 export const TRADE_DOT_MIN_BTC = 0.01;
