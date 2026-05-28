@@ -69,6 +69,11 @@ function tradeBufferKey(symbol: string, market: BookmapMarketSource): string {
   return `binance:${sym}:${market}`;
 }
 
+function tradeDedupeKey(trade: HeatmapTrade): string {
+  if (trade.id) return `${trade.market ?? ""}:id:${trade.id}`;
+  return `${trade.market ?? ""}:${trade.ts}:${trade.price}:${trade.side}:${trade.sizeBtc}`;
+}
+
 function orderbookCacheKey(symbol: string, market: BookmapMarketSource): string {
   const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
   return `${sym}:${market}`;
@@ -113,10 +118,8 @@ export function useLiquidityHeatmapFeed(
   const [exchange, setExchange] = useState("Binance");
   const [pipelineStats, setPipelineStats] = useState<HeatmapPipelineStats>(EMPTY_STATS);
   const tradesRef = useRef<HeatmapTrade[]>([]);
-  const marketCachesRef = useRef<Record<BookmapMarketSource, MarketTradeCache>>({
-    spot: { trades: [], received: 0, latestTs: null, version: 0 },
-    perp: { trades: [], received: 0, latestTs: null, version: 0 },
-  });
+  const seenTradeKeysRef = useRef<Set<string>>(new Set());
+  const marketCachesRef = useRef<Record<string, MarketTradeCache>>({});
   const orderbookCachesRef = useRef<Record<string, MarketOrderbookCache>>({});
   const [tradeTick, setTradeTick] = useState(0);
   const [tradeVersion, setTradeVersion] = useState(0);
@@ -170,27 +173,28 @@ export function useLiquidityHeatmapFeed(
   const getSnapshots = useCallback(() => snapshotsRef.current, []);
 
   const persistMarketCache = useCallback((market: BookmapMarketSource) => {
-    marketCachesRef.current[market] = {
-      trades: tradesRef.current,
+    marketCachesRef.current[tradeBufferKey(symbol, market)] = {
+      trades: [...tradesRef.current],
       received: receivedRef.current,
       latestTs: latestTsRef.current,
       version: tradeVersionRef.current,
     };
-  }, []);
+  }, [symbol]);
 
   const restoreMarketCache = useCallback((market: BookmapMarketSource) => {
-    const cached = marketCachesRef.current[market];
-    tradesRef.current = cached.trades.length > 0 ? [...cached.trades] : [];
-    receivedRef.current = cached.received;
-    latestTsRef.current = cached.latestTs;
-    tradeVersionRef.current = cached.version;
+    const cached = marketCachesRef.current[tradeBufferKey(symbol, market)];
+    tradesRef.current = cached?.trades.length ? [...cached.trades] : [];
+    seenTradeKeysRef.current = new Set(tradesRef.current.map(tradeDedupeKey));
+    receivedRef.current = cached?.received ?? 0;
+    latestTsRef.current = cached?.latestTs ?? null;
+    tradeVersionRef.current = cached?.version ?? 0;
     setTradeBufferCount(tradesRef.current.length);
-    setReceivedTradeCount(cached.received);
-    setLatestTradeTs(cached.latestTs);
+    setReceivedTradeCount(receivedRef.current);
+    setLatestTradeTs(latestTsRef.current);
     setLastMessageTs(lastMessageRef.current);
-    setTradeVersion(cached.version);
+    setTradeVersion(tradeVersionRef.current);
     setTradeTick((n) => n + 1);
-  }, []);
+  }, [symbol]);
 
   const persistOrderbookCache = useCallback((
     market: BookmapMarketSource,
@@ -248,10 +252,22 @@ export function useLiquidityHeatmapFeed(
 
   const ingestTrade = useCallback(
     (trade: HeatmapTrade) => {
+      const dedupeKey = tradeDedupeKey(trade);
+      if (seenTradeKeysRef.current.has(dedupeKey)) return;
+
+      const prev = tradesRef.current;
+      const next = appendTradeToBuffer(prev, trade);
+      if (next === prev) return;
+
       receivedRef.current += 1;
       latestTsRef.current = trade.ts;
       lastMessageRef.current = Date.now();
-      tradesRef.current = appendTradeToBuffer(tradesRef.current, trade);
+      tradesRef.current = next;
+      if (next.length === prev.length + 1) {
+        seenTradeKeysRef.current.add(dedupeKey);
+      } else {
+        seenTradeKeysRef.current = new Set(next.map(tradeDedupeKey));
+      }
       scheduleTradeFlush();
     },
     [scheduleTradeFlush],
@@ -468,8 +484,10 @@ export function useLiquidityHeatmapFeed(
       connect();
     };
 
-    void seedFromRest();
-    connect();
+    void (async () => {
+      await seedFromRest();
+      connect();
+    })();
 
     return () => {
       cancelled = true;
