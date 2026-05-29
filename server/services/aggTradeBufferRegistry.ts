@@ -21,7 +21,7 @@ type BufferConfig = {
   streamSymbol: string;
   wsBase: string;
   wsPath: string;
-  restAggTradesUrl: string;
+  restAggTradesUrls: string[];
   logTag: string;
 };
 
@@ -34,9 +34,10 @@ const TRADE_STALE_MS = 3_000;
 const TRADE_HEALTH_MS = 2_000;
 
 let perpSseClients = 0;
+let spotSseClients = 0;
 
 function createAggTradeBuffer(config: BufferConfig) {
-  const { market, streamSymbol, wsBase, wsPath, restAggTradesUrl, logTag } = config;
+  const { market, streamSymbol, wsBase, wsPath, restAggTradesUrls, logTag } = config;
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
@@ -44,6 +45,8 @@ function createAggTradeBuffer(config: BufferConfig) {
   let lastMessageTs = 0;
   let lastTrade: BufferedAggTrade | null = null;
   let healthTimer: ReturnType<typeof setInterval> | null = null;
+  let lastError: string | null = null;
+  let lastRestSeedTs = 0;
   const listeners = new Set<(trade: BufferedAggTrade) => void>();
   const backing: BufferedAggTrade[] = [];
   let start = 0;
@@ -107,32 +110,37 @@ function createAggTradeBuffer(config: BufferConfig) {
     for (const fn of listeners) fn(t);
   }
 
-  function logPerpTradesHealth(reason?: string): void {
-    if (market !== "perp" || !DEBUG) return;
+  function logTradesHealth(reason?: string): void {
+    if (!DEBUG && process.env.NODE_ENV !== "production") return;
     const ageMs = lastMessageTs > 0 ? Date.now() - lastMessageTs : null;
-    console.debug("[PERP_TRADES_HEALTH]", {
+    console.debug("[AGG_TRADES_HEALTH]", {
+      market,
       reason,
       connected,
       lastMessageTs: lastMessageTs || null,
       latestTradeTs: lastTrade?.time ?? null,
       latestAgeMs: lastTrade?.time != null ? Date.now() - lastTrade.time : ageMs,
       tradesInBuffer: Math.max(0, backing.length - start),
-      bufferKey: aggTradeBufferKey(streamSymbol, "perp"),
+      bufferKey: aggTradeBufferKey(streamSymbol, market),
       reconnectCount: reconnectAttempt,
-      sseClients: perpSseClients,
+      sseClients: market === "perp" ? perpSseClients : spotSseClients,
       lastTradePrice: lastTrade?.price ?? null,
       lastTradeSize: lastTrade?.qty ?? null,
       lastTradeSide: lastTrade?.side ?? null,
+      lastError,
+      lastRestSeedTs: lastRestSeedTs || null,
     });
   }
 
   function runTradeHealthCheck(): void {
-    if (market !== "perp") return;
     const ageMs = lastMessageTs > 0 ? Date.now() - lastMessageTs : Infinity;
-    logPerpTradesHealth();
     if (ageMs > TRADE_STALE_MS && (connected || backing.length > start)) {
+      logTradesHealth("stale");
       void seedFromRest();
       if (ws?.readyState !== WebSocket.OPEN) connect();
+    } else if (backing.length <= start) {
+      logTradesHealth("empty");
+      void seedFromRest();
     }
   }
 
@@ -168,6 +176,7 @@ function createAggTradeBuffer(config: BufferConfig) {
   async function seedFromRest(): Promise<void> {
     const end = Date.now();
     const startMs = end - RETENTION_MS;
+    let lastSeedError: string | null = null;
     try {
       const params = new URLSearchParams({
         symbol: streamSymbol,
@@ -175,10 +184,29 @@ function createAggTradeBuffer(config: BufferConfig) {
         startTime: String(startMs),
         endTime: String(end),
       });
-      const res = await fetch(`${restAggTradesUrl}?${params}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!Array.isArray(data)) return;
+      let data: unknown = null;
+      let provider: string | null = null;
+      for (const restAggTradesUrl of restAggTradesUrls) {
+        try {
+          const res = await fetch(`${restAggTradesUrl}?${params}`);
+          if (!res.ok) {
+            lastSeedError = `${restAggTradesUrl} status ${res.status}`;
+            continue;
+          }
+          data = await res.json();
+          provider = restAggTradesUrl;
+          break;
+        } catch (error) {
+          lastSeedError =
+            error instanceof Error
+              ? `${restAggTradesUrl} ${error.message}`
+              : `${restAggTradesUrl} ${String(error)}`;
+        }
+      }
+      if (!Array.isArray(data)) {
+        lastError = lastSeedError ?? "REST seed returned non-array";
+        return;
+      }
       const seen = new Set<string>();
       for (let i = start; i < backing.length; i++) seen.add(backing[i]!.id);
       for (const row of data) {
@@ -194,9 +222,12 @@ function createAggTradeBuffer(config: BufferConfig) {
           pushTrade(t);
         }
       }
-      log(`Seeded ${data.length} rows from REST`);
+      lastError = null;
+      lastRestSeedTs = Date.now();
+      log(`Seeded ${data.length} rows from REST${provider ? ` (${provider})` : ""}`);
     } catch (e) {
-      console.warn(`[${logTag}] REST seed failed:`, e instanceof Error ? e.message : e);
+      lastError = e instanceof Error ? e.message : String(e);
+      console.warn(`[${logTag}] REST seed failed:`, lastError);
     }
   }
 
@@ -215,6 +246,7 @@ function createAggTradeBuffer(config: BufferConfig) {
     try {
       ws = new WebSocket(`${wsBase}${wsPath}`);
     } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
       console.error(`[${logTag}] connect failed:`, e);
       scheduleReconnect();
       return;
@@ -222,6 +254,7 @@ function createAggTradeBuffer(config: BufferConfig) {
     ws.on("open", () => {
       connected = true;
       reconnectAttempt = 0;
+      lastError = null;
       console.log(`[${logTag}] WebSocket connected`);
       void seedFromRest();
     });
@@ -236,15 +269,14 @@ function createAggTradeBuffer(config: BufferConfig) {
       scheduleReconnect();
     });
     ws.on("error", (err) => {
+      lastError = err.message;
       console.warn(`[${logTag}] WebSocket error:`, err.message);
     });
   }
 
   connect();
   void seedFromRest();
-  if (market === "perp") {
-    healthTimer = setInterval(runTradeHealthCheck, TRADE_HEALTH_MS);
-  }
+  healthTimer = setInterval(runTradeHealthCheck, TRADE_HEALTH_MS);
 
   return {
     query(symbol: string, startMs: number, endMs: number): BufferedAggTrade[] {
@@ -282,6 +314,25 @@ function createAggTradeBuffer(config: BufferConfig) {
         size: end - start,
       };
     },
+    getHealth(symbol: string) {
+      const cov = this.getCoverage(symbol);
+      return {
+        ...cov,
+        lastMessageTs: lastMessageTs || null,
+        latestTradeTs: lastTrade?.time ?? null,
+        latestAgeMs:
+          lastTrade?.time != null
+            ? Date.now() - lastTrade.time
+            : lastMessageTs > 0
+              ? Date.now() - lastMessageTs
+              : null,
+        reconnectCount: reconnectAttempt,
+        sseClients: market === "perp" ? perpSseClients : spotSseClients,
+        bufferKey: aggTradeBufferKey(streamSymbol, market),
+        lastError,
+        lastRestSeedTs: lastRestSeedTs || null,
+      };
+    },
   };
 }
 
@@ -290,7 +341,12 @@ const spotBuffer = createAggTradeBuffer({
   streamSymbol: "BTCUSDT",
   wsBase: "wss://stream.binance.com:9443",
   wsPath: "/ws/btcusdt@aggTrade",
-  restAggTradesUrl: "https://api.binance.com/api/v3/aggTrades",
+  restAggTradesUrls: [
+    "https://api1.binance.com/api/v3/aggTrades",
+    "https://api2.binance.com/api/v3/aggTrades",
+    "https://api3.binance.com/api/v3/aggTrades",
+    "https://api.binance.com/api/v3/aggTrades",
+  ],
   logTag: "AggTradeBuffer:spot",
 });
 
@@ -299,7 +355,7 @@ const perpBuffer = createAggTradeBuffer({
   streamSymbol: "BTCUSDT",
   wsBase: "wss://fstream.binance.com",
   wsPath: "/ws/btcusdt@aggTrade",
-  restAggTradesUrl: "https://fapi.binance.com/fapi/v1/aggTrades",
+  restAggTradesUrls: ["https://fapi.binance.com/fapi/v1/aggTrades"],
   logTag: "AggTradeBuffer:perp",
 });
 
@@ -350,15 +406,20 @@ export function trackAggTradeSseClient(
   market: BookmapMarketSource,
   delta: 1 | -1,
 ): void {
-  if (parseBookmapMarket(market) !== "perp") return;
-  perpSseClients = Math.max(0, perpSseClients + delta);
+  if (parseBookmapMarket(market) === "perp") {
+    perpSseClients = Math.max(0, perpSseClients + delta);
+  } else {
+    spotSseClients = Math.max(0, spotSseClients + delta);
+  }
 }
 
 export function getPerpTradesBufferHealth() {
-  const cov = perpBuffer.getCoverage("BTCUSDT");
-  return {
-    ...cov,
-    sseClients: perpSseClients,
-    bufferKey: aggTradeBufferKey("BTCUSDT", "perp"),
-  };
+  return perpBuffer.getHealth("BTCUSDT");
+}
+
+export function getTradesBufferHealth(
+  symbol = "BTCUSDT",
+  market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
+) {
+  return resolveBuffer(market).getHealth(symbol);
 }

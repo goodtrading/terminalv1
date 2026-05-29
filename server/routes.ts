@@ -10,8 +10,13 @@ import { buildLiveMarketContext } from "./ai/buildLiveMarketContext";
 import { generateAIResponse } from "./lib/openaiClient";
 import { z } from "zod";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
-import { getOrderBook, initializeFullDepth } from "./services/orderbookService";
-import { initializePerpFullDepth } from "./services/orderbookServicePerp";
+import {
+  getOrderBook,
+  getSpotOrderBookHealth,
+  initializeFullDepth,
+  resyncSpotOrderBook,
+} from "./services/orderbookService";
+import { getPerpOrderBookHealth, initializePerpFullDepth } from "./services/orderbookServicePerp";
 import { getBookmapEngine, logBookmapMarketStateDiagnostics } from "./services/bookmapEngine";
 import { getOrderBookForMarket, parseBookmapMarket } from "./services/orderbookMarketRegistry";
 import { queryBboHistory } from "./services/bboHistoryRegistry";
@@ -50,6 +55,7 @@ import "./services/orderbookService";
 import "./services/orderbookServicePerp";
 import {
   queryBufferedAggTrades,
+  getTradesBufferHealth,
   subscribeAggTradeBuffer,
   trackAggTradeSseClient,
 } from "./services/aggTradeBufferService";
@@ -85,9 +91,17 @@ export async function registerRoutes(
       }
       let orderBook = getOrderBookForMarket(market);
       let exchange = market === "perp" ? "binance-perp" : "binance";
-      const binanceSpotEmpty =
+      let binanceSpotEmpty =
         market === "spot" && orderBook.bids.length === 0 && orderBook.asks.length === 0;
       let warning: string | undefined;
+      let providerStatus: Record<string, unknown> | undefined;
+
+      if (binanceSpotEmpty) {
+        await resyncSpotOrderBook("api-orderbook-raw-empty");
+        orderBook = getOrderBookForMarket(market);
+        binanceSpotEmpty = orderBook.bids.length === 0 && orderBook.asks.length === 0;
+      }
+
       if (binanceSpotEmpty && krakenFallbackEnabled) {
         const ob = await getKrakenOrderBook(symbol, 500);
         orderBook = {
@@ -101,9 +115,14 @@ export async function registerRoutes(
         }
       } else if (binanceSpotEmpty) {
         warning = "binance_spot_orderbook_empty";
+        providerStatus = {
+          spot: getSpotOrderBookHealth(),
+          perp: getPerpOrderBookHealth(),
+        };
         if (process.env.NODE_ENV === "production") {
           console.warn(
             "[API] /api/orderbook/raw: Binance spot empty; returning Binance response without Kraken fallback",
+            providerStatus,
           );
         }
       }
@@ -118,6 +137,7 @@ export async function registerRoutes(
               warning,
               fallbackEligible: true,
               krakenFallbackEnabled: false,
+              providerStatus,
             }
           : {}),
       });
@@ -517,6 +537,11 @@ export async function registerRoutes(
       });
 
       console.log(`${logCtx()} ← count=${Array.isArray(trades) ? trades.length : "not-array"}`);
+      if (process.env.NODE_ENV === "production" && (!Array.isArray(trades) || trades.length === 0)) {
+        console.warn(`${logCtx()} empty result`, {
+          tradeFeedStatus: getTradesBufferHealth(symbol, market),
+        });
+      }
 
       res.status(200).json(Array.isArray(trades) ? trades : []);
     } catch (error: any) {
@@ -546,6 +571,14 @@ export async function registerRoutes(
 
     const seed = queryBufferedAggTrades(symbol, since, Date.now(), market);
     for (const t of seed) send(t);
+    if (process.env.NODE_ENV === "production" && seed.length === 0) {
+      console.warn("[API] /api/market/agg-trades/stream: empty seed", {
+        symbol,
+        market,
+        since,
+        tradeFeedStatus: getTradesBufferHealth(symbol, market),
+      });
+    }
 
     trackAggTradeSseClient(market, 1);
 

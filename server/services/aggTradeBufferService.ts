@@ -7,6 +7,7 @@ export {
   queryBufferedAggTrades,
   subscribeAggTradeBuffer,
   getBufferCoverage,
+  getTradesBufferHealth,
   aggTradeBufferKey,
   trackAggTradeSseClient,
 } from "./aggTradeBufferRegistry";
