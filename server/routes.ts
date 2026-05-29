@@ -69,11 +69,14 @@ export async function registerRoutes(
     const source = (req.query.source as string)?.toLowerCase();
     const symbol = (req.query.symbol as string) || "BTCUSDT";
     const market = parseBookmapMarket(req.query.market);
+    const krakenFallbackEnabled =
+      String(process.env.ALLOW_KRAKEN_ORDERBOOK_FALLBACK ?? "").toLowerCase() === "true";
     try {
       if (source === "kraken") {
         const ob = await getKrakenOrderBook(symbol, 500);
         res.json({
           exchange: "kraken",
+          market,
           bids: ob.bids.map((level) => [level.price.toString(), level.size.toString()]),
           asks: ob.asks.map((level) => [level.price.toString(), level.size.toString()]),
           timestamp: ob.timestamp,
@@ -82,7 +85,10 @@ export async function registerRoutes(
       }
       let orderBook = getOrderBookForMarket(market);
       let exchange = market === "perp" ? "binance-perp" : "binance";
-      if (orderBook.bids.length === 0 && orderBook.asks.length === 0 && market !== "perp") {
+      const binanceSpotEmpty =
+        market === "spot" && orderBook.bids.length === 0 && orderBook.asks.length === 0;
+      let warning: string | undefined;
+      if (binanceSpotEmpty && krakenFallbackEnabled) {
         const ob = await getKrakenOrderBook(symbol, 500);
         orderBook = {
           bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
@@ -91,7 +97,14 @@ export async function registerRoutes(
         };
         exchange = "kraken";
         if (process.env.NODE_ENV === "production") {
-          console.warn("[API] /api/orderbook/raw: WS empty, fallback to Kraken");
+          console.warn("[API] /api/orderbook/raw: Binance spot empty, Kraken fallback enabled");
+        }
+      } else if (binanceSpotEmpty) {
+        warning = "binance_spot_orderbook_empty";
+        if (process.env.NODE_ENV === "production") {
+          console.warn(
+            "[API] /api/orderbook/raw: Binance spot empty; returning Binance response without Kraken fallback",
+          );
         }
       }
       res.json({
@@ -100,6 +113,13 @@ export async function registerRoutes(
         bids: orderBook.bids.map((level) => [level.price.toString(), level.size.toString()]),
         asks: orderBook.asks.map((level) => [level.price.toString(), level.size.toString()]),
         timestamp: orderBook.timestamp || Date.now(),
+        ...(warning
+          ? {
+              warning,
+              fallbackEligible: true,
+              krakenFallbackEnabled: false,
+            }
+          : {}),
       });
     } catch (error: any) {
       console.error("[API] Order book fetch error:", error?.message ?? error);
