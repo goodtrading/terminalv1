@@ -1,4 +1,10 @@
-import { BOOKMAP_ENGINE_MAX_RENDER_CELLS } from "@/lib/bookmapEngineConfig";
+import {
+  BOOKMAP_ENGINE_BUCKET_MS,
+  BOOKMAP_ENGINE_MAX_RENDER_CELLS,
+  WALL_IMPORTANT_BTC,
+  WALL_MAJOR_BTC,
+  WALL_STRUCTURAL_BTC,
+} from "@/lib/bookmapEngineConfig";
 import {
   aggregateBookLevelsByBucket,
   aggregateHeatmapCellsByBucket,
@@ -13,7 +19,7 @@ import {
 } from "./bookmapBandPrepare";
 import type { VerticalCompressionMode } from "@/lib/bookmapDepthRange";
 import type { HeatmapBand } from "./bookmapBandTypes";
-import { BOOKMAP_ENGINE_BUCKET_MS } from "@/lib/bookmapEngineConfig";
+import { bucketPrice } from "./domLadderUtils";
 
 export type PreparedEngineCell = {
   timeBucket: number;
@@ -62,6 +68,7 @@ const TIER_RANK: Record<EngineWallTier, number> = {
   structural: 2,
   major: 3,
 };
+const DOM_ANCHOR_MAX_LEVELS = 400;
 
 type WallLike = Pick<
   BookLevel,
@@ -100,18 +107,124 @@ function dedupeWalls(levels: WallLike[]): PreparedEngineWall[] {
 
 function capCells(
   cells: PreparedEngineCell[],
-  wallPrices: Set<string>,
+  protectedPrices: Set<string>,
   maxCells: number,
 ): PreparedEngineCell[] {
   if (cells.length <= maxCells) return cells;
 
-  const mustKeep = cells.filter((c) => wallPrices.has(`${c.side}:${c.price}`));
+  const mustKeep = cells.filter((c) =>
+    protectedPrices.has(`${c.side}:${c.price}`),
+  );
   const rest = cells
-    .filter((c) => !wallPrices.has(`${c.side}:${c.price}`))
+    .filter((c) => !protectedPrices.has(`${c.side}:${c.price}`))
     .sort((a, b) => b.maxSizeInBucket - a.maxSizeInBucket);
 
   const budget = Math.max(maxCells - mustKeep.length, 0);
   return [...mustKeep, ...rest.slice(0, budget)];
+}
+
+function currentBookAnchorCells(
+  state: BookmapState,
+  minPrice: number,
+  maxPrice: number,
+  heatmapBucketSize: number,
+): PreparedEngineCell[] {
+  const levels = currentBookAnchorLevels(
+    state,
+    minPrice,
+    maxPrice,
+    heatmapBucketSize,
+  );
+
+  if (!levels.length) return [];
+
+  const timeBucket =
+    Math.floor((state.timestamp || Date.now()) / BOOKMAP_ENGINE_BUCKET_MS) *
+    BOOKMAP_ENGINE_BUCKET_MS;
+
+  return levels.map((level) => ({
+    timeBucket,
+    price: level.price,
+    side: level.side,
+    intensity: 0,
+    isMajor: level.maxSeenSize >= WALL_MAJOR_BTC,
+    maxSizeInBucket: Math.max(level.size, level.maxSeenSize),
+  }));
+}
+
+function currentBookAnchorLevels(
+  state: BookmapState,
+  minPrice: number,
+  maxPrice: number,
+  bucketSize: number,
+): BookLevel[] {
+  const step = Math.max(1, bucketSize);
+  const byKey = new Map<string, BookLevel>();
+
+  for (const level of [...state.bids, ...state.asks]) {
+    const size = Math.max(level.size, level.maxSeenSize);
+    if (level.stale || size < WALL_IMPORTANT_BTC) continue;
+    if (level.price < minPrice || level.price > maxPrice) continue;
+
+    const price = bucketPrice(level.price, step);
+    const key = `${level.side}:${price}`;
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, {
+        ...level,
+        price,
+        size: level.size,
+        maxSeenSize: size,
+        isImportant: size >= WALL_IMPORTANT_BTC,
+        isStructural: size >= WALL_STRUCTURAL_BTC,
+        isMajor: size >= WALL_MAJOR_BTC,
+      });
+      continue;
+    }
+
+    const maxSeenSize = Math.max(prev.maxSeenSize, size);
+    prev.size += level.size;
+    prev.maxSeenSize = maxSeenSize;
+    prev.firstSeenTs = Math.min(prev.firstSeenTs, level.firstSeenTs);
+    prev.lastUpdateTs = Math.max(prev.lastUpdateTs, level.lastUpdateTs);
+    prev.isImportant = prev.isImportant || maxSeenSize >= WALL_IMPORTANT_BTC;
+    prev.isStructural = prev.isStructural || maxSeenSize >= WALL_STRUCTURAL_BTC;
+    prev.isMajor = prev.isMajor || maxSeenSize >= WALL_MAJOR_BTC;
+    prev.stale = prev.stale && level.stale;
+  }
+
+  return Array.from(byKey.values())
+    .sort((a, b) => b.maxSeenSize - a.maxSeenSize)
+    .slice(0, DOM_ANCHOR_MAX_LEVELS);
+}
+
+function mergePreparedCells(
+  cells: PreparedEngineCell[],
+  anchors: PreparedEngineCell[],
+): PreparedEngineCell[] {
+  if (!anchors.length) return cells;
+
+  const byKey = new Map<string, PreparedEngineCell>();
+  for (const cell of cells) {
+    byKey.set(`${cell.timeBucket}:${cell.side}:${cell.price}`, cell);
+  }
+
+  for (const anchor of anchors) {
+    const key = `${anchor.timeBucket}:${anchor.side}:${anchor.price}`;
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, anchor);
+      continue;
+    }
+
+    prev.maxSizeInBucket = Math.max(
+      prev.maxSizeInBucket,
+      anchor.maxSizeInBucket,
+    );
+    prev.isMajor = prev.isMajor || anchor.isMajor;
+  }
+
+  return Array.from(byKey.values());
 }
 
 export function prepareEngineRenderData(
@@ -145,17 +258,32 @@ export function prepareEngineRenderData(
     ...state.importantWalls,
     ...state.structuralWalls,
     ...state.majorWalls,
+    ...currentBookAnchorLevels(state, minPrice, maxPrice, wallStep),
   ];
   const aggregatedWalls = aggregateBookLevelsByBucket(wallLevels, wallStep);
   const walls = dedupeWalls(aggregatedWalls);
 
   const wallPrices = new Set(walls.map((w) => `${w.side}:${w.price}`));
+  const anchorCells = currentBookAnchorCells(
+    state,
+    minPrice,
+    maxPrice,
+    heatmapBucketSize,
+  );
+  const protectedPrices = new Set(wallPrices);
+  for (const cell of anchorCells) {
+    protectedPrices.add(`${cell.side}:${cell.price}`);
+  }
 
   const preparedCells: PreparedEngineCell[] = cellsInRange.map((cell) =>
     cellToPrepared(cell),
   );
 
-  const capped = capCells(preparedCells, wallPrices, maxCells);
+  const capped = capCells(
+    mergePreparedCells(preparedCells, anchorCells),
+    protectedPrices,
+    maxCells,
+  );
 
   const timeMax = state.timestamp || Date.now();
   const bucketTimes = capped.map((c) => c.timeBucket);
