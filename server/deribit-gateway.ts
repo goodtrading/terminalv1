@@ -98,6 +98,15 @@ function parseCsv(content: string): any[] {
   return results;
 }
 
+function toFiniteNumberOrNull(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (value == null || value === "") continue;
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
 export const normalizedOptionSchema = z.object({
   strike: z.number(),
   expiry: z.string(),
@@ -108,6 +117,10 @@ export const normalizedOptionSchema = z.object({
   ivAsk: z.number().optional(),
   /** Implied vol fallback from Deribit mark_iv (decimal vol). */
   ivMark: z.number().optional(),
+  bestBidPrice: z.number().nullable().optional(),
+  bestAskPrice: z.number().nullable().optional(),
+  bestBidSize: z.number().nullable().optional(),
+  bestAskSize: z.number().nullable().optional(),
   gammaExposure: z.number().optional(),
   vannaExposure: z.number().optional(),
   charmExposure: z.number().optional()
@@ -894,6 +907,10 @@ export class DeribitOptionsGateway {
                 return Number.isFinite(n) ? n / 100 : undefined;
               })()
             : undefined;
+          const bestBidPrice = toFiniteNumberOrNull(item.best_bid_price, item.bid_price);
+          const bestAskPrice = toFiniteNumberOrNull(item.best_ask_price, item.ask_price);
+          const bestBidSize = toFiniteNumberOrNull(item.best_bid_amount, item.bid_amount, item.bid_size);
+          const bestAskSize = toFiniteNumberOrNull(item.best_ask_amount, item.ask_amount, item.ask_size);
 
           let gammaExposure: number | undefined;
           let vannaExposure: number | undefined;
@@ -931,6 +948,10 @@ export class DeribitOptionsGateway {
             ivBid: bidIv,
             ivAsk: askIv,
             ivMark,
+            bestBidPrice,
+            bestAskPrice,
+            bestBidSize,
+            bestAskSize,
             gammaExposure,
             vannaExposure,
             charmExposure

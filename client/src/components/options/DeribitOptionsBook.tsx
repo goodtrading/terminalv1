@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-import type { DeribitOptionsBookResponse, DeribitOptionBookRow, DeribitOptionSide } from "@shared/types/deribit-options";
+import type { DeribitOptionsBookResponse, DeribitOptionBookRow, DeribitOptionSide, DeribitOptionSizeStats } from "@shared/types/deribit-options";
 import {
   buildOptionsZoneContext,
   getOptionZoneTags,
@@ -84,6 +84,8 @@ type RowBadges = {
 };
 
 const CACHE_TTL_MS = 15000; // 15 seconds cache
+const OPTIONS_TOP_OF_BOOK_REFETCH_MS = 500;
+const OPTIONS_TOP_OF_BOOK_UI_MIN_UPDATE_MS = 100;
 
 // BadgePill component for structural indicators
 const BadgePill = ({ badge }: { badge: Badge }) => {
@@ -176,6 +178,17 @@ type OptionSideViewModel = {
   ask: number | null
   bidSize: number | null
   askSize: number | null
+  bestBidPrice: number | null
+  bestAskPrice: number | null
+  bestBidSize: number | null
+  bestAskSize: number | null
+  deribitReceivedAt?: number | null
+  cacheUpdatedAt?: number | null
+  ageMs?: number | null
+  liquidityUpdatedAt: number | null
+  liquiditySource: "ws" | "rest" | "missing"
+  bidSizeStats1s?: DeribitOptionSizeStats
+  askSizeStats1s?: DeribitOptionSizeStats
   tags: string[]
 }
 
@@ -192,7 +205,43 @@ type OptionRowViewModel = {
   put: OptionSideViewModel | null
 }
 
-// Unified column definition for all modes
+type OptionTopOfBookItem = {
+  instrumentName: string
+  bestBidPrice: number | null
+  bestAskPrice: number | null
+  bestBidSize: number | null
+  bestAskSize: number | null
+  deribitReceivedAt?: number | null
+  cacheUpdatedAt?: number | null
+  ageMs?: number | null
+  updatedAt: number
+  source: "ws" | "rest"
+  bidSizeStats1s?: DeribitOptionSizeStats
+  askSizeStats1s?: DeribitOptionSizeStats
+}
+
+type OptionTopOfBookPayload = {
+  serverNow: number
+  timestamp: number
+  staleMs: number
+  items: Record<string, OptionTopOfBookItem>
+}
+
+type OptionColumnSide = "call" | "center" | "put";
+
+type OptionColumnDefinition = {
+  id: string
+  label: string
+  side: OptionColumnSide
+  defaultOrder: number
+  width: number
+  align?: 'left' | 'center' | 'right'
+  visible: boolean
+  headerClassName?: string
+  cellClassName?: string
+  render: (row: OptionRowViewModel) => React.ReactNode
+}
+
 type ColumnDef = {
   id: string
   header: string
@@ -202,11 +251,131 @@ type ColumnDef = {
   renderCell: (row: OptionRowViewModel) => React.ReactNode
 }
 
+const OPTIONS_COLUMNS_ORDER_STORAGE_KEY =
+  "goodtrading.deribitOptionsBook.columns.order.v1";
+
+const DEFAULT_OPTION_COLUMN_ORDER = [
+  "call_oi",
+  "call_delta",
+  "call_iv_bid",
+  "call_bid",
+  "call_ask",
+  "call_iv_ask",
+  "call_bid_size",
+  "call_ask_size",
+  "strike",
+  "zones",
+  "put_bid_size",
+  "put_ask_size",
+  "put_iv_bid",
+  "put_bid",
+  "put_ask",
+  "put_iv_ask",
+  "put_delta",
+  "put_oi",
+];
+
+const OPTION_COLUMN_DEFAULT_ORDER = new Map(
+  DEFAULT_OPTION_COLUMN_ORDER.map((id, index) => [id, (index + 1) * 10])
+);
+
+const OPTION_COLUMN_SIDE_BY_ID: Record<string, OptionColumnSide> = {
+  call_oi: "call",
+  call_delta: "call",
+  call_iv_bid: "call",
+  call_bid: "call",
+  call_ask: "call",
+  call_iv_ask: "call",
+  call_bid_size: "call",
+  call_ask_size: "call",
+  strike: "center",
+  zones: "center",
+  put_bid_size: "put",
+  put_ask_size: "put",
+  put_iv_bid: "put",
+  put_bid: "put",
+  put_ask: "put",
+  put_iv_ask: "put",
+  put_delta: "put",
+  put_oi: "put",
+};
+
+function normalizeOptionColumnId(id: string): string {
+  const normalized = id.replace(/-/g, "_");
+  const aliases: Record<string, string> = {
+    call_bid_iv: "call_iv_bid",
+    call_ask_iv: "call_iv_ask",
+    put_bid_iv: "put_iv_bid",
+    put_ask_iv: "put_iv_ask",
+  };
+  return aliases[normalized] ?? normalized;
+}
+
+function getDefaultColumnOrder(columns: OptionColumnDefinition[]): string[] {
+  return [...columns]
+    .sort((a, b) => a.defaultOrder - b.defaultOrder)
+    .map((column) => column.id);
+}
+
+function parseSavedColumnOrder(raw: string | null): string[] | null {
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter((item): item is string => typeof item === "string");
+  } catch {
+    return null;
+  }
+}
+
+function resolveOptionColumns(
+  defaultColumns: OptionColumnDefinition[],
+  savedOrder: string[] | null
+): OptionColumnDefinition[] {
+  const byId = new Map(defaultColumns.map((column) => [column.id, column]));
+
+  if (!savedOrder || savedOrder.length === 0) {
+    return [...defaultColumns].sort((a, b) => a.defaultOrder - b.defaultOrder);
+  }
+
+  const ordered: OptionColumnDefinition[] = [];
+
+  for (const id of savedOrder) {
+    const column = byId.get(id);
+    if (!column) continue;
+
+    ordered.push(column);
+    byId.delete(id);
+  }
+
+  const missing = Array.from(byId.values()).sort(
+    (a, b) => a.defaultOrder - b.defaultOrder
+  );
+
+  return [...ordered, ...missing];
+}
+
 
 export default function DeribitOptionsBook() {
   const [currency, setCurrency] = useState<"BTC" | "ETH">("BTC");
   const [selectedExpiry, setSelectedExpiry] = useState<string>("");
   const [filter, setFilter] = useState<"ALL" | "ATM" | "RANGE" | "MOVEMENT" | "DISTANCE">("ATM");
+  const [isColumnPanelOpen, setIsColumnPanelOpen] = useState(false);
+  const [topOfBookStreamData, setTopOfBookStreamData] = useState<OptionTopOfBookPayload | null>(null);
+  const [isTopOfBookSseConnected, setIsTopOfBookSseConnected] = useState(false);
+  const lastTopOfBookUiUpdateRef = useRef(0);
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    if (typeof window === "undefined") return DEFAULT_OPTION_COLUMN_ORDER;
+
+    const saved = parseSavedColumnOrder(
+      window.localStorage.getItem(OPTIONS_COLUMNS_ORDER_STORAGE_KEY)
+    );
+
+    if (saved) return saved.map(normalizeOptionColumnId);
+
+    return DEFAULT_OPTION_COLUMN_ORDER;
+  });
   // Fixed to PRO mode - view toggle removed
 const viewMode: OptionsViewMode = "PRO";
 
@@ -362,6 +531,83 @@ const viewMode: OptionsViewMode = "PRO";
     const bidStr = bid !== null && bid !== undefined ? formatPrice(bid) : "-";
     const askStr = ask !== null && ask !== undefined ? formatPrice(ask) : "-";
     return `${bidStr} / ${askStr}`;
+  };
+
+  const getLiquidityFreshness = (side: OptionSideViewModel | null | undefined) => {
+    if (!side?.liquidityUpdatedAt || side.liquiditySource === "missing") {
+      return {
+        className: "text-terminal-muted/45",
+        title: "Liquidity: missing",
+      };
+    }
+
+    const ageMs = Date.now() - side.liquidityUpdatedAt;
+    const ageSec = Math.max(0, ageMs / 1000);
+    const label = `Liquidity: ${side.liquiditySource} · ${ageSec.toFixed(1)}s old`;
+    if (ageMs < 2000) {
+      return { className: "text-emerald-300", title: label };
+    }
+    if (ageMs <= 5000) {
+      return { className: "", title: label };
+    }
+    return { className: "text-amber-300/70", title: label };
+  };
+
+  const formatLiquidityStat = (value: number | null | undefined, decimals = 1): string => {
+    if (value == null || !Number.isFinite(value)) return "n/a";
+    return value.toFixed(decimals);
+  };
+
+  const formatLiquiditySize = (value: number | null | undefined): string => {
+    if (value == null || !Number.isFinite(value)) return "—";
+    if (value === 0) return "0.00";
+    return formatNumber(value);
+  };
+
+  const getSizeStats = (
+    side: OptionSideViewModel | null | undefined,
+    quoteSide: "bid" | "ask"
+  ): DeribitOptionSizeStats | undefined => {
+    return quoteSide === "bid" ? side?.bidSizeStats1s : side?.askSizeStats1s;
+  };
+
+  const getSizeCellMeta = (
+    side: OptionSideViewModel | null | undefined,
+    quoteSide: "bid" | "ask"
+  ) => {
+    const freshness = getLiquidityFreshness(side);
+    const stats = getSizeStats(side, quoteSide);
+    const label = quoteSide === "bid" ? "Bid Size" : "Ask Size";
+
+    if (!stats || stats.samples === 0) {
+      return freshness;
+    }
+
+    const ageMs = side?.liquidityUpdatedAt ? Math.max(0, Date.now() - side.liquidityUpdatedAt) : null;
+    const spikeAbsLabel =
+      stats.spikeAbs != null && Number.isFinite(stats.spikeAbs)
+        ? `+${formatLiquidityStat(stats.spikeAbs)}`
+        : "n/a";
+    const title = [
+      label,
+      `Current: ${formatLiquidityStat(stats.current)}`,
+      `1s range: ${formatLiquidityStat(stats.min)} -> ${formatLiquidityStat(stats.max)}`,
+      `1s Delta: ${formatLiquidityStat(stats.delta)}`,
+      `1s spike: ${spikeAbsLabel}`,
+      `Samples: ${stats.samples}`,
+      `Source: ${side?.liquiditySource ?? "missing"}`,
+      `Age: ${ageMs == null ? "n/a" : `${ageMs}ms`}`,
+      side?.deribitReceivedAt ? `Deribit received: ${Math.max(0, Date.now() - side.deribitReceivedAt)}ms ago` : null,
+      side?.cacheUpdatedAt ? `Cache updated: ${Math.max(0, Date.now() - side.cacheUpdatedAt)}ms ago` : null,
+    ].join("\n");
+
+    return {
+      className: cn(
+        freshness.className,
+        stats.spike && "bg-amber-400/10 text-amber-200 ring-1 ring-inset ring-amber-400/30"
+      ),
+      title,
+    };
   };
 
   
@@ -641,6 +887,52 @@ const viewMode: OptionsViewMode = "PRO";
     return Array.from(instruments).slice(0, 60); // Safety limit
   }, [derivedRows]);
 
+  useEffect(() => {
+    if (visibleInstrumentNames.length === 0 || typeof EventSource === "undefined") {
+      setTopOfBookStreamData(null);
+      setIsTopOfBookSseConnected(false);
+      return;
+    }
+
+    const params = new URLSearchParams({
+      instruments: visibleInstrumentNames.join(","),
+    });
+    const source = new EventSource(`/api/options/deribit/top-of-book/stream?${params}`);
+    let closed = false;
+
+    const handleTopOfBook = (event: Event) => {
+      if (closed) return;
+
+      try {
+        const payload = JSON.parse((event as MessageEvent<string>).data) as OptionTopOfBookPayload;
+        const now = Date.now();
+        const elapsed = now - lastTopOfBookUiUpdateRef.current;
+        if (elapsed < OPTIONS_TOP_OF_BOOK_UI_MIN_UPDATE_MS) return;
+
+        lastTopOfBookUiUpdateRef.current = now;
+        setTopOfBookStreamData(payload);
+        setIsTopOfBookSseConnected(true);
+      } catch {
+        setIsTopOfBookSseConnected(false);
+      }
+    };
+
+    source.addEventListener("top_of_book", handleTopOfBook);
+    source.onopen = () => {
+      if (!closed) setIsTopOfBookSseConnected(true);
+    };
+    source.onerror = () => {
+      if (!closed) setIsTopOfBookSseConnected(false);
+    };
+
+    return () => {
+      closed = true;
+      source.removeEventListener("top_of_book", handleTopOfBook);
+      source.close();
+      setIsTopOfBookSseConnected(false);
+    };
+  }, [visibleInstrumentNames.join("|")]);
+
   // Ticker enrichment query
   const { data: tickersData, isLoading: isEnriching } = useQuery<{
     generatedAt: number;
@@ -675,10 +967,41 @@ const viewMode: OptionsViewMode = "PRO";
     staleTime: 15000,
   });
 
+  const { data: topOfBookData } = useQuery<OptionTopOfBookPayload>({
+    queryKey: ["deribit-options-top-of-book", visibleInstrumentNames.join("|")],
+    queryFn: async () => {
+      if (visibleInstrumentNames.length === 0) {
+        return { serverNow: Date.now(), timestamp: Date.now(), staleMs: 5000, items: {} };
+      }
+
+      const params = new URLSearchParams({
+        instruments: visibleInstrumentNames.join(","),
+      });
+      const response = await fetch(`/api/options/deribit/top-of-book?${params}`);
+      if (!response.ok) {
+        return { serverNow: Date.now(), timestamp: Date.now(), staleMs: 5000, items: {} };
+      }
+
+      return response.json();
+    },
+    enabled: visibleInstrumentNames.length > 0 && !isTopOfBookSseConnected,
+    refetchInterval: OPTIONS_TOP_OF_BOOK_REFETCH_MS,
+    refetchIntervalInBackground: false,
+    staleTime: 0,
+    retry: false,
+  });
+
   // Helper function to enrich side data with ticker data
-  const enrichSide = (side: any, tickerMap: Record<string, any>) => {
+  const enrichSide = (
+    side: any,
+    tickerMap: Record<string, any>,
+    topOfBookMap: Record<string, OptionTopOfBookItem>
+  ) => {
     if (!side) return null;
     const ticker = tickerMap[side.instrumentName];
+    const topOfBook = topOfBookMap[side.instrumentName];
+    const liquiditySource = topOfBook?.source ?? side.liquiditySource ?? (ticker ? "rest" : "missing");
+    const liquidityUpdatedAt = topOfBook?.updatedAt ?? side.liquidityUpdatedAt ?? null;
 
     return {
       ...side,
@@ -686,15 +1009,35 @@ const viewMode: OptionsViewMode = "PRO";
       bidIv: side.bidIv ?? ticker?.bidIv ?? null,
       askIv: side.askIv ?? ticker?.askIv ?? null,
       markIv: side.markIv ?? ticker?.markIv ?? null,
-      bidSize: side.bidSize ?? ticker?.bidSize ?? null,
-      askSize: side.askSize ?? ticker?.askSize ?? null,
+      bidPrice: topOfBook?.bestBidPrice ?? side.bidPrice ?? ticker?.bidPrice ?? ticker?.bestBidPrice ?? null,
+      askPrice: topOfBook?.bestAskPrice ?? side.askPrice ?? ticker?.askPrice ?? ticker?.bestAskPrice ?? null,
+      bestBidPrice: topOfBook?.bestBidPrice ?? side.bestBidPrice ?? side.bidPrice ?? ticker?.bestBidPrice ?? ticker?.bidPrice ?? null,
+      bestAskPrice: topOfBook?.bestAskPrice ?? side.bestAskPrice ?? side.askPrice ?? ticker?.bestAskPrice ?? ticker?.askPrice ?? null,
+      bestBidSize: topOfBook?.bestBidSize ?? side.bestBidSize ?? side.bidSize ?? ticker?.bestBidSize ?? ticker?.bidSize ?? null,
+      bestAskSize: topOfBook?.bestAskSize ?? side.bestAskSize ?? side.askSize ?? ticker?.bestAskSize ?? ticker?.askSize ?? null,
+      bidSize: topOfBook?.bestBidSize ?? side.bidSize ?? side.bestBidSize ?? ticker?.bidSize ?? ticker?.bestBidSize ?? null,
+      askSize: topOfBook?.bestAskSize ?? side.askSize ?? side.bestAskSize ?? ticker?.askSize ?? ticker?.bestAskSize ?? null,
+      deribitReceivedAt: topOfBook?.deribitReceivedAt ?? side.deribitReceivedAt ?? null,
+      cacheUpdatedAt: topOfBook?.cacheUpdatedAt ?? side.cacheUpdatedAt ?? null,
+      ageMs: topOfBook?.ageMs ?? null,
+      liquidityUpdatedAt,
+      liquiditySource,
+      bidSizeStats1s: topOfBook?.bidSizeStats1s ?? side.bidSizeStats1s,
+      askSizeStats1s: topOfBook?.askSizeStats1s ?? side.askSizeStats1s,
       markPrice: side.markPrice ?? ticker?.markPrice ?? null
     };
   };
 
   // Create enriched rows with ticker data
   const enrichedRows = useMemo(() => {
-    if (!tickersData?.tickers || Object.keys(tickersData.tickers).length === 0) {
+    const tickerMap = tickersData?.tickers ?? {};
+    const streamItems = topOfBookStreamData?.items ?? {};
+    const topOfBookMap =
+      isTopOfBookSseConnected && Object.keys(streamItems).length > 0
+        ? streamItems
+        : topOfBookData?.items ?? {};
+
+    if (Object.keys(tickerMap).length === 0 && Object.keys(topOfBookMap).length === 0) {
       console.log("[OPTIONS_DEBUG_ENRICH] No ticker data, using derivedRows", { 
         tickersData: tickersData?.tickers ? Object.keys(tickersData.tickers).length : 0,
         derivedRowsCount: derivedRows.length 
@@ -705,8 +1048,8 @@ const viewMode: OptionsViewMode = "PRO";
     const enriched = derivedRows.map(row => {
       const enrichedRow = {
         ...row,
-        call: enrichSide(row.call, tickersData.tickers),
-        put: enrichSide(row.put, tickersData.tickers)
+        call: enrichSide(row.call, tickerMap, topOfBookMap),
+        put: enrichSide(row.put, tickerMap, topOfBookMap)
       };
 
       // Debug log for first row with data
@@ -757,12 +1100,13 @@ const viewMode: OptionsViewMode = "PRO";
 
     console.log("[OPTIONS_DEBUG_ENRICH] Enrichment completed", {
       enrichedRowsCount: enriched.length,
-      tickersAvailable: Object.keys(tickersData.tickers).length,
-      sampleTicker: Object.values(tickersData.tickers)[0]
+      tickersAvailable: Object.keys(tickerMap).length,
+      topOfBookAvailable: Object.keys(topOfBookMap).length,
+      sampleTicker: Object.values(tickerMap)[0]
     });
 
     return enriched;
-  }, [derivedRows, tickersData]);
+  }, [derivedRows, tickersData, topOfBookData, topOfBookStreamData, isTopOfBookSseConnected]);
 
   // Calculate column visibility based on enriched data
   const columnVisibility = useMemo(() => {
@@ -801,10 +1145,21 @@ const viewMode: OptionsViewMode = "PRO";
         delta: row.call.delta || null,
         bidIv: row.call.bidIv || null,
         askIv: row.call.askIv || null,
-        bid: row.call.bidPrice || null,
-        ask: row.call.askPrice || null,
-        bidSize: row.call.bidSize || null,
-        askSize: row.call.askSize || null,
+        bid: row.call.bestBidPrice ?? row.call.bidPrice ?? null,
+        ask: row.call.bestAskPrice ?? row.call.askPrice ?? null,
+        bidSize: row.call.bestBidSize ?? row.call.bidSize ?? null,
+        askSize: row.call.bestAskSize ?? row.call.askSize ?? null,
+        bestBidPrice: row.call.bestBidPrice ?? row.call.bidPrice ?? null,
+        bestAskPrice: row.call.bestAskPrice ?? row.call.askPrice ?? null,
+        bestBidSize: row.call.bestBidSize ?? row.call.bidSize ?? null,
+        bestAskSize: row.call.bestAskSize ?? row.call.askSize ?? null,
+        deribitReceivedAt: row.call.deribitReceivedAt ?? null,
+        cacheUpdatedAt: row.call.cacheUpdatedAt ?? null,
+        ageMs: row.call.ageMs ?? null,
+        liquidityUpdatedAt: row.call.liquidityUpdatedAt ?? null,
+        liquiditySource: row.call.liquiditySource ?? "missing",
+        bidSizeStats1s: row.call.bidSizeStats1s,
+        askSizeStats1s: row.call.askSizeStats1s,
         tags: []
       } : null;
 
@@ -815,10 +1170,21 @@ const viewMode: OptionsViewMode = "PRO";
         delta: row.put.delta || null,
         bidIv: row.put.bidIv || null,
         askIv: row.put.askIv || null,
-        bid: row.put.bidPrice || null,
-        ask: row.put.askPrice || null,
-        bidSize: row.put.bidSize || null,
-        askSize: row.put.askSize || null,
+        bid: row.put.bestBidPrice ?? row.put.bidPrice ?? null,
+        ask: row.put.bestAskPrice ?? row.put.askPrice ?? null,
+        bidSize: row.put.bestBidSize ?? row.put.bidSize ?? null,
+        askSize: row.put.bestAskSize ?? row.put.askSize ?? null,
+        bestBidPrice: row.put.bestBidPrice ?? row.put.bidPrice ?? null,
+        bestAskPrice: row.put.bestAskPrice ?? row.put.askPrice ?? null,
+        bestBidSize: row.put.bestBidSize ?? row.put.bidSize ?? null,
+        bestAskSize: row.put.bestAskSize ?? row.put.askSize ?? null,
+        deribitReceivedAt: row.put.deribitReceivedAt ?? null,
+        cacheUpdatedAt: row.put.cacheUpdatedAt ?? null,
+        ageMs: row.put.ageMs ?? null,
+        liquidityUpdatedAt: row.put.liquidityUpdatedAt ?? null,
+        liquiditySource: row.put.liquiditySource ?? "missing",
+        bidSizeStats1s: row.put.bidSizeStats1s,
+        askSizeStats1s: row.put.askSizeStats1s,
         tags: []
       } : null;
 
@@ -977,7 +1343,7 @@ const viewMode: OptionsViewMode = "PRO";
 
     const columns: ColumnDef[] = [
       {
-        id: 'call-oi',
+        id: 'call_oi',
         header: 'OI',
         width: 80,
         align: 'right',
@@ -1001,7 +1367,7 @@ const viewMode: OptionsViewMode = "PRO";
 
     if (hasDelta) {
       columns.push({
-        id: 'call-delta',
+        id: 'call_delta',
         header: 'Δ',
         width: 60,
         align: 'right',
@@ -1072,16 +1438,34 @@ const viewMode: OptionsViewMode = "PRO";
 
     if (hasSize) {
       columns.push({
-        id: 'call-size',
-        header: 'Size',
-        width: 80,
+        id: 'call-bid-size',
+        header: 'Bid Sz',
+        width: 70,
         align: 'right',
         visible: true,
-        renderCell: (row) => (
-          <div className="text-right px-3 py-1.5 text-xs font-mono text-green-400/70 border-r border-terminal-border/20">
-            {row.call?.bidSize ? formatNumber(row.call.bidSize) : "—"}
-          </div>
-        )
+        renderCell: (row) => {
+          const meta = getSizeCellMeta(row.call, "bid");
+          return (
+            <div className={cn("text-right px-3 py-1.5 text-xs font-mono text-green-400/70 border-r border-terminal-border/20", meta.className)} title={meta.title}>
+              {formatLiquiditySize(row.call?.bestBidSize)}
+            </div>
+          );
+        }
+      });
+      columns.push({
+        id: 'call-ask-size',
+        header: 'Ask Sz',
+        width: 70,
+        align: 'right',
+        visible: true,
+        renderCell: (row) => {
+          const meta = getSizeCellMeta(row.call, "ask");
+          return (
+            <div className={cn("text-right px-3 py-1.5 text-xs font-mono text-green-400/70 border-r border-terminal-border/20", meta.className)} title={meta.title}>
+              {formatLiquiditySize(row.call?.bestAskSize)}
+            </div>
+          );
+        }
       });
     }
 
@@ -1125,16 +1509,34 @@ const viewMode: OptionsViewMode = "PRO";
     // Put columns
     if (hasSize) {
       columns.push({
-        id: 'put-size',
-        header: 'Size',
-        width: 80,
+        id: 'put-bid-size',
+        header: 'Bid Sz',
+        width: 70,
         align: 'left',
         visible: true,
-        renderCell: (row) => (
-          <div className="text-left px-3 py-1.5 text-xs font-mono text-red-400/70 border-r border-terminal-border/20">
-            {row.put?.askSize ? formatNumber(row.put.askSize) : "—"}
-          </div>
-        )
+        renderCell: (row) => {
+          const meta = getSizeCellMeta(row.put, "bid");
+          return (
+            <div className={cn("text-left px-3 py-1.5 text-xs font-mono text-red-400/70 border-r border-terminal-border/20", meta.className)} title={meta.title}>
+              {formatLiquiditySize(row.put?.bestBidSize)}
+            </div>
+          );
+        }
+      });
+      columns.push({
+        id: 'put-ask-size',
+        header: 'Ask Sz',
+        width: 70,
+        align: 'left',
+        visible: true,
+        renderCell: (row) => {
+          const meta = getSizeCellMeta(row.put, "ask");
+          return (
+            <div className={cn("text-left px-3 py-1.5 text-xs font-mono text-red-400/70 border-r border-terminal-border/20", meta.className)} title={meta.title}>
+              {formatLiquiditySize(row.put?.bestAskSize)}
+            </div>
+          );
+        }
       });
     }
 
@@ -1380,10 +1782,89 @@ const viewMode: OptionsViewMode = "PRO";
     ];
   };
 
-  // Get current columns - fixed to PRO mode
-  const currentColumns = useMemo(() => {
-    return getProColumns();
+  const optionColumns = useMemo<OptionColumnDefinition[]>(() => {
+    return getProColumns().map((column) => {
+      const id = normalizeOptionColumnId(column.id);
+      return {
+        id,
+        label: column.header,
+        side: OPTION_COLUMN_SIDE_BY_ID[id] ?? "center",
+        defaultOrder: OPTION_COLUMN_DEFAULT_ORDER.get(id) ?? 10_000,
+        width: column.width,
+        align: column.align,
+        visible: column.visible,
+        render: column.renderCell,
+      };
+    });
   }, [columnVisibility]);
+
+  const orderedColumns = useMemo(
+    () => resolveOptionColumns(optionColumns, columnOrder),
+    [optionColumns, columnOrder]
+  );
+
+  const callColumns = useMemo(
+    () => orderedColumns.filter((column) => column.side === "call" && column.visible),
+    [orderedColumns]
+  );
+
+  const centerColumns = useMemo(
+    () => orderedColumns.filter((column) => column.side === "center" && column.visible),
+    [orderedColumns]
+  );
+
+  const putColumns = useMemo(
+    () => orderedColumns.filter((column) => column.side === "put" && column.visible),
+    [orderedColumns]
+  );
+
+  const currentColumns = useMemo(
+    () => [...callColumns, ...centerColumns, ...putColumns],
+    [callColumns, centerColumns, putColumns]
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      OPTIONS_COLUMNS_ORDER_STORAGE_KEY,
+      JSON.stringify(columnOrder)
+    );
+  }, [columnOrder]);
+
+  const moveColumnWithinSide = (columnId: string, direction: "up" | "down") => {
+    setColumnOrder((prev) => {
+      const resolved = resolveOptionColumns(optionColumns, prev);
+      const target = resolved.find((column) => column.id === columnId);
+      if (!target) return prev;
+
+      const sideColumns = resolved.filter((column) => column.side === target.side);
+      const currentIndex = sideColumns.findIndex((column) => column.id === columnId);
+      if (currentIndex === -1) return prev;
+
+      const nextIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+      if (nextIndex < 0 || nextIndex >= sideColumns.length) return prev;
+
+      const movedSideColumns = [...sideColumns];
+      const [moved] = movedSideColumns.splice(currentIndex, 1);
+      movedSideColumns.splice(nextIndex, 0, moved);
+
+      const sideOrder: OptionColumnSide[] = ["call", "center", "put"];
+      return sideOrder.flatMap((side) => {
+        if (side === target.side) return movedSideColumns.map((column) => column.id);
+        return resolved
+          .filter((column) => column.side === side)
+          .map((column) => column.id);
+      });
+    });
+  };
+
+  const resetColumnOrder = () => {
+    const defaultOrder = getDefaultColumnOrder(optionColumns);
+    setColumnOrder(defaultOrder);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(OPTIONS_COLUMNS_ORDER_STORAGE_KEY);
+    }
+  };
 
   // Calculate options intelligence based on derived rows
   const optionsIntel = useMemo((): OptionsIntel => {
@@ -1592,9 +2073,10 @@ const viewMode: OptionsViewMode = "PRO";
     }
     
     if (filter === "RANGE") {
-      if (!bookData?.underlyingPrice) return [];
+      const underlyingPrice = bookData?.underlyingPrice;
+      if (!underlyingPrice) return [];
       return derivedRows.filter(row => {
-        const distance = Math.abs(row.strike - bookData.underlyingPrice) / bookData.underlyingPrice;
+        const distance = Math.abs(row.strike - underlyingPrice) / underlyingPrice;
         return distance <= 0.15; // Within 15% of spot
       });
     }
@@ -1621,6 +2103,57 @@ const viewMode: OptionsViewMode = "PRO";
     }
     return null;
   }, [zoneContext, optionsIntel.transitionZone]);
+
+  const renderColumnCustomizeGroup = (title: string, columns: OptionColumnDefinition[]) => {
+    const groupColumns = columns.filter((column) => column.visible);
+    if (!groupColumns.length) return null;
+
+    return (
+      <div className="space-y-1">
+        <div className="text-[9px] font-bold uppercase tracking-wider text-terminal-muted">
+          {title}
+        </div>
+        <div className="space-y-1">
+          {groupColumns.map((column, index) => (
+            <div
+              key={column.id}
+              className="flex items-center justify-between gap-2 rounded border border-terminal-border/30 bg-terminal-bg/70 px-2 py-1"
+            >
+              <span className="min-w-0 truncate text-[11px] font-mono text-terminal-text">
+                {column.label}
+              </span>
+              <div className="flex shrink-0 gap-1">
+                <button
+                  type="button"
+                  disabled={index === 0}
+                  onClick={() => moveColumnWithinSide(column.id, "up")}
+                  className={cn(
+                    "h-5 w-5 border border-terminal-border/60 bg-terminal-panel text-[10px] leading-none text-terminal-muted transition-colors hover:border-terminal-accent hover:text-white",
+                    index === 0 && "cursor-not-allowed opacity-35 hover:border-terminal-border/60 hover:text-terminal-muted"
+                  )}
+                  aria-label={`Move ${column.label} up`}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  disabled={index === groupColumns.length - 1}
+                  onClick={() => moveColumnWithinSide(column.id, "down")}
+                  className={cn(
+                    "h-5 w-5 border border-terminal-border/60 bg-terminal-panel text-[10px] leading-none text-terminal-muted transition-colors hover:border-terminal-accent hover:text-white",
+                    index === groupColumns.length - 1 && "cursor-not-allowed opacity-35 hover:border-terminal-border/60 hover:text-terminal-muted"
+                  )}
+                  aria-label={`Move ${column.label} down`}
+                >
+                  ↓
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   // Auto-scroll to ATM when filter is ATM and data loads
   useEffect(() => {
@@ -1909,8 +2442,54 @@ const viewMode: OptionsViewMode = "PRO";
           </div>
         )}
 
+        <div className="relative ml-auto">
+          <button
+            type="button"
+            onClick={() => setIsColumnPanelOpen((open) => !open)}
+            className={cn(
+              "px-2 py-1 text-xs font-medium border transition-colors",
+              isColumnPanelOpen
+                ? "border-terminal-accent bg-terminal-accent/20 text-terminal-accent"
+                : "border-terminal-border bg-terminal-panel text-terminal-muted hover:text-white"
+            )}
+          >
+            Columns
+          </button>
+
+          {isColumnPanelOpen && (
+            <div className="absolute right-0 top-8 z-50 w-[280px] rounded border border-terminal-border bg-terminal-bg/95 p-3 shadow-xl shadow-black/40 backdrop-blur">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-white">
+                  Customize Columns
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsColumnPanelOpen(false)}
+                  className="border border-terminal-border/60 bg-terminal-panel px-2 py-0.5 text-[10px] text-terminal-muted transition-colors hover:border-terminal-accent hover:text-white"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="max-h-[58vh] space-y-3 overflow-y-auto pr-1">
+                {renderColumnCustomizeGroup("Calls", callColumns)}
+                {renderColumnCustomizeGroup("Center", centerColumns)}
+                {renderColumnCustomizeGroup("Puts", putColumns)}
+              </div>
+
+              <button
+                type="button"
+                onClick={resetColumnOrder}
+                className="mt-3 w-full border border-terminal-border/60 bg-terminal-panel px-2 py-1 text-[10px] font-medium text-terminal-muted transition-colors hover:border-terminal-accent hover:text-white"
+              >
+                Reset default
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Filter Buttons */}
-        <div className="flex gap-1 ml-auto">
+        <div className="flex gap-1">
           {(["ALL", "ATM", "RANGE", "MOVEMENT", "DIST"] as const).map(f => (
             <button
               key={f}
@@ -1955,7 +2534,7 @@ const viewMode: OptionsViewMode = "PRO";
                       )}
                       style={{ width: column.width }}
                     >
-                      {column.header}
+                      {column.label}
                     </th>
                   ))}
                 </tr>
@@ -1984,7 +2563,7 @@ const viewMode: OptionsViewMode = "PRO";
                           column.align === 'right' && "text-right"
                         )}
                       >
-                        {column.renderCell(row)}
+                        {column.render(row)}
                       </td>
                     ))}
                   </tr>

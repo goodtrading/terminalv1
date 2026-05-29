@@ -20,6 +20,13 @@ import { getPerpOrderBookHealth, initializePerpFullDepth } from "./services/orde
 import { getBookmapEngine, logBookmapMarketStateDiagnostics } from "./services/bookmapEngine";
 import { getOrderBookForMarket, parseBookmapMarket } from "./services/orderbookMarketRegistry";
 import { queryBboHistory } from "./services/bboHistoryRegistry";
+import {
+  DERIBIT_OPTIONS_WS_MAX_INSTRUMENTS,
+  DERIBIT_OPTIONS_WS_STALE_MS,
+  ensureDeribitOptionsTopOfBookStream,
+  getDeribitOptionsTopOfBook,
+  getDeribitOptionsTopOfBookSnapshot,
+} from "./services/deribitOptionsTopOfBookStream";
 import { getKrakenOrderBook } from "./kraken-gateway";
 import { liquidityVacuumEngine, VacuumEngineInput } from "./lib/liquidityVacuumEngine";
 import { VacuumValidationTests } from "./lib/vacuumValidationTests";
@@ -44,6 +51,52 @@ const SCENARIOS_CACHE_TTL_MS = 1500;
 const TERMINAL_STATE_CACHE_TTL_MS = 1500;
 
 const BINANCE_CONNECTIVITY_TIMEOUT_MS = 6_000;
+const OPTIONS_TOP_OF_BOOK_SSE_MIN_INTERVAL_MS = 100;
+const OPTIONS_TOP_OF_BOOK_SSE_MAX_INSTRUMENTS = DERIBIT_OPTIONS_WS_MAX_INSTRUMENTS;
+const OPTIONS_TOP_OF_BOOK_SSE_HEARTBEAT_MS = 15000;
+
+function parseInstrumentListParam(value: unknown): string[] {
+  const raw = Array.isArray(value) ? value.join(",") : typeof value === "string" ? value : "";
+  return raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((name) => name.startsWith("BTC-") || name.startsWith("ETH-"))
+    .slice(0, DERIBIT_OPTIONS_WS_MAX_INSTRUMENTS);
+}
+
+function buildTopOfBookPayload(instrumentNames: string[]) {
+  const serverNow = Date.now();
+  const snapshot = getDeribitOptionsTopOfBookSnapshot(instrumentNames, {
+    includeStale: false,
+  });
+  const items: Record<string, unknown> = {};
+
+  for (const instrumentName of Object.keys(snapshot)) {
+    const item = snapshot[instrumentName];
+    items[instrumentName] = {
+      instrumentName: item.instrumentName,
+      bestBidPrice: item.bestBidPrice,
+      bestAskPrice: item.bestAskPrice,
+      bestBidSize: item.bestBidSize,
+      bestAskSize: item.bestAskSize,
+      deribitReceivedAt: item.deribitReceivedAt,
+      cacheUpdatedAt: item.cacheUpdatedAt,
+      updatedAt: item.updatedAt,
+      ageMs: serverNow - item.updatedAt,
+      source: item.source,
+      bidSizeStats1s: item.bidSizeStats1s,
+      askSizeStats1s: item.askSizeStats1s,
+    };
+  }
+
+  return {
+    serverNow,
+    timestamp: serverNow,
+    staleMs: DERIBIT_OPTIONS_WS_STALE_MS,
+    items,
+  };
+}
 
 async function probeBinanceDepth(
   label: string,
@@ -978,7 +1031,7 @@ export async function registerRoutes(
       }
       
       // Filter and validate instrument names
-      const validInstruments = [...new Set(instrumentNames)] // Remove duplicates
+      const validInstruments = Array.from(new Set(instrumentNames)) // Remove duplicates
         .filter(name => typeof name === 'string' && name.length > 0)
         .filter(name => name.startsWith('BTC-') || name.startsWith('ETH-'))
         .slice(0, 60); // Safety limit
@@ -1032,7 +1085,21 @@ export async function registerRoutes(
       };
       
       // Helper function for defensive mapping
+      const toFiniteNumberOrNull = (...values: unknown[]): number | null => {
+        for (const value of values) {
+          if (value == null || value === "") continue;
+          const n = Number(value);
+          if (Number.isFinite(n)) return n;
+        }
+        return null;
+      };
+
       const mapTickerData = (ticker: any) => {
+        const bestBidPrice = toFiniteNumberOrNull(ticker.best_bid_price, ticker.bid_price);
+        const bestAskPrice = toFiniteNumberOrNull(ticker.best_ask_price, ticker.ask_price);
+        const bestBidSize = toFiniteNumberOrNull(ticker.best_bid_amount, ticker.bid_amount, ticker.bid_size);
+        const bestAskSize = toFiniteNumberOrNull(ticker.best_ask_amount, ticker.ask_amount, ticker.ask_size);
+
         return {
           instrumentName: ticker.instrument_name,
           delta: ticker.greeks?.delta ?? ticker.delta ?? null,
@@ -1042,8 +1109,14 @@ export async function registerRoutes(
           bidIv: ticker.bid_iv ?? null,
           askIv: ticker.ask_iv ?? null,
           markIv: ticker.mark_iv ?? null,
-          bidSize: ticker.best_bid_amount ?? ticker.bid_amount ?? ticker.bid_size ?? null,
-          askSize: ticker.best_ask_amount ?? ticker.ask_amount ?? ticker.ask_size ?? null,
+          bestBidPrice,
+          bestAskPrice,
+          bestBidSize,
+          bestAskSize,
+          bidPrice: bestBidPrice,
+          askPrice: bestAskPrice,
+          bidSize: bestBidSize,
+          askSize: bestAskSize,
           markPrice: ticker.mark_price ?? null,
           underlyingPrice: ticker.underlying_price ?? ticker.index_price ?? null
         };
@@ -1083,6 +1156,75 @@ export async function registerRoutes(
         errors: ["Internal server error"]
       });
     }
+  });
+
+  app.get("/api/options/deribit/top-of-book", (req: Request, res: Response) => {
+    const instrumentNames = parseInstrumentListParam(req.query.instruments);
+    if (instrumentNames.length > 0) {
+      ensureDeribitOptionsTopOfBookStream(instrumentNames);
+    }
+
+    res.json(buildTopOfBookPayload(instrumentNames));
+  });
+
+  app.get("/api/options/deribit/top-of-book/stream", (req: Request, res: Response) => {
+    const instrumentNames = parseInstrumentListParam(req.query.instruments).slice(
+      0,
+      OPTIONS_TOP_OF_BOOK_SSE_MAX_INSTRUMENTS
+    );
+
+    if (instrumentNames.length > 0) {
+      ensureDeribitOptionsTopOfBookStream(instrumentNames);
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    let closed = false;
+    let lastFingerprint = "";
+
+    const writeEvent = (event: string, data: unknown) => {
+      if (closed || res.destroyed) return;
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const writeSnapshot = (force = false) => {
+      const payload = buildTopOfBookPayload(instrumentNames);
+      const items = payload.items;
+      const fingerprint = Object.keys(items)
+        .sort()
+        .map((instrumentName) => {
+          const item = items[instrumentName] as { updatedAt?: number };
+          return `${instrumentName}:${item.updatedAt ?? 0}`;
+        })
+        .join("|");
+
+      if (!force && fingerprint === lastFingerprint) return;
+      lastFingerprint = fingerprint;
+      writeEvent("top_of_book", payload);
+    };
+
+    writeSnapshot(true);
+
+    const updateTimer = setInterval(
+      () => writeSnapshot(false),
+      OPTIONS_TOP_OF_BOOK_SSE_MIN_INTERVAL_MS
+    );
+    const heartbeatTimer = setInterval(() => {
+      if (!closed && !res.destroyed) {
+        res.write(`: heartbeat ${Date.now()}\n\n`);
+      }
+    }, OPTIONS_TOP_OF_BOOK_SSE_HEARTBEAT_MS);
+
+    req.on("close", () => {
+      closed = true;
+      clearInterval(updateTimer);
+      clearInterval(heartbeatTimer);
+    });
   });
 
   // --- Deribit Options Book Endpoint ---
@@ -1218,6 +1360,14 @@ export async function registerRoutes(
 
       // Parse instrument names and group by strike
       const strikeMap = new Map<number, { call?: any, put?: any }>();
+      const toFiniteNumberOrNull = (...values: unknown[]): number | null => {
+        for (const value of values) {
+          if (value == null || value === "") continue;
+          const n = Number(value);
+          if (Number.isFinite(n)) return n;
+        }
+        return null;
+      };
       
       instruments.forEach((instrument: any) => {
         const match = instrument.instrument_name.match(/^(BTC|ETH)-(\d{2}[A-Z]{3}\d{2})-(\d+)-([CP])$/);
@@ -1230,6 +1380,18 @@ export async function registerRoutes(
           }
           
           const summary = summaries.find((s: any) => s.instrument_name === instrument.instrument_name);
+          const bestBidPrice = toFiniteNumberOrNull(summary?.best_bid_price, summary?.bid_price);
+          const bestAskPrice = toFiniteNumberOrNull(summary?.best_ask_price, summary?.ask_price);
+          const bestBidSize = toFiniteNumberOrNull(
+            summary?.best_bid_amount,
+            summary?.bid_amount,
+            summary?.bid_size
+          );
+          const bestAskSize = toFiniteNumberOrNull(
+            summary?.best_ask_amount,
+            summary?.ask_amount,
+            summary?.ask_size
+          );
           
           // Filter by selected expiry
           if (selectedExpiry && instrumentExpiry !== selectedExpiry) {
@@ -1246,10 +1408,14 @@ export async function registerRoutes(
             delta: summary?.delta || null,
             bidIv: summary?.bid_iv || null,
             askIv: summary?.ask_iv || null,
-            bidPrice: summary?.bid_price || null,
-            askPrice: summary?.ask_price || null,
-            bidSize: summary?.bid_amount || null,
-            askSize: summary?.ask_amount || null,
+            bidPrice: bestBidPrice,
+            askPrice: bestAskPrice,
+            bidSize: bestBidSize,
+            askSize: bestAskSize,
+            bestBidPrice,
+            bestAskPrice,
+            bestBidSize,
+            bestAskSize,
             markPrice: summary?.mark_price || null,
             volume24h: summary?.volume_usd || null,
             priceChange24h: summary?.price_change_24h || null
@@ -1271,6 +1437,57 @@ export async function registerRoutes(
           put: data.put || null
         }))
         .sort((a, b) => a.strike - b.strike);
+
+      const prioritizedInstrumentNames = rows
+        .flatMap((row) => [
+          row.call ? { instrumentName: row.call.instrumentName, strike: row.strike } : null,
+          row.put ? { instrumentName: row.put.instrumentName, strike: row.strike } : null,
+        ])
+        .filter((item): item is { instrumentName: string; strike: number } => !!item?.instrumentName)
+        .sort((a, b) => {
+          const spot = Number(underlyingPrice);
+          if (!Number.isFinite(spot) || spot <= 0) return a.strike - b.strike;
+          return Math.abs(a.strike - spot) - Math.abs(b.strike - spot);
+        })
+        .map((item) => item.instrumentName)
+        .slice(0, DERIBIT_OPTIONS_WS_MAX_INSTRUMENTS);
+
+      ensureDeribitOptionsTopOfBookStream(prioritizedInstrumentNames);
+
+      for (const row of rows) {
+        for (const side of [row.call, row.put]) {
+          if (!side?.instrumentName) continue;
+          const wsLiquidity = getDeribitOptionsTopOfBook(side.instrumentName);
+          if (wsLiquidity) {
+            side.bestBidPrice = wsLiquidity.bestBidPrice;
+            side.bestAskPrice = wsLiquidity.bestAskPrice;
+            side.bestBidSize = wsLiquidity.bestBidSize;
+            side.bestAskSize = wsLiquidity.bestAskSize;
+            side.bidPrice = wsLiquidity.bestBidPrice;
+            side.askPrice = wsLiquidity.bestAskPrice;
+            side.bidSize = wsLiquidity.bestBidSize;
+            side.askSize = wsLiquidity.bestAskSize;
+            side.deribitReceivedAt = wsLiquidity.deribitReceivedAt;
+            side.cacheUpdatedAt = wsLiquidity.cacheUpdatedAt;
+            side.liquidityUpdatedAt = wsLiquidity.updatedAt;
+            side.liquiditySource = "ws";
+            side.bidSizeStats1s = wsLiquidity.bidSizeStats1s;
+            side.askSizeStats1s = wsLiquidity.askSizeStats1s;
+          } else {
+            const hasRestLiquidity =
+              side.bestBidPrice != null ||
+              side.bestAskPrice != null ||
+              side.bestBidSize != null ||
+              side.bestAskSize != null;
+            side.liquidityUpdatedAt = hasRestLiquidity ? Date.now() : null;
+            side.liquiditySource = hasRestLiquidity ? "rest" : "missing";
+            side.deribitReceivedAt = null;
+            side.cacheUpdatedAt = null;
+            side.bidSizeStats1s = undefined;
+            side.askSizeStats1s = undefined;
+          }
+        }
+      }
 
       console.log("[DERIBIT_OPTIONS_DEBUG] rows count", rows.length);
       console.log("[DERIBIT_OPTIONS_DEBUG] sample rows", rows.slice(0, 3).map(row => ({
