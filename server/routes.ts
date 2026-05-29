@@ -43,6 +43,61 @@ const VACUUM_CACHE_TTL_MS = 1500;
 const SCENARIOS_CACHE_TTL_MS = 1500;
 const TERMINAL_STATE_CACHE_TTL_MS = 1500;
 
+const BINANCE_CONNECTIVITY_TIMEOUT_MS = 6_000;
+
+async function probeBinanceDepth(
+  label: string,
+  url: string,
+): Promise<{
+  label: string;
+  url: string;
+  ok: boolean;
+  statusCode: number | null;
+  bidCount: number;
+  askCount: number;
+  error: string | null;
+}> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BINANCE_CONNECTIVITY_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    const statusCode = res.status;
+    if (!res.ok) {
+      return {
+        label,
+        url,
+        ok: false,
+        statusCode,
+        bidCount: 0,
+        askCount: 0,
+        error: `HTTP ${statusCode}`,
+      };
+    }
+    const data = await res.json();
+    return {
+      label,
+      url,
+      ok: true,
+      statusCode,
+      bidCount: Array.isArray(data?.bids) ? data.bids.length : 0,
+      askCount: Array.isArray(data?.asks) ? data.asks.length : 0,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      label,
+      url,
+      ok: false,
+      statusCode: null,
+      bidCount: 0,
+      askCount: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // Initialize full depth on server start (spot = legacy default; perp = futures leg)
 initializeFullDepth().catch(console.error);
 initializePerpFullDepth().catch(console.error);
@@ -69,6 +124,34 @@ export async function registerRoutes(
 ): Promise<Server> {
   const { registerDebugDbRoutes } = await import("./routes/debugDbRoutes");
   registerDebugDbRoutes(app);
+
+  app.get("/api/debug/binance-connectivity", async (_req: Request, res: Response) => {
+    const spotHosts = [
+      "https://api1.binance.com",
+      "https://api2.binance.com",
+      "https://api3.binance.com",
+      "https://api.binance.com",
+    ];
+    const spot = await Promise.all(
+      spotHosts.map((host) =>
+        probeBinanceDepth(
+          host.replace("https://", ""),
+          `${host}/api/v3/depth?symbol=BTCUSDT&limit=5`,
+        ),
+      ),
+    );
+    const futures = await probeBinanceDepth(
+      "fapi.binance.com",
+      "https://fapi.binance.com/fapi/v1/depth?symbol=BTCUSDT&limit=5",
+    );
+
+    res.json({
+      timestamp: Date.now(),
+      timeoutMs: BINANCE_CONNECTIVITY_TIMEOUT_MS,
+      spot,
+      futures,
+    });
+  });
 
   // --- Raw Order Book Endpoint (unified shape: exchange, bids, asks, timestamp) ---
   app.get("/api/orderbook/raw", async (req: Request, res: Response) => {
