@@ -1229,6 +1229,8 @@ export async function registerRoutes(
 
   // --- Deribit Options Book Endpoint ---
   app.get("/api/options/deribit/book", async (req, res) => {
+    console.log("BOOK_ENDPOINT_VERSION_V4");
+    console.log("SERVER_TIME", new Date().toISOString());
     console.log("[DERIBIT_OPTIONS_BOOK_FETCH] Request received");
     try {
       const currency = (req.query.currency as string)?.toUpperCase() || "BTC";
@@ -1292,8 +1294,10 @@ export async function registerRoutes(
         if (!input) return null;
         
         // If already in Deribit format (DDMMMYY), return as-is
-        if (/^\d{2}[A-Z]{3}\d{2}$/.test(input)) {
-          return input;
+        const deribitMatch = input.toUpperCase().match(/^(\d{1,2})([A-Z]{3})(\d{2})$/);
+        if (deribitMatch) {
+          const [, day, month, year] = deribitMatch;
+          return `${day.padStart(2, "0")}${month}${year}`;
         }
         
         // Convert YYYYMMDD format (20260428 -> 28APR26)
@@ -1310,6 +1314,13 @@ export async function registerRoutes(
         }
         
         return null;
+      };
+
+      const expiryCompareKey = (input: string | null | undefined): string | null => {
+        const normalized = normalizeExpiry(input);
+        if (!normalized) return null;
+        const match = normalized.match(/^0?(\d{1,2})([A-Z]{3})(\d{2})$/);
+        return match ? `${Number(match[1])}${match[2]}${match[3]}` : normalized;
       };
 
       // Extract unique expiries from instruments in Deribit canonical format
@@ -1355,6 +1366,7 @@ export async function registerRoutes(
       if (!selectedExpiry && expiries.length > 0) {
         selectedExpiry = expiries[0];
       }
+      const selectedExpiryKey = expiryCompareKey(selectedExpiry);
       
       console.log("[DERIBIT_OPTIONS_DEBUG] selected expiry", selectedExpiry);
 
@@ -1370,10 +1382,17 @@ export async function registerRoutes(
       };
       
       instruments.forEach((instrument: any) => {
-        const match = instrument.instrument_name.match(/^(BTC|ETH)-(\d{2}[A-Z]{3}\d{2})-(\d+)-([CP])$/);
+        const match = instrument.instrument_name.match(/^(BTC|ETH)-(\d{1,2}[A-Z]{3}\d{2})-(\d+)-([CP])$/);
         if (match) {
           const [, , instrumentExpiry, strikeStr, optionType] = match;
+          const instrumentExpiryKey = expiryCompareKey(instrumentExpiry);
           const strike = parseInt(strikeStr);
+
+          // Filter by selected expiry before creating strike rows; otherwise
+          // strikes from other expiries become empty rows for the selected book.
+          if (selectedExpiryKey && instrumentExpiryKey !== selectedExpiryKey) {
+            return;
+          }
           
           if (!strikeMap.has(strike)) {
             strikeMap.set(strike, {});
@@ -1392,18 +1411,12 @@ export async function registerRoutes(
             summary?.ask_amount,
             summary?.ask_size
           );
-          
-          // Filter by selected expiry
-          if (selectedExpiry && instrumentExpiry !== selectedExpiry) {
-            return;
-          }
-          
           const optionData = {
             instrumentName: instrument.instrument_name,
             expiry: instrumentExpiry,
             strike: strikeStr,
             type: optionType,
-            matchesSelectedExpiry: instrumentExpiry === selectedExpiry,
+            matchesSelectedExpiry: instrumentExpiryKey === selectedExpiryKey,
             openInterest: summary?.open_interest || null,
             delta: summary?.delta || null,
             bidIv: summary?.bid_iv || null,
@@ -1427,6 +1440,25 @@ export async function registerRoutes(
             strikeMap.get(strike)!.put = optionData;
           }
         }
+      });
+
+      console.log("EXPIRY_TRACE", {
+        requestExpiry: expiry ?? null,
+        normalizedRequestedExpiry,
+        selectedExpiry,
+        selectedExpiryKey,
+        sampleInstrumentExpiries: instruments
+          .slice(0, 20)
+          .map((instrument: any) => {
+            const match = instrument.instrument_name?.match(/^(BTC|ETH)-(\d{1,2}[A-Z]{3}\d{2})-(\d+)-([CP])$/);
+            return match ? {
+              instrumentName: instrument.instrument_name,
+              instrumentExpiry: match[2],
+              instrumentExpiryKey: expiryCompareKey(match[2]),
+              matchesSelectedExpiry: expiryCompareKey(match[2]) === selectedExpiryKey,
+            } : null;
+          })
+          .filter(Boolean),
       });
 
       // Convert to sorted array
@@ -1489,7 +1521,59 @@ export async function registerRoutes(
         }
       }
 
+      console.log("BOOK_ROWS_TOTAL", rows.length);
+      console.log("ROWS_WITH_CALL_DATA", rows.filter(r => r.call).length);
+      console.log("ROWS_WITH_PUT_DATA", rows.filter(r => r.put).length);
       console.log("[DERIBIT_OPTIONS_DEBUG] rows count", rows.length);
+      const atmDebugRow = rows.length && underlyingPrice
+        ? rows.reduce((closest, row) => {
+            return Math.abs(row.strike - underlyingPrice!) < Math.abs(closest.strike - underlyingPrice!)
+              ? row
+              : closest;
+          }, rows[0])
+        : rows[0] ?? null;
+      console.log("ATM_ROW_BACKEND", JSON.stringify(atmDebugRow ? {
+        strike: atmDebugRow.strike,
+        call: atmDebugRow.call ? {
+          openInterest: atmDebugRow.call.openInterest,
+          bidPrice: atmDebugRow.call.bidPrice,
+          askPrice: atmDebugRow.call.askPrice,
+          bestBidPrice: atmDebugRow.call.bestBidPrice,
+          bestAskPrice: atmDebugRow.call.bestAskPrice,
+          bestBidSize: atmDebugRow.call.bestBidSize,
+          bestAskSize: atmDebugRow.call.bestAskSize,
+        } : null,
+        put: atmDebugRow.put ? {
+          openInterest: atmDebugRow.put.openInterest,
+          bidPrice: atmDebugRow.put.bidPrice,
+          askPrice: atmDebugRow.put.askPrice,
+          bestBidPrice: atmDebugRow.put.bestBidPrice,
+          bestAskPrice: atmDebugRow.put.bestAskPrice,
+          bestBidSize: atmDebugRow.put.bestBidSize,
+          bestAskSize: atmDebugRow.put.bestAskSize,
+        } : null,
+      } : null, null, 2));
+      console.log("[DERIBIT_OPTIONS_DEBUG] atm row shape", atmDebugRow ? {
+        strike: atmDebugRow.strike,
+        call: atmDebugRow.call ? {
+          bidPrice: atmDebugRow.call.bidPrice,
+          askPrice: atmDebugRow.call.askPrice,
+          openInterest: atmDebugRow.call.openInterest,
+          bestBidSize: atmDebugRow.call.bestBidSize,
+          bidSize: atmDebugRow.call.bidSize,
+          bestAskSize: atmDebugRow.call.bestAskSize,
+          askSize: atmDebugRow.call.askSize,
+        } : null,
+        put: atmDebugRow.put ? {
+          bidPrice: atmDebugRow.put.bidPrice,
+          askPrice: atmDebugRow.put.askPrice,
+          openInterest: atmDebugRow.put.openInterest,
+          bestBidSize: atmDebugRow.put.bestBidSize,
+          bidSize: atmDebugRow.put.bidSize,
+          bestAskSize: atmDebugRow.put.bestAskSize,
+          askSize: atmDebugRow.put.askSize,
+        } : null,
+      } : null);
       console.log("[DERIBIT_OPTIONS_DEBUG] sample rows", rows.slice(0, 3).map(row => ({
         strike: row.strike,
         hasCall: !!row.call,
@@ -1501,6 +1585,7 @@ export async function registerRoutes(
       console.log("[OPTIONS_UNDERLYING_DEBUG] final underlyingPrice:", underlyingPrice);
 
       const response = {
+        debugVersion: "BOOK_V4",
         currency: currency as "BTC" | "ETH",
         underlyingPrice,
         selectedExpiry: selectedExpiry || null,

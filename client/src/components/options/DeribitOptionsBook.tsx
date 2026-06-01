@@ -275,6 +275,13 @@ const DEFAULT_OPTION_COLUMN_ORDER = [
   "put_oi",
 ];
 
+const REQUIRED_DEFAULT_OPTION_COLUMN_IDS = [
+  "call_bid_size",
+  "call_ask_size",
+  "put_bid_size",
+  "put_ask_size",
+];
+
 const OPTION_COLUMN_DEFAULT_ORDER = new Map(
   DEFAULT_OPTION_COLUMN_ORDER.map((id, index) => [id, (index + 1) * 10])
 );
@@ -356,6 +363,25 @@ function resolveOptionColumns(
   return [...ordered, ...missing];
 }
 
+function mergeRequiredDefaultColumnIds(order: string[]): string[] {
+  const normalizedOrder = order.map(normalizeOptionColumnId);
+  const merged = [...normalizedOrder];
+  for (const id of REQUIRED_DEFAULT_OPTION_COLUMN_IDS) {
+    if (!merged.includes(id)) {
+      const defaultIndex = DEFAULT_OPTION_COLUMN_ORDER.indexOf(id);
+      const insertBefore = DEFAULT_OPTION_COLUMN_ORDER
+        .slice(defaultIndex + 1)
+        .find((nextId) => merged.includes(nextId));
+      if (insertBefore) {
+        merged.splice(merged.indexOf(insertBefore), 0, id);
+      } else {
+        merged.push(id);
+      }
+    }
+  }
+  return merged;
+}
+
 
 export default function DeribitOptionsBook() {
   const [currency, setCurrency] = useState<"BTC" | "ETH">("BTC");
@@ -372,7 +398,7 @@ export default function DeribitOptionsBook() {
       window.localStorage.getItem(OPTIONS_COLUMNS_ORDER_STORAGE_KEY)
     );
 
-    if (saved) return saved.map(normalizeOptionColumnId);
+    if (saved) return mergeRequiredDefaultColumnIds(saved);
 
     return DEFAULT_OPTION_COLUMN_ORDER;
   });
@@ -399,6 +425,19 @@ const viewMode: OptionsViewMode = "PRO";
     staleTime: CACHE_TTL_MS,
     retry: false,
   });
+
+  useEffect(() => {
+    console.log("FIRST_ROW_FROM_API", bookData?.rows?.[0]);
+    const apiAtmRow = bookData?.rows?.length && bookData?.underlyingPrice
+      ? bookData.rows.reduce((closest, row) => {
+          return Math.abs(row.strike - bookData.underlyingPrice!) <
+            Math.abs(closest.strike - bookData.underlyingPrice!)
+            ? row
+            : closest;
+        }, bookData.rows[0])
+      : bookData?.rows?.[0];
+    console.log("ATM_ROW_FRONTEND", apiAtmRow);
+  }, [bookData]);
 
   // Get visible instrument names for enrichment (will be added after derivedRows is defined)
 
@@ -536,7 +575,7 @@ const viewMode: OptionsViewMode = "PRO";
   const getLiquidityFreshness = (side: OptionSideViewModel | null | undefined) => {
     if (!side?.liquidityUpdatedAt || side.liquiditySource === "missing") {
       return {
-        className: "text-terminal-muted/45",
+        className: "option-liq-cell--missing text-terminal-muted/45 opacity-60",
         title: "Liquidity: missing",
       };
     }
@@ -545,12 +584,12 @@ const viewMode: OptionsViewMode = "PRO";
     const ageSec = Math.max(0, ageMs / 1000);
     const label = `Liquidity: ${side.liquiditySource} · ${ageSec.toFixed(1)}s old`;
     if (ageMs < 2000) {
-      return { className: "text-emerald-300", title: label };
+      return { className: "option-liq-cell--fresh opacity-100", title: label };
     }
     if (ageMs <= 5000) {
-      return { className: "", title: label };
+      return { className: "option-liq-cell--fresh opacity-100", title: label };
     }
-    return { className: "text-amber-300/70", title: label };
+    return { className: "option-liq-cell--stale text-terminal-muted/60 opacity-70", title: label };
   };
 
   const formatLiquidityStat = (value: number | null | undefined, decimals = 1): string => {
@@ -591,20 +630,21 @@ const viewMode: OptionsViewMode = "PRO";
     const title = [
       label,
       `Current: ${formatLiquidityStat(stats.current)}`,
-      `1s range: ${formatLiquidityStat(stats.min)} -> ${formatLiquidityStat(stats.max)}`,
-      `1s Delta: ${formatLiquidityStat(stats.delta)}`,
+      `1s max: ${formatLiquidityStat(stats.max)}`,
+      `1s min: ${formatLiquidityStat(stats.min)}`,
+      `1s Δ: ${formatLiquidityStat(stats.delta)}`,
       `1s spike: ${spikeAbsLabel}`,
       `Samples: ${stats.samples}`,
       `Source: ${side?.liquiditySource ?? "missing"}`,
       `Age: ${ageMs == null ? "n/a" : `${ageMs}ms`}`,
       side?.deribitReceivedAt ? `Deribit received: ${Math.max(0, Date.now() - side.deribitReceivedAt)}ms ago` : null,
       side?.cacheUpdatedAt ? `Cache updated: ${Math.max(0, Date.now() - side.cacheUpdatedAt)}ms ago` : null,
-    ].join("\n");
+    ].filter(Boolean).join("\n");
 
     return {
       className: cn(
         freshness.className,
-        stats.spike && "bg-amber-400/10 text-amber-200 ring-1 ring-inset ring-amber-400/30"
+        stats.spike && "option-liq-cell--spike bg-amber-400/[0.06] ring-1 ring-inset ring-amber-300/35"
       ),
       title,
     };
@@ -1339,7 +1379,6 @@ const viewMode: OptionsViewMode = "PRO";
   const getProColumns = (): ColumnDef[] => {
     const hasDelta = columnVisibility.hasDelta;
     const hasIv = columnVisibility.hasIv;
-    const hasSize = columnVisibility.hasSize;
 
     const columns: ColumnDef[] = [
       {
@@ -1436,38 +1475,36 @@ const viewMode: OptionsViewMode = "PRO";
       });
     }
 
-    if (hasSize) {
-      columns.push({
-        id: 'call-bid-size',
-        header: 'Bid Sz',
-        width: 70,
-        align: 'right',
-        visible: true,
-        renderCell: (row) => {
-          const meta = getSizeCellMeta(row.call, "bid");
-          return (
-            <div className={cn("text-right px-3 py-1.5 text-xs font-mono text-green-400/70 border-r border-terminal-border/20", meta.className)} title={meta.title}>
-              {formatLiquiditySize(row.call?.bestBidSize)}
-            </div>
-          );
-        }
-      });
-      columns.push({
-        id: 'call-ask-size',
-        header: 'Ask Sz',
-        width: 70,
-        align: 'right',
-        visible: true,
-        renderCell: (row) => {
-          const meta = getSizeCellMeta(row.call, "ask");
-          return (
-            <div className={cn("text-right px-3 py-1.5 text-xs font-mono text-green-400/70 border-r border-terminal-border/20", meta.className)} title={meta.title}>
-              {formatLiquiditySize(row.call?.bestAskSize)}
-            </div>
-          );
-        }
-      });
-    }
+    columns.push({
+      id: 'call-bid-size',
+      header: 'Bid Sz',
+      width: 70,
+      align: 'right',
+      visible: true,
+      renderCell: (row) => {
+        const meta = getSizeCellMeta(row.call, "bid");
+        return (
+          <div className={cn("option-liq-cell option-liq-cell--call text-right px-3 py-1.5 text-xs font-mono text-green-300/75 border-r border-terminal-border/20 transition-colors duration-150", meta.className)} title={meta.title}>
+            {formatLiquiditySize(row.call?.bestBidSize)}
+          </div>
+        );
+      }
+    });
+    columns.push({
+      id: 'call-ask-size',
+      header: 'Ask Sz',
+      width: 70,
+      align: 'right',
+      visible: true,
+      renderCell: (row) => {
+        const meta = getSizeCellMeta(row.call, "ask");
+        return (
+          <div className={cn("option-liq-cell option-liq-cell--call text-right px-3 py-1.5 text-xs font-mono text-green-300/75 border-r border-terminal-border/20 transition-colors duration-150", meta.className)} title={meta.title}>
+            {formatLiquiditySize(row.call?.bestAskSize)}
+          </div>
+        );
+      }
+    });
 
     // Strike column
     columns.push({
@@ -1507,38 +1544,36 @@ const viewMode: OptionsViewMode = "PRO";
     });
 
     // Put columns
-    if (hasSize) {
-      columns.push({
-        id: 'put-bid-size',
-        header: 'Bid Sz',
-        width: 70,
-        align: 'left',
-        visible: true,
-        renderCell: (row) => {
-          const meta = getSizeCellMeta(row.put, "bid");
-          return (
-            <div className={cn("text-left px-3 py-1.5 text-xs font-mono text-red-400/70 border-r border-terminal-border/20", meta.className)} title={meta.title}>
-              {formatLiquiditySize(row.put?.bestBidSize)}
-            </div>
-          );
-        }
-      });
-      columns.push({
-        id: 'put-ask-size',
-        header: 'Ask Sz',
-        width: 70,
-        align: 'left',
-        visible: true,
-        renderCell: (row) => {
-          const meta = getSizeCellMeta(row.put, "ask");
-          return (
-            <div className={cn("text-left px-3 py-1.5 text-xs font-mono text-red-400/70 border-r border-terminal-border/20", meta.className)} title={meta.title}>
-              {formatLiquiditySize(row.put?.bestAskSize)}
-            </div>
-          );
-        }
-      });
-    }
+    columns.push({
+      id: 'put-bid-size',
+      header: 'Bid Sz',
+      width: 70,
+      align: 'left',
+      visible: true,
+      renderCell: (row) => {
+        const meta = getSizeCellMeta(row.put, "bid");
+        return (
+          <div className={cn("option-liq-cell option-liq-cell--put text-left px-3 py-1.5 text-xs font-mono text-red-300/75 border-r border-terminal-border/20 transition-colors duration-150", meta.className)} title={meta.title}>
+            {formatLiquiditySize(row.put?.bestBidSize)}
+          </div>
+        );
+      }
+    });
+    columns.push({
+      id: 'put-ask-size',
+      header: 'Ask Sz',
+      width: 70,
+      align: 'left',
+      visible: true,
+      renderCell: (row) => {
+        const meta = getSizeCellMeta(row.put, "ask");
+        return (
+          <div className={cn("option-liq-cell option-liq-cell--put text-left px-3 py-1.5 text-xs font-mono text-red-300/75 border-r border-terminal-border/20 transition-colors duration-150", meta.className)} title={meta.title}>
+            {formatLiquiditySize(row.put?.bestAskSize)}
+          </div>
+        );
+      }
+    });
 
     if (hasIv) {
       columns.push({
@@ -1824,6 +1859,11 @@ const viewMode: OptionsViewMode = "PRO";
   );
 
   useEffect(() => {
+    console.log("allColumns", optionColumns);
+    console.log("visibleColumns", currentColumns);
+  }, [optionColumns, currentColumns]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(
       OPTIONS_COLUMNS_ORDER_STORAGE_KEY,
@@ -2051,25 +2091,9 @@ const viewMode: OptionsViewMode = "PRO";
       
       const subset = derivedRows.slice(startIndex, endIndex);
       
-      // Filter out completely empty rows in ATM mode (no call or put data)
-      return subset.filter(row => {
-        const hasCallData = row.call && (
-          row.call.openInterest || 
-          row.call.bidPrice || 
-          row.call.askPrice ||
-          row.call.bidSize ||
-          row.call.askSize
-        );
-        const hasPutData = row.put && (
-          row.put.openInterest || 
-          row.put.bidPrice || 
-          row.put.askPrice ||
-          row.put.bidSize ||
-          row.put.askSize
-        );
-        // Always include ATM row even if empty, and rows with any data
-        return row.strike === atmStrike || hasCallData || hasPutData;
-      });
+      // Keep empty strikes in ATM mode: they provide useful visual context and
+      // make navigation around the ATM strike stable even when call/put data is missing.
+      return subset;
     }
     
     if (filter === "RANGE") {
@@ -2089,6 +2113,13 @@ const viewMode: OptionsViewMode = "PRO";
     const visibleStrikes = new Set(filteredRows.map((r) => r.strike));
     return viewRows.filter((r) => visibleStrikes.has(r.strike));
   }, [viewRows, filteredRows]);
+
+  useEffect(() => {
+    console.log(
+      "VISIBLE_ROW_SAMPLE",
+      visibleViewRows.find((r) => r.call || r.put)
+    );
+  }, [visibleViewRows]);
 
   const transitionZoneSummary = useMemo(() => {
     if (zoneContext.transitionStrikes.length >= 2) {
