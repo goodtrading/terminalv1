@@ -5,6 +5,7 @@ import {
 import type { VerticalCompressionMode } from "@/lib/bookmapDepthRange";
 import type { BookmapVisualSettings } from "@/components/terminal/bookmap/bookmapSettings";
 import { computeTradeDotRadius } from "@/components/terminal/bookmap/bookmapSettings";
+import type { BookmapMarketSource } from "@shared/bookmapMarket";
 import type { BookmapTrade } from "./bookmapTradeTypes";
 import { HEATMAP_PAD } from "./bookmapHeatmapRenderer";
 
@@ -59,6 +60,7 @@ export type PrepareEngineTradeDotsParams = {
   verticalMode: VerticalCompressionMode;
   heatmapBucketSize: number;
   domBucketSize: number;
+  market?: BookmapMarketSource;
   maxDots?: number;
   visual?: TradeDotVisualContext;
 };
@@ -282,14 +284,22 @@ function computeDotRenderStats(
 export function prepareEngineTradeDots(
   params: PrepareEngineTradeDotsParams,
 ): PreparedEngineTradeDots {
-  const maxDots = params.maxDots ?? ENGINE_TRADE_DOT_MAX;
+  const maxDots = params.maxDots ?? (params.market === "perp" ? 1_800 : ENGINE_TRADE_DOT_MAX);
   const isMicro = params.verticalMode === "micro";
-  const { timeClusterMs: baseTimeMs, priceCluster: basePriceCluster } =
+  const { timeClusterMs, priceCluster: rawPriceCluster } =
     tradeDotClusterParams(
       params.verticalMode,
       params.heatmapBucketSize,
       params.domBucketSize,
     );
+  const baseTimeMs =
+    params.market === "perp" && !isMicro
+      ? Math.max(250, Math.round(timeClusterMs * 0.45))
+      : timeClusterMs;
+  const basePriceCluster =
+    params.market === "perp" && !isMicro
+      ? Math.max(1, Math.round(rawPriceCluster * 0.65))
+      : rawPriceCluster;
 
   const tradeCfg = params.visual?.settings.trades;
   const minBtc = tradeCfg?.hideSmallTrades
@@ -362,7 +372,7 @@ export function prepareEngineTradeDots(
 
 type TierOpacity = { fill: number; halo: number };
 
-const TIER_OPACITY: Record<SizeTier, TierOpacity> = {
+const TIER_OPACITY: Record<TradeDotSizeTier, TierOpacity> = {
   small: { fill: 0.7, halo: 0.08 },
   medium: { fill: 0.8, halo: 0.12 },
   large: { fill: 0.9, halo: 0.18 },

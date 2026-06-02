@@ -52,7 +52,14 @@ export interface BingXNormalizedOrder {
   symbol: string;
   side: "buy" | "sell" | "unknown";
   type: "market" | "limit" | "stop" | "take_profit" | "unknown";
-  status: "open" | "partially_filled" | "unknown";
+  status:
+    | "open"
+    | "partially_filled"
+    | "filled"
+    | "cancelled"
+    | "expired"
+    | "rejected"
+    | "unknown";
   price?: number;
   triggerPrice?: number;
   stopPrice?: number;
@@ -165,6 +172,38 @@ function normalizeOrderType(raw: string): BingXNormalizedOrder["type"] {
   if (s.includes("stop") && !s.includes("profit")) return "stop";
   if (s.includes("profit") || s.includes("tp")) return "take_profit";
   return "unknown";
+}
+
+function normalizeOrderStatus(raw: string): BingXNormalizedOrder["status"] {
+  const s = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!s) return "open";
+
+  if (s.startsWith("partial") || s.startsWith("partially")) {
+    return "partially_filled";
+  }
+
+  if (
+    s === "new" ||
+    s === "open" ||
+    s === "working" ||
+    s === "active" ||
+    s === "pending" ||
+    s === "accepted" ||
+    s === "submitted"
+  ) {
+    return "open";
+  }
+
+  if (s === "filled") return "filled";
+  if (s === "canceled" || s === "cancelled") return "cancelled";
+  if (s === "expired") return "expired";
+  if (s === "rejected") return "rejected";
+
+  return "unknown";
+}
+
+function logBingXLimitDiagnostic(payload: Record<string, unknown>): void {
+  console.debug("[BINGX_LIMIT_DIAG][readonly]", payload);
 }
 
 export function mapBingXErrorToSafe(err: unknown): {
@@ -285,6 +324,20 @@ function mapPositions(
 function mapOrders(
   rows: Awaited<ReturnType<typeof getOpenOrders>>,
 ): BingXNormalizedOrder[] {
+  logBingXLimitDiagnostic({
+    stage: "map_orders_input",
+    count: rows.length,
+    orders: rows.map((o) => ({
+      orderId: o.orderId,
+      symbol: o.symbol,
+      type: o.type,
+      status: o.status,
+      price: o.price ?? null,
+      triggerPrice: o.triggerPrice ?? null,
+      stopPrice: o.stopPrice ?? null,
+    })),
+  });
+
   return rows.map((o) => {
     const type = normalizeOrderType(o.type);
     const trigger = o.triggerPrice ?? o.stopPrice;
@@ -297,19 +350,12 @@ function mapOrders(
     const effectivePrice = isConditional
       ? trigger ?? limitPrice
       : limitPrice ?? trigger;
-    return {
+    const mapped = {
       id: o.orderId,
       symbol: o.symbol,
       side: normalizeOrderSide(o.side),
       type,
-      status:
-        o.status.toLowerCase().includes("partial")
-          ? "partially_filled"
-          : o.status.toLowerCase().includes("open") ||
-              o.status.toLowerCase().includes("new") ||
-              o.status === ""
-            ? "open"
-            : "unknown",
+      status: normalizeOrderStatus(o.status),
       price: effectivePrice,
       triggerPrice: trigger,
       stopPrice: o.stopPrice,
@@ -317,6 +363,20 @@ function mapOrders(
       reduceOnly: o.reduceOnly,
       createdTime: undefined,
     };
+    logBingXLimitDiagnostic({
+      stage: "map_orders_output_row",
+      id: mapped.id,
+      symbol: mapped.symbol,
+      rawType: o.type,
+      type: mapped.type,
+      rawStatus: o.status,
+      status: mapped.status,
+      rawPrice: o.price ?? null,
+      price: mapped.price ?? null,
+      triggerPrice: mapped.triggerPrice ?? null,
+      isConditional,
+    });
+    return mapped;
   });
 }
 
@@ -530,6 +590,19 @@ async function syncSnapshotCore(
 
   try {
     openOrders = mapOrders(await getOpenOrders(credentials, sym));
+    logBingXLimitDiagnostic({
+      stage: "snapshot_open_orders",
+      symbol: sym ?? null,
+      count: openOrders.length,
+      orders: openOrders.map((o) => ({
+        id: o.id,
+        symbol: o.symbol,
+        type: o.type,
+        status: o.status,
+        price: o.price ?? null,
+        triggerPrice: o.triggerPrice ?? null,
+      })),
+    });
   } catch {
     connectionHealth = "degraded";
     warnings.push("Open orders could not be loaded.");

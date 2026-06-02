@@ -91,13 +91,16 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
 
   const primaryHeatmapState = useMemo((): BookmapState | null => {
     if (sourceMode === "perp") return effectivePerp;
+    if (sourceMode === "both") {
+      return activeDomMarket === "perp" ? effectivePerp : effectiveSpot;
+    }
     return effectiveSpot;
-  }, [sourceMode, effectiveSpot, effectivePerp]);
+  }, [sourceMode, activeDomMarket, effectiveSpot, effectivePerp]);
 
   const overlayHeatmapState = useMemo((): BookmapState | null => {
     if (sourceMode !== "both") return null;
-    return effectivePerp;
-  }, [sourceMode, effectivePerp]);
+    return activeDomMarket === "perp" ? effectiveSpot : effectivePerp;
+  }, [sourceMode, activeDomMarket, effectiveSpot, effectivePerp]);
 
   const effectiveDomState = useMemo((): BookmapState | null => {
     return activeDomMarket === "perp" ? effectivePerp : effectiveSpot;
@@ -128,7 +131,7 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
 
   const hasRenderableHeatmap = Boolean(
     sourceMode === "both"
-      ? effectiveSpot && effectiveSpot.heatmapCells.length > 0
+      ? primaryHeatmapState && primaryHeatmapState.heatmapCells.length > 0
       : primaryHeatmapState && primaryHeatmapState.heatmapCells.length > 0,
   );
 

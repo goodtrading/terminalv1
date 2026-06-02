@@ -286,12 +286,20 @@ export function LiquidityHeatmapPanel({
   }, [effectiveBboMarket, effectivePerp, effectiveSpot]);
 
   const bboDomSnapshot = useMemo(() => {
+    const legacyBbo = orderbookFeedMarket === effectiveBboMarket
+      ? extractBboFromDomSnapshot(latestLegacy)
+      : null;
+
     if (useEngineRenderer && bboDomState) {
-      return bookLevelsToDomSnapshot(
+      const engineSnapshot = bookLevelsToDomSnapshot(
         bboDomState.bids,
         bboDomState.asks,
         bboDomState.timestamp,
       );
+      const engineBbo = extractBboFromDomSnapshot(engineSnapshot);
+      if (engineBbo) return engineSnapshot;
+      if (legacyBbo) return latestLegacy;
+      return engineSnapshot;
     }
     if (orderbookFeedMarket === effectiveBboMarket) return latestLegacy;
     return undefined;
@@ -902,6 +910,7 @@ export function LiquidityHeatmapPanel({
       verticalMode: priceScale.verticalMode,
       heatmapBucketSize: priceScale.heatmapBucketSize,
       domBucketSize: priceScale.domBucketSize,
+      market: activeTradeMarket,
       visual: tradeDotVisual,
     });
   }, [
@@ -1522,7 +1531,7 @@ export function LiquidityHeatmapPanel({
     (feedStatus === "empty" || feedStatus === "offline" || feedStatus === "error");
 
   const primaryMarket: BookmapMarketSource =
-    sourceMode === "perp" ? "perp" : "spot";
+    sourceMode === "both" ? activeDomMarket : sourceMode === "perp" ? "perp" : "spot";
 
   const engineEverLoaded = Boolean(
     everLoadedByMarket[primaryMarket] ||

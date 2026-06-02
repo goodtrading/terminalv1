@@ -194,6 +194,10 @@ function logBingXAccountSync(payload: Record<string, unknown>): void {
   console.debug("[BingX Account Sync]", payload);
 }
 
+function logBingXLimitDiagnostic(payload: Record<string, unknown>): void {
+  console.debug("[BINGX_LIMIT_DIAG][account]", payload);
+}
+
 function mapBalance(data: unknown): BingXBalancesResult {
   const rows = extractBalanceRows(data);
   const balances: BingXAccountSnapshot["balances"] = [];
@@ -278,6 +282,12 @@ function mapOpenOrders(data: unknown): BingXAccountSnapshot["openOrders"] {
       ? (data as { orders: unknown[] }).orders
       : [];
 
+  logBingXLimitDiagnostic({
+    stage: "raw_open_orders",
+    raw: data,
+    beforeMapCount: list.length,
+  });
+
   return list
     .map((row) => {
       if (!row || typeof row !== "object") return null;
@@ -298,7 +308,7 @@ function mapOpenOrders(data: unknown): BingXAccountSnapshot["openOrders"] {
       }
 
       const price = coerceNumber(o.price) || undefined;
-      return {
+      const mapped = {
         orderId: String(o.orderId ?? o.orderID ?? o.id ?? ""),
         symbol: String(o.symbol ?? ""),
         side: String(o.side ?? o.positionSide ?? ""),
@@ -312,6 +322,15 @@ function mapOpenOrders(data: unknown): BingXAccountSnapshot["openOrders"] {
         ),
         status: String(o.status ?? "open"),
       };
+      logBingXLimitDiagnostic({
+        stage: "mapped_open_order_row",
+        orderId: mapped.orderId,
+        symbol: mapped.symbol,
+        type: mapped.type,
+        status: mapped.status,
+        price: mapped.price ?? null,
+      });
+      return mapped;
     })
     .filter((o): o is NonNullable<typeof o> => o != null && o.orderId.length > 0);
 }
@@ -431,16 +450,43 @@ export async function getOpenOrders(
   try {
     const data = await client.signedGet<unknown>(OPEN_ORDERS_PATH, params);
     const scoped = mapOpenOrders(data);
+    logBingXLimitDiagnostic({
+      stage: "scoped_open_orders_mapped",
+      symbol,
+      afterMapCount: scoped.length,
+      orders: scoped.map((o) => ({
+        orderId: o.orderId,
+        symbol: o.symbol,
+        type: o.type,
+        status: o.status,
+        price: o.price ?? null,
+      })),
+    });
     if (!symbol?.trim()) return scoped;
     try {
       const allData = await client.signedGet<unknown>(OPEN_ORDERS_PATH, {});
-      const merged = mergeOpenOrdersById(scoped, mapOpenOrders(allData));
+      const accountWide = mapOpenOrders(allData);
+      const merged = mergeOpenOrdersById(scoped, accountWide);
+      logBingXLimitDiagnostic({
+        stage: "merged_open_orders_mapped",
+        symbol,
+        scopedCount: scoped.length,
+        accountWideCount: accountWide.length,
+        afterMapCount: merged.length,
+        orders: merged.map((o) => ({
+          orderId: o.orderId,
+          symbol: o.symbol,
+          type: o.type,
+          status: o.status,
+          price: o.price ?? null,
+        })),
+      });
       if (isBingxRiskDebugEnabled()) {
         logBingXAccountSync({
           kind: "open_orders_merge",
           symbol,
           scopedCount: scoped.length,
-          allCount: mapOpenOrders(allData).length,
+          allCount: accountWide.length,
           mergedCount: merged.length,
         });
       }

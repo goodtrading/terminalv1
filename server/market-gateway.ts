@@ -107,11 +107,9 @@ export class MarketDataGateway {
         const response = await this.fetchWithTimeout(`${mirror}${path}`);
         const latency = Date.now() - start;
         if (response.ok) return { data: await response.json(), provider: `Binance(${mirror})`, latency };
-        if (response.status === 451) throw new Error("GEO_BLOCKED");
         lastError = `Status ${response.status}`;
       } catch (e: any) {
         lastError = e.message;
-        if (e.message === "GEO_BLOCKED") break;
       }
     }
     throw new Error(lastError || "Binance mirrors failed");
