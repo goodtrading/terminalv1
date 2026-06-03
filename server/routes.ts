@@ -59,6 +59,47 @@ const OPTIONS_TOP_OF_BOOK_SSE_MIN_INTERVAL_MS = 500;
 const OPTIONS_TOP_OF_BOOK_SSE_MAX_INSTRUMENTS = DERIBIT_OPTIONS_WS_MAX_INSTRUMENTS;
 const OPTIONS_TOP_OF_BOOK_SSE_HEARTBEAT_MS = 15000;
 
+function isValidRawOrderbookSnapshot(value: unknown): boolean {
+  const payload = value as { bids?: unknown; asks?: unknown } | null | undefined;
+  return Boolean(
+    payload &&
+      Array.isArray(payload.bids) &&
+      Array.isArray(payload.asks) &&
+      payload.bids.length > 0 &&
+      payload.asks.length > 0,
+  );
+}
+
+function isValidBookmapStateSnapshot(value: unknown): boolean {
+  const payload = value as { bids?: unknown; asks?: unknown; heatmapCells?: unknown } | null | undefined;
+  return Boolean(
+    payload &&
+      Array.isArray(payload.bids) &&
+      Array.isArray(payload.asks) &&
+      Array.isArray(payload.heatmapCells) &&
+      payload.bids.length > 0 &&
+      payload.asks.length > 0 &&
+      payload.heatmapCells.length > 0,
+  );
+}
+
+function isValidLiquidityHeatmapSnapshot(value: unknown): boolean {
+  const payload = value as {
+    liquidityHeatZones?: unknown;
+    bids?: unknown;
+    asks?: unknown;
+  } | null | undefined;
+  return Boolean(
+    payload &&
+      Array.isArray(payload.liquidityHeatZones) &&
+      Array.isArray(payload.bids) &&
+      Array.isArray(payload.asks) &&
+      payload.liquidityHeatZones.length > 0 &&
+      payload.bids.length > 0 &&
+      payload.asks.length > 0,
+  );
+}
+
 function parseInstrumentListParam(value: unknown): string[] {
   const raw = Array.isArray(value) ? value.join(",") : typeof value === "string" ? value : "";
   return raw
@@ -248,65 +289,87 @@ export async function registerRoutes(
     const krakenFallbackEnabled =
       String(process.env.ALLOW_KRAKEN_ORDERBOOK_FALLBACK ?? "").toLowerCase() === "true";
     try {
-      const payload = await cachedFetch(cacheKey, { ttlMs: ORDERBOOK_RAW_CACHE_TTL_MS, staleTtlMs: 30_000 }, async () => {
-        if (source === "kraken") {
-          const ob = await getKrakenOrderBook(symbol, 500);
+      const payload = await cachedFetch(
+        cacheKey,
+        {
+          ttlMs: ORDERBOOK_RAW_CACHE_TTL_MS,
+          staleTtlMs: 30_000,
+          validate: isValidRawOrderbookSnapshot,
+          invalidMessage: `Invalid empty orderbook snapshot for ${cacheKey}`,
+        },
+        async () => {
+          if (source === "kraken") {
+            const ob = await getKrakenOrderBook(symbol, 500);
+            return {
+              exchange: "kraken",
+              market,
+              bids: ob.bids.map((level) => [level.price.toString(), level.size.toString()]),
+              asks: ob.asks.map((level) => [level.price.toString(), level.size.toString()]),
+              timestamp: ob.timestamp,
+            };
+          }
+          let orderBook = getOrderBookForMarket(market);
+          let exchange = market === "perp" ? "binance-perp" : "binance";
+          let binanceSpotEmpty =
+            market === "spot" && orderBook.bids.length === 0 && orderBook.asks.length === 0;
+          let warning: string | undefined;
+          let providerStatus: Record<string, unknown> | undefined;
+
+          if (binanceSpotEmpty) {
+            await resyncSpotOrderBook("api-orderbook-raw-empty");
+            orderBook = getOrderBookForMarket(market);
+            binanceSpotEmpty = orderBook.bids.length === 0 && orderBook.asks.length === 0;
+          }
+
+          if (binanceSpotEmpty && krakenFallbackEnabled) {
+            const ob = await getKrakenOrderBook(symbol, 500);
+            orderBook = {
+              bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
+              asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
+              timestamp: ob.timestamp,
+            };
+            exchange = "kraken";
+          } else if (binanceSpotEmpty) {
+            warning = "binance_spot_orderbook_empty";
+            providerStatus = {
+              spot: getSpotOrderBookHealth(),
+              perp: getPerpOrderBookHealth(),
+            };
+          }
           return {
-            exchange: "kraken",
+            exchange,
             market,
-            bids: ob.bids.map((level) => [level.price.toString(), level.size.toString()]),
-            asks: ob.asks.map((level) => [level.price.toString(), level.size.toString()]),
-            timestamp: ob.timestamp,
+            bids: orderBook.bids.map((level) => [level.price.toString(), level.size.toString()]),
+            asks: orderBook.asks.map((level) => [level.price.toString(), level.size.toString()]),
+            timestamp: orderBook.timestamp || Date.now(),
+            ...(warning
+              ? {
+                  warning,
+                  fallbackEligible: true,
+                  krakenFallbackEnabled: false,
+                  providerStatus,
+                }
+              : {}),
           };
-        }
-        let orderBook = getOrderBookForMarket(market);
-        let exchange = market === "perp" ? "binance-perp" : "binance";
-        let binanceSpotEmpty =
-          market === "spot" && orderBook.bids.length === 0 && orderBook.asks.length === 0;
-        let warning: string | undefined;
-        let providerStatus: Record<string, unknown> | undefined;
-
-        if (binanceSpotEmpty) {
-          await resyncSpotOrderBook("api-orderbook-raw-empty");
-          orderBook = getOrderBookForMarket(market);
-          binanceSpotEmpty = orderBook.bids.length === 0 && orderBook.asks.length === 0;
-        }
-
-        if (binanceSpotEmpty && krakenFallbackEnabled) {
-          const ob = await getKrakenOrderBook(symbol, 500);
-          orderBook = {
-            bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
-            asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
-            timestamp: ob.timestamp,
-          };
-          exchange = "kraken";
-        } else if (binanceSpotEmpty) {
-          warning = "binance_spot_orderbook_empty";
-          providerStatus = {
-            spot: getSpotOrderBookHealth(),
-            perp: getPerpOrderBookHealth(),
-          };
-        }
-        return {
-          exchange,
+        },
+      );
+      if (process.env.NODE_ENV === "production" && !isValidRawOrderbookSnapshot(payload)) {
+        console.warn("[bookmap-feed] /api/orderbook/raw invalid payload", {
+          source: source ?? "default",
           market,
-          bids: orderBook.bids.map((level) => [level.price.toString(), level.size.toString()]),
-          asks: orderBook.asks.map((level) => [level.price.toString(), level.size.toString()]),
-          timestamp: orderBook.timestamp || Date.now(),
-          ...(warning
-            ? {
-                warning,
-                fallbackEligible: true,
-                krakenFallbackEnabled: false,
-                providerStatus,
-              }
-            : {}),
-        };
-      });
+          bids: Array.isArray((payload as any)?.bids) ? (payload as any).bids.length : null,
+          asks: Array.isArray((payload as any)?.asks) ? (payload as any).asks.length : null,
+          degraded: Boolean((payload as any)?.degraded),
+        });
+      }
       res.json(payload);
     } catch (error: any) {
       console.error("[API] Order book fetch error:", error?.message ?? error);
-      res.status(500).json({ error: "Failed to fetch order book" });
+      res.status(503).json({
+        error: "ORDERBOOK_UNAVAILABLE",
+        degraded: true,
+        details: error?.message ?? "Failed to fetch order book",
+      });
     }
   });
 
@@ -364,56 +427,80 @@ export async function registerRoutes(
         priceMin ?? "min-auto",
         priceMax ?? "max-auto",
       ].join(":");
-      const payload = await cachedFetch(cacheKey, { ttlMs: 1_000, staleTtlMs: 10_000 }, async () => {
-        const engine = getBookmapEngine(symbol, exchange, market);
+      const payload = await cachedFetch(
+        cacheKey,
+        {
+          ttlMs: 1_000,
+          staleTtlMs: 10_000,
+          validate: isValidBookmapStateSnapshot,
+          invalidMessage: `Invalid empty bookmap snapshot for ${cacheKey}`,
+        },
+        async () => {
+          const engine = getBookmapEngine(symbol, exchange, market);
 
-        if (bucketMs != null && Number.isFinite(bucketMs) && bucketMs > 0) {
-          engine.setBucketMs(bucketMs);
-        }
+          if (bucketMs != null && Number.isFinite(bucketMs) && bucketMs > 0) {
+            engine.setBucketMs(bucketMs);
+          }
 
-        if (!engine.hasData()) {
-          if (exchange === "kraken") {
-            const ob = await getKrakenOrderBook(symbol, 500);
-            engine.applySnapshot({
-              bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
-              asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
-              timestamp: ob.timestamp,
-            });
-          } else if (exchange === "binance" || exchange.startsWith("binance")) {
-            const orderBook = getOrderBookForMarket(market);
-            if (orderBook.bids.length > 0 || orderBook.asks.length > 0) {
+          if (!engine.hasData()) {
+            if (exchange === "kraken") {
+              const ob = await getKrakenOrderBook(symbol, 500);
               engine.applySnapshot({
-                bids: orderBook.bids,
-                asks: orderBook.asks,
-                timestamp: orderBook.timestamp ?? Date.now(),
+                bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
+                asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
+                timestamp: ob.timestamp,
               });
+            } else if (exchange === "binance" || exchange.startsWith("binance")) {
+              const orderBook = getOrderBookForMarket(market);
+              if (orderBook.bids.length > 0 && orderBook.asks.length > 0) {
+                engine.applySnapshot({
+                  bids: orderBook.bids,
+                  asks: orderBook.asks,
+                  timestamp: orderBook.timestamp ?? Date.now(),
+                });
+              }
             }
           }
-        }
 
-        const state = engine.getCurrentState({
-          priceRangePct,
-          priceMin:
-            priceMin != null && Number.isFinite(priceMin) ? priceMin : undefined,
-          priceMax:
-            priceMax != null && Number.isFinite(priceMax) ? priceMax : undefined,
-          minWallSize,
-          includeStale,
-        });
+          const state = engine.getCurrentState({
+            priceRangePct,
+            priceMin:
+              priceMin != null && Number.isFinite(priceMin) ? priceMin : undefined,
+            priceMax:
+              priceMax != null && Number.isFinite(priceMax) ? priceMax : undefined,
+            minWallSize,
+            includeStale,
+          });
 
-        logBookmapMarketStateDiagnostics(symbol, exchange, market);
+          logBookmapMarketStateDiagnostics(symbol, exchange, market);
 
-        return {
+          return {
+            symbol,
+            exchange,
+            market,
+            ...state,
+          };
+        },
+      );
+      if (process.env.NODE_ENV === "production" && !isValidBookmapStateSnapshot(payload)) {
+        console.warn("[bookmap-feed] /api/bookmap/state invalid payload", {
           symbol,
           exchange,
           market,
-          ...state,
-        };
-      });
+          bids: Array.isArray((payload as any)?.bids) ? (payload as any).bids.length : null,
+          asks: Array.isArray((payload as any)?.asks) ? (payload as any).asks.length : null,
+          cells: Array.isArray((payload as any)?.heatmapCells) ? (payload as any).heatmapCells.length : null,
+          degraded: Boolean((payload as any)?.degraded),
+        });
+      }
       res.json(payload);
     } catch (error: any) {
       console.error("[API] /api/bookmap/state error:", error?.message ?? error);
-      res.status(500).json({ error: "Failed to fetch bookmap state" });
+      res.status(503).json({
+        error: "BOOKMAP_STATE_UNAVAILABLE",
+        degraded: true,
+        details: error?.message ?? "Failed to fetch bookmap state",
+      });
     }
   });
 
@@ -822,17 +909,36 @@ export async function registerRoutes(
 
   app.get("/api/liquidity/heatmap", async (_req, res) => {
     try {
-      const heatmap = await cachedFetch("liquidity:heatmap", { ttlMs: HEATMAP_CACHE_TTL_MS, staleTtlMs: 60_000 }, async () => {
-        const ticker = MarketDataGateway.getCachedTicker();
-        const spotPrice = ticker?.price;
-        if (!spotPrice) {
-          throw new Error("SPOT_PRICE_UNAVAILABLE");
-        }
-        return OrderBookGateway.getLiquidityHeatmap(spotPrice);
-      });
+      const heatmap = await cachedFetch(
+        "liquidity:heatmap",
+        {
+          ttlMs: HEATMAP_CACHE_TTL_MS,
+          staleTtlMs: 60_000,
+          validate: isValidLiquidityHeatmapSnapshot,
+          invalidMessage: "Invalid empty liquidity heatmap snapshot",
+        },
+        async () => {
+          const ticker = MarketDataGateway.getCachedTicker();
+          const spotPrice = ticker?.price;
+          if (!spotPrice) {
+            throw new Error("SPOT_PRICE_UNAVAILABLE");
+          }
+          return OrderBookGateway.getLiquidityHeatmap(spotPrice);
+        },
+      );
+      if (process.env.NODE_ENV === "production" && !isValidLiquidityHeatmapSnapshot(heatmap)) {
+        console.warn("[bookmap-feed] /api/liquidity/heatmap invalid payload", {
+          zones: Array.isArray((heatmap as any)?.liquidityHeatZones)
+            ? (heatmap as any).liquidityHeatZones.length
+            : null,
+          bids: Array.isArray((heatmap as any)?.bids) ? (heatmap as any).bids.length : null,
+          asks: Array.isArray((heatmap as any)?.asks) ? (heatmap as any).asks.length : null,
+          degraded: Boolean((heatmap as any)?.degraded),
+        });
+      }
       res.json(heatmap);
     } catch (e: any) {
-      res.status(500).json({ error: "HEATMAP_FAILED", details: e.message });
+      res.status(503).json({ error: "HEATMAP_FAILED", degraded: true, details: e.message });
     }
   });
 

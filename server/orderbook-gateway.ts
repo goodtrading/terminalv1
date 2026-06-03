@@ -246,7 +246,7 @@ export class OrderBookGateway {
     try {
       const ob = getOrderBook();
       let book: OrderBook;
-      if (ob.bids.length > 0 || ob.asks.length > 0) {
+      if (ob.bids.length > 0 && ob.asks.length > 0) {
         book = {
           bids: ob.bids.map((b) => ({ price: b.price, quantity: b.size })),
           asks: ob.asks.map((a) => ({ price: a.price, quantity: a.size })),

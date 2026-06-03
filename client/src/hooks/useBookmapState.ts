@@ -99,7 +99,25 @@ export function useBookmapState(options: UseBookmapStateOptions = {}) {
         const text = (await res.text()) || res.statusText;
         throw new Error(`${res.status}: ${text}`);
       }
-      return (await res.json()) as BookmapState;
+      const data = (await res.json()) as BookmapState;
+      if (!Array.isArray(data.bids) || !Array.isArray(data.asks) || !Array.isArray(data.heatmapCells)) {
+        console.warn("[BOOKMAP_STATE] Invalid response shape", {
+          symbol,
+          market,
+          hasBids: Array.isArray(data.bids),
+          hasAsks: Array.isArray(data.asks),
+          hasHeatmapCells: Array.isArray(data.heatmapCells),
+        });
+      } else if (data.bids.length === 0 || data.asks.length === 0 || data.heatmapCells.length === 0) {
+        console.warn("[BOOKMAP_STATE] Empty response", {
+          symbol,
+          market,
+          bids: data.bids.length,
+          asks: data.asks.length,
+          heatmapCells: data.heatmapCells.length,
+        });
+      }
+      return data;
     },
     enabled,
     placeholderData: keepPreviousData,

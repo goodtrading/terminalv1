@@ -12,6 +12,8 @@ type CacheEntry<T> = {
 export type CacheFetchOptions = {
   ttlMs: number;
   staleTtlMs?: number;
+  validate?: (value: unknown) => boolean;
+  invalidMessage?: string;
 };
 
 export type CacheSnapshot = {
@@ -40,7 +42,7 @@ export async function cachedFetch<T>(
   const now = nowMs();
   const existing = cache.get(key) as CacheEntry<T> | undefined;
 
-  if (existing?.value != null && existing.expiresAt > now) {
+  if (existing?.value != null && existing.expiresAt > now && isValidCachedValue(existing.value, options)) {
     existing.hits += 1;
     return existing.value as T & { degraded?: boolean; warning?: string };
   }
@@ -50,7 +52,11 @@ export async function cachedFetch<T>(
     try {
       return (await existing.inFlight) as T & { degraded?: boolean; warning?: string };
     } catch (error) {
-      if (existing.value != null && withinStaleWindow(existing, options.staleTtlMs, nowMs())) {
+      if (
+        existing.value != null &&
+        isValidCachedValue(existing.value, options) &&
+        withinStaleWindow(existing, options.staleTtlMs, nowMs())
+      ) {
         existing.staleHits += 1;
         return withStaleWarning(existing.value, error);
       }
@@ -73,6 +79,9 @@ export async function cachedFetch<T>(
   entry.misses += 1;
   const inFlight = loader()
     .then((value) => {
+      if (!isValidCachedValue(value, options)) {
+        throw new Error(options.invalidMessage ?? `Invalid cache payload for ${key}`);
+      }
       const refreshedAt = nowMs();
       entry.value = value;
       entry.updatedAt = refreshedAt;
@@ -81,7 +90,11 @@ export async function cachedFetch<T>(
     })
     .catch((error) => {
       entry.errors += 1;
-      if (entry.value != null && withinStaleWindow(entry, options.staleTtlMs, nowMs())) {
+      if (
+        entry.value != null &&
+        isValidCachedValue(entry.value, options) &&
+        withinStaleWindow(entry, options.staleTtlMs, nowMs())
+      ) {
         entry.staleHits += 1;
         return withStaleWarning(entry.value, error);
       }
@@ -99,6 +112,10 @@ export async function cachedFetch<T>(
 function withinStaleWindow<T>(entry: CacheEntry<T>, staleTtlMs: number | undefined, now: number): boolean {
   if (staleTtlMs == null) return true;
   return now - entry.updatedAt <= staleTtlMs;
+}
+
+function isValidCachedValue<T>(value: T, options: CacheFetchOptions): boolean {
+  return options.validate ? options.validate(value) : true;
 }
 
 function withStaleWarning<T>(value: T, error: unknown): T & { degraded?: boolean; warning?: string } {

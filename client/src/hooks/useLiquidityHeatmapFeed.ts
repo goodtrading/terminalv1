@@ -303,6 +303,17 @@ export function useLiquidityHeatmapFeed(
         if (cancelled) return;
 
         const snap = buildSnapshotFromRaw(raw);
+        if (snap.bids.length === 0 || snap.asks.length === 0) {
+          console.warn("[BOOKMAP_ORDERBOOK] Empty or invalid orderbook response", {
+            endpoint,
+            rawBids: Array.isArray(raw.bids) ? raw.bids.length : null,
+            rawAsks: Array.isArray(raw.asks) ? raw.asks.length : null,
+            normalizedBids: snap.bids.length,
+            normalizedAsks: snap.asks.length,
+            degraded: Boolean((raw as { degraded?: boolean }).degraded),
+            warning: (raw as { warning?: string }).warning,
+          });
+        }
 
         if (import.meta.env?.DEV) {
           console.debug("[FLOW_HEATMAP_SOURCE]", {
@@ -413,7 +424,13 @@ export function useLiquidityHeatmapFeed(
         const res = await fetch(`/api/market/agg-trades?${params}`);
         if (!res.ok || cancelled) return;
         const rows = (await res.json()) as unknown[];
-        if (!Array.isArray(rows)) return;
+        if (!Array.isArray(rows)) {
+          console.warn("[BOOKMAP_TRADES] REST seed invalid response", { symbol, market: marketForTrades });
+          return;
+        }
+        if (rows.length === 0) {
+          console.warn("[BOOKMAP_TRADES] REST seed empty", { symbol, market: marketForTrades });
+        }
         for (const row of rows) {
           handleWireTrade(row);
         }
