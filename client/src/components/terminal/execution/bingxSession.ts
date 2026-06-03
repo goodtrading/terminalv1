@@ -35,6 +35,16 @@ export function isBingXSecureApiSession(session: {
   );
 }
 
+export function isBingXVisualSession(session: {
+  connected: boolean;
+  exchange: string | null;
+  connectionMode?: string | null;
+  readOnly?: boolean;
+  tradingPermissionConfirmed?: boolean;
+}): boolean {
+  return isBingXReadOnlySession(session) || isBingXSecureApiSession(session);
+}
+
 /** @deprecated Use isBingXReadOnlySession — includes legacy secure_api stored as read-only. */
 export function isBingXReadOnlyApiSession(session: {
   connected: boolean;

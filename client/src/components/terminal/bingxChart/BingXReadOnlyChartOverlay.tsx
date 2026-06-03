@@ -93,10 +93,33 @@ function LimitOrderBadge({
   chartHeight: number;
   coordinates: DrawingsCoordinateHelpers;
 }) {
+  console.debug("[BINGX_LIMIT_DIAG][badge-received]", {
+    id: order.id,
+    symbol: order.symbol,
+    status: order.status,
+    type: order.type,
+    price: order.price ?? null,
+    triggerPrice: order.triggerPrice ?? null,
+  });
   const price = order.price;
-  if (price == null || price <= 0) return null;
+  if (price == null || price <= 0) {
+    console.debug("[BINGX_LIMIT_DIAG][badge-skip]", {
+      id: order.id,
+      reason: "invalid_price",
+      price: price ?? null,
+    });
+    return null;
+  }
   const y = coordinates.priceToCoordinate(price);
-  if (y == null || !Number.isFinite(y)) return null;
+  if (y == null || !Number.isFinite(y)) {
+    console.debug("[BINGX_LIMIT_DIAG][badge-skip]", {
+      id: order.id,
+      reason: "invalid_coordinate",
+      price,
+      y: y ?? null,
+    });
+    return null;
+  }
 
   const barTop = Math.min(
     Math.max(y - BAR_HEIGHT / 2, 4),
@@ -168,13 +191,34 @@ export function BingXReadOnlyChartOverlay({
   const limitOrderLineSpecs = useMemo(() => {
     const specs: Array<{ key: string; price: number; color: string }> = [];
     for (const order of ordersForSymbol) {
-      if (order.price == null || order.price <= 0) continue;
+      if (order.price == null || order.price <= 0) {
+        console.debug("[BINGX_LIMIT_DIAG][line-spec-skip]", {
+          id: order.id,
+          symbol: order.symbol,
+          status: order.status,
+          type: order.type,
+          price: order.price ?? null,
+          reason: "invalid_price",
+        });
+        continue;
+      }
       specs.push({
         key: `order-${order.id}`,
         price: order.price,
         color: orderLineColor(order),
       });
     }
+    console.debug("[BINGX_LIMIT_DIAG][line-specs]", {
+      ordersForSymbol: ordersForSymbol.map((o) => ({
+        id: o.id,
+        symbol: o.symbol,
+        status: o.status,
+        type: o.type,
+        price: o.price ?? null,
+        triggerPrice: o.triggerPrice ?? null,
+      })),
+      specs,
+    });
     return specs;
   }, [ordersForSymbol]);
 

@@ -83,8 +83,8 @@ type RowBadges = {
   put: Badge[];
 };
 
-const CACHE_TTL_MS = 15000; // 15 seconds cache
-const OPTIONS_TOP_OF_BOOK_REFETCH_MS = 500;
+const CACHE_TTL_MS = 60_000;
+const OPTIONS_TOP_OF_BOOK_REFETCH_MS = 5_000;
 const OPTIONS_TOP_OF_BOOK_UI_MIN_UPDATE_MS = 100;
 
 // BadgePill component for structural indicators
@@ -1003,7 +1003,7 @@ const viewMode: OptionsViewMode = "PRO";
       return response.json();
     },
     enabled: visibleInstrumentNames.length > 0,
-    refetchInterval: 20000,
+    refetchInterval: 30_000,
     staleTime: 15000,
   });
 

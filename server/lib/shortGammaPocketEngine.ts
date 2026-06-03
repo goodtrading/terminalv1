@@ -252,6 +252,10 @@ export function detectShortGammaPockets(input: ShortGammaPocketInput): ShortGamm
     } else {
       status = "NONE";
     }
+
+    if (status !== "NONE") {
+      nearest.status = status;
+    }
   }
 
   const summary = generateSummary(status, nearest, gammaRegime, marketMode);

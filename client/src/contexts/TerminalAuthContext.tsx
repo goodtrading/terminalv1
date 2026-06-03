@@ -67,7 +67,7 @@ export async function fetchMe(): Promise<MeResponse> {
     cache: "no-store",
     assertOk: false,
   });
-  if (res.status === 401) {
+  if (res.status === 401 || res.status === 403) {
     throw new Error("me:401");
   }
   if (!res.ok) {

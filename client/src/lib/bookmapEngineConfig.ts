@@ -1,7 +1,7 @@
 /** When true, Liquidity Heatmap / Flows uses GET /api/bookmap/state (falls back on error/empty). */
 export const USE_BOOKMAP_ENGINE = true;
 
-export const BOOKMAP_ENGINE_REFETCH_MS = 1000;
+export const BOOKMAP_ENGINE_REFETCH_MS = 2_000;
 export const BOOKMAP_ENGINE_PRICE_RANGE_PCT = 10;
 export const BOOKMAP_ENGINE_BUCKET_MS = 500;
 export const BOOKMAP_ENGINE_MAX_RENDER_CELLS = 8_000;

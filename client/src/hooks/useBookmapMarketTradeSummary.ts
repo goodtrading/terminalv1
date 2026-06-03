@@ -13,7 +13,7 @@ export type TradeAggressionSnapshot = {
 };
 
 const WINDOW_MS = 90_000;
-const REFETCH_MS = 3_000;
+const REFETCH_MS = 5_000;
 
 function buildSummary(rows: unknown[]): TradeAggressionSnapshot {
   let buyVolume = 0;

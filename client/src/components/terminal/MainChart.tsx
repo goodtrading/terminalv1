@@ -66,7 +66,7 @@ import {
   BROKER_SESSION_STORAGE_KEY,
   loadBrokerSession,
 } from "./execution/brokerSessionState";
-import { isBingXReadOnlySession } from "./execution/bingxSession";
+import { isBingXVisualSession } from "./execution/bingxSession";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
 type UTCTimestamp = number;
@@ -170,7 +170,7 @@ export function MainChart({
     brokerSession.connectionMode === "paper" &&
     brokerSession.connected;
 
-  const showBingXReadOnlyChartOverlay = isBingXReadOnlySession(brokerSession);
+  const showBingXReadOnlyChartOverlay = isBingXVisualSession(brokerSession);
 
   if (import.meta.env.DEV) {
     console.debug("[bingx-chart] overlay gate", {
@@ -339,9 +339,9 @@ export function MainChart({
     }
   }, [chartTimeframe]);
 
-  const { data: positioning } = useQuery<OptionsPositioning>({ queryKey: ["/api/options-positioning"], refetchInterval: 5000 });
-  const { data: market } = useQuery<MarketState>({ queryKey: ["/api/market-state"], refetchInterval: 5000 });
-  const { data: levels } = useQuery<KeyLevels>({ queryKey: ["/api/key-levels"], refetchInterval: 5000 });
+  const { data: positioning } = useQuery<OptionsPositioning>({ queryKey: ["/api/options-positioning"], refetchInterval: 30_000, staleTime: 15_000 });
+  const { data: market } = useQuery<MarketState>({ queryKey: ["/api/market-state"], refetchInterval: 15_000, staleTime: 10_000 });
+  const { data: levels } = useQuery<KeyLevels>({ queryKey: ["/api/key-levels"], refetchInterval: 30_000, staleTime: 15_000 });
 
   const gammaOverlaySel = useMemo(
     () => resolveGammaOverlaySelection(market, terminalState?.options),
@@ -362,7 +362,8 @@ export function MainChart({
         timestamp: number;
       }>;
     },
-    refetchInterval: 1000, // Update every second for real-time tracking
+    refetchInterval: 1_500,
+    staleTime: 750,
     enabled: activePanels.has("HEATMAP") // Only fetch when heatmap is active
   });
 
@@ -1118,7 +1119,7 @@ export function MainChart({
           count: shortGammaPockets?.pockets?.length ?? 0,
         });
       }
-      if (shortGammaPockets && shortGammaPockets.status !== "NONE" && shortGammaPockets.status !== "IDLE") {
+      if (shortGammaPockets && shortGammaPockets.status !== "NONE") {
         const { pockets, nearest } = shortGammaPockets;
         
         // Deduplicate pockets: if overlap >60% or centers <300 USD apart, keep higher priority

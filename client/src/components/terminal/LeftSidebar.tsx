@@ -45,32 +45,38 @@ function OptionsDataFreshness({ market }: { market: (MarketState & { optionsLast
 export function LeftSidebar() {
   const { data: market } = useQuery<MarketState>({ 
     queryKey: ["/api/market-state"],
-    refetchInterval: 5000 
+    refetchInterval: 15_000,
+    staleTime: 10_000,
   });
   
   const { data: dealer } = useQuery<DealerExposure>({ 
     queryKey: ["/api/dealer-exposure"],
-    refetchInterval: 5000 
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 
   const { data: flow } = useQuery<DealerHedgingFlow>({ 
     queryKey: ["/api/dealer-hedging-flow"],
-    refetchInterval: 5000 
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 
   const { data: positioning } = useQuery<OptionsPositioning>({ 
     queryKey: ["/api/options-positioning"],
-    refetchInterval: 5000 
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 
   const { data: levels } = useQuery<KeyLevels>({ 
     queryKey: ["/api/key-levels"],
-    refetchInterval: 5000 
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
 
   const { data: terminalState } = useQuery<{ options?: TerminalStateOptionsGammaExtras & { gammaFlip?: number | null } }>({
     queryKey: ["/api/terminal/state"],
-    refetchInterval: 5000,
+    refetchInterval: 12_000,
+    staleTime: 8_000,
   });
   const opts = terminalState?.options;
 

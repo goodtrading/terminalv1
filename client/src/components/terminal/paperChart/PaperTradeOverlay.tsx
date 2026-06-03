@@ -354,7 +354,12 @@ export function PaperTradeOverlay({
   };
 
   return (
-    <div ref={rootRef} data-paper-chart-root className="absolute inset-0" style={{ width: chartWidth, height: chartHeight }}>
+    <div
+      ref={rootRef}
+      data-paper-chart-root
+      className="absolute inset-0 pointer-events-none"
+      style={{ width: chartWidth, height: chartHeight }}
+    >
       {statusMsg ? (
         <div className="absolute top-1 left-1/2 -translate-x-1/2 z-[20] rounded border border-slate-600 bg-black/90 px-2 py-0.5 text-[9px] font-mono text-slate-200 pointer-events-none">
           {statusMsg}

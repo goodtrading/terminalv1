@@ -46,7 +46,7 @@ export const getQueryFn: <T>(options: {
       headers: { ...authHeaders() },
     });
 
-    if (res.status === 401) {
+    if ((res.status === 401 || res.status === 403) && path.startsWith("/api/auth/")) {
       clearAuthStorage();
       if (unauthorizedBehavior === "returnNull") {
         return null;

@@ -1039,6 +1039,7 @@ export async function getTerminalState(): Promise<TerminalState> {
       optionsLastUpdated,
 
       options: finalOptions,
+      shortGammaPockets,
 
       gravityMap,
 

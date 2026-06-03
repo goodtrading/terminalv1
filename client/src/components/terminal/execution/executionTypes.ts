@@ -74,7 +74,14 @@ export interface BingXNormalizedOrder {
   symbol: string;
   side: "buy" | "sell" | "unknown";
   type: "market" | "limit" | "stop" | "take_profit" | "unknown";
-  status: "open" | "partially_filled" | "unknown";
+  status:
+    | "open"
+    | "partially_filled"
+    | "filled"
+    | "cancelled"
+    | "expired"
+    | "rejected"
+    | "unknown";
   price?: number;
   triggerPrice?: number;
   stopPrice?: number;

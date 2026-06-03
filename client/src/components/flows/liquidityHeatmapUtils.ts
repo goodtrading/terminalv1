@@ -8,7 +8,7 @@ export const HEATMAP_RENDER_FLOOR_BTC = 0.05;
 export const HEATMAP_MIN_SIZE_OPTIONS = [1, 2, 5, 10, 25, 50, 100] as const;
 export const MAX_LIQUIDITY_SNAPSHOTS = 300;
 /** Real-time orderbook snapshots (not candle timeframes). */
-export const SNAPSHOT_INTERVAL_MS = 500;
+export const SNAPSHOT_INTERVAL_MS = 1_500;
 export const SNAPSHOT_THROTTLE_MS = SNAPSHOT_INTERVAL_MS;
 export const TRADE_BUBBLE_MIN_BTC = 0.5;
 export const DEFAULT_RANGE_PCT = 0.035;

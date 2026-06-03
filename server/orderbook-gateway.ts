@@ -96,7 +96,7 @@ export type LiquidityHeatmap = z.infer<typeof liquidityHeatmapSchema>;
 
 let cachedHeatmap: LiquidityHeatmap | null = null;
 let lastFetchTime = 0;
-const CACHE_TTL_MS = 15000;
+const CACHE_TTL_MS = 1500;
 
 interface HistoricalBin {
   totalQuantity: number;

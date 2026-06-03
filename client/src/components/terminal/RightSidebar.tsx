@@ -130,7 +130,7 @@ function deriveEdge(positioning: any, market: any): string {
 // Short Gamma Pockets Panel Component
 function ShortGammaPocketsPanel() {
   const { data: terminalData } = useTerminalState();
-  const shortGammaPockets = (terminalData as any)?.shortGammaPockets;
+  const shortGammaPockets = terminalData?.options?.shortGammaPockets ?? terminalData?.shortGammaPockets;
 
   if (!shortGammaPockets) {
     return (
@@ -212,7 +212,8 @@ function LiquidityMapPanel() {
   const heatmap = (terminalData?.positioning as any)?.liquidityHeatmap;
   const { data: vacuumData } = useQuery<VacuumAnalysisResult>({
     queryKey: ["/api/vacuum"],
-    refetchInterval: 5000,
+    refetchInterval: 10_000,
+    staleTime: 5_000,
     enabled: !!terminalData?.positioning,
     retry: false,
     throwOnError: false,
@@ -370,7 +371,8 @@ function DistanceToFlipBlock({ market }: { market: { gammaFlip?: number | null; 
 function LiquidityImbalanceBlock({ positioning }: { positioning: any }) {
   const { data: heatmapApi } = useQuery<{ heatmapSummary?: { totalBidLiquidity?: number; totalAskLiquidity?: number } }>({
     queryKey: ["/api/liquidity/heatmap"],
-    refetchInterval: 3000,
+    refetchInterval: 10_000,
+    staleTime: 5_000,
     enabled: !positioning?.liquidityHeatmap?.heatmapSummary
   });
   const heatmap = positioning?.liquidityHeatmap ?? heatmapApi;
@@ -432,7 +434,8 @@ function StructuralScenariosPanel({
 }) {
   const { data: scenariosData, isLoading, error } = useQuery<MarketScenarios>({
     queryKey: ["/api/scenarios"],
-    refetchInterval: 8000,
+    refetchInterval: 15_000,
+    staleTime: 8_000,
   });
 
   const model = useMemo(() => {

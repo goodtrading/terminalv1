@@ -12,7 +12,7 @@ import { bingxApiFetch } from "../execution/bingxApiClient";
 import { bingxReadOnlyErrorMessage } from "../execution/bingxReadOnlyMessages";
 import {
   hasPersistedBingXConnection,
-  isBingXReadOnlySession,
+  isBingXVisualSession,
 } from "../execution/bingxSession";
 import {
   DEFAULT_CHART_SYMBOL,
@@ -53,15 +53,28 @@ function filterOrdersForChart(
   chartSymbol: string,
   riskOrderIds: Set<string>,
 ): BingXNormalizedOrder[] {
-  return orders.filter(
-    (o) =>
-      (o.status === "open" || o.status === "partially_filled") &&
-      o.price != null &&
-      Number.isFinite(o.price) &&
-      o.price > 0 &&
-      exchangeSymbolsMatch(o.symbol, chartSymbol) &&
-      !isRiskChartOrder(o, riskOrderIds),
-  );
+  return orders.filter((o) => {
+    const statusOk = o.status === "open" || o.status === "partially_filled";
+    const priceOk = o.price != null && Number.isFinite(o.price) && o.price > 0;
+    const symbolOk = exchangeSymbolsMatch(o.symbol, chartSymbol);
+    const riskClassification = isRiskChartOrder(o, riskOrderIds);
+    const keep = statusOk && priceOk && symbolOk && !riskClassification;
+    console.debug("[BINGX_LIMIT_DIAG][frontend-filter]", {
+      id: o.id,
+      symbol: o.symbol,
+      chartSymbol,
+      status: o.status,
+      type: o.type,
+      price: o.price ?? null,
+      triggerPrice: o.triggerPrice ?? null,
+      statusOk,
+      priceOk,
+      symbolOk,
+      riskClassification,
+      keep,
+    });
+    return keep;
+  });
 }
 
 async function fetchBingXSnapshot(
@@ -94,7 +107,7 @@ export function isBingXChartOverlaySession(
   brokerSession: BrokerSessionState | null | undefined,
 ): boolean {
   if (!brokerSession) return false;
-  return isBingXReadOnlySession(brokerSession);
+  return isBingXVisualSession(brokerSession);
 }
 
 export function useBingXReadOnlyChartData(
@@ -170,6 +183,21 @@ export function useBingXReadOnlyChartData(
       riskOrders: riskOrdersForSymbol.length,
       totalPositions: snapshot?.positions?.length ?? 0,
       totalOpenOrders: snapshot?.openOrders?.length ?? 0,
+    });
+    console.debug("[BINGX_LIMIT_DIAG][frontend-snapshot]", {
+      chartSymbol: resolvedChartSymbol,
+      executionSymbol,
+      snapshotOpenOrders: snapshot?.openOrders ?? [],
+      ordersForSymbol,
+      riskOrdersForSymbol,
+      orderSummaries: (snapshot?.openOrders ?? []).map((o) => ({
+        id: o.id,
+        symbol: o.symbol,
+        status: o.status,
+        type: o.type,
+        price: o.price ?? null,
+        triggerPrice: o.triggerPrice ?? null,
+      })),
     });
   }
 

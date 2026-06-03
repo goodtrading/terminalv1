@@ -7,4 +7,4 @@ export const LIVE_CANDLE_CHART_DISABLED =
   import.meta.env.VITE_DISABLE_LIVE_CANDLE_CHART === "true";
 
 /** REST ticker poll interval — pushes ticks into the market engine (separate from OHLC history refetch). */
-export const BTC_TICKER_REFETCH_MS = 500;
+export const BTC_TICKER_REFETCH_MS = 1_500;

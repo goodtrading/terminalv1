@@ -33,6 +33,9 @@ import { VacuumValidationTests } from "./lib/vacuumValidationTests";
 import { scenarioEngine, TerminalSignals } from "./lib/scenarioEngine";
 import { testScenarioEngine } from "./lib/scenarioEngineTest";
 import { resolveCandleLimit } from "@shared/candleLimits";
+import { cachedFetch, getCacheSnapshots } from "./lib/ttlCache";
+import { getRecentSlowEndpoints } from "./lib/performanceMonitor";
+import { requireSaasAdmin } from "./middleware/saasAuth";
 
 // Debug flags to prevent event-loop blocking from log spam.
 // Keep these false by default; enable locally when diagnosing.
@@ -41,17 +44,18 @@ const DEBUG_ORDERBOOK = false;
 const DEBUG_VACUUM = false;
 const DEBUG_SCENARIOS = false;
 
-// Very small TTL caches for expensive endpoints that are polled frequently.
-// These are intentionally short and conservative to avoid stale decisions.
-let vacuumCache: { ts: number; value: any } = { ts: 0, value: null };
-let scenariosCache: { ts: number; value: any } = { ts: 0, value: null };
-let terminalStateCache: { ts: number; value: any } = { ts: 0, value: null };
-const VACUUM_CACHE_TTL_MS = 1500;
-const SCENARIOS_CACHE_TTL_MS = 1500;
-const TERMINAL_STATE_CACHE_TTL_MS = 1500;
+const VACUUM_CACHE_TTL_MS = 10_000;
+const SCENARIOS_CACHE_TTL_MS = 15_000;
+const TERMINAL_STATE_CACHE_TTL_MS = 10_000;
+const STORAGE_SIGNAL_CACHE_TTL_MS = 15_000;
+const DERIBIT_BOOK_CACHE_TTL_MS = 30_000;
+const HEATMAP_CACHE_TTL_MS = 1_000;
+const TICKER_CACHE_TTL_MS = 1_000;
+const ORDERBOOK_RAW_CACHE_TTL_MS = 1_000;
+const CANDLES_CACHE_TTL_MS = 60_000;
 
 const BINANCE_CONNECTIVITY_TIMEOUT_MS = 6_000;
-const OPTIONS_TOP_OF_BOOK_SSE_MIN_INTERVAL_MS = 100;
+const OPTIONS_TOP_OF_BOOK_SSE_MIN_INTERVAL_MS = 500;
 const OPTIONS_TOP_OF_BOOK_SSE_MAX_INSTRUMENTS = DERIBIT_OPTIONS_WS_MAX_INSTRUMENTS;
 const OPTIONS_TOP_OF_BOOK_SSE_HEARTBEAT_MS = 15000;
 
@@ -178,6 +182,35 @@ export async function registerRoutes(
   const { registerDebugDbRoutes } = await import("./routes/debugDbRoutes");
   registerDebugDbRoutes(app);
 
+  app.get("/api/system/performance", requireSaasAdmin, (_req: Request, res: Response) => {
+    const memory = process.memoryUsage();
+    const cache = getCacheSnapshots();
+    const totals = cache.reduce(
+      (acc, entry) => {
+        acc.hits += entry.hits;
+        acc.misses += entry.misses;
+        acc.staleHits += entry.staleHits;
+        acc.errors += entry.errors;
+        if (entry.inFlight) acc.inFlight += 1;
+        return acc;
+      },
+      { hits: 0, misses: 0, staleHits: 0, errors: 0, inFlight: 0 },
+    );
+
+    res.json({
+      ok: true,
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      memory,
+      cache: {
+        activeKeys: cache.length,
+        totals,
+        keys: cache,
+      },
+      lastSlowEndpoints: getRecentSlowEndpoints(),
+    });
+  });
+
   app.get("/api/debug/binance-connectivity", async (_req: Request, res: Response) => {
     const spotHosts = [
       "https://api1.binance.com",
@@ -211,72 +244,66 @@ export async function registerRoutes(
     const source = (req.query.source as string)?.toLowerCase();
     const symbol = (req.query.symbol as string) || "BTCUSDT";
     const market = parseBookmapMarket(req.query.market);
+    const cacheKey = `orderbook:raw:${source ?? "default"}:${symbol}:${market}`;
     const krakenFallbackEnabled =
       String(process.env.ALLOW_KRAKEN_ORDERBOOK_FALLBACK ?? "").toLowerCase() === "true";
     try {
-      if (source === "kraken") {
-        const ob = await getKrakenOrderBook(symbol, 500);
-        res.json({
-          exchange: "kraken",
+      const payload = await cachedFetch(cacheKey, { ttlMs: ORDERBOOK_RAW_CACHE_TTL_MS, staleTtlMs: 30_000 }, async () => {
+        if (source === "kraken") {
+          const ob = await getKrakenOrderBook(symbol, 500);
+          return {
+            exchange: "kraken",
+            market,
+            bids: ob.bids.map((level) => [level.price.toString(), level.size.toString()]),
+            asks: ob.asks.map((level) => [level.price.toString(), level.size.toString()]),
+            timestamp: ob.timestamp,
+          };
+        }
+        let orderBook = getOrderBookForMarket(market);
+        let exchange = market === "perp" ? "binance-perp" : "binance";
+        let binanceSpotEmpty =
+          market === "spot" && orderBook.bids.length === 0 && orderBook.asks.length === 0;
+        let warning: string | undefined;
+        let providerStatus: Record<string, unknown> | undefined;
+
+        if (binanceSpotEmpty) {
+          await resyncSpotOrderBook("api-orderbook-raw-empty");
+          orderBook = getOrderBookForMarket(market);
+          binanceSpotEmpty = orderBook.bids.length === 0 && orderBook.asks.length === 0;
+        }
+
+        if (binanceSpotEmpty && krakenFallbackEnabled) {
+          const ob = await getKrakenOrderBook(symbol, 500);
+          orderBook = {
+            bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
+            asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
+            timestamp: ob.timestamp,
+          };
+          exchange = "kraken";
+        } else if (binanceSpotEmpty) {
+          warning = "binance_spot_orderbook_empty";
+          providerStatus = {
+            spot: getSpotOrderBookHealth(),
+            perp: getPerpOrderBookHealth(),
+          };
+        }
+        return {
+          exchange,
           market,
-          bids: ob.bids.map((level) => [level.price.toString(), level.size.toString()]),
-          asks: ob.asks.map((level) => [level.price.toString(), level.size.toString()]),
-          timestamp: ob.timestamp,
-        });
-        return;
-      }
-      let orderBook = getOrderBookForMarket(market);
-      let exchange = market === "perp" ? "binance-perp" : "binance";
-      let binanceSpotEmpty =
-        market === "spot" && orderBook.bids.length === 0 && orderBook.asks.length === 0;
-      let warning: string | undefined;
-      let providerStatus: Record<string, unknown> | undefined;
-
-      if (binanceSpotEmpty) {
-        await resyncSpotOrderBook("api-orderbook-raw-empty");
-        orderBook = getOrderBookForMarket(market);
-        binanceSpotEmpty = orderBook.bids.length === 0 && orderBook.asks.length === 0;
-      }
-
-      if (binanceSpotEmpty && krakenFallbackEnabled) {
-        const ob = await getKrakenOrderBook(symbol, 500);
-        orderBook = {
-          bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
-          asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
-          timestamp: ob.timestamp,
+          bids: orderBook.bids.map((level) => [level.price.toString(), level.size.toString()]),
+          asks: orderBook.asks.map((level) => [level.price.toString(), level.size.toString()]),
+          timestamp: orderBook.timestamp || Date.now(),
+          ...(warning
+            ? {
+                warning,
+                fallbackEligible: true,
+                krakenFallbackEnabled: false,
+                providerStatus,
+              }
+            : {}),
         };
-        exchange = "kraken";
-        if (process.env.NODE_ENV === "production") {
-          console.warn("[API] /api/orderbook/raw: Binance spot empty, Kraken fallback enabled");
-        }
-      } else if (binanceSpotEmpty) {
-        warning = "binance_spot_orderbook_empty";
-        providerStatus = {
-          spot: getSpotOrderBookHealth(),
-          perp: getPerpOrderBookHealth(),
-        };
-        if (process.env.NODE_ENV === "production") {
-          console.warn(
-            "[API] /api/orderbook/raw: Binance spot empty; returning Binance response without Kraken fallback",
-            providerStatus,
-          );
-        }
-      }
-      res.json({
-        exchange,
-        market,
-        bids: orderBook.bids.map((level) => [level.price.toString(), level.size.toString()]),
-        asks: orderBook.asks.map((level) => [level.price.toString(), level.size.toString()]),
-        timestamp: orderBook.timestamp || Date.now(),
-        ...(warning
-          ? {
-              warning,
-              fallbackEligible: true,
-              krakenFallbackEnabled: false,
-              providerStatus,
-            }
-          : {}),
       });
+      res.json(payload);
     } catch (error: any) {
       console.error("[API] Order book fetch error:", error?.message ?? error);
       res.status(500).json({ error: "Failed to fetch order book" });
@@ -325,50 +352,65 @@ export async function registerRoutes(
     const priceMax = req.query.priceMax != null ? Number(req.query.priceMax) : undefined;
 
     try {
-      const engine = getBookmapEngine(symbol, exchange, market);
-
-      if (bucketMs != null && Number.isFinite(bucketMs) && bucketMs > 0) {
-        engine.setBucketMs(bucketMs);
-      }
-
-      if (!engine.hasData()) {
-        if (exchange === "kraken") {
-          const ob = await getKrakenOrderBook(symbol, 500);
-          engine.applySnapshot({
-            bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
-            asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
-            timestamp: ob.timestamp,
-          });
-        } else if (exchange === "binance" || exchange.startsWith("binance")) {
-          const orderBook = getOrderBookForMarket(market);
-          if (orderBook.bids.length > 0 || orderBook.asks.length > 0) {
-            engine.applySnapshot({
-              bids: orderBook.bids,
-              asks: orderBook.asks,
-              timestamp: orderBook.timestamp ?? Date.now(),
-            });
-          }
-        }
-      }
-
-      const state = engine.getCurrentState({
-        priceRangePct,
-        priceMin:
-          priceMin != null && Number.isFinite(priceMin) ? priceMin : undefined,
-        priceMax:
-          priceMax != null && Number.isFinite(priceMax) ? priceMax : undefined,
-        minWallSize,
-        includeStale,
-      });
-
-      logBookmapMarketStateDiagnostics(symbol, exchange, market);
-
-      res.json({
+      const cacheKey = [
+        "bookmap:state",
         symbol,
         exchange,
         market,
-        ...state,
+        priceRangePct ?? "auto",
+        bucketMs ?? "default",
+        minWallSize ?? "default",
+        includeStale ? "stale" : "fresh",
+        priceMin ?? "min-auto",
+        priceMax ?? "max-auto",
+      ].join(":");
+      const payload = await cachedFetch(cacheKey, { ttlMs: 1_000, staleTtlMs: 10_000 }, async () => {
+        const engine = getBookmapEngine(symbol, exchange, market);
+
+        if (bucketMs != null && Number.isFinite(bucketMs) && bucketMs > 0) {
+          engine.setBucketMs(bucketMs);
+        }
+
+        if (!engine.hasData()) {
+          if (exchange === "kraken") {
+            const ob = await getKrakenOrderBook(symbol, 500);
+            engine.applySnapshot({
+              bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
+              asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
+              timestamp: ob.timestamp,
+            });
+          } else if (exchange === "binance" || exchange.startsWith("binance")) {
+            const orderBook = getOrderBookForMarket(market);
+            if (orderBook.bids.length > 0 || orderBook.asks.length > 0) {
+              engine.applySnapshot({
+                bids: orderBook.bids,
+                asks: orderBook.asks,
+                timestamp: orderBook.timestamp ?? Date.now(),
+              });
+            }
+          }
+        }
+
+        const state = engine.getCurrentState({
+          priceRangePct,
+          priceMin:
+            priceMin != null && Number.isFinite(priceMin) ? priceMin : undefined,
+          priceMax:
+            priceMax != null && Number.isFinite(priceMax) ? priceMax : undefined,
+          minWallSize,
+          includeStale,
+        });
+
+        logBookmapMarketStateDiagnostics(symbol, exchange, market);
+
+        return {
+          symbol,
+          exchange,
+          market,
+          ...state,
+        };
       });
+      res.json(payload);
     } catch (error: any) {
       console.error("[API] /api/bookmap/state error:", error?.message ?? error);
       res.status(500).json({ error: "Failed to fetch bookmap state" });
@@ -480,12 +522,11 @@ export async function registerRoutes(
   // --- New Terminal Aggregation Endpoint ---
   app.get("/api/terminal/state", async (_req, res) => {
     try {
-      const now = Date.now();
-      if (terminalStateCache.value && now - terminalStateCache.ts < TERMINAL_STATE_CACHE_TTL_MS) {
-        return res.json(terminalStateCache.value);
-      }
-
-      const state = await getTerminalState();
+      const state = await cachedFetch(
+        "terminal:state",
+        { ttlMs: TERMINAL_STATE_CACHE_TTL_MS, staleTtlMs: 120_000 },
+        getTerminalState,
+      );
       const hasPositioning = state != null && "positioning" in state;
       const hasAbsorption = hasPositioning && state.positioning != null && typeof (state.positioning as any).absorption === "object";
       const opts = (state as any)?.options;
@@ -498,54 +539,88 @@ export async function registerRoutes(
           gravityMapStatus: gm?.status ?? null,
         });
       }
-      terminalStateCache = { ts: now, value: state };
       res.json(state);
     } catch (error: any) {
-      res.status(500).json({ error: "TERMINAL_STATE_UNAVAILABLE", details: error.message });
+      res.status(503).json({
+        ok: false,
+        degraded: true,
+        error: "TERMINAL_STATE_UNAVAILABLE",
+        details: error.message,
+        modules: {
+          gamma: { ok: false },
+          market: { ok: false },
+          orderbook: { ok: false },
+          flows: { ok: false },
+        },
+      });
     }
   });
 
   // Existing analytics endpoints
   app.get("/api/market-state", async (_req, res) => {
-    const data = await storage.getMarketState();
-    const optionsLastUpdated = storage.getOptionsLastUpdated();
-    if (!data) {
-      return res.status(503).json({
+    try {
+      const data = await cachedFetch("storage:market-state", { ttlMs: STORAGE_SIGNAL_CACHE_TTL_MS, staleTtlMs: 120_000 }, async () => {
+        const marketState = await storage.getMarketState();
+        const optionsLastUpdated = storage.getOptionsLastUpdated();
+        if (!marketState) {
+          throw new Error("MARKET_STATE_UNAVAILABLE");
+        }
+        return { ...marketState, optionsLastUpdated };
+      });
+      res.json(data);
+    } catch {
+      res.status(503).json({
         error: "MARKET_STATE_UNAVAILABLE",
-        optionsLastUpdated: optionsLastUpdated ?? null,
+        optionsLastUpdated: storage.getOptionsLastUpdated() ?? null,
       });
     }
-    console.log("[GammaFlipTrace][Route:/api/market-state]", {
-      gammaFlip: data?.gammaFlip ?? null,
-      distanceToFlip: data?.distanceToFlip ?? null,
-      transitionZoneStart: data?.transitionZoneStart ?? null,
-      transitionZoneEnd: data?.transitionZoneEnd ?? null,
-    });
-    res.json({ ...data, optionsLastUpdated });
   });
 
   app.get("/api/dealer-exposure", async (_req, res) => {
-    const data = await storage.getDealerExposure();
-    if (!data) return res.status(503).json({ error: "DEALER_EXPOSURE_UNAVAILABLE" });
-    res.json(data);
+    try {
+      const data = await cachedFetch("storage:dealer-exposure", { ttlMs: STORAGE_SIGNAL_CACHE_TTL_MS, staleTtlMs: 120_000 }, async () => {
+        const value = await storage.getDealerExposure();
+        if (!value) throw new Error("DEALER_EXPOSURE_UNAVAILABLE");
+        return value;
+      });
+      res.json(data);
+    } catch {
+      res.status(503).json({ error: "DEALER_EXPOSURE_UNAVAILABLE" });
+    }
   });
 
   app.get("/api/options-positioning", async (_req, res) => {
-    const data = await storage.getOptionsPositioning();
-    if (!data) return res.status(503).json({ error: "OPTIONS_POSITIONING_UNAVAILABLE" });
-    res.json(data);
+    try {
+      const data = await cachedFetch("storage:options-positioning", { ttlMs: STORAGE_SIGNAL_CACHE_TTL_MS, staleTtlMs: 120_000 }, async () => {
+        const value = await storage.getOptionsPositioning();
+        if (!value) throw new Error("OPTIONS_POSITIONING_UNAVAILABLE");
+        return value;
+      });
+      res.json(data);
+    } catch {
+      res.status(503).json({ error: "OPTIONS_POSITIONING_UNAVAILABLE" });
+    }
   });
 
   app.get("/api/key-levels", async (_req, res) => {
-    const data = await storage.getKeyLevels();
-    if (!data) return res.status(503).json({ error: "KEY_LEVELS_UNAVAILABLE" });
-    res.json(data);
+    try {
+      const data = await cachedFetch("storage:key-levels", { ttlMs: STORAGE_SIGNAL_CACHE_TTL_MS, staleTtlMs: 120_000 }, async () => {
+        const value = await storage.getKeyLevels();
+        if (!value) throw new Error("KEY_LEVELS_UNAVAILABLE");
+        return value;
+      });
+      res.json(data);
+    } catch {
+      res.status(503).json({ error: "KEY_LEVELS_UNAVAILABLE" });
+    }
   });
 
   // Old scenarios endpoint removed - replaced by structural scenarios endpoint below
 
   app.get("/api/dealer-hedging-flow", async (_req, res) => {
-    const data = await storage.getDealerHedgingFlow();
+    const data = await cachedFetch("storage:dealer-hedging-flow", { ttlMs: STORAGE_SIGNAL_CACHE_TTL_MS, staleTtlMs: 120_000 }, () =>
+      storage.getDealerHedgingFlow(),
+    );
     res.json(data);
   });
 
@@ -597,7 +672,11 @@ export async function registerRoutes(
     const source = req.query.source as string | undefined;
 
     try {
-      const candles = await MarketDataGateway.getCandles(symbol, interval, limit, source);
+      const candles = await cachedFetch(
+        `market:candles:${symbol}:${interval}:${limit}:${source ?? "default"}`,
+        { ttlMs: CANDLES_CACHE_TTL_MS, staleTtlMs: 5 * 60_000 },
+        () => MarketDataGateway.getCandles(symbol, interval, limit, source),
+      );
       res.json(candles);
     } catch (error: any) {
       console.error(`[Gateway] Candle Fetch Error: ${error.message}`);
@@ -612,7 +691,11 @@ export async function registerRoutes(
     const symbol = (req.query.symbol as string) || "BTCUSDT";
     const source = req.query.source as string | undefined;
     try {
-      const ticker = await MarketDataGateway.getTicker(symbol, source);
+      const ticker = await cachedFetch(
+        `market:ticker:${symbol}:${source ?? "default"}`,
+        { ttlMs: TICKER_CACHE_TTL_MS, staleTtlMs: 30_000 },
+        () => MarketDataGateway.getTicker(symbol, source),
+      );
       res.json(ticker);
     } catch (error: any) {
       console.error(`[Gateway] Ticker Fetch Error: ${error.message}`);
@@ -739,13 +822,14 @@ export async function registerRoutes(
 
   app.get("/api/liquidity/heatmap", async (_req, res) => {
     try {
-      const ticker = MarketDataGateway.getCachedTicker();
-      const spotPrice = ticker?.price;
-      if (!spotPrice) {
-        res.status(503).json({ error: "SPOT_PRICE_UNAVAILABLE" });
-        return;
-      }
-      const heatmap = await OrderBookGateway.getLiquidityHeatmap(spotPrice);
+      const heatmap = await cachedFetch("liquidity:heatmap", { ttlMs: HEATMAP_CACHE_TTL_MS, staleTtlMs: 60_000 }, async () => {
+        const ticker = MarketDataGateway.getCachedTicker();
+        const spotPrice = ticker?.price;
+        if (!spotPrice) {
+          throw new Error("SPOT_PRICE_UNAVAILABLE");
+        }
+        return OrderBookGateway.getLiquidityHeatmap(spotPrice);
+      });
       res.json(heatmap);
     } catch (e: any) {
       res.status(500).json({ error: "HEATMAP_FAILED", details: e.message });
@@ -760,7 +844,11 @@ export async function registerRoutes(
     const source = req.query.source as string | undefined;
 
     try {
-      const candles = await MarketDataGateway.getCandles(symbol, interval, limit, source);
+      const candles = await cachedFetch(
+        `market:candles:${symbol}:${interval}:${limit}:${source ?? "default"}`,
+        { ttlMs: CANDLES_CACHE_TTL_MS, staleTtlMs: 5 * 60_000 },
+        () => MarketDataGateway.getCandles(symbol, interval, limit, source),
+      );
       res.json(candles);
     } catch (error: any) {
       res.status(503).json({
@@ -773,59 +861,41 @@ export async function registerRoutes(
   // --- Liquidity Vacuum Analysis Endpoint ---
   app.get("/api/vacuum", async (req: Request, res: Response) => {
     try {
-      const now = Date.now();
-      if (vacuumCache.value && now - vacuumCache.ts < VACUUM_CACHE_TTL_MS) {
-        return res.json(vacuumCache.value);
-      }
+      const result = await cachedFetch("engine:vacuum", { ttlMs: VACUUM_CACHE_TTL_MS, staleTtlMs: 120_000 }, async () => {
+        const [orderBook, terminalState, positioning] = await Promise.all([
+          getOrderBook(),
+          cachedFetch("terminal:state", { ttlMs: TERMINAL_STATE_CACHE_TTL_MS, staleTtlMs: 120_000 }, getTerminalState),
+          storage.getOptionsPositioning()
+        ]);
 
-      // Get current market data
-      const [orderBook, terminalState, positioning] = await Promise.all([
-        getOrderBook(),
-        getTerminalState(),
-        storage.getOptionsPositioning()
-      ]);
+        if (!orderBook || !orderBook.bids.length || !orderBook.asks.length) {
+          throw new Error("Insufficient orderbook data for vacuum analysis");
+        }
 
-      if (!orderBook || !orderBook.bids.length || !orderBook.asks.length) {
-        return res.status(503).json({
-          error: "Insufficient orderbook data for vacuum analysis",
-          vacuumRisk: "LOW",
-          vacuumDirection: "NEUTRAL",
-          confirmedVacuumActive: false
-        });
-      }
+        const bestBid = orderBook.bids[0]?.price || 0;
+        const bestAsk = orderBook.asks[0]?.price || 0;
+        const spotPrice = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk;
 
-      // Calculate spot price from orderbook
-      const bestBid = orderBook.bids[0]?.price || 0;
-      const bestAsk = orderBook.asks[0]?.price || 0;
-      const spotPrice = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk;
+        if (!spotPrice) {
+          throw new Error("Unable to determine spot price");
+        }
 
-      if (!spotPrice) {
-        return res.status(503).json({
-          error: "Unable to determine spot price",
-          vacuumRisk: "LOW",
-          vacuumDirection: "NEUTRAL",
-          confirmedVacuumActive: false
-        });
-      }
+        const input: VacuumEngineInput = {
+          spotPrice,
+          bids: orderBook.bids.map(bid => ({ price: bid.price, size: bid.size })),
+          asks: orderBook.asks.map(ask => ({ price: ask.price, size: ask.size })),
+          nearestBookClusters: positioning ? {
+            above: [positioning.callWall].filter(Boolean),
+            below: [positioning.putWall].filter(Boolean)
+          } : undefined,
+          spread: bestAsk - bestBid,
+          liquiditySweepRisk: terminalState?.market?.liquiditySweepDetector,
+          dealerHedgingFlow: terminalState?.market?.dealerHedgingFlow,
+          volatility: terminalState?.market?.distanceToFlip ? Math.abs(terminalState.market.distanceToFlip) : undefined
+        };
 
-      // Prepare input for vacuum engine
-      const input: VacuumEngineInput = {
-        spotPrice,
-        bids: orderBook.bids.map(bid => ({ price: bid.price, size: bid.size })),
-        asks: orderBook.asks.map(ask => ({ price: ask.price, size: ask.size })),
-        nearestBookClusters: positioning ? {
-          above: [positioning.callWall].filter(Boolean),
-          below: [positioning.putWall].filter(Boolean)
-        } : undefined,
-        spread: bestAsk - bestBid,
-        liquiditySweepRisk: terminalState?.market?.liquiditySweepDetector,
-        dealerHedgingFlow: terminalState?.market?.dealerHedgingFlow,
-        volatility: terminalState?.market?.distanceToFlip ? Math.abs(terminalState.market.distanceToFlip) : undefined
-      };
-
-      // Run vacuum analysis
-      const result = liquidityVacuumEngine.analyze(input);
-      vacuumCache = { ts: now, value: result };
+        return liquidityVacuumEngine.analyze(input);
+      });
       res.json(result);
     } catch (error) {
       console.error("Vacuum analysis error:", error);
@@ -865,85 +935,62 @@ export async function registerRoutes(
   // --- Structural Scenarios Endpoint ---
   app.get("/api/scenarios", async (req: Request, res: Response) => {
     try {
-      const now = Date.now();
-      if (scenariosCache.value && now - scenariosCache.ts < SCENARIOS_CACHE_TTL_MS) {
-        return res.json(scenariosCache.value);
-      }
+      const scenarios = await cachedFetch("engine:scenarios", { ttlMs: SCENARIOS_CACHE_TTL_MS, staleTtlMs: 120_000 }, async () => {
+        if (DEBUG_SCENARIOS) {
+          console.log("Structural Scenario Engine responding");
+        }
 
-      if (DEBUG_SCENARIOS) {
-        console.log("Structural Scenario Engine responding");
-      }
+        const [terminalState, positioning, vacuumData] = await Promise.all([
+          cachedFetch("terminal:state", { ttlMs: TERMINAL_STATE_CACHE_TTL_MS, staleTtlMs: 120_000 }, getTerminalState).catch(() => null),
+          storage.getOptionsPositioning().catch(() => null),
+          cachedFetch("engine:vacuum", { ttlMs: VACUUM_CACHE_TTL_MS, staleTtlMs: 120_000 }, async () => {
+            const [orderBook, state, pos] = await Promise.all([
+              getOrderBook(),
+              cachedFetch("terminal:state", { ttlMs: TERMINAL_STATE_CACHE_TTL_MS, staleTtlMs: 120_000 }, getTerminalState),
+              storage.getOptionsPositioning(),
+            ]);
+            if (!orderBook || !orderBook.bids.length || !orderBook.asks.length) {
+              throw new Error("Insufficient orderbook data for vacuum analysis");
+            }
+            const bestBid = orderBook.bids[0]?.price || 0;
+            const bestAsk = orderBook.asks[0]?.price || 0;
+            const spotPrice = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk;
+            if (!spotPrice) throw new Error("Unable to determine spot price");
+            return liquidityVacuumEngine.analyze({
+              spotPrice,
+              bids: orderBook.bids.map(bid => ({ price: bid.price, size: bid.size })),
+              asks: orderBook.asks.map(ask => ({ price: ask.price, size: ask.size })),
+              nearestBookClusters: pos ? {
+                above: [pos.callWall].filter(Boolean),
+                below: [pos.putWall].filter(Boolean)
+              } : undefined,
+              spread: bestAsk - bestBid,
+              liquiditySweepRisk: state?.market?.liquiditySweepDetector,
+              dealerHedgingFlow: state?.market?.dealerHedgingFlow,
+              volatility: state?.market?.distanceToFlip ? Math.abs(state.market.distanceToFlip) : undefined
+            });
+          }).catch(() => null),
+        ]);
 
-      // Get all required terminal signals with timeout protection
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout')), 2000)
-      );
+        const signals: TerminalSignals = {
+          gammaRegime: terminalState?.market?.gammaRegime || "LONG",
+          gammaFlip: terminalState?.market?.gammaFlip || undefined,
+          gammaMagnets: terminalState?.levels?.gammaMagnets || [],
+          callWall: positioning?.callWall || undefined,
+          putWall: positioning?.putWall || undefined,
+          pressure: (terminalState as any)?.positioning_engines?.liquidityHeatmap?.liquidityPressure || "BALANCED",
+          vacuumRisk: vacuumData?.vacuumRisk || "LOW",
+          vacuumType: vacuumData?.vacuumType || "NONE",
+          vacuumDirection: vacuumData?.vacuumDirection || "NEUTRAL",
+          vacuumProximity: vacuumData?.vacuumProximity || "FAR",
+          thinLiquidity: vacuumData?.nearestThinLiquidityZone ? {
+            price: vacuumData.nearestThinLiquidityZone,
+            direction: vacuumData.nearestThinLiquidityDirection || "NONE"
+          } : undefined
+        };
 
-      const port = process.env.PORT || "5000";
-      const vacuumUrl = `http://localhost:${port}/api/vacuum`;
-
-      const [terminalState, positioning, vacuumData] = await Promise.all([
-        getTerminalState().catch(() => null),
-        storage.getOptionsPositioning().catch(() => null),
-        Promise.race([
-          fetch(vacuumUrl).then(r => r.json()).catch(() => null),
-          timeoutPromise
-        ]).catch(() => null)
-      ]);
-
-      if (DEBUG_SCENARIOS) {
-        console.log("=== SCENARIOS API DEBUG ===");
-        console.log("TERMINAL STATE:", {
-          hasMarket: !!terminalState?.market,
-          gammaRegime: terminalState?.market?.gammaRegime,
-          gammaFlip: terminalState?.market?.gammaFlip,
-          hasLevels: !!terminalState?.levels,
-        });
-        console.log("POSITIONING:", { callWall: positioning?.callWall, putWall: positioning?.putWall });
-        console.log("VACUUM DATA:", {
-          vacuumRisk: vacuumData?.vacuumRisk,
-          vacuumType: vacuumData?.vacuumType,
-          vacuumDirection: vacuumData?.vacuumDirection,
-          vacuumProximity: vacuumData?.vacuumProximity,
-        });
-      }
-
-      // Extract signals for scenario engine with safe fallbacks
-      const signals: TerminalSignals = {
-        gammaRegime: terminalState?.market?.gammaRegime || "LONG", // Safe fallback
-        gammaFlip: terminalState?.market?.gammaFlip || undefined,
-        gammaMagnets: terminalState?.levels?.gammaMagnets || [],
-        callWall: positioning?.callWall || undefined,
-        putWall: positioning?.putWall || undefined,
-        pressure: (terminalState as any)?.positioning_engines?.liquidityHeatmap?.liquidityPressure || "BALANCED", // Safe fallback
-        vacuumRisk: vacuumData?.vacuumRisk || "LOW", // Safe fallback
-        vacuumType: vacuumData?.vacuumType || "NONE", // Safe fallback
-        vacuumDirection: vacuumData?.vacuumDirection || "NEUTRAL", // Safe fallback
-        vacuumProximity: vacuumData?.vacuumProximity || "FAR", // Safe fallback
-        thinLiquidity: vacuumData?.nearestThinLiquidityZone ? {
-          price: vacuumData.nearestThinLiquidityZone,
-          direction: vacuumData.nearestThinLiquidityDirection || "NONE"
-        } : undefined
-      };
-
-      if (DEBUG_SCENARIOS) {
-        console.log("FINAL SIGNALS FOR ENGINE:", {
-          gammaRegime: signals.gammaRegime,
-          gammaFlip: signals.gammaFlip,
-          magnetsCount: signals.gammaMagnets?.length ?? 0,
-        });
-      }
-
-      // Generate scenarios with safe fallback
-      const scenarios = scenarioEngine.generateScenarios(signals);
-      
-      if (DEBUG_SCENARIOS) {
-        console.log("GENERATED SCENARIOS:", scenarios);
-        console.log("=== END SCENARIOS API DEBUG ===");
-      }
-
-      scenariosCache = { ts: now, value: scenarios };
-
+        return scenarioEngine.generateScenarios(signals);
+      });
       res.json(scenarios);
     } catch (error) {
       console.error("Scenario generation error:", error);

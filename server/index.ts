@@ -4,6 +4,7 @@ import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
 import cors from "cors";
+import { recordEndpointTiming } from "./lib/performanceMonitor";
 
 function safeErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -171,7 +172,13 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
+      const userId = (req as any).saasUser?.id ?? (req as any).user?.id;
+      const degraded =
+        capturedJsonResponse?.degraded === true ||
+        capturedJsonResponse?.ok === true && capturedJsonResponse?.degraded === true;
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      if (userId != null) logLine += ` userId=${userId}`;
+      if (degraded) logLine += " degraded=true";
       // Avoid stringifying large JSON payloads for successful requests (prevents memory spikes/OOM).
       if (capturedJsonResponse && res.statusCode >= 400) {
         try {
@@ -181,7 +188,23 @@ app.use((req, res, next) => {
         }
       }
 
-      log(logLine);
+      recordEndpointTiming({
+        method: req.method,
+        path,
+        status: res.statusCode,
+        durationMs: duration,
+        userId,
+        degraded,
+        timestamp: new Date().toISOString(),
+      });
+
+      if (duration > 5_000) {
+        console.error(`[perf] slow endpoint ${logLine}`);
+      } else if (duration > 1_000) {
+        console.warn(`[perf] slow endpoint ${logLine}`);
+      } else {
+        log(logLine);
+      }
     }
   });
 
@@ -232,6 +255,13 @@ app.use((req, res, next) => {
       ok: true,
       status: "healthy",
       service: "terminal",
+      timestamp: new Date().toISOString(),
+    });
+  });
+  app.get("/api/health", (_req, res) => {
+    res.status(200).json({
+      ok: true,
+      uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     });
   });

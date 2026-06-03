@@ -23,6 +23,7 @@ export interface TerminalState {
   tickerStatus: "fresh" | "stale" | "unavailable";
   timestamp: number;
   options?: TerminalStateOptionsGammaExtras & Record<string, unknown>;
+  shortGammaPockets?: TerminalStateOptionsGammaExtras["shortGammaPockets"];
   gravityMap?: {
     status?: string;
     primaryMagnet?: { price?: number; label?: string; strength?: string } | number | null;
@@ -35,7 +36,7 @@ export function useTerminalState() {
     queryKey: ["/api/terminal/state"],
     // Polling del panel principal. Este endpoint es caro en el server
     // (recalcula engines/heatmap/coherence), así que evitamos 2s por defecto.
-    refetchInterval: 5000,
-    staleTime: 2000,
+    refetchInterval: 12_000,
+    staleTime: 8_000,
   });
 }

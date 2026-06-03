@@ -146,8 +146,8 @@ export function useLiquidityHeatmapFeed(
       return res.json() as { price?: number; last?: number };
     },
     enabled,
-    refetchInterval: 2000,
-    staleTime: 1000,
+    refetchInterval: 2_000,
+    staleTime: 1_000,
     retry: false,
   });
 
@@ -533,7 +533,7 @@ export function useLiquidityHeatmapFeed(
       if (latestAgeMs > BOOKMAP_OB_STALE_MS) {
         reconnectTradesRef.current?.();
       }
-    }, 2_000);
+    }, 8_000);
 
     return () => window.clearInterval(id);
   }, [enabled, marketForTrades, symbol, tradesStreamConnected, sseUrl]);
