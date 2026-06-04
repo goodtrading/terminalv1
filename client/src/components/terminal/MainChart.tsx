@@ -1119,28 +1119,82 @@ export function MainChart({
           count: shortGammaPockets?.pockets?.length ?? 0,
         });
       }
-      if (shortGammaPockets && shortGammaPockets.status !== "NONE") {
-        const { pockets, nearest } = shortGammaPockets;
+      if (shortGammaPockets && Array.isArray(shortGammaPockets.pockets) && shortGammaPockets.pockets.length > 0) {
+        const { pockets, nearest, status: signalStatus } = shortGammaPockets;
+        const resolvePocketRange = (pocket: any): { rangeLow: number; rangeHigh: number } | null => {
+          const zone = pocket?.zone && typeof pocket.zone === "object" ? pocket.zone : null;
+          const lowRaw =
+            pocket?.rangeLow ??
+            pocket?.lower ??
+            pocket?.low ??
+            pocket?.start ??
+            zone?.lower ??
+            zone?.low ??
+            zone?.start;
+          const highRaw =
+            pocket?.rangeHigh ??
+            pocket?.upper ??
+            pocket?.high ??
+            pocket?.end ??
+            zone?.upper ??
+            zone?.high ??
+            zone?.end;
+          const low = Number(lowRaw);
+          const high = Number(highRaw);
+          if (Number.isFinite(low) && Number.isFinite(high) && low > 0 && high > 0 && low !== high) {
+            return { rangeLow: Math.min(low, high), rangeHigh: Math.max(low, high) };
+          }
+          const center = Number(pocket?.price ?? pocket?.level ?? pocket?.strike ?? pocket?.center);
+          if (!Number.isFinite(center) || center <= 0) return null;
+          const width = Math.max(center * 0.0015, 150);
+          return { rangeLow: center - width, rangeHigh: center + width };
+        };
+        const strongStatuses = new Set(["ACTIVE", "NEAR", "TRIGGERED", "WARNING", "HIGH_RISK", "EXPANDING"]);
+        const softStatuses = new Set(["WATCH", "IDLE", "NONE"]);
         
         // Deduplicate pockets: if overlap >60% or centers <300 USD apart, keep higher priority
-        const statusPriority: Record<string, number> = { ACTIVE: 4, EXPANDING: 3, WATCH: 2, IDLE: 1 };
+        const statusPriority: Record<string, number> = {
+          TRIGGERED: 7,
+          HIGH_RISK: 6,
+          ACTIVE: 5,
+          WARNING: 4,
+          NEAR: 4,
+          EXPANDING: 3,
+          WATCH: 2,
+          IDLE: 1,
+          NONE: 0,
+        };
         const deduplicatedPockets: any[] = [];
         const sortedByPriority = [...pockets].sort((a: any, b: any) => {
-          const priorityDiff = (statusPriority[b.status] || 0) - (statusPriority[a.status] || 0);
+          const aStatus = String(a?.status ?? signalStatus ?? "NONE").toUpperCase();
+          const bStatus = String(b?.status ?? signalStatus ?? "NONE").toUpperCase();
+          const priorityDiff = (statusPriority[bStatus] || 0) - (statusPriority[aStatus] || 0);
           if (priorityDiff !== 0) return priorityDiff;
-          return (b.confidence || 0) - (a.confidence || 0);
+          const scoreDiff =
+            Number(b?.score ?? b?.intensity ?? b?.confidence ?? 0) -
+            Number(a?.score ?? a?.intensity ?? a?.confidence ?? 0);
+          if (scoreDiff !== 0) return scoreDiff;
+          const aRange = resolvePocketRange(a);
+          const bRange = resolvePocketRange(b);
+          const aCenter = aRange ? (aRange.rangeLow + aRange.rangeHigh) / 2 : Number.POSITIVE_INFINITY;
+          const bCenter = bRange ? (bRange.rangeLow + bRange.rangeHigh) / 2 : Number.POSITIVE_INFINITY;
+          return Math.abs(aCenter - price) - Math.abs(bCenter - price);
         });
         
         for (const pocket of sortedByPriority) {
           if (pocket.status === "FAILED") continue;
-          const center = (pocket.rangeLow + pocket.rangeHigh) / 2;
+          const range = resolvePocketRange(pocket);
+          if (!range) continue;
+          const center = (range.rangeLow + range.rangeHigh) / 2;
           const isDuplicate = deduplicatedPockets.some((existing: any) => {
-            const existingCenter = (existing.rangeLow + existing.rangeHigh) / 2;
+            const existingRange = resolvePocketRange(existing);
+            if (!existingRange) return false;
+            const existingCenter = (existingRange.rangeLow + existingRange.rangeHigh) / 2;
             const centerDistance = Math.abs(center - existingCenter);
-            const overlap = Math.min(pocket.rangeHigh, existing.rangeHigh) - Math.max(pocket.rangeLow, existing.rangeLow);
-            const pocketRange = pocket.rangeHigh - pocket.rangeLow;
-            const existingRange = existing.rangeHigh - existing.rangeLow;
-            const overlapRatio = overlap / Math.max(pocketRange, existingRange, 1);
+            const overlap = Math.min(range.rangeHigh, existingRange.rangeHigh) - Math.max(range.rangeLow, existingRange.rangeLow);
+            const pocketSpan = range.rangeHigh - range.rangeLow;
+            const existingSpan = existingRange.rangeHigh - existingRange.rangeLow;
+            const overlapRatio = overlap / Math.max(pocketSpan, existingSpan, 1);
             return centerDistance < 300 || overlapRatio > 0.6;
           });
           if (!isDuplicate) {
@@ -1154,20 +1208,28 @@ export function MainChart({
         
         // Separate pockets by direction relative to spot
         const upperPockets = deduplicatedPockets.filter((p: any) => {
-          const center = (p.rangeLow + p.rangeHigh) / 2;
+          const range = resolvePocketRange(p);
+          if (!range) return false;
+          const center = (range.rangeLow + range.rangeHigh) / 2;
           return center > spot;
         }).sort((a: any, b: any) => {
-          const centerA = (a.rangeLow + a.rangeHigh) / 2;
-          const centerB = (b.rangeLow + b.rangeHigh) / 2;
+          const rangeA = resolvePocketRange(a)!;
+          const rangeB = resolvePocketRange(b)!;
+          const centerA = (rangeA.rangeLow + rangeA.rangeHigh) / 2;
+          const centerB = (rangeB.rangeLow + rangeB.rangeHigh) / 2;
           return (centerA - spot) - (centerB - spot); // Sort by distance to spot (ascending)
         });
         
         const lowerPockets = deduplicatedPockets.filter((p: any) => {
-          const center = (p.rangeLow + p.rangeHigh) / 2;
+          const range = resolvePocketRange(p);
+          if (!range) return false;
+          const center = (range.rangeLow + range.rangeHigh) / 2;
           return center < spot;
         }).sort((a: any, b: any) => {
-          const centerA = (a.rangeLow + a.rangeHigh) / 2;
-          const centerB = (b.rangeLow + b.rangeHigh) / 2;
+          const rangeA = resolvePocketRange(a)!;
+          const rangeB = resolvePocketRange(b)!;
+          const centerA = (rangeA.rangeLow + rangeA.rangeHigh) / 2;
+          const centerB = (rangeB.rangeLow + rangeB.rangeHigh) / 2;
           return (spot - centerA) - (spot - centerB); // Sort by distance to spot (ascending)
         });
         
@@ -1188,29 +1250,52 @@ export function MainChart({
           pocketsToRender.push(nearest);
         }
         
-        pocketsToRender.slice(0, 2).forEach((pocket: any, index: number) => {
-          const { rangeLow, rangeHigh, risk, status } = pocket;
+        let renderedPocketCount = 0;
+        pocketsToRender.slice(0, 4).forEach((pocket: any, index: number) => {
+          const range = resolvePocketRange(pocket);
+          if (!range) return;
+          const { risk } = pocket;
+          const { rangeLow, rangeHigh } = range;
+          const status = String(pocket?.status ?? signalStatus ?? "NONE").toUpperCase();
           if (rangeLow && rangeHigh && Math.abs(rangeHigh - rangeLow) > 0) {
             const center = (rangeLow + rangeHigh) / 2;
             
-            // Map IDLE to WATCH for display (no distance filter)
-            let displayStatus = status;
-            if (status === "IDLE") {
-              displayStatus = "WATCH";
-            }
+            const isStrong = strongStatuses.has(status) || risk === "HIGH";
+            const isSoft = softStatuses.has(status) || !isStrong;
+            const displayStatus = isStrong ? status : "WATCH";
             
-            const label = `SHORT GAMMA POCKET · ${displayStatus} · ${fmtK(rangeLow)}-${fmtK(rangeHigh)}`;
+            const label = isStrong
+              ? `SHORT GAMMA POCKET · ${displayStatus} · ${fmtK(rangeLow)}-${fmtK(rangeHigh)}`
+              : `SGP WATCH · ${fmtK(rangeLow)}-${fmtK(rangeHigh)}`;
             
             // Visual hierarchy: nearest pocket more visible
             const isNearest = index === 0;
-            const opacity = isNearest ? 0.85 : 0.55;
-            const color = risk === "HIGH" ? `rgba(255, 100, 100, ${opacity})` : risk === "MEDIUM" ? `rgba(255, 165, 0, ${opacity})` : `rgba(255, 255, 255, ${opacity})`;
+            const opacity = isStrong
+              ? (isNearest ? 0.85 : 0.58)
+              : (isNearest ? 0.34 : 0.22);
+            const color = risk === "HIGH"
+              ? `rgba(255, 100, 100, ${opacity})`
+              : risk === "MEDIUM"
+                ? `rgba(255, 165, 0, ${opacity})`
+                : isSoft
+                  ? `rgba(255, 255, 255, ${opacity})`
+                  : `rgba(255, 255, 255, ${opacity})`;
+            const lineWidth = isStrong && isNearest ? 2 : 1;
+            const labelPriority = isStrong ? 3 : 4;
             
-            pushEntry(center, 3, label, "SGP", color, LineStyle.Solid, isNearest ? 2 : 1, false, false, "short_gamma_pocket" as any, "gamma", opacity, true);
-            pushEntry(rangeLow, 4, "", "", color, LineStyle.Dashed, 1, false, true, "short_gamma_pocket_band" as any, "gamma", opacity * 0.6, false);
-            pushEntry(rangeHigh, 4, "", "", color, LineStyle.Dashed, 1, false, true, "short_gamma_pocket_band" as any, "gamma", opacity * 0.6, false);
+            pushEntry(center, labelPriority, label, "SGP", color, LineStyle.Solid, lineWidth, false, false, "short_gamma_pocket" as any, "gamma", opacity, true);
+            pushEntry(rangeLow, 4, "", "", color, LineStyle.Dashed, 1, false, true, "short_gamma_pocket_band" as any, "gamma", opacity * 0.55, false);
+            pushEntry(rangeHigh, 4, "", "", color, LineStyle.Dashed, 1, false, true, "short_gamma_pocket_band" as any, "gamma", opacity * 0.55, false);
+            renderedPocketCount += 1;
           }
         });
+        if (import.meta.env.DEV && pockets.length > 0 && renderedPocketCount === 0) {
+          console.debug("[sgp-overlay] pockets received but none rendered", {
+            status: signalStatus,
+            count: pockets.length,
+            sample: pockets[0],
+          });
+        }
       }
     }
 
