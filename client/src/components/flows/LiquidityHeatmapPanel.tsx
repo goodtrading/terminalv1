@@ -395,41 +395,6 @@ export function LiquidityHeatmapPanel({
     activeDomMarket === "perp" &&
     (perpBookmapStale || isOrderbookStale(orderbookAgeMs) || isOrderbookStale(perpAgeMs));
 
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const tradeAgeMs =
-      latestTradeTs != null ? Math.max(0, Date.now() - latestTradeTs) : null;
-    console.debug("[BOOKMAP_MARKET_FRESHNESS]", {
-      sourceMode,
-      domSource: activeDomMarket,
-      tradeSource: activeTradeMarket,
-      market: activeDomMarket,
-      bookmapAgeMs: activeDomAgeMs,
-      spotBookmapAgeMs: spotAgeMs,
-      perpBookmapAgeMs: perpAgeMs,
-      orderbookAgeMs,
-      orderbookFeedMarket,
-      tradeAgeMs,
-      bestBid: domBboRaw?.bestBid ?? null,
-      bestAsk: domBboRaw?.bestAsk ?? null,
-      bboValid: domBboFresh,
-      perpLiveStale,
-    });
-  }, [
-    sourceMode,
-    activeDomMarket,
-    activeTradeMarket,
-    activeDomAgeMs,
-    spotAgeMs,
-    perpAgeMs,
-    orderbookAgeMs,
-    orderbookFeedMarket,
-    latestTradeTs,
-    domBboRaw,
-    domBboFresh,
-    perpLiveStale,
-  ]);
-
   const trades = getRecentTrades();
 
   const tradeDotsEnabled =

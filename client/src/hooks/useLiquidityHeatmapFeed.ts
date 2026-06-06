@@ -47,7 +47,7 @@ const EMPTY_STATS: HeatmapPipelineStats = {
 };
 
 /** Perp prints are often smaller than spot; keep ingest permissive, dots filter visually. */
-const PERP_TRADE_INGEST_FLOOR_BTC = 0.0001;
+const PERP_TRADE_INGEST_FLOOR_BTC = 0.001;
 
 type MarketTradeCache = {
   trades: HeatmapTrade[];
