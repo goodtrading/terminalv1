@@ -8,6 +8,8 @@ export {
   subscribeAggTradeBuffer,
   getBufferCoverage,
   getTradesBufferHealth,
+  getAggTradeBufferState,
+  getAllAggTradeBufferStates,
   aggTradeBufferKey,
   trackAggTradeSseClient,
 } from "./aggTradeBufferRegistry";

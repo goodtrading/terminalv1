@@ -137,6 +137,16 @@ export function useLiquidityHeatmapFeed(
   const flushScheduledRef = useRef(false);
   const reconnectTradesRef = useRef<(() => void) | null>(null);
   const spotRef = useRef<number | null>(null);
+  const feedDiagnosticsRef = useRef({
+    lastSseOpenAt: null as number | null,
+    lastSseMessageAt: null as number | null,
+    lastParsedTradeTs: null as number | null,
+    restSeedCount: 0,
+    restSeedLatestTs: null as number | null,
+    parseErrors: 0,
+    droppedTooSmall: 0,
+    dedupeDrops: 0,
+  });
 
   const { data: ticker } = useQuery({
     queryKey: ["flows-ticker", symbol],
@@ -253,7 +263,10 @@ export function useLiquidityHeatmapFeed(
   const ingestTrade = useCallback(
     (trade: HeatmapTrade) => {
       const dedupeKey = tradeDedupeKey(trade);
-      if (seenTradeKeysRef.current.has(dedupeKey)) return;
+      if (seenTradeKeysRef.current.has(dedupeKey)) {
+        feedDiagnosticsRef.current.dedupeDrops += 1;
+        return;
+      }
 
       const prev = tradesRef.current;
       const next = appendTradeToBuffer(prev, trade);
@@ -262,6 +275,7 @@ export function useLiquidityHeatmapFeed(
       receivedRef.current += 1;
       latestTsRef.current = trade.ts;
       lastMessageRef.current = Date.now();
+      feedDiagnosticsRef.current.lastParsedTradeTs = trade.ts;
       tradesRef.current = next;
       if (next.length === prev.length + 1) {
         seenTradeKeysRef.current.add(dedupeKey);
@@ -406,7 +420,14 @@ export function useLiquidityHeatmapFeed(
 
     const handleWireTrade = (raw: unknown) => {
       const trade = parseRawTradeEvent(raw, marketForTrades);
-      if (!trade || trade.sizeBtc < ingestFloor) return;
+      if (!trade) {
+        feedDiagnosticsRef.current.parseErrors += 1;
+        return;
+      }
+      if (trade.sizeBtc < ingestFloor) {
+        feedDiagnosticsRef.current.droppedTooSmall += 1;
+        return;
+      }
       ingestTrade(trade);
     };
 
@@ -431,9 +452,16 @@ export function useLiquidityHeatmapFeed(
         if (rows.length === 0) {
           console.warn("[BOOKMAP_TRADES] REST seed empty", { symbol, market: marketForTrades });
         }
+        let seedLatestTs: number | null = null;
         for (const row of rows) {
           handleWireTrade(row);
+          const parsed = parseRawTradeEvent(row, marketForTrades);
+          if (parsed && (seedLatestTs == null || parsed.ts > seedLatestTs)) {
+            seedLatestTs = parsed.ts;
+          }
         }
+        feedDiagnosticsRef.current.restSeedCount = rows.length;
+        feedDiagnosticsRef.current.restSeedLatestTs = seedLatestTs;
         if (import.meta.env?.DEV) {
           console.debug("[BOOKMAP_TRADES] REST seed", {
             symbol,
@@ -466,6 +494,7 @@ export function useLiquidityHeatmapFeed(
         const isReconnect = hadStreamConnected;
         hadStreamConnected = true;
         reconnectAttempt = 0;
+        feedDiagnosticsRef.current.lastSseOpenAt = Date.now();
         setTradesStreamConnected(true);
         void seedFromRest();
         if (isReconnect && import.meta.env?.DEV) {
@@ -474,12 +503,13 @@ export function useLiquidityHeatmapFeed(
       });
 
       es.onmessage = (event) => {
+        feedDiagnosticsRef.current.lastSseMessageAt = Date.now();
         try {
           const raw = JSON.parse(event.data);
           if (raw?.ok === true) return;
           handleWireTrade(raw);
         } catch {
-          /* ignore */
+          feedDiagnosticsRef.current.parseErrors += 1;
         }
       };
 
@@ -525,35 +555,55 @@ export function useLiquidityHeatmapFeed(
   ]);
 
   useEffect(() => {
-    if (!enabled || marketForTrades !== "perp") return;
+    if (!enabled) return;
 
-    const logHealth = () => {
+    const logFeedState = () => {
       if (!import.meta.env.DEV) return;
-      const latestAgeMs =
-        latestTsRef.current != null ? Math.max(0, Date.now() - latestTsRef.current) : null;
-      console.debug("[PERP_TRADES_HEALTH]", {
-        connected: tradesStreamConnected,
-        lastMessageTs: lastMessageRef.current,
-        latestTradeTs: latestTsRef.current,
-        latestAgeMs,
-        tradesInBuffer: tradesRef.current.length,
-        bufferKey: tradeBufferKey(symbol, "perp"),
+      const now = Date.now();
+      const diag = feedDiagnosticsRef.current;
+      const latestTsAgeMs =
+        latestTsRef.current != null ? Math.max(0, now - latestTsRef.current) : null;
+      const lastParsedAgeMs =
+        diag.lastParsedTradeTs != null ? Math.max(0, now - diag.lastParsedTradeTs) : null;
+      const restSeedLatestAgeMs =
+        diag.restSeedLatestTs != null ? Math.max(0, now - diag.restSeedLatestTs) : null;
+      console.debug("[BOOKMAP_TRADE_FEED_STATE]", {
+        marketForTrades,
+        streamUrl: sseUrl,
+        streamConnected: tradesStreamConnected,
+        lastSseOpenAt: diag.lastSseOpenAt,
+        lastSseMessageAt: diag.lastSseMessageAt,
+        lastSseMessageAgeMs:
+          diag.lastSseMessageAt != null ? Math.max(0, now - diag.lastSseMessageAt) : null,
+        lastParsedTradeTs: diag.lastParsedTradeTs,
+        lastParsedTradeAgeMs: lastParsedAgeMs,
+        tradesRefCount: tradesRef.current.length,
+        latestTsRef: latestTsRef.current,
+        latestTsAgeMs: latestTsAgeMs,
         tradeVersion: tradeVersionRef.current,
-        sseUrl,
+        tradeTick,
+        restSeedCount: diag.restSeedCount,
+        restSeedLatestTs: diag.restSeedLatestTs,
+        restSeedLatestAgeMs: restSeedLatestAgeMs,
+        parseErrors: diag.parseErrors,
+        droppedTooSmall: diag.droppedTooSmall,
+        dedupeDrops: diag.dedupeDrops,
+        bufferKey: tradeBufferKey(symbol, marketForTrades),
       });
     };
 
     const id = window.setInterval(() => {
-      logHealth();
+      logFeedState();
+      if (marketForTrades !== "perp") return;
       const latestAgeMs =
         latestTsRef.current != null ? Date.now() - latestTsRef.current : Infinity;
       if (latestAgeMs > BOOKMAP_OB_STALE_MS) {
         reconnectTradesRef.current?.();
       }
-    }, 8_000);
+    }, 2_000);
 
     return () => window.clearInterval(id);
-  }, [enabled, marketForTrades, symbol, tradesStreamConnected, sseUrl]);
+  }, [enabled, marketForTrades, symbol, tradesStreamConnected, sseUrl, tradeTick]);
 
   const getRecentTrades = useCallback(() => tradesRef.current, []);
 

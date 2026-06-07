@@ -32,6 +32,20 @@ const MAX_BUFFER_RETURN = 120_000;
 const DEBUG = process.env.NODE_ENV === "development";
 const TRADE_STALE_MS = 3_000;
 const TRADE_HEALTH_MS = 2_000;
+/** Perp WS considered silent if no raw message in this window. */
+const WS_SILENT_RECOVER_MS = 10_000;
+/** Narrow REST gap-fill window when buffer newest is already live. */
+const REST_TAIL_WINDOW_MS = 60_000;
+/** Target historical coverage for boot/backfill (matches client TRADE_BUFFER_MS ~7.5m). */
+const HISTORICAL_BACKFILL_MS = 452_000;
+/** Max REST pages when paging backward from latest trades. */
+const HISTORICAL_BACKFILL_MAX_PAGES = 12;
+
+type RestSeedMode = "historical" | "tail" | "gap-fill";
+/** Do not terminate a socket still in CONNECTING until this grace elapses. */
+const WS_CONNECT_GRACE_MS = 10_000;
+/** Minimum spacing between explicit reconnect attempts. */
+const RECONNECT_MIN_INTERVAL_MS = 5_000;
 
 let perpSseClients = 0;
 let spotSseClients = 0;
@@ -41,15 +55,68 @@ function createAggTradeBuffer(config: BufferConfig) {
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
+  let reconnectScheduled = false;
+  let connectingStartedAt = 0;
+  let lastConnectAttemptAt = 0;
   let connected = false;
-  let lastMessageTs = 0;
+  /** Wall-clock time of last raw WS frame only (not REST). */
+  let lastWsMessageAt = 0;
+  /** Wall-clock time of last accepted trade push (WS or REST). */
+  let lastAcceptedTradeAt = 0;
   let lastTrade: BufferedAggTrade | null = null;
   let healthTimer: ReturnType<typeof setInterval> | null = null;
   let lastError: string | null = null;
   let lastRestSeedTs = 0;
+  let lastRestSeedFetchedCount = 0;
+  let lastRestSeedAcceptedCount = 0;
+  let lastRestSeedMode: RestSeedMode | null = null;
   const listeners = new Set<(trade: BufferedAggTrade) => void>();
+  const wsUrl = `${wsBase}${wsPath}`;
   const backing: BufferedAggTrade[] = [];
   let start = 0;
+
+  type PushSource = "ws" | "rest";
+
+  const pushTrace = {
+    rawMessageCount: 0,
+    parsedTradeCount: 0,
+    parseErrorCount: 0,
+    lastRawEventTime: null as number | null,
+    lastRawTradeTime: null as number | null,
+    lastRawAggId: null as string | null,
+    lastParsedTradeTs: null as number | null,
+    acceptedPushCount: 0,
+    duplicateDropCount: 0,
+    staleDropCount: 0,
+    invalidDropCount: 0,
+    restSeedFetchedCount: 0,
+    restSeedAcceptedCount: 0,
+    restSeedLatestTradeTs: null as number | null,
+    lastBufferNewestBefore: null as number | null,
+    lastBufferNewestAfter: null as number | null,
+    lastPushSource: null as PushSource | null,
+  };
+
+  function bufferNewestTs(): number | null {
+    trimByRetention();
+    const end = backing.length;
+    if (start >= end) return null;
+    return backing[end - 1]!.time;
+  }
+
+  function bufferOldestTs(): number | null {
+    trimByRetention();
+    const end = backing.length;
+    if (start >= end) return null;
+    return backing[start]!.time;
+  }
+
+  function bufferCoverageMs(): number {
+    const oldest = bufferOldestTs();
+    const newest = bufferNewestTs();
+    if (oldest == null || newest == null) return 0;
+    return Math.max(0, newest - oldest);
+  }
 
   function log(msg: string): void {
     if (DEBUG) console.log(`[${logTag}] ${msg}`);
@@ -88,38 +155,79 @@ function createAggTradeBuffer(config: BufferConfig) {
     return lo;
   }
 
-  function pushTrade(t: BufferedAggTrade): void {
+  function pushTrade(t: BufferedAggTrade, source: PushSource = "ws"): boolean {
+    if (
+      !Number.isFinite(t.price) ||
+      !Number.isFinite(t.qty) ||
+      !Number.isFinite(t.time) ||
+      t.qty <= 0
+    ) {
+      pushTrace.invalidDropCount++;
+      return false;
+    }
+
+    const newestBefore = bufferNewestTs();
+    pushTrace.lastBufferNewestBefore = newestBefore;
+    pushTrace.lastPushSource = source;
+
     trimByRetention();
     const scanFrom = Math.max(start, backing.length - 80);
     for (let i = scanFrom; i < backing.length; i++) {
-      if (backing[i]!.id === t.id) return;
+      if (backing[i]!.id === t.id) {
+        pushTrace.duplicateDropCount++;
+        pushTrace.lastBufferNewestAfter = bufferNewestTs();
+        return false;
+      }
     }
     const last = backing[backing.length - 1];
     if (last && t.time < last.time) {
       const idx = lowerBound(start, backing.length, t.time);
-      if (backing[idx]?.id === t.id) return;
+      if (backing[idx]?.id === t.id) {
+        pushTrace.duplicateDropCount++;
+        pushTrace.lastBufferNewestAfter = bufferNewestTs();
+        return false;
+      }
       backing.splice(idx, 0, t);
-      lastMessageTs = Date.now();
-      lastTrade = t;
+      lastAcceptedTradeAt = Date.now();
+      lastTrade = backing[backing.length - 1]!;
+      pushTrace.acceptedPushCount++;
+      pushTrace.lastParsedTradeTs = t.time;
+      pushTrace.lastBufferNewestAfter = bufferNewestTs();
       for (const fn of listeners) fn(t);
-      return;
+      return true;
     }
     backing.push(t);
-    lastMessageTs = Date.now();
+    lastAcceptedTradeAt = Date.now();
     lastTrade = t;
+    pushTrace.acceptedPushCount++;
+    pushTrace.lastParsedTradeTs = t.time;
+    pushTrace.lastBufferNewestAfter = bufferNewestTs();
     for (const fn of listeners) fn(t);
+    return true;
+  }
+
+  function bufferNewestAgeMs(): number {
+    const newest = bufferNewestTs();
+    return newest != null ? Date.now() - newest : Infinity;
+  }
+
+  function wsSilentAgeMs(): number {
+    return lastWsMessageAt > 0 ? Date.now() - lastWsMessageAt : Infinity;
   }
 
   function logTradesHealth(reason?: string): void {
     if (!DEBUG && process.env.NODE_ENV !== "production") return;
-    const ageMs = lastMessageTs > 0 ? Date.now() - lastMessageTs : null;
+    const newest = bufferNewestTs();
     console.debug("[AGG_TRADES_HEALTH]", {
       market,
       reason,
       connected,
-      lastMessageTs: lastMessageTs || null,
-      latestTradeTs: lastTrade?.time ?? null,
-      latestAgeMs: lastTrade?.time != null ? Date.now() - lastTrade.time : ageMs,
+      bufferNewestTs: newest,
+      bufferNewestAgeMs: newest != null ? Date.now() - newest : null,
+      lastWsMessageAt: lastWsMessageAt || null,
+      lastWsMessageAgeMs: lastWsMessageAt > 0 ? Date.now() - lastWsMessageAt : null,
+      lastAcceptedTradeAt: lastAcceptedTradeAt || null,
+      latestTradeTs: newest ?? lastTrade?.time ?? null,
       tradesInBuffer: Math.max(0, backing.length - start),
       bufferKey: aggTradeBufferKey(streamSymbol, market),
       reconnectCount: reconnectAttempt,
@@ -132,15 +240,116 @@ function createAggTradeBuffer(config: BufferConfig) {
     });
   }
 
+  function safeTerminate(socket: WebSocket): void {
+    try {
+      socket.removeAllListeners("message");
+      socket.removeAllListeners("open");
+      socket.removeAllListeners("close");
+      socket.removeAllListeners("error");
+      socket.on("error", () => {});
+      socket.terminate();
+    } catch (err) {
+      log(
+        `safeTerminate non-fatal: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  function safeReconnectAllowed(): boolean {
+    if (reconnectScheduled) return false;
+    const now = Date.now();
+    if (now - lastConnectAttemptAt < RECONNECT_MIN_INTERVAL_MS) return false;
+    if (!ws) return true;
+    if (ws.readyState === WebSocket.CONNECTING) {
+      return now - connectingStartedAt >= WS_CONNECT_GRACE_MS;
+    }
+    return true;
+  }
+
+  function forceReconnectWs(): void {
+    const now = Date.now();
+
+    if (reconnectScheduled) {
+      log("skip reconnect: reconnect already scheduled");
+      return;
+    }
+    if (now - lastConnectAttemptAt < RECONNECT_MIN_INTERVAL_MS) {
+      log("skip reconnect: min interval not elapsed");
+      return;
+    }
+
+    if (reconnectTimer != null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+      reconnectScheduled = false;
+    }
+
+    if (!ws) {
+      reconnectAttempt++;
+      connect();
+      return;
+    }
+
+    const state = ws.readyState;
+    if (state === WebSocket.CONNECTING) {
+      if (now - connectingStartedAt < WS_CONNECT_GRACE_MS) {
+        log("skip reconnect: socket still connecting");
+        return;
+      }
+      safeTerminate(ws);
+      ws = null;
+      connected = false;
+      reconnectAttempt++;
+      connect();
+      return;
+    }
+
+    if (state === WebSocket.OPEN) {
+      safeTerminate(ws);
+      ws = null;
+      connected = false;
+      reconnectAttempt++;
+      connect();
+      return;
+    }
+
+    ws = null;
+    connected = false;
+    reconnectAttempt++;
+    connect();
+  }
+
   function runTradeHealthCheck(): void {
-    const ageMs = lastMessageTs > 0 ? Date.now() - lastMessageTs : Infinity;
-    if (ageMs > TRADE_STALE_MS && (connected || backing.length > start)) {
-      logTradesHealth("stale");
-      void seedFromRest();
-      if (ws?.readyState !== WebSocket.OPEN) connect();
-    } else if (backing.length <= start) {
+    const newestAgeMs = bufferNewestAgeMs();
+    const isEmpty = backing.length <= start;
+
+    if (isEmpty) {
       logTradesHealth("empty");
       void seedFromRest();
+      if (ws?.readyState !== WebSocket.OPEN && ws?.readyState !== WebSocket.CONNECTING) {
+        connect();
+      }
+      return;
+    }
+
+    if (newestAgeMs > TRADE_STALE_MS) {
+      logTradesHealth("buffer-newest-stale");
+      void seedFromRest();
+      if (market === "perp") {
+        if (safeReconnectAllowed()) forceReconnectWs();
+      } else if (
+        ws?.readyState !== WebSocket.OPEN &&
+        ws?.readyState !== WebSocket.CONNECTING
+      ) {
+        connect();
+      }
+      return;
+    }
+
+    if (market === "perp" && wsSilentAgeMs() > WS_SILENT_RECOVER_MS) {
+      logTradesHealth("perp-ws-silent");
+      void seedFromRest();
+      if (safeReconnectAllowed()) forceReconnectWs();
     }
   }
 
@@ -149,21 +358,34 @@ function createAggTradeBuffer(config: BufferConfig) {
     try {
       parsed = JSON.parse(raw);
     } catch {
+      pushTrace.parseErrorCount++;
       return null;
     }
-    if (!parsed || typeof parsed !== "object") return null;
+    if (!parsed || typeof parsed !== "object") {
+      pushTrace.parseErrorCount++;
+      return null;
+    }
     const root = parsed as Record<string, unknown>;
     const row = (root.data && typeof root.data === "object" ? root.data : root) as Record<
       string,
       unknown
     >;
-    if (row.e !== "aggTrade") return null;
+    if (row.e !== "aggTrade") {
+      pushTrace.parseErrorCount++;
+      return null;
+    }
+    const eventTime = Number(row.E);
+    if (Number.isFinite(eventTime)) pushTrace.lastRawEventTime = eventTime;
     const p = parseFloat(String(row.p));
     const q = parseFloat(String(row.q));
     const time = Number(row.T);
     if (!Number.isFinite(p) || !Number.isFinite(q) || !Number.isFinite(time) || q <= 0) {
+      pushTrace.parseErrorCount++;
       return null;
     }
+    pushTrace.lastRawTradeTime = time;
+    pushTrace.lastRawAggId = row.a != null ? String(row.a) : null;
+    pushTrace.parsedTradeCount++;
     return {
       id: String(row.a),
       price: p,
@@ -173,58 +395,220 @@ function createAggTradeBuffer(config: BufferConfig) {
     };
   }
 
-  async function seedFromRest(): Promise<void> {
-    const end = Date.now();
-    const startMs = end - RETENTION_MS;
+  function parseRestAggRow(row: unknown): BufferedAggTrade | null {
+    if (!row || typeof row !== "object") return null;
+    const r = row as Record<string, unknown>;
+    const price = parseFloat(String(r.p));
+    const qty = parseFloat(String(r.q));
+    const time = Number(r.T);
+    if (!Number.isFinite(price) || !Number.isFinite(qty) || !Number.isFinite(time) || qty <= 0) {
+      return null;
+    }
+    return {
+      id: String(r.a),
+      price,
+      qty,
+      time,
+      side: r.m === true ? "sell" : "buy",
+    };
+  }
+
+  async function fetchRestAggTrades(
+    params: URLSearchParams,
+  ): Promise<{ rows: unknown[]; provider: string | null; error: string | null }> {
     let lastSeedError: string | null = null;
-    try {
+    for (const restAggTradesUrl of restAggTradesUrls) {
+      try {
+        const res = await fetch(`${restAggTradesUrl}?${params}`);
+        if (!res.ok) {
+          lastSeedError = `${restAggTradesUrl} status ${res.status}`;
+          continue;
+        }
+        const data = await res.json();
+        if (!Array.isArray(data)) {
+          lastSeedError = `${restAggTradesUrl} non-array response`;
+          continue;
+        }
+        return { rows: data, provider: restAggTradesUrl, error: null };
+      } catch (error) {
+        lastSeedError =
+          error instanceof Error
+            ? `${restAggTradesUrl} ${error.message}`
+            : `${restAggTradesUrl} ${String(error)}`;
+      }
+    }
+    return { rows: [], provider: null, error: lastSeedError };
+  }
+
+  function ingestRestRows(rows: unknown[]): {
+    accepted: number;
+    fetched: number;
+    minT: number | null;
+    maxT: number | null;
+  } {
+    const seen = new Set<string>();
+    for (let i = start; i < backing.length; i++) seen.add(backing[i]!.id);
+    let seedMinT: number | null = null;
+    let seedMaxT: number | null = null;
+    let seedAccepted = 0;
+    for (const row of rows) {
+      const t = parseRestAggRow(row);
+      if (!t) continue;
+      if (seedMinT == null || t.time < seedMinT) seedMinT = t.time;
+      if (seedMaxT == null || t.time > seedMaxT) seedMaxT = t.time;
+      if (!seen.has(t.id)) {
+        seen.add(t.id);
+        if (pushTrade(t, "rest")) seedAccepted++;
+      } else {
+        pushTrace.duplicateDropCount++;
+      }
+    }
+    return { accepted: seedAccepted, fetched: rows.length, minT: seedMinT, maxT: seedMaxT };
+  }
+
+  function recordRestSeedResult(
+    mode: RestSeedMode,
+    fetched: number,
+    accepted: number,
+    maxT: number | null,
+    provider: string | null,
+  ): void {
+    const end = Date.now();
+    pushTrace.restSeedFetchedCount += fetched;
+    pushTrace.restSeedAcceptedCount += accepted;
+    if (maxT != null) {
+      pushTrace.restSeedLatestTradeTs =
+        pushTrace.restSeedLatestTradeTs == null
+          ? maxT
+          : Math.max(pushTrace.restSeedLatestTradeTs, maxT);
+    }
+    lastError = null;
+    lastRestSeedTs = Date.now();
+    lastRestSeedFetchedCount = fetched;
+    lastRestSeedAcceptedCount = accepted;
+    lastRestSeedMode = mode;
+    const seedLatestAgeMs =
+      maxT != null ? Math.max(0, end - maxT) : null;
+    if (seedLatestAgeMs != null && seedLatestAgeMs > TRADE_STALE_MS) {
+      console.warn(`[${logTag}] REST ${mode} still stale after fetch`, {
+        fetched,
+        accepted,
+        seedMaxT: maxT,
+        seedLatestAgeMs,
+        coverageMs: bufferCoverageMs(),
+        url: provider,
+      });
+    }
+    log(
+      `Seeded ${accepted}/${fetched} rows from REST${provider ? ` (${provider})` : ""} [${mode}]` +
+        ` coverageMs=${bufferCoverageMs()}`,
+    );
+  }
+
+  async function liveTailSeed(): Promise<void> {
+    const params = new URLSearchParams({
+      symbol: streamSymbol,
+      limit: String(SEED_REST_LIMIT),
+    });
+    const { rows, provider, error } = await fetchRestAggTrades(params);
+    if (error && rows.length === 0) {
+      lastError = error;
+      return;
+    }
+    const { accepted, fetched, maxT } = ingestRestRows(rows);
+    recordRestSeedResult("tail", fetched, accepted, maxT, provider);
+  }
+
+  async function gapFillSeed(): Promise<void> {
+    const end = Date.now();
+    const newest = bufferNewestTs();
+    if (newest == null) {
+      await liveTailSeed();
+      return;
+    }
+    const startMs = Math.max(end - REST_TAIL_WINDOW_MS, newest - 1);
+    const params = new URLSearchParams({
+      symbol: streamSymbol,
+      limit: String(SEED_REST_LIMIT),
+      startTime: String(startMs),
+      endTime: String(end),
+    });
+    const { rows, provider, error } = await fetchRestAggTrades(params);
+    if (error && rows.length === 0) {
+      lastError = error;
+      return;
+    }
+    const { accepted, fetched, maxT } = ingestRestRows(rows);
+    recordRestSeedResult("gap-fill", fetched, accepted, maxT, provider);
+  }
+
+  async function historicalBackfillSeed(): Promise<void> {
+    const end = Date.now();
+    let totalFetched = 0;
+    let totalAccepted = 0;
+    let seedMaxT: number | null = null;
+    let provider: string | null = null;
+    let pageEnd: number | undefined;
+
+    for (let page = 0; page < HISTORICAL_BACKFILL_MAX_PAGES; page++) {
       const params = new URLSearchParams({
         symbol: streamSymbol,
         limit: String(SEED_REST_LIMIT),
-        startTime: String(startMs),
-        endTime: String(end),
       });
-      let data: unknown = null;
-      let provider: string | null = null;
-      for (const restAggTradesUrl of restAggTradesUrls) {
-        try {
-          const res = await fetch(`${restAggTradesUrl}?${params}`);
-          if (!res.ok) {
-            lastSeedError = `${restAggTradesUrl} status ${res.status}`;
-            continue;
-          }
-          data = await res.json();
-          provider = restAggTradesUrl;
-          break;
-        } catch (error) {
-          lastSeedError =
-            error instanceof Error
-              ? `${restAggTradesUrl} ${error.message}`
-              : `${restAggTradesUrl} ${String(error)}`;
-        }
+      if (pageEnd != null) params.set("endTime", String(pageEnd));
+
+      const result = await fetchRestAggTrades(params);
+      if (result.error && result.rows.length === 0) {
+        if (page === 0) lastError = result.error;
+        break;
       }
-      if (!Array.isArray(data)) {
-        lastError = lastSeedError ?? "REST seed returned non-array";
+      provider = result.provider ?? provider;
+      if (result.rows.length === 0) break;
+
+      const ingested = ingestRestRows(result.rows);
+      totalFetched += ingested.fetched;
+      totalAccepted += ingested.accepted;
+      if (ingested.maxT != null) {
+        seedMaxT =
+          seedMaxT == null ? ingested.maxT : Math.max(seedMaxT, ingested.maxT);
+      }
+
+      const oldest = bufferOldestTs();
+      const coverage = bufferCoverageMs();
+      if (coverage >= HISTORICAL_BACKFILL_MS) break;
+      if (ingested.minT == null) break;
+
+      const nextEnd = Math.min(ingested.minT - 1, (oldest ?? ingested.minT) - 1);
+      if (pageEnd != null && nextEnd >= pageEnd) break;
+      pageEnd = nextEnd;
+      if (result.rows.length < SEED_REST_LIMIT) break;
+    }
+
+    if (totalFetched === 0) {
+      await liveTailSeed();
+      return;
+    }
+    recordRestSeedResult("historical", totalFetched, totalAccepted, seedMaxT, provider);
+  }
+
+  async function seedFromRest(): Promise<void> {
+    const end = Date.now();
+    const newest = bufferNewestTs();
+    const isEmpty = backing.length <= start;
+    const bufferStale = newest == null || end - newest > TRADE_STALE_MS;
+    const coverageMs = bufferCoverageMs();
+    const needsHistorical = isEmpty || coverageMs < HISTORICAL_BACKFILL_MS;
+
+    try {
+      if (needsHistorical) {
+        await historicalBackfillSeed();
         return;
       }
-      const seen = new Set<string>();
-      for (let i = start; i < backing.length; i++) seen.add(backing[i]!.id);
-      for (const row of data) {
-        const t: BufferedAggTrade = {
-          id: String(row.a),
-          price: parseFloat(row.p),
-          qty: parseFloat(row.q),
-          time: Number(row.T),
-          side: row.m === true ? "sell" : "buy",
-        };
-        if (!seen.has(t.id)) {
-          seen.add(t.id);
-          pushTrade(t);
-        }
+      if (bufferStale) {
+        await liveTailSeed();
+        return;
       }
-      lastError = null;
-      lastRestSeedTs = Date.now();
-      log(`Seeded ${data.length} rows from REST${provider ? ` (${provider})` : ""}`);
+      await gapFillSeed();
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
       console.warn(`[${logTag}] REST seed failed:`, lastError);
@@ -233,9 +617,11 @@ function createAggTradeBuffer(config: BufferConfig) {
 
   function scheduleReconnect(): void {
     if (reconnectTimer != null) return;
+    reconnectScheduled = true;
     const delay = Math.min(30_000, 800 + reconnectAttempt * 900);
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
+      reconnectScheduled = false;
       reconnectAttempt++;
       connect();
     }, delay);
@@ -243,34 +629,47 @@ function createAggTradeBuffer(config: BufferConfig) {
 
   function connect(): void {
     if (ws?.readyState === WebSocket.OPEN) return;
+    if (ws?.readyState === WebSocket.CONNECTING) return;
+
+    const now = Date.now();
+    lastConnectAttemptAt = now;
+    connectingStartedAt = now;
+
     try {
       ws = new WebSocket(`${wsBase}${wsPath}`);
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
       console.error(`[${logTag}] connect failed:`, e);
+      ws = null;
       scheduleReconnect();
       return;
     }
+
+    ws.on("error", (err) => {
+      lastError = err.message;
+      console.warn(`[${logTag}] WebSocket error:`, err.message);
+    });
     ws.on("open", () => {
       connected = true;
       reconnectAttempt = 0;
+      reconnectScheduled = false;
+      connectingStartedAt = 0;
       lastError = null;
       console.log(`[${logTag}] WebSocket connected`);
       void seedFromRest();
     });
     ws.on("message", (data: Buffer | string) => {
+      lastWsMessageAt = Date.now();
+      pushTrace.rawMessageCount++;
       const raw = typeof data === "string" ? data : data.toString();
       const trade = parseAggTradePayload(raw);
-      if (trade) pushTrade(trade);
+      if (trade) pushTrade(trade, "ws");
     });
     ws.on("close", () => {
       connected = false;
+      connectingStartedAt = 0;
       ws = null;
       scheduleReconnect();
-    });
-    ws.on("error", (err) => {
-      lastError = err.message;
-      console.warn(`[${logTag}] WebSocket error:`, err.message);
     });
   }
 
@@ -316,15 +715,19 @@ function createAggTradeBuffer(config: BufferConfig) {
     },
     getHealth(symbol: string) {
       const cov = this.getCoverage(symbol);
+      const now = Date.now();
+      const bufferNewest = cov.newestMs;
       return {
         ...cov,
-        lastMessageTs: lastMessageTs || null,
-        latestTradeTs: lastTrade?.time ?? null,
+        lastMessageTs: lastWsMessageAt || null,
+        lastWsMessageAt: lastWsMessageAt || null,
+        lastAcceptedTradeAt: lastAcceptedTradeAt || null,
+        latestTradeTs: bufferNewest ?? lastTrade?.time ?? null,
         latestAgeMs:
-          lastTrade?.time != null
-            ? Date.now() - lastTrade.time
-            : lastMessageTs > 0
-              ? Date.now() - lastMessageTs
+          bufferNewest != null
+            ? now - bufferNewest
+            : lastTrade?.time != null
+              ? now - lastTrade.time
               : null,
         reconnectCount: reconnectAttempt,
         sseClients: market === "perp" ? perpSseClients : spotSseClients,
@@ -332,6 +735,93 @@ function createAggTradeBuffer(config: BufferConfig) {
         lastError,
         lastRestSeedTs: lastRestSeedTs || null,
       };
+    },
+    getBufferState(symbol: string) {
+      const cov = this.getCoverage(symbol);
+      const now = Date.now();
+      const bufferNewest = cov.newestMs;
+      return {
+        key: aggTradeBufferKey(streamSymbol, market),
+        market,
+        connected,
+        subscriberCount: listeners.size,
+        bufferCount: cov.size,
+        latestTradeTs: bufferNewest ?? lastTrade?.time ?? null,
+        latestTradeAgeMs:
+          bufferNewest != null
+            ? Math.max(0, now - bufferNewest)
+            : lastTrade?.time != null
+              ? Math.max(0, now - lastTrade.time)
+              : null,
+        lastWsMessageAt: lastWsMessageAt > 0 ? lastWsMessageAt : null,
+        lastWsMessageAgeMs:
+          lastWsMessageAt > 0 ? Math.max(0, now - lastWsMessageAt) : null,
+        lastAcceptedTradeAt: lastAcceptedTradeAt > 0 ? lastAcceptedTradeAt : null,
+        lastRestSeedAt: lastRestSeedTs > 0 ? lastRestSeedTs : null,
+        lastRestSeedCount: lastRestSeedFetchedCount,
+        lastRestSeedAcceptedCount,
+        lastRestSeedMode,
+        oldestTradeTs: cov.oldestMs,
+        coverageMs:
+          cov.oldestMs != null && cov.newestMs != null
+            ? Math.max(0, cov.newestMs - cov.oldestMs)
+            : null,
+        lastError,
+        reconnectCount: reconnectAttempt,
+        wsUrl,
+      };
+    },
+    flushPushTrace() {
+      const now = Date.now();
+      const bufferNewest = bufferNewestTs();
+      const snapshot = {
+        market,
+        key: aggTradeBufferKey(streamSymbol, market),
+        connected,
+        wsUrl,
+        lastWsMessageAt: lastWsMessageAt > 0 ? lastWsMessageAt : null,
+        lastWsMessageAgeMs:
+          lastWsMessageAt > 0 ? Math.max(0, now - lastWsMessageAt) : null,
+        lastAcceptedTradeAt: lastAcceptedTradeAt > 0 ? lastAcceptedTradeAt : null,
+        rawMessageCount: pushTrace.rawMessageCount,
+        parsedTradeCount: pushTrace.parsedTradeCount,
+        parseErrorCount: pushTrace.parseErrorCount,
+        lastRawEventTime: pushTrace.lastRawEventTime,
+        lastRawTradeTime: pushTrace.lastRawTradeTime,
+        lastRawAggId: pushTrace.lastRawAggId,
+        lastParsedTradeTs: pushTrace.lastParsedTradeTs,
+        lastParsedTradeAgeMs:
+          pushTrace.lastParsedTradeTs != null
+            ? Math.max(0, now - pushTrace.lastParsedTradeTs)
+            : null,
+        bufferNewestBefore: pushTrace.lastBufferNewestBefore,
+        bufferNewestAfter: pushTrace.lastBufferNewestAfter,
+        bufferLatestTradeAgeMs:
+          bufferNewest != null ? Math.max(0, now - bufferNewest) : null,
+        acceptedPushCount: pushTrace.acceptedPushCount,
+        duplicateDropCount: pushTrace.duplicateDropCount,
+        staleDropCount: pushTrace.staleDropCount,
+        invalidDropCount: pushTrace.invalidDropCount,
+        restSeedCount: pushTrace.restSeedFetchedCount,
+        restSeedAcceptedCount: pushTrace.restSeedAcceptedCount,
+        restSeedLatestTradeTs: pushTrace.restSeedLatestTradeTs,
+        restSeedLatestTradeAgeMs:
+          pushTrace.restSeedLatestTradeTs != null
+            ? Math.max(0, now - pushTrace.restSeedLatestTradeTs)
+            : null,
+        lastPushSource: pushTrace.lastPushSource,
+        lastError,
+      };
+      pushTrace.rawMessageCount = 0;
+      pushTrace.parsedTradeCount = 0;
+      pushTrace.parseErrorCount = 0;
+      pushTrace.acceptedPushCount = 0;
+      pushTrace.duplicateDropCount = 0;
+      pushTrace.staleDropCount = 0;
+      pushTrace.invalidDropCount = 0;
+      pushTrace.restSeedFetchedCount = 0;
+      pushTrace.restSeedAcceptedCount = 0;
+      return snapshot;
     },
   };
 }
@@ -422,4 +912,29 @@ export function getTradesBufferHealth(
   market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
 ) {
   return resolveBuffer(market).getHealth(symbol);
+}
+
+export function getAggTradeBufferState(
+  symbol = "BTCUSDT",
+  market: BookmapMarketSource,
+) {
+  return resolveBuffer(market).getBufferState(symbol);
+}
+
+export function getAllAggTradeBufferStates(symbol = "BTCUSDT") {
+  return {
+    spot: getAggTradeBufferState(symbol, "spot"),
+    perp: getAggTradeBufferState(symbol, "perp"),
+  };
+}
+
+if (DEBUG) {
+  setInterval(() => {
+    const states = getAllAggTradeBufferStates("BTCUSDT");
+    console.debug("[AGG_TRADE_BUFFER_STATE]", states);
+    console.debug("[AGG_TRADE_PUSH_TRACE]", {
+      spot: spotBuffer.flushPushTrace(),
+      perp: perpBuffer.flushPushTrace(),
+    });
+  }, 2_000);
 }

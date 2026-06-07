@@ -38,8 +38,10 @@ import { renderDivergenceMarkers } from "./bookmapDivergenceMarkers";
 import type { SpotPerpDivergenceSignal } from "./bookmapDivergenceEngine";
 import { renderEngineExecutionRails } from "./bookmapExecutionRails";
 import {
+  EMPTY_TRADE_DOT_RENDER_STATS,
   renderEngineTradeDots,
   type EngineTradeDot,
+  type EngineTradeDotRenderStats,
   type TradeDotVisualContext,
 } from "./bookmapEngineTradeDots";
 import type { ExecutionRailLength } from "@/components/terminal/bookmap/bookmapSettings";
@@ -71,6 +73,8 @@ export type BookmapEngineFrameParams = {
   showFarWallMarkers?: boolean;
   /** Clustered trade dots (engine overlay). */
   tradeDots?: EngineTradeDot[];
+  /** Optional scalar counters for forensic dot-clip diagnosis (DEV). */
+  tradeDotRenderStatsOut?: EngineTradeDotRenderStats;
   tradeDotVerticalMode?: VerticalCompressionMode;
   tradeDotVisual?: TradeDotVisualContext;
   executionRailsEnabled?: boolean;
@@ -495,6 +499,9 @@ export function paintBookmapEngineHeatmapFrame(
     );
   }
 
+  if (params.tradeDotRenderStatsOut) {
+    Object.assign(params.tradeDotRenderStatsOut, EMPTY_TRADE_DOT_RENDER_STATS);
+  }
   if (params.tradeDots && params.tradeDots.length > 0) {
     if (params.executionRailsEnabled !== false) {
       renderEngineExecutionRails(
@@ -520,6 +527,7 @@ export function paintBookmapEngineHeatmapFrame(
       metrics.plotH,
       params.tradeDotVerticalMode ?? "intraday",
       params.tradeDotVisual,
+      params.tradeDotRenderStatsOut,
     );
   }
 

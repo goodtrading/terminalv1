@@ -35,12 +35,16 @@ import {
 } from "@/lib/bookmapEngineConfig";
 import { useBookmapTrades } from "@/hooks/useBookmapTrades";
 import { formatBookmapRangeShort } from "@/lib/bookmapPriceScaleUtils";
-import { prepareEngineTradeDots } from "./bookmapEngineTradeDots";
+import {
+  prepareEngineTradeDots,
+  resolveDotVisibleEndTime,
+} from "./bookmapEngineTradeDots";
 import { paintBookmapEngineHeatmapFrame } from "./bookmapEngineRenderer";
 import {
   bookLevelsToDomSnapshot,
   applyEngineViewportBandNormalization,
   prepareEngineRenderData,
+  type PreparedEngineRenderData,
 } from "./bookmapEnginePrepare";
 import type { BookmapState } from "@/types/bookmapState";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
@@ -113,6 +117,55 @@ export type LiquidityHeatmapPanelProps = {
 const MIN_SIZE_OPTIONS = HEATMAP_MIN_SIZE_OPTIONS;
 const VOLUME_RESIZE_HANDLE_PX = 4;
 
+/** Legacy snapshot renderer — manual debug only; never automatic in production. */
+const LEGACY_DEBUG_ALLOWED = import.meta.env.VITE_BOOKMAP_LEGACY_DEBUG === "true";
+
+function createEmptyEngineRenderData(
+  timeMin: number,
+  timeMax: number,
+  heatmapBucketSize: number,
+  domBucketSize: number,
+  labelStep: number,
+): PreparedEngineRenderData {
+  return {
+    bands: [],
+    mergedBands: [],
+    cells: [],
+    walls: [],
+    timeMin,
+    timeMax,
+    visualScale: {
+      visualMode: "intraday",
+      pLow: 0,
+      pHigh: 1,
+      logP60: 0,
+      logP80: 0,
+      logP92: 0,
+      logP97: 0,
+      logP99: 0,
+      logMax: 0,
+    },
+    stats: {
+      rawCellCount: 0,
+      bandCount: 0,
+      visibleBandCount: 0,
+      renderedBandCount: 0,
+      visualMode: "intraday",
+      pLow: 0,
+      pHigh: 1,
+      minRenderIntensity: 0,
+    },
+    bandPrepareMeta: {
+      rawCellCount: 0,
+      bandCount: 0,
+      priceSpan: 0,
+      labelStep,
+      heatmapBucketSize,
+      domBucketSize,
+    },
+  };
+}
+
 function isPosFinitePrice(n: number | null | undefined): n is number {
   return n != null && Number.isFinite(n) && n > 0;
 }
@@ -162,6 +215,14 @@ export function LiquidityHeatmapPanel({
   const [wallRevision, setWallRevision] = useState(0);
   const tradeRxSampleRef = useRef({ atMs: Date.now(), received: 0 });
   const [tradeRxPerSec, setTradeRxPerSec] = useState<number | null>(null);
+  const forensicDrawRef = useRef({
+    legacyRendered: false,
+    renderedLayerNames: [] as string[],
+    rendererReceivedDotsCount: 0,
+    rendererDrawnDotsCount: 0,
+    rendererClippedTimeCount: 0,
+    rendererClippedPriceCount: 0,
+  });
 
   const [engineFetchBounds, setEngineFetchBounds] = useState<{
     priceMin?: number;
@@ -240,7 +301,9 @@ export function LiquidityHeatmapPanel({
   const bookmapAgeMs = primaryQuery.ageMs;
   const bookmapDataUpdatedAt = primaryQuery.dataUpdatedAt;
 
-  const useEngineRenderer = Boolean(USE_BOOKMAP_ENGINE && hasRenderableHeatmap);
+  const engineRequested = USE_BOOKMAP_ENGINE;
+  const legacyDebugEnabled = LEGACY_DEBUG_ALLOWED;
+  const useEngineRenderer = Boolean(engineRequested && hasRenderableHeatmap);
 
   const usingCachedBookmapState = usingCachedPrimary;
 
@@ -849,6 +912,33 @@ export function LiquidityHeatmapPanel({
     [priceScale.verticalMode, depthRangePreset],
   );
 
+  const dotFilterWindow = useMemo(() => {
+    const latestBboTs =
+      bboHistory.latestBbo?.timestamp ??
+      (bboDomState?.timestamp != null && Number.isFinite(bboDomState.timestamp)
+        ? bboDomState.timestamp
+        : null);
+    return resolveDotVisibleEndTime({
+      market: activeTradeMarket,
+      viewportStart: timeScale.viewport.visibleStartTime,
+      viewportEnd: timeScale.viewport.visibleEndTime,
+      latestBboTs,
+      newestTradeTs: latestTradeTs,
+      followLive: timeScale.followLive,
+    });
+  }, [
+    activeTradeMarket,
+    timeScale.followLive,
+    timeScale.viewport.visibleStartTime,
+    timeScale.viewport.visibleEndTime,
+    bboHistory.latestBbo,
+    bboDomState?.timestamp,
+    bboHistory.clientVersion,
+    latestTradeTs,
+    tradeTick,
+    tradeVersion,
+  ]);
+
   const engineTradeDots = useMemo(() => {
     if (!tradeDotsEnabled) {
       return {
@@ -863,6 +953,12 @@ export function LiquidityHeatmapPanel({
           dotRadiusMin: 0,
           dotRadiusMax: 0,
           clusterMs: 0,
+          rejectedTooOld: 0,
+          rejectedTooNew: 0,
+          rejectedTooSmall: 0,
+          rejectedBelowPrice: 0,
+          rejectedAbovePrice: 0,
+          dotMinBtc: 0,
         },
       };
     }
@@ -870,8 +966,8 @@ export function LiquidityHeatmapPanel({
       trades: bookmapTradeAgg.trades,
       minPrice: priceRange.minPrice,
       maxPrice: priceRange.maxPrice,
-      visibleStartTime: timeScale.viewport.visibleStartTime,
-      visibleEndTime: timeScale.viewport.visibleEndTime,
+      visibleStartTime: dotFilterWindow.dotVisibleStartTime,
+      visibleEndTime: dotFilterWindow.dotVisibleEndTime,
       verticalMode: priceScale.verticalMode,
       heatmapBucketSize: priceScale.heatmapBucketSize,
       domBucketSize: priceScale.domBucketSize,
@@ -886,8 +982,8 @@ export function LiquidityHeatmapPanel({
     bookmapTradeAgg.summary.tradeCount,
     priceRange.minPrice,
     priceRange.maxPrice,
-    timeScale.viewport.visibleStartTime,
-    timeScale.viewport.visibleEndTime,
+    dotFilterWindow.dotVisibleStartTime,
+    dotFilterWindow.dotVisibleEndTime,
     timeScale.followLive,
     timeScale.horizontalOffsetMs,
     priceScale.verticalMode,
@@ -897,6 +993,121 @@ export function LiquidityHeatmapPanel({
     activeTradeMarket,
     sourceMode,
     tradeSource,
+  ]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+
+    const logForensicState = () => {
+      const now = Date.now();
+      let newestDotTs: number | null = null;
+      let oldestDotTs: number | null = null;
+      for (const d of engineTradeDots.dots) {
+        if (newestDotTs == null || d.timestamp > newestDotTs) {
+          newestDotTs = d.timestamp;
+        }
+        if (oldestDotTs == null || d.timestamp < oldestDotTs) {
+          oldestDotTs = d.timestamp;
+        }
+      }
+      const latestBboTs =
+        bboHistory.latestBbo?.timestamp ??
+        (bboDomState?.timestamp != null && Number.isFinite(bboDomState.timestamp)
+          ? bboDomState.timestamp
+          : null);
+      let skippedReason = "none";
+      if (!tradeDotsEnabled) {
+        skippedReason = "disabled";
+      } else if (engineTradeDots.stats.dotCount === 0) {
+        if (!bookmapTradeAgg.trades.length) skippedReason = "no_trades";
+        else if (engineTradeDots.stats.visibleTrades === 0) skippedReason = "filter";
+        else skippedReason = "cluster_cap";
+      } else if (forensicDrawRef.current.rendererDrawnDotsCount === 0) {
+        skippedReason = "renderer_clip";
+      }
+
+      console.debug("[BOOKMAP_FORENSIC_STATE]", {
+        sourceMode,
+        domSource,
+        tradeSource,
+        activeTradeMarket,
+        engineRequested,
+        legacyRendered: forensicDrawRef.current.legacyRendered,
+        renderedLayerNames: forensicDrawRef.current.renderedLayerNames.join(","),
+        now,
+        latestBboTs,
+        latestBboAgeMs:
+          latestBboTs != null ? Math.max(0, now - latestBboTs) : null,
+        newestTradeTs: latestTradeTs,
+        newestTradeAgeMs:
+          latestTradeTs != null ? Math.max(0, now - latestTradeTs) : null,
+        liveEdgeTs: dotFilterWindow.liveEdgeTs,
+        liveEdgeSource: dotFilterWindow.liveEdgeSource,
+        viewportStart: timeScale.viewport.visibleStartTime,
+        viewportEnd: timeScale.viewport.visibleEndTime,
+        dotWindowStart: dotFilterWindow.dotVisibleStartTime,
+        dotWindowEnd: dotFilterWindow.dotVisibleEndTime,
+        perpLiveStartApplied: dotFilterWindow.perpLiveStartApplied,
+        perpEndToleranceApplied: dotFilterWindow.perpEndToleranceApplied,
+        dotWindowDurationMs:
+          dotFilterWindow.dotVisibleEndTime - dotFilterWindow.dotVisibleStartTime,
+        selectedTradesCount: bookmapTradeAgg.trades.length,
+        rejectedTooOld: engineTradeDots.stats.rejectedTooOld,
+        rejectedTooNew: engineTradeDots.stats.rejectedTooNew,
+        rejectedTooSmall: engineTradeDots.stats.rejectedTooSmall,
+        rejectedBelowPrice: engineTradeDots.stats.rejectedBelowPrice,
+        rejectedAbovePrice: engineTradeDots.stats.rejectedAbovePrice,
+        passedFilterCount: engineTradeDots.stats.visibleTrades,
+        dotMinBtc: engineTradeDots.stats.dotMinBtc,
+        engineDotsCount: engineTradeDots.stats.dotCount,
+        newestDotTs,
+        newestDotAgeMs:
+          newestDotTs != null ? Math.max(0, now - newestDotTs) : null,
+        oldestDotTs,
+        skippedReason,
+        rendererReceivedDotsCount: forensicDrawRef.current.rendererReceivedDotsCount,
+        rendererDrawnDotsCount: forensicDrawRef.current.rendererDrawnDotsCount,
+        rendererClippedTimeCount: forensicDrawRef.current.rendererClippedTimeCount,
+        rendererClippedPriceCount: forensicDrawRef.current.rendererClippedPriceCount,
+      });
+    };
+
+    logForensicState();
+    const id = window.setInterval(logForensicState, 2000);
+    return () => window.clearInterval(id);
+  }, [
+    sourceMode,
+    domSource,
+    tradeSource,
+    activeTradeMarket,
+    engineRequested,
+    useEngineRenderer,
+    engineRenderData,
+    legacyDebugEnabled,
+    engineRenderBase,
+    timeScale.viewport.visibleStartTime,
+    timeScale.viewport.visibleEndTime,
+    dotFilterWindow.dotVisibleStartTime,
+    dotFilterWindow.dotVisibleEndTime,
+    dotFilterWindow.liveEdgeTs,
+    dotFilterWindow.liveEdgeSource,
+    dotFilterWindow.perpLiveStartApplied,
+    dotFilterWindow.perpEndToleranceApplied,
+    bookmapTradeAgg.trades,
+    engineTradeDots.dots,
+    engineTradeDots.stats.visibleTrades,
+    engineTradeDots.stats.dotCount,
+    engineTradeDots.stats.rejectedTooOld,
+    engineTradeDots.stats.rejectedTooNew,
+    engineTradeDots.stats.rejectedTooSmall,
+    engineTradeDots.stats.rejectedBelowPrice,
+    engineTradeDots.stats.rejectedAbovePrice,
+    latestTradeTs,
+    tradeDotsEnabled,
+    bboHistory.latestBbo,
+    bboDomState?.timestamp,
+    tradeVersion,
+    tradeTick,
   ]);
 
   useEffect(() => {
@@ -1270,7 +1481,32 @@ export function LiquidityHeatmapPanel({
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    if (useEngineRenderer && engineRenderData) {
+    if (engineRequested) {
+      const engineFrame =
+        engineRenderData ??
+        createEmptyEngineRenderData(
+          engineRenderBase?.timeMin ?? timeScale.viewport.visibleStartTime,
+          engineRenderBase?.timeMax ?? timeScale.viewport.visibleEndTime,
+          priceScale.heatmapBucketSize,
+          priceScale.domBucketSize,
+          priceScale.labelStep,
+        );
+      const renderedLayerNames: string[] = [
+        engineRenderData ? "engine-primary-bands" : "engine-primary-empty",
+      ];
+      if (sourceMode === "both" && engineOverlayRenderData) {
+        renderedLayerNames.push("engine-overlay-bands");
+      }
+      if (sourceMode === "both" && passiveConfluenceLevels.length > 0) {
+        renderedLayerNames.push("engine-confluence");
+      }
+      const tradeDotRenderStats = {
+        rendererReceivedDotsCount: 0,
+        rendererDrawnDotsCount: 0,
+        rendererClippedTimeCount: 0,
+        rendererClippedPriceCount: 0,
+      };
+
       paintBookmapEngineHeatmapFrame(ctx, {
         width: w,
         height: h,
@@ -1281,7 +1517,7 @@ export function LiquidityHeatmapPanel({
         heatmapBucketSize: priceScale.heatmapBucketSize,
         domBucketSize: priceScale.domBucketSize,
         crosshair,
-        engine: engineRenderData,
+        engine: engineFrame,
         overlayEngine:
           sourceMode === "both" && engineOverlayRenderData
             ? engineOverlayRenderData
@@ -1296,6 +1532,7 @@ export function LiquidityHeatmapPanel({
         timeViewport: timeScale.viewport,
         showFarWallMarkers: showImportantFarLevels,
         tradeDots: tradeDotsEnabled ? engineTradeDots.dots : undefined,
+        tradeDotRenderStatsOut: tradeDotRenderStats,
         tradeDotVerticalMode: priceScale.verticalMode,
         tradeDotVisual,
         executionRailsEnabled: visualSettings.trades.executionRailsEnabled,
@@ -1311,28 +1548,56 @@ export function LiquidityHeatmapPanel({
           bothModeDivergence && visualSettings.divergence.showChartMarkers,
         visualSettings,
       });
+      forensicDrawRef.current = {
+        legacyRendered: false,
+        renderedLayerNames,
+        ...tradeDotRenderStats,
+      };
       return;
     }
 
-    paintBookmapHeatmapFrame(ctx, {
-      width: w,
-      height: h,
-      minPrice: priceRange.minPrice,
-      maxPrice: priceRange.maxPrice,
-      spot: priceReference ?? tickerSpot,
-      series: getSnapshots().slice(-MAX_LIQUIDITY_SNAPSHOTS),
-      priceStep: priceScale.heatmapBucketSize,
-      minVisibleBtc,
-      majorWallsOnly,
-      showTrades: useEngineRenderer ? false : showTrades,
-      trades: getRecentTrades(),
-      showPersistentWalls: useEngineRenderer ? false : showPersistentWalls,
-      persistentWalls,
-      crosshair,
-      farWallMarkers,
-      ladderRowHeightPx: Math.max(4, priceScale.heatmapBucketSize > 0 ? 8 : 4),
-    });
+    if (legacyDebugEnabled) {
+      forensicDrawRef.current = {
+        legacyRendered: true,
+        renderedLayerNames: ["legacy-snapshot-cells"],
+        rendererReceivedDotsCount: 0,
+        rendererDrawnDotsCount: 0,
+        rendererClippedTimeCount: 0,
+        rendererClippedPriceCount: 0,
+      };
+      paintBookmapHeatmapFrame(ctx, {
+        width: w,
+        height: h,
+        minPrice: priceRange.minPrice,
+        maxPrice: priceRange.maxPrice,
+        spot: priceReference ?? tickerSpot,
+        series: getSnapshots().slice(-MAX_LIQUIDITY_SNAPSHOTS),
+        priceStep: priceScale.heatmapBucketSize,
+        minVisibleBtc,
+        majorWallsOnly,
+        showTrades,
+        trades: getRecentTrades(),
+        showPersistentWalls,
+        persistentWalls,
+        crosshair,
+        farWallMarkers,
+        ladderRowHeightPx: Math.max(4, priceScale.heatmapBucketSize > 0 ? 8 : 4),
+      });
+      return;
+    }
+
+    forensicDrawRef.current = {
+      legacyRendered: false,
+      renderedLayerNames: ["engine-disabled"],
+      rendererReceivedDotsCount: 0,
+      rendererDrawnDotsCount: 0,
+      rendererClippedTimeCount: 0,
+      rendererClippedPriceCount: 0,
+    };
   }, [
+    engineRequested,
+    legacyDebugEnabled,
+    engineRenderBase,
     useEngineRenderer,
     engineRenderData,
     engineOverlayRenderData,

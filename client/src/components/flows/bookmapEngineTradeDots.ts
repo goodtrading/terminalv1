@@ -13,6 +13,102 @@ export { TRADE_DOT_COLOR_MODE, type TradeDotColorMode };
 
 export const ENGINE_TRADE_DOT_MAX = 1_000;
 export const ENGINE_TRADE_DOT_MIN_BTC = 0.01;
+/** Match Perp SSE ingest floor so dots track CVD tape. */
+export const PERP_TRADE_DOT_MIN_BTC = 0.001;
+/** Perp dot filter only — extends visibleEnd past chart viewport, not timeScale. */
+export const PERP_DOT_END_TOLERANCE_MS = 4_000;
+/** Perp dot filter only — drops historical viewport trades; live window near BBO/now. */
+export const PERP_DOT_LIVE_WINDOW_MS = 8_000;
+
+export type DotLiveEdgeSource = "bbo" | "trade" | "now";
+
+export type DotVisibleEndWindow = {
+  dotVisibleStartTime: number;
+  dotVisibleEndTime: number;
+  liveEdgeTs: number;
+  liveEdgeSource: DotLiveEdgeSource;
+  perpLiveStartApplied: boolean;
+  perpEndToleranceApplied: boolean;
+};
+
+export type EngineTradeDotRenderStats = {
+  rendererReceivedDotsCount: number;
+  rendererDrawnDotsCount: number;
+  rendererClippedTimeCount: number;
+  rendererClippedPriceCount: number;
+};
+
+export const EMPTY_TRADE_DOT_RENDER_STATS: EngineTradeDotRenderStats = {
+  rendererReceivedDotsCount: 0,
+  rendererDrawnDotsCount: 0,
+  rendererClippedTimeCount: 0,
+  rendererClippedPriceCount: 0,
+};
+
+/** Perp-only end slack for dot filtering; Spot uses viewport end unchanged. */
+export function resolveDotVisibleEndTime(params: {
+  market?: BookmapMarketSource;
+  viewportStart: number;
+  viewportEnd: number;
+  latestBboTs?: number | null;
+  newestTradeTs?: number | null;
+  /** When false, Perp uses full viewport history (pan/review). Live window only when following. */
+  followLive?: boolean;
+  now?: number;
+}): DotVisibleEndWindow {
+  const start = params.viewportStart;
+  const viewportEnd = params.viewportEnd;
+  const now = params.now ?? Date.now();
+  const liveEdge = resolveDotLiveEdge(
+    params.latestBboTs,
+    params.newestTradeTs,
+    now,
+  );
+
+  if (params.market !== "perp") {
+    return {
+      dotVisibleStartTime: start,
+      dotVisibleEndTime: viewportEnd,
+      liveEdgeTs: liveEdge.liveEdgeTs,
+      liveEdgeSource: liveEdge.liveEdgeSource,
+      perpLiveStartApplied: false,
+      perpEndToleranceApplied: false,
+    };
+  }
+
+  const liveEdgeTs = liveEdge.liveEdgeTs;
+  const followLive = params.followLive !== false;
+  const liveStart = Math.max(start, liveEdgeTs - PERP_DOT_LIVE_WINDOW_MS);
+  const dotStart = followLive ? liveStart : start;
+  const toleratedEnd = Math.min(
+    now + 250,
+    liveEdgeTs + PERP_DOT_END_TOLERANCE_MS,
+  );
+  const end = Math.max(viewportEnd, toleratedEnd);
+
+  return {
+    dotVisibleStartTime: dotStart,
+    dotVisibleEndTime: end,
+    liveEdgeTs,
+    liveEdgeSource: liveEdge.liveEdgeSource,
+    perpLiveStartApplied: followLive && liveStart > start,
+    perpEndToleranceApplied: end > viewportEnd,
+  };
+}
+
+function resolveDotLiveEdge(
+  latestBboTs: number | null | undefined,
+  newestTradeTs: number | null | undefined,
+  now: number,
+): { liveEdgeTs: number; liveEdgeSource: DotLiveEdgeSource } {
+  if (latestBboTs != null && Number.isFinite(latestBboTs)) {
+    return { liveEdgeTs: latestBboTs, liveEdgeSource: "bbo" };
+  }
+  if (newestTradeTs != null && Number.isFinite(newestTradeTs)) {
+    return { liveEdgeTs: newestTradeTs, liveEdgeSource: "trade" };
+  }
+  return { liveEdgeTs: now, liveEdgeSource: "now" };
+}
 
 const HALO_SCALE = 1.48;
 const CORE_SCALE = 0.52;
@@ -42,6 +138,12 @@ export type EngineTradeDotStats = {
   dotRadiusMin: number;
   dotRadiusMax: number;
   clusterMs: number;
+  rejectedTooOld: number;
+  rejectedTooNew: number;
+  rejectedTooSmall: number;
+  rejectedBelowPrice: number;
+  rejectedAbovePrice: number;
+  dotMinBtc: number;
 };
 
 export type TradeDotVisualContext = {
@@ -70,6 +172,14 @@ export type PreparedEngineTradeDots = {
   stats: EngineTradeDotStats;
 };
 
+const EMPTY_REJECTION_STATS = {
+  rejectedTooOld: 0,
+  rejectedTooNew: 0,
+  rejectedTooSmall: 0,
+  rejectedBelowPrice: 0,
+  rejectedAbovePrice: 0,
+};
+
 const EMPTY_STATS: EngineTradeDotStats = {
   tradeCount: 0,
   visibleTrades: 0,
@@ -80,7 +190,40 @@ const EMPTY_STATS: EngineTradeDotStats = {
   dotRadiusMin: 0,
   dotRadiusMax: 0,
   clusterMs: 0,
+  dotMinBtc: 0,
+  ...EMPTY_REJECTION_STATS,
 };
+
+function countDotFilterRejections(
+  trades: BookmapTrade[],
+  params: Pick<
+    PrepareEngineTradeDotsParams,
+    "visibleStartTime" | "visibleEndTime" | "minPrice" | "maxPrice"
+  >,
+  minBtc: number,
+) {
+  let rejectedTooOld = 0;
+  let rejectedTooNew = 0;
+  let rejectedTooSmall = 0;
+  let rejectedBelowPrice = 0;
+  let rejectedAbovePrice = 0;
+
+  for (const t of trades) {
+    if (t.sizeBtc < minBtc) rejectedTooSmall++;
+    if (t.timestamp < params.visibleStartTime) rejectedTooOld++;
+    if (t.timestamp > params.visibleEndTime) rejectedTooNew++;
+    if (t.price < params.minPrice) rejectedBelowPrice++;
+    if (t.price > params.maxPrice) rejectedAbovePrice++;
+  }
+
+  return {
+    rejectedTooOld,
+    rejectedTooNew,
+    rejectedTooSmall,
+    rejectedBelowPrice,
+    rejectedAbovePrice,
+  };
+}
 
 type DotSizing = { min: number; max: number; factor: number };
 
@@ -191,10 +334,10 @@ function clusterTrades(
       buyVolume: number;
       sellVolume: number;
       priceSum: number;
-      timeSum: number;
       vol: number;
       tradeCount: number;
       jitterKey: number;
+      latestTimestamp: number;
     }
   >();
 
@@ -206,17 +349,20 @@ function clusterTrades(
       buyVolume: 0,
       sellVolume: 0,
       priceSum: 0,
-      timeSum: 0,
       vol: 0,
       tradeCount: 0,
       jitterKey: jitterKeyForTrade(t),
+      latestTimestamp: t.timestamp,
     };
     if (t.side === "buy") slot.buyVolume += t.sizeBtc;
     else slot.sellVolume += t.sizeBtc;
     slot.priceSum += t.price * t.sizeBtc;
-    slot.timeSum += t.timestamp * t.sizeBtc;
     slot.vol += t.sizeBtc;
     slot.tradeCount += 1;
+    if (t.timestamp >= slot.latestTimestamp) {
+      slot.latestTimestamp = t.timestamp;
+      slot.jitterKey = jitterKeyForTrade(t);
+    }
     map.set(key, slot);
   }
 
@@ -226,7 +372,7 @@ function clusterTrades(
     const dominance = Math.abs(slot.buyVolume - slot.sellVolume) / slot.vol;
     const side = slot.buyVolume >= slot.sellVolume ? "buy" : "sell";
     out.push({
-      timestamp: slot.timeSum / slot.vol,
+      timestamp: slot.latestTimestamp,
       price: slot.priceSum / slot.vol,
       sizeBtc: slot.vol,
       side,
@@ -247,6 +393,8 @@ function computeDotRenderStats(
   tradeCount: number,
   visibleTrades: number,
   clusterMs: number,
+  rejections: typeof EMPTY_REJECTION_STATS,
+  dotMinBtc: number,
   visual?: TradeDotVisualContext,
 ): EngineTradeDotStats {
   let buyDots = 0;
@@ -278,6 +426,8 @@ function computeDotRenderStats(
     dotRadiusMin: Number.isFinite(dotRadiusMin) ? dotRadiusMin : minR,
     dotRadiusMax: dotRadiusMax > 0 ? dotRadiusMax : maxR,
     clusterMs,
+    dotMinBtc,
+    ...rejections,
   };
 }
 
@@ -302,9 +452,13 @@ export function prepareEngineTradeDots(
       : rawPriceCluster;
 
   const tradeCfg = params.visual?.settings.trades;
+  const marketFloor =
+    params.market === "perp" ? PERP_TRADE_DOT_MIN_BTC : ENGINE_TRADE_DOT_MIN_BTC;
   const minBtc = tradeCfg?.hideSmallTrades
-    ? Math.max(ENGINE_TRADE_DOT_MIN_BTC, tradeCfg.minTradeSize)
-    : Math.max(ENGINE_TRADE_DOT_MIN_BTC, tradeCfg?.minTradeSize ?? 0);
+    ? Math.max(marketFloor, tradeCfg.minTradeSize)
+    : marketFloor;
+
+  const rejections = countDotFilterRejections(params.trades, params, minBtc);
 
   const filtered = params.trades.filter(
     (t) =>
@@ -316,7 +470,15 @@ export function prepareEngineTradeDots(
   );
 
   if (!filtered.length) {
-    return { dots: [], stats: { ...EMPTY_STATS } };
+    return {
+      dots: [],
+      stats: {
+        ...EMPTY_STATS,
+        tradeCount: params.trades.length,
+        dotMinBtc: minBtc,
+        ...rejections,
+      },
+    };
   }
 
   const useCluster = tradeCfg?.clusterTrades !== false;
@@ -353,8 +515,9 @@ export function prepareEngineTradeDots(
   }
 
   if (dots.length > maxDots) {
-    dots.sort((a, b) => b.sizeBtc - a.sizeBtc);
+    dots.sort((a, b) => b.timestamp - a.timestamp || b.sizeBtc - a.sizeBtc);
     dots = dots.slice(0, maxDots);
+    dots.sort((a, b) => a.timestamp - b.timestamp);
   }
 
   return {
@@ -365,6 +528,8 @@ export function prepareEngineTradeDots(
       params.trades.length,
       filtered.length,
       timeMs,
+      rejections,
+      minBtc,
       params.visual,
     ),
   };
@@ -506,8 +671,19 @@ export function renderEngineTradeDots(
   plotH: number,
   verticalMode: VerticalCompressionMode,
   visual?: TradeDotVisualContext,
+  renderStatsOut?: EngineTradeDotRenderStats,
 ): void {
-  if (!dots.length) return;
+  const stats: EngineTradeDotRenderStats = {
+    rendererReceivedDotsCount: dots.length,
+    rendererDrawnDotsCount: 0,
+    rendererClippedTimeCount: 0,
+    rendererClippedPriceCount: 0,
+  };
+
+  if (!dots.length) {
+    if (renderStatsOut) Object.assign(renderStatsOut, stats);
+    return;
+  }
 
   const plotLeft = HEATMAP_PAD.left;
   const plotTop = HEATMAP_PAD.top;
@@ -530,8 +706,14 @@ export function renderEngineTradeDots(
     const y = priceToY(dot.price) + dy;
     const pad = radius * HALO_SCALE + 2;
 
-    if (x + pad < plotLeft || x - pad > plotRight) continue;
-    if (y + pad < plotTop || y - pad > plotBottom) continue;
+    if (x + pad < plotLeft || x - pad > plotRight) {
+      stats.rendererClippedTimeCount++;
+      continue;
+    }
+    if (y + pad < plotTop || y - pad > plotBottom) {
+      stats.rendererClippedPriceCount++;
+      continue;
+    }
 
     const style = bookmapDotLayerStyle(
       dot.side,
@@ -541,5 +723,8 @@ export function renderEngineTradeDots(
     );
 
     drawBookmapLayeredDot(ctx, x, y, radius, style);
+    stats.rendererDrawnDotsCount++;
   }
+
+  if (renderStatsOut) Object.assign(renderStatsOut, stats);
 }
