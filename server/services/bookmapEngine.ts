@@ -41,6 +41,7 @@ export interface BookmapEngineState {
   structuralWalls: BookLevel[];
   majorWalls: BookLevel[];
   timestamp: number;
+  limitHistorySampler?: LimitHistorySamplerStats;
 }
 
 export interface OrderBookLevelInput {
@@ -68,6 +69,46 @@ export interface GetHeatmapCellsParams {
   bucketMs?: number;
 }
 
+export interface LimitHistorySamplerStats {
+  historySamplerEnabled: boolean;
+  lastTickTs: number;
+  lastSampledLevelCount: number;
+  lastBidSampled: number;
+  lastAskSampled: number;
+  /** Levels >= BOOKMAP_SAMPLE_MAJOR_BTC in last tick. */
+  lastSampledWallLevels: number;
+  /** Levels >= BOOKMAP_SAMPLE_MEDIUM_BTC and < major in last tick. */
+  lastSampledMediumLevels: number;
+  heatmapCellCount: number;
+  coverageMs: number;
+  snapshotTickAgeMs: number;
+  /** P7.4D — server sampler audit scalars (DEV diagnostics). */
+  snapshotSampleIntervalMs: number;
+  snapshotWritesPerTick: number;
+  avgBidLevelsSampledPerTick: number;
+  avgAskLevelsSampledPerTick: number;
+  maxBidLevelsSampledPerTick: number;
+  maxAskLevelsSampledPerTick: number;
+  majorLevelsPerTick: number;
+  mediumLevelsPerTick: number;
+  nearPriceLevelsPerTick: number;
+  sampledDepthMode: string;
+  sampledTopLevelsPerSide: number;
+  thresholdMajorBtc: number;
+  thresholdMediumBtc: number;
+  thresholdNearPriceBtc: number;
+  historicalRetentionMinutes: number;
+  rawHeatmapCellCount: number;
+  retainedHeatmapCellCount: number;
+  droppedByRetentionCount: number;
+  farFromPriceSampledPct: number;
+  nearPriceSampledPct: number;
+  likelySamplerTooSparse: boolean;
+  likelyThresholdTooAggressive: boolean;
+  likelyRetentionTooShort: boolean;
+  p74ServerSamplerOk: boolean;
+}
+
 export interface GetStateOptions {
   priceRangePct?: number;
   /** When set with priceMax, overrides pct-based book clipping for bids/asks. */
@@ -82,11 +123,38 @@ export const WALL_STRUCTURAL_BTC = 150;
 export const WALL_MAJOR_BTC = 300;
 
 const DEFAULT_BUCKET_MS = 500;
+/** Periodic passive limit history sampler (P7.1). */
+export const BOOKMAP_SNAPSHOT_SAMPLE_MS = 1_000;
+export const BOOKMAP_SAMPLE_MIN_BTC = 2;
+/** P7.4E — lower medium threshold to increase historical texture input. */
+export const BOOKMAP_SAMPLE_MEDIUM_BTC = 1.5;
+export const BOOKMAP_SAMPLE_MAJOR_BTC = 100;
+/** P7.4E — dense passive limit sampling per side. */
+export const BOOKMAP_SAMPLE_TOP_LEVELS_PER_SIDE = 400;
+/** Legacy near band (superseded by P7.4E distance bands). */
+export const BOOKMAP_SAMPLE_NEAR_BAND_PCT = 0.35;
+export const BOOKMAP_SAMPLE_FAR_MEDIUM_BAND_PCT = 0.5;
+export const BOOKMAP_SAMPLER_DEPTH_MODE =
+  "banded-0-50pct+major+top-by-size";
+/** P7.4E — top levels by size within each distance band (per side). */
+const BOOKMAP_SAMPLE_DISTANCE_BANDS: ReadonlyArray<{
+  lo: number;
+  hi: number;
+  minBtc: number;
+  topN: number;
+}> = [
+  { lo: 0, hi: 0.05, minBtc: BOOKMAP_SAMPLE_MIN_BTC, topN: 120 },
+  { lo: 0.05, hi: 0.15, minBtc: BOOKMAP_SAMPLE_MIN_BTC, topN: 120 },
+  { lo: 0.15, hi: 0.35, minBtc: BOOKMAP_SAMPLE_MEDIUM_BTC, topN: 100 },
+  { lo: 0.35, hi: 0.5, minBtc: BOOKMAP_SAMPLE_MEDIUM_BTC, topN: 60 },
+];
+const BOOKMAP_SAMPLER_NEAR_PRICE_AUDIT_PCT = 0.05;
 const STALE_MS = 5 * 60 * 1000;
 /** Keep stale non-wall depth for last-known DOM / COB (Bookmap-style far depth). */
 const STALE_DEPTH_RETENTION_MS = 30 * 60 * 1000;
-const HEATMAP_RETENTION_MS = 90 * 60 * 1000;
-const MAX_HEATMAP_CELLS = 250_000;
+/** P7.4D — longer passive limit footprint retention (was 90m). */
+const HEATMAP_RETENTION_MS = 120 * 60 * 1000;
+const MAX_HEATMAP_CELLS = 280_000;
 const DEBUG = process.env.NODE_ENV === "development";
 const LOG_THROTTLE_MS = 5_000;
 
@@ -131,8 +199,50 @@ export class BookmapEngine {
   private readonly levels = new Map<string, BookLevel>();
   private readonly heatmapCells = new Map<string, HeatmapCell>();
   private bucketMs = DEFAULT_BUCKET_MS;
+  private snapshotBucketMs = BOOKMAP_SNAPSHOT_SAMPLE_MS;
   private lastTimestamp = 0;
   private lastLogAt = 0;
+  private samplerStats: LimitHistorySamplerStats = {
+    historySamplerEnabled: true,
+    lastTickTs: 0,
+    lastSampledLevelCount: 0,
+    lastBidSampled: 0,
+    lastAskSampled: 0,
+    lastSampledWallLevels: 0,
+    lastSampledMediumLevels: 0,
+    heatmapCellCount: 0,
+    coverageMs: 0,
+    snapshotTickAgeMs: 0,
+    snapshotSampleIntervalMs: BOOKMAP_SNAPSHOT_SAMPLE_MS,
+    snapshotWritesPerTick: 0,
+    avgBidLevelsSampledPerTick: 0,
+    avgAskLevelsSampledPerTick: 0,
+    maxBidLevelsSampledPerTick: 0,
+    maxAskLevelsSampledPerTick: 0,
+    majorLevelsPerTick: 0,
+    mediumLevelsPerTick: 0,
+    nearPriceLevelsPerTick: 0,
+    sampledDepthMode: BOOKMAP_SAMPLER_DEPTH_MODE,
+    sampledTopLevelsPerSide: BOOKMAP_SAMPLE_TOP_LEVELS_PER_SIDE,
+    thresholdMajorBtc: BOOKMAP_SAMPLE_MAJOR_BTC,
+    thresholdMediumBtc: BOOKMAP_SAMPLE_MEDIUM_BTC,
+    thresholdNearPriceBtc: BOOKMAP_SAMPLE_MIN_BTC,
+    historicalRetentionMinutes: HEATMAP_RETENTION_MS / 60_000,
+    rawHeatmapCellCount: 0,
+    retainedHeatmapCellCount: 0,
+    droppedByRetentionCount: 0,
+    farFromPriceSampledPct: 0,
+    nearPriceSampledPct: 0,
+    likelySamplerTooSparse: false,
+    likelyThresholdTooAggressive: false,
+    likelyRetentionTooShort: false,
+    p74ServerSamplerOk: false,
+  };
+  private samplerTickCount = 0;
+  private bidSampledSum = 0;
+  private askSampledSum = 0;
+  private cumulativeRetentionDropped = 0;
+  private lastTrimRawCount = 0;
 
   constructor(symbol: string, exchange: string, market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET) {
     this.symbol = symbol.toUpperCase();
@@ -253,6 +363,7 @@ export class BookmapEngine {
       structuralWalls,
       majorWalls,
       timestamp: this.lastTimestamp,
+      limitHistorySampler: this.getLimitHistorySamplerStats(),
     };
   }
 
@@ -283,11 +394,225 @@ export class BookmapEngine {
     this.levels.clear();
     this.heatmapCells.clear();
     this.lastTimestamp = 0;
+    this.samplerTickCount = 0;
+    this.bidSampledSum = 0;
+    this.askSampledSum = 0;
+    this.cumulativeRetentionDropped = 0;
+    this.lastTrimRawCount = 0;
     if (DEBUG) console.debug("[BookmapEngine] reset", { symbol: this.symbol, exchange: this.exchange });
   }
 
   hasData(): boolean {
     return this.levels.size > 0 || this.heatmapCells.size > 0;
+  }
+
+  getLimitHistorySamplerStats(): LimitHistorySamplerStats {
+    const now = Date.now();
+    const coverageMs = this.computeHeatmapCoverageMs();
+    const retainedHeatmapCellCount = this.heatmapCells.size;
+    const coverageMinutes = coverageMs / 60_000;
+    const retentionMinutes = HEATMAP_RETENTION_MS / 60_000;
+
+    const likelySamplerTooSparse =
+      this.samplerTickCount > 3 &&
+      (this.samplerStats.avgBidLevelsSampledPerTick +
+        this.samplerStats.avgAskLevelsSampledPerTick <
+        80 ||
+        coverageMinutes < retentionMinutes * 0.2);
+
+    const likelyThresholdTooAggressive =
+      this.samplerStats.mediumLevelsPerTick <
+        this.samplerStats.majorLevelsPerTick * 0.5 &&
+      this.samplerStats.lastSampledLevelCount < 120;
+
+    const likelyRetentionTooShort =
+      coverageMinutes < retentionMinutes * 0.35 &&
+      retainedHeatmapCellCount > 1_000 &&
+      this.cumulativeRetentionDropped > 500;
+
+    const p74ServerSamplerOk =
+      !likelySamplerTooSparse &&
+      !likelyThresholdTooAggressive &&
+      !likelyRetentionTooShort &&
+      coverageMinutes >= 10;
+
+    return {
+      ...this.samplerStats,
+      heatmapCellCount: retainedHeatmapCellCount,
+      coverageMs,
+      snapshotTickAgeMs:
+        this.samplerStats.lastTickTs > 0
+          ? Math.max(0, now - this.samplerStats.lastTickTs)
+          : 0,
+      retainedHeatmapCellCount,
+      rawHeatmapCellCount: this.lastTrimRawCount || retainedHeatmapCellCount,
+      droppedByRetentionCount: this.cumulativeRetentionDropped,
+      historicalRetentionMinutes: retentionMinutes,
+      likelySamplerTooSparse,
+      likelyThresholdTooAggressive,
+      likelyRetentionTooShort,
+      p74ServerSamplerOk,
+    };
+  }
+
+  /**
+   * P7.1 — materialize passive limit history from a full orderbook snapshot.
+   * Only levels present in the current book receive cells for this time bucket;
+   * pulled/disappeared levels leave gaps in newer buckets while past cells remain.
+   */
+  samplePassiveLimitHistory(input: BookmapSnapshotInput): number {
+    const ts = input.timestamp ?? Date.now();
+    this.lastTimestamp = Math.max(this.lastTimestamp, ts);
+
+    const mid = this.estimateMidFromBook(input.bids, input.asks) ?? this.estimateMidPrice();
+    const bidLevels = selectPassiveLimitSampleLevels(input.bids, mid);
+    const askLevels = selectPassiveLimitSampleLevels(input.asks, mid);
+    const timeBucket =
+      Math.floor(ts / this.snapshotBucketMs) * this.snapshotBucketMs;
+
+    for (const row of bidLevels) {
+      this.writeSnapshotHeatmapCell(timeBucket, row.price, "bid", row.size, ts);
+    }
+    for (const row of askLevels) {
+      this.writeSnapshotHeatmapCell(timeBucket, row.price, "ask", row.size, ts);
+    }
+
+    const rawBeforeTrim = this.heatmapCells.size;
+    this.trimHeatmapCells(ts);
+    const sampled = [...bidLevels, ...askLevels];
+    let lastSampledWallLevels = 0;
+    let lastSampledMediumLevels = 0;
+    let majorLevelsPerTick = 0;
+    let mediumLevelsPerTick = 0;
+    let nearPriceLevelsPerTick = 0;
+    let farFromPriceLevelsPerTick = 0;
+    for (const row of sampled) {
+      if (row.size >= BOOKMAP_SAMPLE_MAJOR_BTC) {
+        lastSampledWallLevels += 1;
+        majorLevelsPerTick += 1;
+      } else if (row.size >= BOOKMAP_SAMPLE_MEDIUM_BTC) {
+        lastSampledMediumLevels += 1;
+        mediumLevelsPerTick += 1;
+      }
+      if (mid != null && mid > 0) {
+        const distPct = Math.abs(row.price - mid) / mid;
+        if (distPct <= BOOKMAP_SAMPLER_NEAR_PRICE_AUDIT_PCT) {
+          nearPriceLevelsPerTick += 1;
+        } else {
+          farFromPriceLevelsPerTick += 1;
+        }
+      }
+    }
+
+    this.samplerTickCount += 1;
+    this.bidSampledSum += bidLevels.length;
+    this.askSampledSum += askLevels.length;
+    const sampledTotal = sampled.length || 1;
+    const nearPct = nearPriceLevelsPerTick / sampledTotal;
+    const farPct = farFromPriceLevelsPerTick / sampledTotal;
+
+    this.samplerStats = {
+      historySamplerEnabled: true,
+      lastTickTs: ts,
+      lastSampledLevelCount: sampled.length,
+      lastBidSampled: bidLevels.length,
+      lastAskSampled: askLevels.length,
+      lastSampledWallLevels,
+      lastSampledMediumLevels,
+      heatmapCellCount: this.heatmapCells.size,
+      coverageMs: this.computeHeatmapCoverageMs(),
+      snapshotTickAgeMs: 0,
+      snapshotSampleIntervalMs: this.snapshotBucketMs,
+      snapshotWritesPerTick: bidLevels.length + askLevels.length,
+      avgBidLevelsSampledPerTick: this.bidSampledSum / this.samplerTickCount,
+      avgAskLevelsSampledPerTick: this.askSampledSum / this.samplerTickCount,
+      maxBidLevelsSampledPerTick: Math.max(
+        this.samplerStats.maxBidLevelsSampledPerTick,
+        bidLevels.length,
+      ),
+      maxAskLevelsSampledPerTick: Math.max(
+        this.samplerStats.maxAskLevelsSampledPerTick,
+        askLevels.length,
+      ),
+      majorLevelsPerTick,
+      mediumLevelsPerTick,
+      nearPriceLevelsPerTick,
+      sampledDepthMode: BOOKMAP_SAMPLER_DEPTH_MODE,
+      sampledTopLevelsPerSide: BOOKMAP_SAMPLE_TOP_LEVELS_PER_SIDE,
+      thresholdMajorBtc: BOOKMAP_SAMPLE_MAJOR_BTC,
+      thresholdMediumBtc: BOOKMAP_SAMPLE_MEDIUM_BTC,
+      thresholdNearPriceBtc: BOOKMAP_SAMPLE_MIN_BTC,
+      historicalRetentionMinutes: HEATMAP_RETENTION_MS / 60_000,
+      rawHeatmapCellCount: rawBeforeTrim,
+      retainedHeatmapCellCount: this.heatmapCells.size,
+      droppedByRetentionCount: this.cumulativeRetentionDropped,
+      farFromPriceSampledPct: farPct,
+      nearPriceSampledPct: nearPct,
+      likelySamplerTooSparse: false,
+      likelyThresholdTooAggressive: false,
+      likelyRetentionTooShort: false,
+      p74ServerSamplerOk: false,
+    };
+    this.lastTrimRawCount = rawBeforeTrim;
+
+    return this.samplerStats.lastSampledLevelCount;
+  }
+
+  private computeHeatmapCoverageMs(): number {
+    let oldest = Infinity;
+    let newest = -Infinity;
+    for (const cell of Array.from(this.heatmapCells.values())) {
+      if (cell.timeBucket < oldest) oldest = cell.timeBucket;
+      if (cell.timeBucket > newest) newest = cell.timeBucket;
+    }
+    if (!Number.isFinite(oldest) || !Number.isFinite(newest)) return 0;
+    return Math.max(0, newest - oldest);
+  }
+
+  private estimateMidFromBook(
+    bids: OrderBookLevelInput[],
+    asks: OrderBookLevelInput[],
+  ): number | null {
+    let bestBid = 0;
+    let bestAsk = Infinity;
+    for (const b of bids) {
+      if (b.size > 0 && b.price > bestBid) bestBid = b.price;
+    }
+    for (const a of asks) {
+      if (a.size > 0 && a.price < bestAsk) bestAsk = a.price;
+    }
+    if (bestBid > 0 && Number.isFinite(bestAsk) && bestAsk < Infinity && bestAsk > bestBid) {
+      return (bestBid + bestAsk) / 2;
+    }
+    return null;
+  }
+
+  private writeSnapshotHeatmapCell(
+    timeBucket: number,
+    price: number,
+    side: BookSide,
+    size: number,
+    ts: number,
+  ): void {
+    if (!Number.isFinite(price) || price <= 0 || size <= 0) return;
+    const key = cellKey(timeBucket, side, price);
+    const existing = this.heatmapCells.get(key);
+    if (existing) {
+      existing.lastSizeInBucket = size;
+      existing.size = size;
+      existing.maxSizeInBucket = Math.max(existing.maxSizeInBucket, size);
+      existing.lastUpdateTs = ts;
+      return;
+    }
+    this.heatmapCells.set(key, {
+      timeBucket,
+      price,
+      side,
+      size,
+      maxSizeInBucket: size,
+      lastSizeInBucket: size,
+      lastUpdateTs: ts,
+    });
   }
 
   private applyLevelUpdate(
@@ -348,6 +673,15 @@ export class BookmapEngine {
     const key = cellKey(timeBucket, side, price);
     const existing = this.heatmapCells.get(key);
 
+    if (size <= 0) {
+      if (existing) {
+        existing.lastSizeInBucket = 0;
+        existing.size = 0;
+        existing.lastUpdateTs = ts;
+      }
+      return;
+    }
+
     if (existing) {
       existing.lastSizeInBucket = size;
       existing.size = size;
@@ -393,19 +727,25 @@ export class BookmapEngine {
   }
 
   private trimHeatmapCells(now: number): void {
+    const before = this.heatmapCells.size;
     const cutoff = now - HEATMAP_RETENTION_MS;
     for (const [key, cell] of Array.from(this.heatmapCells.entries())) {
       if (cell.timeBucket < cutoff) this.heatmapCells.delete(key);
     }
 
-    if (this.heatmapCells.size <= MAX_HEATMAP_CELLS) return;
+    if (this.heatmapCells.size > MAX_HEATMAP_CELLS) {
+      const sorted = Array.from(this.heatmapCells.entries()).sort(
+        (a, b) => a[1].timeBucket - b[1].timeBucket,
+      );
+      const drop = sorted.length - MAX_HEATMAP_CELLS;
+      for (let i = 0; i < drop; i++) {
+        this.heatmapCells.delete(sorted[i]![0]);
+      }
+    }
 
-    const sorted = Array.from(this.heatmapCells.entries()).sort(
-      (a, b) => a[1].timeBucket - b[1].timeBucket,
-    );
-    const drop = sorted.length - MAX_HEATMAP_CELLS;
-    for (let i = 0; i < drop; i++) {
-      this.heatmapCells.delete(sorted[i]![0]);
+    const dropped = Math.max(0, before - this.heatmapCells.size);
+    if (dropped > 0) {
+      this.cumulativeRetentionDropped += dropped;
     }
   }
 
@@ -486,6 +826,56 @@ export class BookmapEngine {
   }
 }
 
+function passiveLimitDistancePct(price: number, mid: number): number {
+  return Math.abs(price - mid) / mid;
+}
+
+function selectPassiveLimitSampleLevels(
+  levels: OrderBookLevelInput[],
+  mid: number | null,
+): OrderBookLevelInput[] {
+  const selected = new Map<number, OrderBookLevelInput>();
+
+  const consider = (row: OrderBookLevelInput) => {
+    if (!Number.isFinite(row.price) || row.price <= 0 || row.size <= 0) return;
+    const prev = selected.get(row.price);
+    if (!prev || row.size > prev.size) {
+      selected.set(row.price, row);
+    }
+  };
+
+  for (const row of levels) {
+    if (row.size >= BOOKMAP_SAMPLE_MAJOR_BTC) consider(row);
+  }
+  for (const row of levels) {
+    if (row.size >= BOOKMAP_SAMPLE_MEDIUM_BTC) consider(row);
+  }
+
+  if (mid != null && mid > 0) {
+    for (const band of BOOKMAP_SAMPLE_DISTANCE_BANDS) {
+      const inBand = levels.filter((row) => {
+        if (row.size < band.minBtc) return false;
+        const distPct = passiveLimitDistancePct(row.price, mid);
+        return distPct >= band.lo && distPct < band.hi;
+      });
+      inBand
+        .sort((a, b) => b.size - a.size)
+        .slice(0, band.topN)
+        .forEach(consider);
+    }
+  }
+
+  const ranked = [...levels]
+    .filter((row) => row.size > 0)
+    .sort((a, b) => b.size - a.size)
+    .slice(0, BOOKMAP_SAMPLE_TOP_LEVELS_PER_SIDE);
+  for (const row of ranked) {
+    consider(row);
+  }
+
+  return Array.from(selected.values());
+}
+
 const engines = new Map<string, BookmapEngine>();
 
 function engineKey(symbol: string, exchange: string, market: BookmapMarketSource): string {
@@ -518,6 +908,51 @@ export function feedBinanceOrderBook(
   } else {
     engine.applyDepthUpdate(update);
   }
+}
+
+/** P7.1 — periodic passive limit snapshot into heatmap history cells. */
+export function sampleBinancePassiveLimitHistory(
+  market: BookmapMarketSource,
+  orderBook: BookmapSnapshotInput,
+): number {
+  const engine = getBookmapEngine("BTCUSDT", "binance", market);
+  return engine.samplePassiveLimitHistory(orderBook);
+}
+
+export function getLimitHistorySamplerStats(
+  symbol: string,
+  exchange: string,
+  market: BookmapMarketSource,
+): LimitHistorySamplerStats {
+  return getBookmapEngine(symbol, exchange, market).getLimitHistorySamplerStats();
+}
+
+let limitHistoryDiagStarted = false;
+
+export function startBookmapLimitHistoryDiagnostics(): void {
+  if (limitHistoryDiagStarted || process.env.NODE_ENV === "production") return;
+  limitHistoryDiagStarted = true;
+
+  setInterval(() => {
+    const spot = getLimitHistorySamplerStats("BTCUSDT", "binance", "spot");
+    const perp = getLimitHistorySamplerStats("BTCUSDT", "binance", "perp");
+    console.debug("[BOOKMAP_LIMIT_HISTORY_STATE]", {
+      spotEngineCellCount: spot.heatmapCellCount,
+      perpEngineCellCount: perp.heatmapCellCount,
+      spotEngineCoverageMs: spot.coverageMs,
+      perpEngineCoverageMs: perp.coverageMs,
+      spotSampledLevelsLastTick: spot.lastSampledLevelCount,
+      perpSampledLevelsLastTick: perp.lastSampledLevelCount,
+      spotSnapshotTickAgeMs: spot.snapshotTickAgeMs,
+      perpSnapshotTickAgeMs: perp.snapshotTickAgeMs,
+      historySamplerEnabled: spot.historySamplerEnabled && perp.historySamplerEnabled,
+      currentOrderbookOnly:
+        spot.coverageMs < 30_000 &&
+        perp.coverageMs < 30_000 &&
+        spot.heatmapCellCount < 200 &&
+        perp.heatmapCellCount < 200,
+    });
+  }, 2_000);
 }
 
 export function logBookmapMarketStateDiagnostics(

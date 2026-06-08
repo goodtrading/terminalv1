@@ -6,7 +6,11 @@
  */
 
 import WebSocket from "ws";
-import { feedBinanceOrderBook } from "./bookmapEngine";
+import {
+  BOOKMAP_SNAPSHOT_SAMPLE_MS,
+  feedBinanceOrderBook,
+  sampleBinancePassiveLimitHistory,
+} from "./bookmapEngine";
 import { recordBboFromOrderBook } from "./bboHistoryRegistry";
 import type { OrderBookLevel, OrderBookSnapshot } from "./orderbookService";
 
@@ -131,7 +135,7 @@ function applyDeltaToSnapshot(
 }
 
 function logPerpHealth(reason?: string): void {
-  if (!DEBUG_ENABLED) return;
+  if (!DEBUG_ENABLED && process.env.NODE_ENV !== "production") return;
   const ageMs = health.lastMessageTs > 0 ? Date.now() - health.lastMessageTs : null;
   const { bestBid, bestAsk, spread } = getBboFromSnapshot(snapshot);
   console.debug("[PERP_ORDERBOOK_HEALTH]", {
@@ -193,7 +197,7 @@ export async function resyncPerpOrderBook(reason: string): Promise<void> {
   lastResyncAttemptMs = now;
   resyncInFlight = true;
   try {
-    if (DEBUG_ENABLED) {
+    if (DEBUG_ENABLED || process.env.NODE_ENV === "production") {
       console.warn("[OrderBookServicePerp] Resyncing from REST:", reason);
     }
     await initializePerpFullDepth();
@@ -315,8 +319,34 @@ function scheduleReconnect(): void {
   }, RECONNECT_MS);
 }
 
+function runPerpPassiveLimitSnapshotSample(): void {
+  const ob = getPerpOrderBook();
+  if (ob.bids.length === 0 && ob.asks.length === 0) return;
+  sampleBinancePassiveLimitHistory("perp", {
+    bids: ob.bids,
+    asks: ob.asks,
+    timestamp: ob.timestamp ?? Date.now(),
+  });
+}
+
 connect();
 healthInterval = setInterval(runHealthCheck, HEALTH_INTERVAL_MS);
+runPerpPassiveLimitSnapshotSample();
+setInterval(runPerpPassiveLimitSnapshotSample, BOOKMAP_SNAPSHOT_SAMPLE_MS);
+
+if (process.env.NODE_ENV === "production") {
+  setInterval(() => {
+    if (snapshot.bids.length === 0 || snapshot.asks.length === 0) {
+      void resyncPerpOrderBook("production-empty-book-poll");
+      return;
+    }
+    const ageMs =
+      health.lastMessageTs > 0 ? Date.now() - health.lastMessageTs : Infinity;
+    if (!health.connected || ageMs > STALE_MS) {
+      void resyncPerpOrderBook("production-rest-fallback");
+    }
+  }, 6_000);
+}
 
 export function getPerpOrderBook(): OrderBookSnapshot {
   const ts =

@@ -16,8 +16,16 @@ import {
   initializeFullDepth,
   resyncSpotOrderBook,
 } from "./services/orderbookService";
-import { getPerpOrderBookHealth, initializePerpFullDepth } from "./services/orderbookServicePerp";
-import { getBookmapEngine, logBookmapMarketStateDiagnostics } from "./services/bookmapEngine";
+import {
+  getPerpOrderBookHealth,
+  initializePerpFullDepth,
+  resyncPerpOrderBook,
+} from "./services/orderbookServicePerp";
+import {
+  getBookmapEngine,
+  logBookmapMarketStateDiagnostics,
+  sampleBinancePassiveLimitHistory,
+} from "./services/bookmapEngine";
 import { getOrderBookForMarket, parseBookmapMarket } from "./services/orderbookMarketRegistry";
 import { queryBboHistory } from "./services/bboHistoryRegistry";
 import {
@@ -58,6 +66,71 @@ const BINANCE_CONNECTIVITY_TIMEOUT_MS = 6_000;
 const OPTIONS_TOP_OF_BOOK_SSE_MIN_INTERVAL_MS = 500;
 const OPTIONS_TOP_OF_BOOK_SSE_MAX_INSTRUMENTS = DERIBIT_OPTIONS_WS_MAX_INSTRUMENTS;
 const OPTIONS_TOP_OF_BOOK_SSE_HEARTBEAT_MS = 15000;
+const BOOKMAP_RAILWAY_DIAG_INTERVAL_MS = 2_000;
+let lastBookmapRailwayDiagAt = 0;
+
+function logBookmapRailwayDataDiag(payload: {
+  source: string;
+  hasSpotBook: boolean;
+  hasPerpBook: boolean;
+  spotBidCount: number;
+  spotAskCount: number;
+  perpBidCount: number;
+  perpAskCount: number;
+  tradeCount: number;
+  lastBookTimestamp: number | null;
+  lastTradeTimestamp: number | null;
+  orderbookAgeMs: number | null;
+  tradesAgeMs: number | null;
+  selectedSource: string;
+  endpointOk: boolean;
+}): void {
+  const now = Date.now();
+  if (now - lastBookmapRailwayDiagAt < BOOKMAP_RAILWAY_DIAG_INTERVAL_MS) return;
+  lastBookmapRailwayDiagAt = now;
+  console.log("[BOOKMAP_RAILWAY_DATA_DIAG]", {
+    env: process.env.NODE_ENV,
+    ...payload,
+  });
+}
+
+async function syncBookmapEngineFromLiveOrderBook(
+  symbol: string,
+  exchange: string,
+  market: ReturnType<typeof parseBookmapMarket>,
+): Promise<void> {
+  const engine = getBookmapEngine(symbol, exchange, market);
+  let orderBook = getOrderBookForMarket(market);
+
+  if (orderBook.bids.length === 0 || orderBook.asks.length === 0) {
+    if (market === "perp") {
+      await resyncPerpOrderBook("api-bookmap-state-empty");
+    } else {
+      await resyncSpotOrderBook("api-bookmap-state-empty");
+    }
+    orderBook = getOrderBookForMarket(market);
+  }
+
+  if (orderBook.bids.length === 0 || orderBook.asks.length === 0) {
+    return;
+  }
+
+  const ts = orderBook.timestamp ?? Date.now();
+  engine.applySnapshot({
+    bids: orderBook.bids,
+    asks: orderBook.asks,
+    timestamp: ts,
+  });
+
+  const heatmapCellsBefore = engine.getCurrentState({ includeStale: true }).heatmapCells.length;
+  if (heatmapCellsBefore === 0) {
+    sampleBinancePassiveLimitHistory(market, {
+      bids: orderBook.bids,
+      asks: orderBook.asks,
+      timestamp: ts,
+    });
+  }
+}
 
 function isValidRawOrderbookSnapshot(value: unknown): boolean {
   const payload = value as { bids?: unknown; asks?: unknown } | null | undefined;
@@ -442,24 +515,17 @@ export async function registerRoutes(
             engine.setBucketMs(bucketMs);
           }
 
-          if (!engine.hasData()) {
-            if (exchange === "kraken") {
+          if (exchange === "kraken") {
+            if (!engine.hasData()) {
               const ob = await getKrakenOrderBook(symbol, 500);
               engine.applySnapshot({
                 bids: ob.bids.map((b) => ({ price: b.price, size: b.size })),
                 asks: ob.asks.map((a) => ({ price: a.price, size: a.size })),
                 timestamp: ob.timestamp,
               });
-            } else if (exchange === "binance" || exchange.startsWith("binance")) {
-              const orderBook = getOrderBookForMarket(market);
-              if (orderBook.bids.length > 0 && orderBook.asks.length > 0) {
-                engine.applySnapshot({
-                  bids: orderBook.bids,
-                  asks: orderBook.asks,
-                  timestamp: orderBook.timestamp ?? Date.now(),
-                });
-              }
             }
+          } else if (exchange === "binance" || exchange.startsWith("binance")) {
+            await syncBookmapEngineFromLiveOrderBook(symbol, exchange, market);
           }
 
           const state = engine.getCurrentState({
@@ -473,6 +539,28 @@ export async function registerRoutes(
           });
 
           logBookmapMarketStateDiagnostics(symbol, exchange, market);
+
+          const spotBook = getOrderBookForMarket("spot");
+          const perpBook = getOrderBookForMarket("perp");
+          const spotHealth = getSpotOrderBookHealth();
+          const perpHealth = getPerpOrderBookHealth();
+          logBookmapRailwayDataDiag({
+            source: "bookmap-state",
+            hasSpotBook: spotBook.bids.length > 0 && spotBook.asks.length > 0,
+            hasPerpBook: perpBook.bids.length > 0 && perpBook.asks.length > 0,
+            spotBidCount: spotBook.bids.length,
+            spotAskCount: spotBook.asks.length,
+            perpBidCount: perpBook.bids.length,
+            perpAskCount: perpBook.asks.length,
+            tradeCount: 0,
+            lastBookTimestamp: state.timestamp ?? null,
+            lastTradeTimestamp: null,
+            orderbookAgeMs:
+              market === "perp" ? perpHealth.ageMs : spotHealth.ageMs,
+            tradesAgeMs: null,
+            selectedSource: market,
+            endpointOk: state.bids.length > 0 && state.asks.length > 0,
+          });
 
           return {
             symbol,

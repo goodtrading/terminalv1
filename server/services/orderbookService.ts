@@ -6,7 +6,12 @@
  */
 
 import WebSocket from "ws";
-import { feedBinanceOrderBook } from "./bookmapEngine";
+import {
+  BOOKMAP_SNAPSHOT_SAMPLE_MS,
+  feedBinanceOrderBook,
+  sampleBinancePassiveLimitHistory,
+  startBookmapLimitHistoryDiagnostics,
+} from "./bookmapEngine";
 import { recordBboFromOrderBook } from "./bboHistoryRegistry";
 
 export interface OrderBookLevel {
@@ -354,8 +359,35 @@ function scheduleReconnect(): void {
   }, RECONNECT_MS);
 }
 
+function runSpotPassiveLimitSnapshotSample(): void {
+  const ob = getOrderBook();
+  if (ob.bids.length === 0 && ob.asks.length === 0) return;
+  sampleBinancePassiveLimitHistory("spot", {
+    bids: ob.bids,
+    asks: ob.asks,
+    timestamp: ob.timestamp ?? Date.now(),
+  });
+}
+
 connect();
 healthInterval = setInterval(runHealthCheck, HEALTH_INTERVAL_MS);
+runSpotPassiveLimitSnapshotSample();
+setInterval(runSpotPassiveLimitSnapshotSample, BOOKMAP_SNAPSHOT_SAMPLE_MS);
+startBookmapLimitHistoryDiagnostics();
+
+if (process.env.NODE_ENV === "production") {
+  setInterval(() => {
+    if (snapshot.bids.length === 0 || snapshot.asks.length === 0) {
+      void resyncSpotOrderBook("production-empty-book-poll");
+      return;
+    }
+    const ageMs =
+      health.lastMessageTs > 0 ? Date.now() - health.lastMessageTs : Infinity;
+    if (!health.connected || ageMs > STALE_MS) {
+      void resyncSpotOrderBook("production-rest-fallback");
+    }
+  }, 8_000);
+}
 
 /**
  * Returns the current order book snapshot from Binance depth WebSocket.
