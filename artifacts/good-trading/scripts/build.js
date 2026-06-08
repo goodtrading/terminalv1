@@ -8,7 +8,11 @@ let metroProcess = null;
 
 const projectRoot = path.resolve(__dirname, "..");
 
+const isCI = process.env.CI || process.env.RAILWAY_ENVIRONMENT;
+
 function findWorkspaceRoot(startDir) {
+  if (isCI) return process.cwd();
+
   let dir = startDir;
   while (dir !== path.dirname(dir)) {
     if (fs.existsSync(path.join(dir, "pnpm-workspace.yaml"))) {
@@ -16,7 +20,8 @@ function findWorkspaceRoot(startDir) {
     }
     dir = path.dirname(dir);
   }
-  throw new Error("Could not find workspace root (no pnpm-workspace.yaml found)");
+
+  return startDir;
 }
 
 const workspaceRoot = findWorkspaceRoot(projectRoot);
@@ -146,16 +151,14 @@ async function startMetro(expoPublicDomain, expoPublicReplId) {
     console.log(`Setting EXPO_PUBLIC_REPL_ID=${expoPublicReplId}`);
   }
 
+  const packageManager = isCI ? "npx" : "pnpm";
+  const packageArgs = isCI 
+    ? ["expo", "start", "--no-dev", "--minify", "--localhost"]
+    : ["exec", "expo", "start", "--no-dev", "--minify", "--localhost"];
+
   metroProcess = spawn(
-    "pnpm",
-    [
-      "exec",
-      "expo",
-      "start",
-      "--no-dev",
-      "--minify",
-      "--localhost",
-    ],
+    packageManager,
+    packageArgs,
     {
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
