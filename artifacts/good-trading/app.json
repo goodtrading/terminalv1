@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "GoodTrading",
-    "slug": "good-trading",
+    "slug": "goodtrading-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -14,10 +14,15 @@
       "backgroundColor": "#000000"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "bundleIdentifier": "com.alvarogtsorganization.goodtradingapp",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
-      "backgroundColor": "#000000"
+      "backgroundColor": "#000000",
+      "package": "com.alvarogtsorganization.goodtradingapp"
     },
     "web": {
       "favicon": "./assets/images/icon.png"
@@ -35,6 +40,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "51e1142d-78e9-4dc3-8bcc-ccae1fcc22fb"
+      }
+    },
+    "owner": "alvarogts-organization"
   }
 }
