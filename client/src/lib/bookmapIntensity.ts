@@ -40,6 +40,11 @@ function logSizes(sizes: number[]): number[] {
   return sizes.filter((s) => s > 0 && Number.isFinite(s)).map((s) => Math.log1p(s));
 }
 
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
 function modePercentileAnchors(mode: BookmapVisualMode): {
   p60: number;
   p80: number;
@@ -247,4 +252,364 @@ export function logPercentileIntensity(
   else if (peak >= WALL_STRUCTURAL_BTC) intensity = Math.max(intensity, 0.85);
   else if (peak >= WALL_IMPORTANT_BTC) intensity = Math.max(intensity, 0.7);
   return Math.max(0, Math.min(1, intensity));
+}
+
+// ─── Micro scalping visual hierarchy (historical texture only) ───────────────
+
+export type MicroScalpContext = {
+  verticalMode: string;
+  visiblePriceRange: number;
+  pxPerSample?: number;
+  pxPerPriceBucket?: number;
+};
+
+/** Broader micro view — calibration + palette (matches panel microContext). */
+export function isMicroVisualHierarchyMode(ctx: MicroScalpContext): boolean {
+  return ctx.verticalMode === "micro" && ctx.visiblePriceRange <= 1_500;
+}
+
+export function isMicroScalpMode(ctx: MicroScalpContext): boolean {
+  if (ctx.verticalMode !== "micro") return false;
+  if (ctx.visiblePriceRange > 600) return false;
+  const pxSample = ctx.pxPerSample;
+  const pxBucket = ctx.pxPerPriceBucket;
+  if (
+    pxSample != null &&
+    Number.isFinite(pxSample) &&
+    pxBucket != null &&
+    Number.isFinite(pxBucket)
+  ) {
+    return pxSample >= 4 || pxBucket >= 1.0;
+  }
+  return true;
+}
+
+export function microSizeScore(size: number): number {
+  if (size < 2) return 0.06;
+  if (size < 5) return 0.22;
+  if (size < 10) return 0.38;
+  if (size < 30) return 0.62;
+  if (size < 70) return 0.82;
+  return 0.94;
+}
+
+export function microProximityScore(distPct: number): number {
+  if (distPct <= 0.0005) return 1.0;
+  if (distPct <= 0.0015) return 0.78;
+  if (distPct <= 0.0035) return 0.48;
+  return 0.14;
+}
+
+export function microPersistenceScore(ms: number): number {
+  if (ms < 1000) return 0.1;
+  if (ms < 4000) return 0.32;
+  if (ms < 10000) return 0.58;
+  if (ms < 20000) return 0.76;
+  return 0.9;
+}
+
+export function microContinuityScore(runLength: number): number {
+  if (runLength <= 1) return 0.1;
+  if (runLength === 2) return 0.28;
+  if (runLength <= 4) return 0.52;
+  if (runLength <= 8) return 0.74;
+  return 0.88;
+}
+
+export function microRenderCurve(x: number): number {
+  const v = clamp01(x);
+  if (v < 0.1) return v * 0.8;
+  if (v < 0.25) return 0.08 + (v - 0.1) * 1.35;
+  if (v < 0.45) return 0.28 + (v - 0.25) * 1.25;
+  if (v < 0.7) return 0.53 + (v - 0.45) * 1.0;
+  return Math.min(0.96, 0.78 + (v - 0.7) * 0.6);
+}
+
+function microRenderIntensityCapBySize(sizeBtc: number): number {
+  if (sizeBtc < 2) return 0.18;
+  if (sizeBtc < 5) return 0.38;
+  if (sizeBtc < 10) return 0.52;
+  if (sizeBtc < 30) return 0.7;
+  if (sizeBtc < 70) return 0.84;
+  return 0.96;
+}
+
+export function computeMicroDataIntensity(params: {
+  sizeBtc: number;
+  localRankScore: number;
+  proximityScore: number;
+  persistenceScore: number;
+  continuityScore?: number;
+}): number {
+  const continuity =
+    params.continuityScore ?? params.persistenceScore;
+  return clamp01(
+    microSizeScore(params.sizeBtc) * 0.22 +
+      clamp01(params.localRankScore) * 0.28 +
+      clamp01(params.proximityScore) * 0.24 +
+      clamp01(params.persistenceScore) * 0.14 +
+      clamp01(continuity) * 0.12,
+  );
+}
+
+export function calibrateMicroScalpRenderIntensity(params: {
+  dataIntensity: number;
+  sizeBtc: number;
+  localRankScore: number;
+  proximityScore: number;
+  persistenceScore: number;
+  continuityScore?: number;
+}): number {
+  const microData = computeMicroDataIntensity(params);
+  const curved = microRenderCurve(microData);
+  const existing = clamp01(params.dataIntensity);
+  const combined = Math.max(existing, curved);
+  const cap = microRenderIntensityCapBySize(params.sizeBtc);
+  return Math.min(cap, combined);
+}
+
+export function computeLocalRankScore(
+  sizeBtc: number,
+  sortedSizes: number[],
+): number {
+  if (!sortedSizes.length || !Number.isFinite(sizeBtc) || sizeBtc <= 0) {
+    return 0;
+  }
+  let rank = 0;
+  for (const s of sortedSizes) {
+    if (s <= sizeBtc) rank += 1;
+  }
+  if (sortedSizes.length <= 1) return sizeBtc > 0 ? 0.5 : 0;
+  return clamp01((rank - 1) / (sortedSizes.length - 1));
+}
+
+// ─── Historical texture visual lock (frozen footprint intensity) ─────────────
+
+/** Minimum intensity gain to flag a semantic upgrade (max() always applies). */
+export const HISTORICAL_INTENSITY_UPGRADE_DELTA = 0.015;
+
+export type HistoricalTextureVisualLock = {
+  renderIntensity: number;
+  renderAlphaFloor: number;
+  createdAt: number;
+};
+
+export type HistoricalTextureVisualLockResult = {
+  renderIntensity: number;
+  renderAlphaFloor: number;
+  locked: boolean;
+  upgraded: boolean;
+  downgradePrevented: boolean;
+  firstLockBelowMedium: boolean;
+  deniedUpgrade: boolean;
+};
+
+export function historicalTextureCellKey(
+  side: "bid" | "ask",
+  price: number,
+  timeBucket: number,
+  visualRegime: "micro" | "std" = "std",
+): string {
+  return `${side}:${price}:${timeBucket}:${visualRegime}`;
+}
+
+/**
+ * Session cache — stores MAX render intensity reached per key.
+ * Never downgrade intensity; alpha is a floor hint only (renderer computes final).
+ */
+export function resolveHistoricalTextureVisualLock(params: {
+  key: string;
+  currentRenderIntensity: number;
+  currentRenderAlpha: number;
+  cache?: Map<string, HistoricalTextureVisualLock>;
+}): HistoricalTextureVisualLockResult {
+  const currentI = clamp01(params.currentRenderIntensity);
+  const currentA = clamp01(params.currentRenderAlpha);
+  const cache = params.cache;
+
+  if (!cache) {
+    return {
+      renderIntensity: currentI,
+      renderAlphaFloor: currentA,
+      locked: false,
+      upgraded: false,
+      downgradePrevented: false,
+      firstLockBelowMedium: currentI < 0.25,
+      deniedUpgrade: false,
+    };
+  }
+
+  const existing = cache.get(params.key);
+  if (!existing) {
+    cache.set(params.key, {
+      renderIntensity: currentI,
+      renderAlphaFloor: currentA,
+      createdAt: Date.now(),
+    });
+    return {
+      renderIntensity: currentI,
+      renderAlphaFloor: currentA,
+      locked: true,
+      upgraded: false,
+      downgradePrevented: false,
+      firstLockBelowMedium: currentI < 0.25,
+      deniedUpgrade: false,
+    };
+  }
+
+  const nextIntensity = Math.max(existing.renderIntensity, currentI);
+  const upgraded =
+    currentI > existing.renderIntensity + HISTORICAL_INTENSITY_UPGRADE_DELTA;
+  const downgradePrevented =
+    currentI < existing.renderIntensity - HISTORICAL_INTENSITY_UPGRADE_DELTA;
+  const deniedUpgrade =
+    currentI > existing.renderIntensity &&
+    currentI <= existing.renderIntensity + HISTORICAL_INTENSITY_UPGRADE_DELTA &&
+    !upgraded;
+  const nextAlphaFloor = upgraded
+    ? Math.max(existing.renderAlphaFloor, currentA)
+    : existing.renderAlphaFloor;
+
+  cache.set(params.key, {
+    renderIntensity: nextIntensity,
+    renderAlphaFloor: nextAlphaFloor,
+    createdAt: existing.createdAt,
+  });
+
+  return {
+    renderIntensity: nextIntensity,
+    renderAlphaFloor: nextAlphaFloor,
+    locked: true,
+    upgraded,
+    downgradePrevented,
+    firstLockBelowMedium: false,
+    deniedUpgrade,
+  };
+}
+
+// ─── Historical texture span/run peak lock ───────────────────────────────────
+
+export type HistoricalTextureSpanPeakLock = {
+  peakIntensity: number;
+  alphaFloor: number;
+  peakSize: number;
+  updatedAt: number;
+};
+
+export type HistoricalTextureSpanPeakLockResult = {
+  peakIntensity: number;
+  alphaFloor: number;
+  peakSize: number;
+  upgraded: boolean;
+  downgradePrevented: boolean;
+};
+
+export type TextureSpanPeakCellLike = {
+  intensity?: number;
+  dataIntensity?: number;
+  microScalpRenderIntensity?: number;
+  historicalRenderIntensity?: number;
+  historicalRenderAlphaFloor?: number;
+  historicalRenderAlpha?: number;
+  maxSizeInBucket?: number;
+};
+
+export function computeTextureSpanPeakIntensity(
+  cell: TextureSpanPeakCellLike,
+): number {
+  return clamp01(
+    Math.max(
+      cell.microScalpRenderIntensity ?? 0,
+      cell.historicalRenderIntensity ?? 0,
+      cell.intensity ?? 0,
+      cell.dataIntensity ?? 0,
+    ),
+  );
+}
+
+export function computeTextureSpanAlphaFloor(
+  cell: TextureSpanPeakCellLike,
+): number {
+  return clamp01(
+    Math.max(
+      cell.historicalRenderAlphaFloor ?? 0,
+      cell.historicalRenderAlpha ?? 0,
+    ),
+  );
+}
+
+export function historicalTextureRunKey(
+  side: "bid" | "ask",
+  price: number,
+  firstTimeBucket: number,
+  visualRegime: "micro" | "std" = "std",
+): string {
+  return `run:${side}:${price}:${firstTimeBucket}:${visualRegime}`;
+}
+
+/** Session cache — MAX peak intensity per resting run (side+price+runStart). */
+export function resolveHistoricalTextureSpanPeakLock(params: {
+  key: string;
+  currentPeakIntensity: number;
+  currentAlphaFloor: number;
+  currentPeakSize: number;
+  cache?: Map<string, HistoricalTextureSpanPeakLock>;
+}): HistoricalTextureSpanPeakLockResult {
+  const currentI = clamp01(params.currentPeakIntensity);
+  const currentA = clamp01(params.currentAlphaFloor);
+  const currentSize = Math.max(0, params.currentPeakSize);
+  const cache = params.cache;
+
+  if (!cache) {
+    return {
+      peakIntensity: currentI,
+      alphaFloor: currentA,
+      peakSize: currentSize,
+      upgraded: false,
+      downgradePrevented: false,
+    };
+  }
+
+  const existing = cache.get(params.key);
+  if (!existing) {
+    cache.set(params.key, {
+      peakIntensity: currentI,
+      alphaFloor: currentA,
+      peakSize: currentSize,
+      updatedAt: Date.now(),
+    });
+    return {
+      peakIntensity: currentI,
+      alphaFloor: currentA,
+      peakSize: currentSize,
+      upgraded: false,
+      downgradePrevented: false,
+    };
+  }
+
+  const nextIntensity = Math.max(existing.peakIntensity, currentI);
+  const upgraded =
+    currentI > existing.peakIntensity + HISTORICAL_INTENSITY_UPGRADE_DELTA;
+  const downgradePrevented =
+    currentI < existing.peakIntensity - HISTORICAL_INTENSITY_UPGRADE_DELTA;
+  const nextAlphaFloor =
+    nextIntensity > existing.peakIntensity
+      ? Math.max(existing.alphaFloor, currentA)
+      : existing.alphaFloor;
+  const nextPeakSize = Math.max(existing.peakSize, currentSize);
+
+  cache.set(params.key, {
+    peakIntensity: nextIntensity,
+    alphaFloor: nextAlphaFloor,
+    peakSize: nextPeakSize,
+    updatedAt: existing.updatedAt,
+  });
+
+  return {
+    peakIntensity: nextIntensity,
+    alphaFloor: nextAlphaFloor,
+    peakSize: nextPeakSize,
+    upgraded,
+    downgradePrevented,
+  };
 }

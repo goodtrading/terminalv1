@@ -6,7 +6,12 @@
  */
 
 import WebSocket from "ws";
-import { feedBinanceOrderBook } from "./bookmapEngine";
+import {
+  BOOKMAP_HISTORY_SAMPLER_ENABLED,
+  BOOKMAP_SNAPSHOT_SAMPLE_MS,
+  feedBinanceOrderBook,
+  runBookmapLimitHistorySnapshotSample,
+} from "./bookmapEngine";
 import { recordBboFromOrderBook } from "./bboHistoryRegistry";
 import type { OrderBookLevel, OrderBookSnapshot } from "./orderbookService";
 
@@ -315,8 +320,21 @@ function scheduleReconnect(): void {
   }, RECONNECT_MS);
 }
 
+function runPerpLimitHistorySample(): void {
+  if (!BOOKMAP_HISTORY_SAMPLER_ENABLED) return;
+  if (snapshot.bids.length === 0 && snapshot.asks.length === 0) return;
+  runBookmapLimitHistorySnapshotSample("perp", {
+    bids: snapshot.bids,
+    asks: snapshot.asks,
+    timestamp: snapshot.timestamp ?? Date.now(),
+  });
+}
+
 connect();
 healthInterval = setInterval(runHealthCheck, HEALTH_INTERVAL_MS);
+if (BOOKMAP_HISTORY_SAMPLER_ENABLED) {
+  setInterval(runPerpLimitHistorySample, BOOKMAP_SNAPSHOT_SAMPLE_MS);
+}
 
 export function getPerpOrderBook(): OrderBookSnapshot {
   const ts =

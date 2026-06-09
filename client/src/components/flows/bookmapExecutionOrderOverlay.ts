@@ -3,7 +3,7 @@ import { formatHeatmapPrice } from "./liquidityHeatmapUtils";
 
 /** Execution overlay palette — intentionally separate from heatmap yellow/orange ramp. */
 export const BOOKMAP_EXEC_LIMIT_COLOR = "rgba(34, 211, 238, 0.85)";
-export const BOOKMAP_EXEC_ENTRY_COLOR = "rgba(34, 211, 238, 0.75)";
+export const BOOKMAP_EXEC_ENTRY_COLOR = "rgba(34, 211, 238, 0.95)";
 export const BOOKMAP_EXEC_SL_COLOR = "rgba(239, 68, 68, 0.9)";
 export const BOOKMAP_EXEC_TP_COLOR = "rgba(34, 197, 94, 0.9)";
 /** Label text — white-cyan, not heatmap yellow/orange. */
@@ -68,7 +68,7 @@ export function buildBookmapExecutionOrdersFromPaper(
       price: pos.entryPrice,
       label: "ENTRY",
       dashed: false,
-      lineWidth: 1.5,
+      lineWidth: 2,
       color: BOOKMAP_EXEC_ENTRY_COLOR,
     });
   }
@@ -78,7 +78,7 @@ export function buildBookmapExecutionOrdersFromPaper(
       price: pos.stopLoss,
       label: "SL",
       dashed: true,
-      lineWidth: 1.5,
+      lineWidth: 1,
       color: BOOKMAP_EXEC_SL_COLOR,
     });
   }
@@ -88,7 +88,7 @@ export function buildBookmapExecutionOrdersFromPaper(
       price: pos.takeProfit,
       label: "TP",
       dashed: true,
-      lineWidth: 1.5,
+      lineWidth: 1,
       color: BOOKMAP_EXEC_TP_COLOR,
     });
   }

@@ -24,7 +24,12 @@ import {
 import { SpotPerpDivergencePanel } from "./SpotPerpDivergencePanel";
 import { BOOKMAP_OB_STALE_MS, isOrderbookStale } from "@shared/bookmapFreshness";
 import { countExecutionRails } from "./bookmapExecutionRails";
+import {
+  buildBookmapExecutionOrdersFromPaper,
+  renderBookmapExecutionOrders,
+} from "./bookmapExecutionOrderOverlay";
 import { HEATMAP_PAD } from "./bookmapHeatmapRenderer";
+import { usePaperTradeOverlay } from "@/components/terminal/paperChart/usePaperTradeOverlay";
 import { useLiquidityHeatmapFeed } from "@/hooks/useLiquidityHeatmapFeed";
 import {
   BOOKMAP_ENGINE_PRICE_RANGE_PCT,
@@ -43,9 +48,39 @@ import { paintBookmapEngineHeatmapFrame } from "./bookmapEngineRenderer";
 import {
   bookLevelsToDomSnapshot,
   applyEngineViewportBandNormalization,
+  applyHistoricalTextureVisualLock,
+  applyMicroScalpTextureCalibration,
+  BOOKMAP_TEXTURE_MODE_ENABLED,
+  BOOKMAP_TEXTURE_SAMPLER_MS,
+  buildBookmapHistoryRetentionDiag,
+  buildBookmapTextureDiag,
+  buildBookmapTextureGeometryDiag,
+  buildBookmapLiveProjectionDiag,
+  buildBookmapLiveProjectionGeometryDiag,
+  classifyBookmapTextureDiag,
   prepareEngineRenderData,
+  type BookmapMicroVisualHierarchyTruth,
+  type BookmapPerpFilterTruth,
+  type BookmapTextureDiag,
+  type BookmapL2BandContinuityTruth,
+  type BookmapPaletteParityTruth,
+  type BookmapVisualParityTruth,
+  type BookmapP74SpanAudit,
+  type HistoricalColorLockAudit,
+  type HistoricalColorRetentionTruth,
+  type HistoricalSpanColorAudit,
+  type SpanRenderContinuityAudit,
+  type SpanTextureBalanceAudit,
   type PreparedEngineRenderData,
 } from "./bookmapEnginePrepare";
+import type {
+  HistoricalTextureSpanPeakLock,
+  HistoricalTextureVisualLock,
+} from "@/lib/bookmapIntensity";
+import {
+  PERP_RENDER_ACTIVE_CAP,
+  PERP_RENDER_CLOSED_CAP,
+} from "@/lib/bookmapEngineConfig";
 import type { BookmapState } from "@/types/bookmapState";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
 import { PERP_OVERLAY_OPACITY_OPTIONS } from "@shared/bookmapSourceMode";
@@ -62,6 +97,7 @@ import {
   type RightSpacePct,
 } from "./bookmapViewMode";
 import {
+  computeDepthRangeFromPreset,
   computeFarDepthMarkers,
   depthPresetLabel,
   depthPresetToLegacyViewMode,
@@ -155,6 +191,43 @@ function createEmptyEngineRenderData(
       pHigh: 1,
       minRenderIntensity: 0,
     },
+    textureCells: [],
+    textureStats: {
+      rawHeatmapCellCount: 0,
+      preparedCellCount: 0,
+      preparedTextureCellCount: 0,
+      wallBandCount: 0,
+      cellsFilteredBySize: 0,
+      cellsFilteredByPrice: 0,
+      cellsFilteredByTime: 0,
+      texturePriceBucketSize: 1,
+      timeBucketMs: 500,
+      minRenderedSizeBtc: 0,
+      maxRenderedSizeBtc: 0,
+      mergeCompressionRatio: 0,
+      textureModeEnabled: BOOKMAP_TEXTURE_MODE_ENABLED,
+      texturePrepareCapHit: false,
+      textureDrawCapHit: false,
+      cellsFilteredByIntensity: 0,
+      textureSamplerMs: 1200,
+      textureContinuousMode: "sampler-interval-end",
+      cellsWithEndTime: 0,
+      cellsUsingSyntheticEndTime: 0,
+    },
+    textureModeEnabled: BOOKMAP_TEXTURE_MODE_ENABLED,
+    liveProjectionLevels: [],
+    liveProjectionStats: {
+      liveProjectionEnabled: false,
+      currentBidLevelCount: 0,
+      currentAskLevelCount: 0,
+      projectedBidLevelCount: 0,
+      projectedAskLevelCount: 0,
+      projectedLevelsFilteredBySize: 0,
+      projectedLevelsFilteredByPrice: 0,
+      minProjectedSizeBtc: 0,
+      maxProjectedSizeBtc: 0,
+      liveProjectionStartTime: timeMax,
+    },
     bandPrepareMeta: {
       rawCellCount: 0,
       bandCount: 0,
@@ -168,6 +241,60 @@ function createEmptyEngineRenderData(
 
 function isPosFinitePrice(n: number | null | undefined): n is number {
   return n != null && Number.isFinite(n) && n > 0;
+}
+
+type BookmapPriceCenterSource = "bbo" | "priceReference" | "bookMid" | "none";
+
+function resolveBookmapPriceCenterMid(opts: {
+  bestBid: number | null | undefined;
+  bestAsk: number | null | undefined;
+  priceReference: number | null;
+  bookMid: number | null;
+}): {
+  midPrice: number | null;
+  bestBid: number | null;
+  bestAsk: number | null;
+  source: BookmapPriceCenterSource;
+} {
+  const { bestBid, bestAsk, priceReference, bookMid } = opts;
+  if (isBboValid(bestBid, bestAsk)) {
+    return {
+      midPrice: ((bestBid as number) + (bestAsk as number)) / 2,
+      bestBid: bestBid as number,
+      bestAsk: bestAsk as number,
+      source: "bbo",
+    };
+  }
+  if (isPosFinitePrice(priceReference)) {
+    return {
+      midPrice: priceReference,
+      bestBid: null,
+      bestAsk: null,
+      source: "priceReference",
+    };
+  }
+  if (isPosFinitePrice(bookMid)) {
+    return {
+      midPrice: bookMid,
+      bestBid: null,
+      bestAsk: null,
+      source: "bookMid",
+    };
+  }
+  return { midPrice: null, bestBid: null, bestAsk: null, source: "none" };
+}
+
+function heatmapCellsCoverageMs(
+  cells: Array<{ timeBucket: number }> | undefined,
+): number {
+  if (!cells?.length) return 0;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const cell of cells) {
+    if (cell.timeBucket < min) min = cell.timeBucket;
+    if (cell.timeBucket > max) max = cell.timeBucket;
+  }
+  return min === Infinity ? 0 : Math.max(0, max - min);
 }
 
 export function LiquidityHeatmapPanel({
@@ -215,6 +342,260 @@ export function LiquidityHeatmapPanel({
   const [wallRevision, setWallRevision] = useState(0);
   const tradeRxSampleRef = useRef({ atMs: Date.now(), received: 0 });
   const [tradeRxPerSec, setTradeRxPerSec] = useState<number | null>(null);
+  const textureRenderStatsRef = useRef({
+    renderedTextureCellCount: 0,
+    cellsFilteredByTime: 0,
+    textureDrawCapHit: false,
+    avgTextureCellWidthPx: 0,
+    minTextureCellWidthPx: 0,
+    maxTextureCellWidthPx: 0,
+  });
+  const liveProjectionRenderStatsRef = useRef({
+    renderedLiveProjectionCount: 0,
+    projectionStartTime: 0,
+    projectionEndTime: 0,
+    avgProjectionWidthPx: 0,
+    minProjectionWidthPx: 0,
+    maxProjectionWidthPx: 0,
+    projectionOverlapsHistory: false,
+  });
+  const textureDiagRef = useRef<BookmapTextureDiag>(
+    buildBookmapTextureDiag({
+      sourceMode: "spot",
+      activeDomMarket: "spot",
+      renderData: null,
+    }),
+  );
+  const perpFilterTruthRef = useRef<BookmapPerpFilterTruth>({
+    perpFilterEnabled: false,
+    activeCandidatesBeforePerpFilter: 0,
+    closedCandidatesBeforePerpFilter: 0,
+    activeAfterPerpFilter: 0,
+    closedAfterPerpFilter: 0,
+    activeDroppedByPerpSizeDistance: 0,
+    closedDroppedByPerpAgeSizeDistance: 0,
+    activeDroppedByPerpRowSuppression: 0,
+    closedDroppedByPerpRowSuppression: 0,
+    perpActiveCap: PERP_RENDER_ACTIVE_CAP,
+    perpClosedCap: PERP_RENDER_CLOSED_CAP,
+    renderedPerpActiveSpanCount: 0,
+    renderedPerpClosedSpanCount: 0,
+    renderedPerpTotalSpanCount: 0,
+    perpStripeSaturationPct: 0,
+    perpDensityTooHigh: false,
+    perpFilterOk: true,
+  });
+  const visualParityTruthRef = useRef<BookmapVisualParityTruth>({
+    perpFilterAligned: true,
+    historicalTextureGranular: false,
+    rightSideContinuityOk: false,
+    adaptiveColorHierarchyEnabled: false,
+    visiblePriceRangePct: 0,
+    zoomRegime: "micro",
+    viewportVisibleSpanCount: 0,
+    viewportActiveSpanCount: 0,
+    viewportClosedSpanCount: 0,
+    usesAbsoluteSizeComponent: false,
+    usesViewportRelativeSizeComponent: false,
+    usesDistanceWeighting: false,
+    usesClosedAgeWeighting: false,
+    usesRecentPullWeighting: false,
+    activeNearAvgAlpha: 0,
+    activeFarAvgAlpha: 0,
+    closedRecentAvgAlpha: 0,
+    closedOldAvgAlpha: 0,
+    nearVsFarAlphaRatio: 0,
+    activeVsClosedAlphaRatio: 0,
+    recentPullCandidateCount: 0,
+    wallPullVisualCandidateCount: 0,
+    textureLooksStripedOnly: true,
+    textureLooksGranular: false,
+    rightSideLooksOverlayed: true,
+    rightSideFeelsContinuous: false,
+    visualFloodingInPerp: false,
+    microZoomBoostApplied: false,
+    scalpZoomBoostApplied: false,
+    visualParityOk: false,
+  });
+  const l2BandContinuityTruthRef = useRef<BookmapL2BandContinuityTruth>({
+    l2BandContinuityFixEnabled: true,
+    relevantActiveL2CandidateCount: 0,
+    stableActiveL2BandCount: 0,
+    normalActiveMicroBandCount: 0,
+    closedRelevantHistoryBandCount: 0,
+    weakGranularTextureBandCount: 0,
+    stableBandsUsingSingleColorCount: 0,
+    stableBandsSplitByMaterialSizeChangeCount: 0,
+    stableBandsIncorrectlySplitByChunkColorCount: 0,
+    rightEdgeStableBandCount: 0,
+    rightEdgeColorMatchesHistoryCount: 0,
+    rightEdgeColorMismatchCount: 0,
+    pulledRelevantBandCount: 0,
+    pulledRelevantBandsStopAtCloseTimeCount: 0,
+    pulledRelevantBandsIncorrectlyExtendRightCount: 0,
+    granularAppliedToWeakOnly: true,
+    granularAppliedToRelevantL2Count: 0,
+    stableL2BandContinuityOk: false,
+    rightEdgeContinuityOk: false,
+    pulledL2HistoryOk: false,
+    l2BandVisualOk: false,
+  });
+  const paletteParityTruthRef = useRef<BookmapPaletteParityTruth>({
+    paletteFixEnabled: true,
+    activeBandMinAlpha: 0,
+    activeBandMaxAlpha: 0,
+    closedBandMinAlpha: 0,
+    closedBandMaxAlpha: 0,
+    weakBandCount: 0,
+    mediumBandCount: 0,
+    strongBandCount: 0,
+    extremeBandCount: 0,
+    weakBandsTooTransparentCount: 0,
+    strongBandsTooTransparentCount: 0,
+    activeRelevantBandsWashedOutCount: 0,
+    liveRightContinuationCount: 0,
+    liveRightContinuationToneMismatchCount: 0,
+    liveRightContinuationAlphaMismatchCount: 0,
+    zoomRegime: "micro",
+    nearPriceContrastBoostActive: false,
+    farLiquidityFadeActive: false,
+    paletteUsesBookmapStyleRamp: false,
+    opacityHierarchyOk: false,
+    rightContinuationVisualMatchOk: false,
+    relevantActiveBandsSolidEnough: false,
+    paletteParityOk: false,
+  });
+  const microHierarchyTruthRef = useRef<BookmapMicroVisualHierarchyTruth>({
+    microScalpMode: false,
+    microVisualHierarchyActive: false,
+    verticalMode: "macro",
+    visiblePriceRange: 0,
+    pxPerSample: 0,
+    pxPerPriceBucket: 0,
+    visibleTextureCellCount: 0,
+    nearTouchCellCount: 0,
+    mediumCellCount_2to10: 0,
+    strongCellCount_10to30: 0,
+    majorCellCount_30plus: 0,
+    avgExistingIntensity: 0,
+    avgMicroDataIntensity: 0,
+    avgMicroRenderIntensity: 0,
+    nearTouchAvgRenderIntensity: 0,
+    mediumRenderAvg: 0,
+    strongRenderAvg: 0,
+    majorRenderAvg: 0,
+    avgHistoricalTextureAlpha: 0,
+    microAlphaMul: 1.12,
+    mediumVisible: false,
+    strongVisible: false,
+    hierarchyGap_mediumToStrong: 0,
+    hierarchyGap_strongToMajor: 0,
+    overbrightRisk: false,
+    microHierarchyOk: false,
+  });
+  const historicalTextureVisualCacheRef = useRef(
+    new Map<string, HistoricalTextureVisualLock>(),
+  );
+  const historicalTextureSpanPeakCacheRef = useRef(
+    new Map<string, HistoricalTextureSpanPeakLock>(),
+  );
+  const historicalSpanColorAuditRef = useRef<HistoricalSpanColorAudit>({
+    textureCellCount: 0,
+    renderedSpanCount: 0,
+    multiBucketSpanCount: 0,
+    avgCellsPerSpan: 0,
+    spansWithMixedIntensity: 0,
+    avgIntensityVarianceWithinSpan: 0,
+    maxIntensityVarianceWithinSpan: 0,
+    spansUsingPeakIntensity: 0,
+    spansDowngradePrevented: 0,
+    avgSpanPeakIntensity: 0,
+    avgSpanFinalIntensity: 0,
+    historicalSpanColorRetentionOk: false,
+    historicalSpanColorProblemClassification: "pending",
+  });
+  const p74SpanAuditRef = useRef<BookmapP74SpanAudit>({
+    renderedSpanCount: 0,
+    avgCellsPerSpan: 0,
+    avgSpanWidthPx: 0,
+    avgSpanPeakIntensity: 0,
+    spanPeakIntensityMode: true,
+    spanBaseLayerEnabled: true,
+    internalChunkOverlayAlpha: 0.14,
+    spanContinuityOk: false,
+    internalTextureOverlayEnabled: false,
+    overlayToBaseAlphaRatio: 0,
+    bookmapTextureBalanceOk: false,
+  });
+  const spanTextureBalanceAuditRef = useRef<SpanTextureBalanceAudit>({
+    renderedSpanCount: 0,
+    spanBaseLayerEnabled: true,
+    internalTextureOverlayEnabled: false,
+    avgBaseAlpha: 0,
+    avgOverlayAlpha: 0,
+    overlayToBaseAlphaRatio: 0,
+    avgInternalSizeVariance: 0,
+    spansWithInternalVariation: 0,
+    spansTooFlat: false,
+    spansTooFragmented: false,
+    bookmapTextureBalanceOk: false,
+    problemClassification: "pending",
+  });
+  const spanRenderContinuityAuditRef = useRef<SpanRenderContinuityAudit>({
+    renderedSpanCount: 0,
+    renderedChunkCount: 0,
+    avgChunksPerSpan: 0,
+    maxChunksPerSpan: 0,
+    spansRenderedAsSingleRect: 0,
+    spansRenderedAsChunks: 0,
+    chunkFragmentationDetected: false,
+    avgSpanWidthPx: 0,
+    avgChunkWidthPx: 0,
+    spanBaseLayerEnabled: true,
+    spanTextureOverlayEnabled: false,
+    spanContinuityOk: false,
+    problemClassification: "pending",
+  });
+  const historicalColorRetentionTruthRef = useRef<HistoricalColorRetentionTruth>({
+    historicalTextureCellCount: 0,
+    visualCacheSize: 0,
+    cellsWithFrozenRenderIntensity: 0,
+    cellsWithoutFrozenRenderIntensity: 0,
+    avgFrozenRenderIntensity: 0,
+    avgCurrentRenderIntensity: 0,
+    avgFinalRenderIntensity: 0,
+    avgIntensityDrift: 0,
+    maxIntensityDrift: 0,
+    downgradedHistoricalCellsPrevented: 0,
+    upgradedHistoricalCells: 0,
+    cellsStuckBelow025: 0,
+    activeCellsUsingFrozenLowIntensity: 0,
+    historicalColorRetentionOk: false,
+    historicalColorTooMuted: false,
+    alphaFrozenAsFinalDetected: false,
+    recalculatingHistoricalColors: false,
+    microScalpMode: false,
+  });
+  const historicalColorLockAuditRef = useRef<HistoricalColorLockAudit>({
+    historicalTextureCellCount: 0,
+    visualCacheSize: 0,
+    firstLockBelowMediumCount: 0,
+    cachedIntensityAvg: 0,
+    currentCandidateIntensityAvg: 0,
+    upgradedHistoricalCells: 0,
+    downgradedHistoricalCellsPrevented: 0,
+    alphaFrozenCellCount: 0,
+    alphaFinalAvg: 0,
+    intensityFinalAvg: 0,
+    cellsStuckBelow025: 0,
+    cellsEligibleForUpgrade: 0,
+    cellsDeniedUpgrade: 0,
+    activeCellsUsingFrozenLowIntensity: 0,
+    historicalLockProblemClassification: "ok",
+  });
+  const hasUserAdjustedPriceViewportRef = useRef(false);
+  const lastPriceCenterContextRef = useRef<string | null>(null);
+
   const forensicDrawRef = useRef({
     legacyRendered: false,
     renderedLayerNames: [] as string[],
@@ -269,6 +650,17 @@ export function LiquidityHeatmapPanel({
     perpBookmapStale,
     everLoadedByMarket,
   } = composite;
+
+  const paperTrade = usePaperTradeOverlay();
+  const executionOrderLines = useMemo(
+    () =>
+      buildBookmapExecutionOrdersFromPaper({
+        paperActive: paperTrade.paperActive,
+        openLimitOrders: paperTrade.openLimitOrders,
+        overlay: paperTrade.overlay,
+      }),
+    [paperTrade.paperActive, paperTrade.openLimitOrders, paperTrade.overlay],
+  );
 
   const {
     getSnapshots,
@@ -504,6 +896,19 @@ export function LiquidityHeatmapPanel({
     return null;
   }, [tickerSpot, bookMid]);
 
+  const priceCenterMid = useMemo(
+    () =>
+      resolveBookmapPriceCenterMid({
+        bestBid: domBbo?.bestBid,
+        bestAsk: domBbo?.bestAsk,
+        priceReference,
+        bookMid,
+      }),
+    [domBbo, priceReference, bookMid],
+  );
+
+  const priceScaleAnchor = priceCenterMid.midPrice;
+
   const engineWalls = useMemo(() => {
     if (!effectiveDomState) return [];
     return [
@@ -519,7 +924,7 @@ export function LiquidityHeatmapPanel({
   }, [effectiveDomState]);
 
   const priceScale = useBookmapPriceScale({
-    spot: priceReference,
+    spot: priceScaleAnchor,
     plotHeight: heatmapPlotHeight > 20 ? heatmapPlotHeight : 400,
     localRangeUsd,
     depthRangePreset,
@@ -530,6 +935,7 @@ export function LiquidityHeatmapPanel({
 
   const applyDepthPreset = useCallback(
     (preset: DepthRangePreset) => {
+      hasUserAdjustedPriceViewportRef.current = true;
       updatePrefs({
         depthRangePreset: preset,
         bookmapViewMode: depthPresetToLegacyViewMode(preset),
@@ -689,6 +1095,153 @@ export function LiquidityHeatmapPanel({
     enabled: Boolean(useEngineRenderer && engineRenderBase),
   });
 
+  const logPriceCenterDiag = useCallback(
+    (payload: {
+      reason: string;
+      activeDomMarket: string;
+      sourceMode: string;
+      midPrice: number | null;
+      bestBid: number | null;
+      bestAsk: number | null;
+      previousMinPrice: number;
+      previousMaxPrice: number;
+      nextMinPrice: number;
+      nextMaxPrice: number;
+      autoCentered: boolean;
+      skippedBecauseUserAdjusted: boolean;
+      skippedBecauseNoPrice: boolean;
+      skippedBecauseAlreadyInView: boolean;
+      followLive: boolean;
+      depthSetting: DepthRangePreset;
+      priceCenterSource: BookmapPriceCenterSource;
+    }) => {
+      if (!import.meta.env.DEV) return;
+      console.debug("[BOOKMAP_PRICE_CENTER_DIAG]", payload);
+    },
+    [],
+  );
+
+  const tryAutoCenterPriceViewport = useCallback(
+    (reason: string) => {
+      const previousMinPrice = priceScale.visibleMinPrice;
+      const previousMaxPrice = priceScale.visibleMaxPrice;
+      const contextKey = `${sourceMode}:${activeDomMarket}`;
+      const baseDiag = {
+        reason,
+        activeDomMarket,
+        sourceMode,
+        midPrice: priceCenterMid.midPrice,
+        bestBid: priceCenterMid.bestBid,
+        bestAsk: priceCenterMid.bestAsk,
+        previousMinPrice,
+        previousMaxPrice,
+        followLive: timeScale.followLive,
+        depthSetting: depthRangePreset,
+        priceCenterSource: priceCenterMid.source,
+      };
+
+      if (hasUserAdjustedPriceViewportRef.current) {
+        logPriceCenterDiag({
+          ...baseDiag,
+          nextMinPrice: previousMinPrice,
+          nextMaxPrice: previousMaxPrice,
+          autoCentered: false,
+          skippedBecauseUserAdjusted: true,
+          skippedBecauseNoPrice: false,
+          skippedBecauseAlreadyInView: false,
+        });
+        return;
+      }
+
+      if (!isPosFinitePrice(priceCenterMid.midPrice)) {
+        logPriceCenterDiag({
+          ...baseDiag,
+          nextMinPrice: previousMinPrice,
+          nextMaxPrice: previousMaxPrice,
+          autoCentered: false,
+          skippedBecauseUserAdjusted: false,
+          skippedBecauseNoPrice: true,
+          skippedBecauseAlreadyInView: false,
+        });
+        return;
+      }
+
+      const span = Math.max(1, previousMaxPrice - previousMinPrice);
+      const edgeMargin = span * 0.1;
+      const comfortablyInView =
+        priceCenterMid.midPrice >= previousMinPrice + edgeMargin &&
+        priceCenterMid.midPrice <= previousMaxPrice - edgeMargin;
+      const contextChanged = lastPriceCenterContextRef.current !== contextKey;
+
+      if (
+        comfortablyInView &&
+        !contextChanged &&
+        reason !== "panel_open" &&
+        reason !== "price_available"
+      ) {
+        logPriceCenterDiag({
+          ...baseDiag,
+          nextMinPrice: previousMinPrice,
+          nextMaxPrice: previousMaxPrice,
+          autoCentered: false,
+          skippedBecauseUserAdjusted: false,
+          skippedBecauseNoPrice: false,
+          skippedBecauseAlreadyInView: true,
+        });
+        return;
+      }
+
+      priceScale.resetToSpot();
+      lastPriceCenterContextRef.current = contextKey;
+      const nextRange = computeDepthRangeFromPreset(
+        depthRangePreset,
+        priceCenterMid.midPrice,
+        engineWalls,
+        localRangeUsd,
+        engineBookLevels,
+      );
+      logPriceCenterDiag({
+        ...baseDiag,
+        nextMinPrice: nextRange.minPrice,
+        nextMaxPrice: nextRange.maxPrice,
+        autoCentered: true,
+        skippedBecauseUserAdjusted: false,
+        skippedBecauseNoPrice: false,
+        skippedBecauseAlreadyInView: false,
+      });
+    },
+    [
+      activeDomMarket,
+      depthRangePreset,
+      engineBookLevels,
+      engineWalls,
+      localRangeUsd,
+      logPriceCenterDiag,
+      priceCenterMid,
+      priceScale,
+      sourceMode,
+      timeScale.followLive,
+    ],
+  );
+
+  useEffect(() => {
+    if (heatmapPlotHeight <= 20) return;
+    const contextKey = `${sourceMode}:${activeDomMarket}`;
+    const reason =
+      lastPriceCenterContextRef.current === null
+        ? "panel_open"
+        : lastPriceCenterContextRef.current !== contextKey
+          ? "source_change"
+          : "price_available";
+    tryAutoCenterPriceViewport(reason);
+  }, [
+    activeDomMarket,
+    heatmapPlotHeight,
+    priceScaleAnchor,
+    sourceMode,
+    tryAutoCenterPriceViewport,
+  ]);
+
   const bboPathDebug = useMemo(() => {
     const pts = bboHistory.points;
     const visible = downsampleBboPointsForViewport(
@@ -818,19 +1371,61 @@ export function LiquidityHeatmapPanel({
   const normalizeBands = useCallback(
     (base: ReturnType<typeof prepareEngineRenderData>) => {
       if (!base) return null;
+      const visiblePriceRange = priceRange.maxPrice - priceRange.minPrice;
+      const viewportMs =
+        timeScale.viewport.visibleEndTime - timeScale.viewport.visibleStartTime;
+      const plotW = Math.max(
+        0,
+        heatmapPlotWidth - HEATMAP_PAD.left - HEATMAP_PAD.right,
+      );
+      const plotH = Math.max(
+        0,
+        heatmapPlotHeight - HEATMAP_PAD.top - HEATMAP_PAD.bottom,
+      );
+      const pxPerSample =
+        viewportMs > 0 && plotW > 0
+          ? plotW / (viewportMs / BOOKMAP_TEXTURE_SAMPLER_MS)
+          : undefined;
+      const pxPerPriceBucket =
+        visiblePriceRange > 0 &&
+        plotH > 0 &&
+        priceScale.heatmapBucketSize > 0
+          ? plotH / (visiblePriceRange / priceScale.heatmapBucketSize)
+          : undefined;
+
       const microContext =
         priceScale.verticalMode === "micro" ||
-        priceRange.maxPrice - priceRange.minPrice <= 1_500 ||
+        visiblePriceRange <= 1_500 ||
         priceScale.labelStep <= 50 ||
         priceScale.heatmapBucketSize <= 25;
-      if (!microContext) return base;
-      return applyEngineViewportBandNormalization(base, {
+      let data = base;
+      if (microContext) {
+        data = applyEngineViewportBandNormalization(base, {
+          minPrice: priceRange.minPrice,
+          maxPrice: priceRange.maxPrice,
+          visibleStartTime: timeScale.viewport.visibleStartTime,
+          visibleEndTime: timeScale.viewport.visibleEndTime,
+          verticalCompressionMode: priceScale.verticalMode,
+          spotPrice: priceReference ?? tickerSpot,
+        });
+      }
+      const calibrated = applyMicroScalpTextureCalibration(data, {
+        verticalMode: priceScale.verticalMode,
+        visiblePriceRange,
+        pxPerSample,
+        pxPerPriceBucket,
+        spotPrice: priceReference ?? tickerSpot,
         minPrice: priceRange.minPrice,
         maxPrice: priceRange.maxPrice,
         visibleStartTime: timeScale.viewport.visibleStartTime,
         visibleEndTime: timeScale.viewport.visibleEndTime,
-        verticalCompressionMode: priceScale.verticalMode,
-        spotPrice: priceReference ?? tickerSpot,
+      });
+      return applyHistoricalTextureVisualLock(calibrated, {
+        cache: historicalTextureVisualCacheRef.current,
+        microScalpMode: calibrated.microScalpVisual?.microScalpMode,
+        microVisualHierarchyActive:
+          calibrated.microScalpVisual?.microVisualHierarchyActive,
+        dataEndTime: timeScale.viewport.dataEndTime,
       });
     },
     [
@@ -843,6 +1438,8 @@ export function LiquidityHeatmapPanel({
       timeScale.viewport.visibleEndTime,
       priceReference,
       tickerSpot,
+      heatmapPlotWidth,
+      heatmapPlotHeight,
     ],
   );
 
@@ -1108,6 +1705,326 @@ export function LiquidityHeatmapPanel({
     bboDomState?.timestamp,
     tradeVersion,
     tradeTick,
+  ]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logLimitHistoryState = () => {
+      const spotCells = effectiveSpot?.heatmapCells ?? [];
+      const perpCells = effectivePerp?.heatmapCells ?? [];
+      const st = engineRenderData?.stats;
+      const spotCoverageMs = heatmapCellsCoverageMs(spotCells);
+      const perpCoverageMs = heatmapCellsCoverageMs(perpCells);
+      console.debug("[BOOKMAP_LIMIT_HISTORY_STATE]", {
+        sourceMode,
+        activeDomMarket,
+        spotEngineCellCount: spotCells.length,
+        perpEngineCellCount: perpCells.length,
+        spotEngineCoverageMs: spotCoverageMs,
+        perpEngineCoverageMs: perpCoverageMs,
+        spotSampledLevelsLastTick: 0,
+        perpSampledLevelsLastTick: 0,
+        spotSnapshotTickAgeMs: orderbookAgeMs ?? 0,
+        perpSnapshotTickAgeMs: perpAgeMs ?? 0,
+        renderedBandCount: st?.renderedBandCount ?? 0,
+        renderedHistoricalBandCount: st?.rawCellCount ?? 0,
+        currentOrderbookOnly: spotCoverageMs <= 500 && perpCoverageMs <= 500,
+        historySamplerEnabled: true,
+      });
+    };
+    logLimitHistoryState();
+    const id = window.setInterval(logLimitHistoryState, 2_000);
+    return () => window.clearInterval(id);
+  }, [
+    sourceMode,
+    activeDomMarket,
+    effectiveSpot,
+    effectivePerp,
+    engineRenderData,
+    orderbookAgeMs,
+    perpAgeMs,
+  ]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logTextureDiag = () => {
+      const diag = buildBookmapTextureDiag({
+        sourceMode,
+        activeDomMarket,
+        renderData: engineRenderData,
+        renderedTextureCellCount:
+          textureRenderStatsRef.current.renderedTextureCellCount,
+        textureDrawCapHit: textureRenderStatsRef.current.textureDrawCapHit,
+        spotSampledLevelsLastTick: 0,
+        perpSampledLevelsLastTick: 0,
+      });
+      const classification = classifyBookmapTextureDiag(diag, {
+        spotSampledLevelsLastTick: 0,
+        perpSampledLevelsLastTick: 0,
+      });
+      textureDiagRef.current = diag;
+      console.debug("[BOOKMAP_TEXTURE_DIAG]", {
+        ...diag,
+        classification,
+        texturePrepareCapHit: diag.texturePrepareCapHit ? "yes" : "no",
+        textureDrawCapHit: diag.textureDrawCapHit ? "yes" : "no",
+        samplerNote:
+          "spotSampledLevelsLastTick/perpSampledLevelsLastTick: see server [BOOKMAP_LIMIT_HISTORY_STATE]",
+      });
+    };
+    logTextureDiag();
+    const id = window.setInterval(logTextureDiag, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket, engineRenderData]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logHistoryRetentionDiag = () => {
+      const rawCells = primaryHeatmapState?.heatmapCells ?? [];
+      const activeMarketState =
+        activeDomMarket === "perp" ? effectivePerp : effectiveSpot;
+      const currentBookLevelCount =
+        (activeMarketState?.bids ?? []).filter((l) => !l.stale && l.size > 0)
+          .length +
+        (activeMarketState?.asks ?? []).filter((l) => !l.stale && l.size > 0)
+          .length;
+      const diag = buildBookmapHistoryRetentionDiag({
+        sourceMode,
+        activeDomMarket,
+        renderData: engineRenderData,
+        rawHeatmapCells: rawCells,
+        renderedTextureCellCount:
+          textureRenderStatsRef.current.renderedTextureCellCount,
+        textureDrawCapHit: textureRenderStatsRef.current.textureDrawCapHit,
+        liveProjectionRenderedCount:
+          liveProjectionRenderStatsRef.current.renderedLiveProjectionCount,
+        currentBookLevelCount,
+      });
+      console.debug("[BOOKMAP_HISTORY_RETENTION_DIAG]", diag);
+    };
+    logHistoryRetentionDiag();
+    const id = window.setInterval(logHistoryRetentionDiag, 2_000);
+    return () => window.clearInterval(id);
+  }, [
+    sourceMode,
+    activeDomMarket,
+    primaryHeatmapState,
+    effectiveSpot,
+    effectivePerp,
+    engineRenderData,
+  ]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logPerpFilterTruth = () => {
+      console.debug("[BOOKMAP_PERP_FILTER_TRUTH]", {
+        ...perpFilterTruthRef.current,
+      });
+    };
+    logPerpFilterTruth();
+    const id = window.setInterval(logPerpFilterTruth, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logVisualParityTruth = () => {
+      console.debug("[BOOKMAP_VISUAL_PARITY_TRUTH]", {
+        ...visualParityTruthRef.current,
+      });
+    };
+    logVisualParityTruth();
+    const id = window.setInterval(logVisualParityTruth, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logL2BandContinuityTruth = () => {
+      console.debug("[BOOKMAP_L2_BAND_CONTINUITY_TRUTH]", {
+        ...l2BandContinuityTruthRef.current,
+      });
+    };
+    logL2BandContinuityTruth();
+    const id = window.setInterval(logL2BandContinuityTruth, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logPaletteParityTruth = () => {
+      console.debug("[BOOKMAP_PALETTE_PARITY_TRUTH]", {
+        ...paletteParityTruthRef.current,
+      });
+    };
+    logPaletteParityTruth();
+    const id = window.setInterval(logPaletteParityTruth, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logMicroHierarchyDiag = () => {
+      console.debug("[BOOKMAP_MICRO_VISUAL_HIERARCHY_DIAG]", {
+        ...microHierarchyTruthRef.current,
+      });
+    };
+    logMicroHierarchyDiag();
+    const id = window.setInterval(logMicroHierarchyDiag, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logHistoricalColorRetentionDiag = () => {
+      console.debug("[BOOKMAP_HISTORICAL_COLOR_RETENTION_DIAG]", {
+        ...historicalColorRetentionTruthRef.current,
+      });
+    };
+    logHistoricalColorRetentionDiag();
+    const id = window.setInterval(logHistoricalColorRetentionDiag, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logHistoricalColorLockAudit = () => {
+      console.debug("[BOOKMAP_HISTORICAL_COLOR_LOCK_AUDIT]", {
+        ...historicalColorLockAuditRef.current,
+      });
+    };
+    logHistoricalColorLockAudit();
+    const id = window.setInterval(logHistoricalColorLockAudit, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logHistoricalSpanColorAudit = () => {
+      console.debug("[BOOKMAP_HISTORICAL_SPAN_COLOR_AUDIT]", {
+        ...historicalSpanColorAuditRef.current,
+      });
+    };
+    logHistoricalSpanColorAudit();
+    const id = window.setInterval(logHistoricalSpanColorAudit, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logP74SpanAudit = () => {
+      console.debug("[BOOKMAP_P74_SPAN_AUDIT]", {
+        ...p74SpanAuditRef.current,
+      });
+    };
+    logP74SpanAudit();
+    const id = window.setInterval(logP74SpanAudit, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logSpanRenderContinuityAudit = () => {
+      console.debug("[BOOKMAP_SPAN_RENDER_CONTINUITY_AUDIT]", {
+        ...spanRenderContinuityAuditRef.current,
+      });
+    };
+    logSpanRenderContinuityAudit();
+    const id = window.setInterval(logSpanRenderContinuityAudit, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logSpanTextureBalanceAudit = () => {
+      console.debug("[BOOKMAP_SPAN_TEXTURE_BALANCE_AUDIT]", {
+        ...spanTextureBalanceAuditRef.current,
+      });
+    };
+    logSpanTextureBalanceAudit();
+    const id = window.setInterval(logSpanTextureBalanceAudit, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logGeometryDiag = () => {
+      const vp = timeScale.viewport;
+      const geom = buildBookmapTextureGeometryDiag({
+        renderData: engineRenderData,
+        renderedTextureCellCount:
+          textureRenderStatsRef.current.renderedTextureCellCount,
+        avgTextureCellWidthPx:
+          textureRenderStatsRef.current.avgTextureCellWidthPx,
+        minTextureCellWidthPx:
+          textureRenderStatsRef.current.minTextureCellWidthPx,
+        maxTextureCellWidthPx:
+          textureRenderStatsRef.current.maxTextureCellWidthPx,
+        viewportMs: vp.visibleEndTime - vp.visibleStartTime,
+        plotWidthPx: heatmapPlotWidth,
+        drawCapHit: textureRenderStatsRef.current.textureDrawCapHit,
+      });
+      console.debug("[BOOKMAP_TEXTURE_GEOMETRY_DIAG]", geom);
+    };
+    logGeometryDiag();
+    const id = window.setInterval(logGeometryDiag, 2_000);
+    return () => window.clearInterval(id);
+  }, [engineRenderData, timeScale.viewport, heatmapPlotWidth]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logLiveProjectionDiag = () => {
+      const diag = buildBookmapLiveProjectionDiag({
+        sourceMode,
+        activeDomMarket,
+        renderData: engineRenderData,
+        timeViewport: {
+          visibleStartTime: timeScale.viewport.visibleStartTime,
+          visibleEndTime: timeScale.viewport.visibleEndTime,
+          liveEdgeTime: timeScale.viewport.liveEdgeTime,
+          dataEndTime: timeScale.viewport.dataEndTime,
+          rightSpacePct: timeScale.viewport.rightSpacePct,
+        },
+        renderedLiveProjectionCount:
+          liveProjectionRenderStatsRef.current.renderedLiveProjectionCount,
+      });
+      console.debug("[BOOKMAP_LIVE_LIQUIDITY_PROJECTION_DIAG]", diag);
+      const geom = buildBookmapLiveProjectionGeometryDiag({
+        sourceMode,
+        activeDomMarket,
+        renderData: engineRenderData,
+        timeViewport: {
+          visibleStartTime: timeScale.viewport.visibleStartTime,
+          visibleEndTime: timeScale.viewport.visibleEndTime,
+          liveEdgeTime: timeScale.viewport.liveEdgeTime,
+          dataEndTime: timeScale.viewport.dataEndTime,
+          rightSpacePct: timeScale.viewport.rightSpacePct,
+        },
+        projectionStartTime:
+          liveProjectionRenderStatsRef.current.projectionStartTime,
+        projectionEndTime:
+          liveProjectionRenderStatsRef.current.projectionEndTime,
+        avgProjectionWidthPx:
+          liveProjectionRenderStatsRef.current.avgProjectionWidthPx,
+        minProjectionWidthPx:
+          liveProjectionRenderStatsRef.current.minProjectionWidthPx,
+        maxProjectionWidthPx:
+          liveProjectionRenderStatsRef.current.maxProjectionWidthPx,
+        renderedLiveProjectionCount:
+          liveProjectionRenderStatsRef.current.renderedLiveProjectionCount,
+        projectionOverlapsHistory:
+          liveProjectionRenderStatsRef.current.projectionOverlapsHistory,
+      });
+      console.debug("[BOOKMAP_LIVE_PROJECTION_GEOMETRY_DIAG]", geom);
+    };
+    logLiveProjectionDiag();
+    const id = window.setInterval(logLiveProjectionDiag, 2_000);
+    return () => window.clearInterval(id);
+  }, [
+    sourceMode,
+    activeDomMarket,
+    engineRenderData,
+    timeScale.viewport,
   ]);
 
   useEffect(() => {
@@ -1443,12 +2360,22 @@ export function LiquidityHeatmapPanel({
   ]);
 
   const resetView = useCallback(() => {
+    hasUserAdjustedPriceViewportRef.current = false;
+    lastPriceCenterContextRef.current = null;
     updatePrefs({ ladderAutoCenter: true });
     priceScale.resetToSpot();
     if (useEngineRenderer) timeScale.resetTimeView();
-  }, [updatePrefs, priceScale, useEngineRenderer, timeScale]);
+    tryAutoCenterPriceViewport("reset_view");
+  }, [
+    updatePrefs,
+    priceScale,
+    useEngineRenderer,
+    timeScale,
+    tryAutoCenterPriceViewport,
+  ]);
 
   const onPriceInteractionStart = useCallback(() => {
+    hasUserAdjustedPriceViewportRef.current = true;
     if (ladderAutoCenter) {
       updatePrefs({ ladderAutoCenter: false });
     }
@@ -1491,10 +2418,20 @@ export function LiquidityHeatmapPanel({
           priceScale.domBucketSize,
           priceScale.labelStep,
         );
-      const renderedLayerNames: string[] = [
+      const renderedLayerNames: string[] = [];
+      if (engineFrame.textureModeEnabled && engineFrame.textureCells.length > 0) {
+        renderedLayerNames.push("engine-primary-texture");
+      }
+      renderedLayerNames.push(
         engineRenderData ? "engine-primary-bands" : "engine-primary-empty",
-      ];
+      );
       if (sourceMode === "both" && engineOverlayRenderData) {
+        if (
+          engineOverlayRenderData.textureModeEnabled &&
+          engineOverlayRenderData.textureCells.length > 0
+        ) {
+          renderedLayerNames.push("engine-overlay-texture");
+        }
         renderedLayerNames.push("engine-overlay-bands");
       }
       if (sourceMode === "both" && passiveConfluenceLevels.length > 0) {
@@ -1505,6 +2442,25 @@ export function LiquidityHeatmapPanel({
         rendererDrawnDotsCount: 0,
         rendererClippedTimeCount: 0,
         rendererClippedPriceCount: 0,
+      };
+      const textureRenderStats = {
+        renderedTextureCellCount: 0,
+        cellsFilteredByTime: 0,
+        textureDrawCapHit: false,
+        avgTextureCellWidthPx: 0,
+        minTextureCellWidthPx: 0,
+        maxTextureCellWidthPx: 0,
+        effectiveTextureBucketMs: 0,
+        textureContinuousMode: "",
+      };
+      const liveProjectionRenderStats = {
+        renderedLiveProjectionCount: 0,
+        projectionStartTime: 0,
+        projectionEndTime: 0,
+        avgProjectionWidthPx: 0,
+        minProjectionWidthPx: 0,
+        maxProjectionWidthPx: 0,
+        projectionOverlapsHistory: false,
       };
 
       paintBookmapEngineHeatmapFrame(ctx, {
@@ -1547,7 +2503,52 @@ export function LiquidityHeatmapPanel({
         showDivergenceMarkers:
           bothModeDivergence && visualSettings.divergence.showChartMarkers,
         visualSettings,
+        sourceMode,
+        activeDomMarket,
+        perpFilterTruthOut: perpFilterTruthRef.current,
+        visualParityTruthOut: visualParityTruthRef.current,
+        l2BandContinuityTruthOut: l2BandContinuityTruthRef.current,
+        paletteParityTruthOut: paletteParityTruthRef.current,
+        microHierarchyTruthOut: microHierarchyTruthRef.current,
+        historicalColorRetentionTruthOut: historicalColorRetentionTruthRef.current,
+        historicalColorLockAuditOut: historicalColorLockAuditRef.current,
+        historicalSpanColorAuditOut: historicalSpanColorAuditRef.current,
+        p74SpanAuditOut: p74SpanAuditRef.current,
+        spanRenderContinuityAuditOut: spanRenderContinuityAuditRef.current,
+        spanTextureBalanceAuditOut: spanTextureBalanceAuditRef.current,
+        spanPeakCache: historicalTextureSpanPeakCacheRef.current,
+        textureRenderStatsOut: textureRenderStats,
+        liveProjectionRenderStatsOut: liveProjectionRenderStats,
       });
+      if (executionOrderLines.length > 0) {
+        const plotW = w - HEATMAP_PAD.left - HEATMAP_PAD.right;
+        const plotH = h - HEATMAP_PAD.top - HEATMAP_PAD.bottom;
+        const drawnOrders = renderBookmapExecutionOrders(
+          ctx,
+          { plotW, plotH, priceToY: priceScale.priceToY },
+          executionOrderLines,
+          priceRange.minPrice,
+          priceRange.maxPrice,
+        );
+        if (drawnOrders > 0) {
+          renderedLayerNames.push("execution-orders");
+        }
+      }
+      textureRenderStatsRef.current = textureRenderStats;
+      liveProjectionRenderStatsRef.current = liveProjectionRenderStats;
+      textureDiagRef.current = buildBookmapTextureDiag({
+        sourceMode,
+        activeDomMarket,
+        renderData: engineRenderData,
+        renderedTextureCellCount: textureRenderStats.renderedTextureCellCount,
+        textureDrawCapHit: textureRenderStats.textureDrawCapHit,
+      });
+      if (engineRenderData?.textureStats) {
+        engineRenderData.textureStats.cellsFilteredByTime =
+          textureRenderStats.cellsFilteredByTime;
+        engineRenderData.textureStats.textureDrawCapHit =
+          textureRenderStats.textureDrawCapHit;
+      }
       forensicDrawRef.current = {
         legacyRendered: false,
         renderedLayerNames,
@@ -1641,6 +2642,7 @@ export function LiquidityHeatmapPanel({
     visualSettings.layout.bidAskLineOpacity,
     divergenceMarkerSignals,
     bothModeDivergence,
+    executionOrderLines,
   ]);
 
   useEffect(() => {
@@ -1974,10 +2976,12 @@ export function LiquidityHeatmapPanel({
       },
       rightSpaceDisabled: !useEngineRenderer,
       onFitWalls: () => {
+        hasUserAdjustedPriceViewportRef.current = true;
         updatePrefs({ ladderAutoCenter: false });
         priceScale.fitToWalls();
       },
       onFitMajorWalls: () => {
+        hasUserAdjustedPriceViewportRef.current = true;
         updatePrefs({ ladderAutoCenter: false });
         applyDepthPreset("majorWalls");
         priceScale.fitToMajorWalls();
@@ -2333,6 +3337,7 @@ export function LiquidityHeatmapPanel({
                       className="pointer-events-auto absolute left-1 max-w-[calc(100%-8px)] truncate rounded px-1 py-0 text-left text-[9px] font-mono text-rose-200/95 hover:bg-slate-900/80"
                       style={{ top: BOOKMAP_PLOT_PAD.top + 2 + i * 13 }}
                       onClick={() => {
+                        hasUserAdjustedPriceViewportRef.current = true;
                         updatePrefs({ ladderAutoCenter: false });
                         priceScale.setCenterPrice(m.price);
                       }}
@@ -2349,6 +3354,7 @@ export function LiquidityHeatmapPanel({
                       className="pointer-events-auto absolute left-1 max-w-[calc(100%-8px)] truncate rounded px-1 py-0 text-left text-[9px] font-mono text-emerald-200/95 hover:bg-slate-900/80"
                       style={{ bottom: BOOKMAP_PLOT_PAD.bottom + 2 + i * 13 }}
                       onClick={() => {
+                        hasUserAdjustedPriceViewportRef.current = true;
                         updatePrefs({ ladderAutoCenter: false });
                         priceScale.setCenterPrice(m.price);
                       }}

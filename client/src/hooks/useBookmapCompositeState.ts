@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useBookmapState, type UseBookmapStateOptions } from "@/hooks/useBookmapState";
 import type { BookmapState } from "@/types/bookmapState";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
@@ -14,6 +14,26 @@ import { isOrderbookDead, isOrderbookStale } from "@shared/bookmapFreshness";
 export type UseBookmapCompositeStateOptions = Omit<UseBookmapStateOptions, "market"> & {
   enabled?: boolean;
 };
+
+function defaultSubSourceForSourceMode(mode: BookmapSourceMode): BookmapMarketSource {
+  return mode === "perp" ? "perp" : "spot";
+}
+
+function logBookmapSourceModeSyncDiag(payload: {
+  action: "source_change" | "dom_change" | "trade_change";
+  previousSourceMode: BookmapSourceMode;
+  nextSourceMode: BookmapSourceMode;
+  previousDomSource: BookmapMarketSource;
+  nextDomSource: BookmapMarketSource;
+  previousTradeSource: BookmapMarketSource;
+  nextTradeSource: BookmapMarketSource;
+  wasManualDomOverride: boolean;
+  wasManualTradeOverride: boolean;
+  reason: string;
+}) {
+  if (!import.meta.env.DEV) return;
+  console.debug("[BOOKMAP_SOURCE_MODE_SYNC_DIAG]", payload);
+}
 
 function useCachedMarketState(
   data: BookmapState | undefined,
@@ -44,8 +64,14 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
   const { enabled = true, ...bookmapOpts } = options;
 
   const [sourceMode, setSourceMode] = useState<BookmapSourceMode>(DEFAULT_BOOKMAP_SOURCE_MODE);
-  const [domSource, setDomSource] = useState<BookmapMarketSource>("perp");
-  const [tradeSource, setTradeSource] = useState<BookmapMarketSource>("perp");
+  const [domSource, setDomSource] = useState<BookmapMarketSource>(
+    defaultSubSourceForSourceMode(DEFAULT_BOOKMAP_SOURCE_MODE),
+  );
+  const [tradeSource, setTradeSource] = useState<BookmapMarketSource>(
+    defaultSubSourceForSourceMode(DEFAULT_BOOKMAP_SOURCE_MODE),
+  );
+  const manualDomOverrideRef = useRef(false);
+  const manualTradeOverrideRef = useRef(false);
   const [perpOverlayOpacityPct, setPerpOverlayOpacityPct] = useState<PerpOverlayOpacityPct>(
     DEFAULT_PERP_OVERLAY_OPACITY_PCT,
   );
@@ -153,13 +179,88 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
   const perpBookmapStale = isOrderbookStale(perpQuery.ageMs);
   const perpBookmapDead = isOrderbookDead(perpQuery.ageMs);
 
+  const handleSourceModeChange = useCallback(
+    (next: BookmapSourceMode) => {
+      const nextDom = defaultSubSourceForSourceMode(next);
+      const nextTrade = defaultSubSourceForSourceMode(next);
+      logBookmapSourceModeSyncDiag({
+        action: "source_change",
+        previousSourceMode: sourceMode,
+        nextSourceMode: next,
+        previousDomSource: domSource,
+        nextDomSource: nextDom,
+        previousTradeSource: tradeSource,
+        nextTradeSource: nextTrade,
+        wasManualDomOverride: false,
+        wasManualTradeOverride: false,
+        reason: `source_defaults_synced_to_${next}`,
+      });
+      setSourceMode(next);
+      setDomSource(nextDom);
+      setTradeSource(nextTrade);
+      manualDomOverrideRef.current = false;
+      manualTradeOverrideRef.current = false;
+    },
+    [sourceMode, domSource, tradeSource],
+  );
+
+  const handleDomSourceChange = useCallback(
+    (next: BookmapMarketSource) => {
+      logBookmapSourceModeSyncDiag({
+        action: "dom_change",
+        previousSourceMode: sourceMode,
+        nextSourceMode: sourceMode,
+        previousDomSource: domSource,
+        nextDomSource: next,
+        previousTradeSource: tradeSource,
+        nextTradeSource: tradeSource,
+        wasManualDomOverride: true,
+        wasManualTradeOverride: manualTradeOverrideRef.current,
+        reason:
+          sourceMode === "both"
+            ? "manual_dom_override_in_both_mode"
+            : "manual_dom_change_while_source_locked",
+      });
+      if (sourceMode === "both") {
+        manualDomOverrideRef.current = true;
+      }
+      setDomSource(next);
+    },
+    [sourceMode, domSource, tradeSource],
+  );
+
+  const handleTradeSourceChange = useCallback(
+    (next: BookmapMarketSource) => {
+      logBookmapSourceModeSyncDiag({
+        action: "trade_change",
+        previousSourceMode: sourceMode,
+        nextSourceMode: sourceMode,
+        previousDomSource: domSource,
+        nextDomSource: domSource,
+        previousTradeSource: tradeSource,
+        nextTradeSource: next,
+        wasManualDomOverride: manualDomOverrideRef.current,
+        wasManualTradeOverride: true,
+        reason:
+          sourceMode === "both"
+            ? "manual_trade_override_in_both_mode"
+            : "manual_trade_change_while_source_locked",
+      });
+      if (sourceMode === "both") {
+        manualTradeOverrideRef.current = true;
+      }
+      setTradeSource(next);
+    },
+    [sourceMode, domSource, tradeSource],
+  );
+
   return {
     sourceMode,
-    setSourceMode,
+    setSourceMode: handleSourceModeChange,
     domSource,
-    setDomSource,
+    setDomSource: handleDomSourceChange,
     tradeSource,
-    setTradeSource,
+    setTradeSource: handleTradeSourceChange,
     perpOverlayOpacityPct,
     setPerpOverlayOpacityPct,
     perpOverlayOpacity,

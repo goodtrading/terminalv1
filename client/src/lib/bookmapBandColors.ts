@@ -1,10 +1,21 @@
 import type { HeatmapBand } from "@/components/flows/bookmapBandTypes";
 import { isWallTier } from "@/components/flows/bookmapBandTypes";
+import {
+  PALETTE_ALPHA_ACTIVE_EXTREME_MAX,
+  PALETTE_ALPHA_ACTIVE_STRONG_MIN,
+  PALETTE_ALPHA_ACTIVE_WEAK_MIN,
+  PALETTE_ALPHA_CLOSED_OLD_MUL,
+  PALETTE_ALPHA_CLOSED_RECENT_MUL,
+} from "@/lib/bookmapEngineConfig";
 
 /**
  * Intensity-first Bookmap palette (side does not dominate hue).
- * very low → navy, low → blue, medium → cyan, medium-high → yellow, high → orange, extreme → red
+ * Passive liquidity: navy → blue → cyan → yellow → orange → red → hot highlight.
  */
+
+/** Micro scalping historical texture alpha — local contrast without global wash. */
+export const MICRO_TEXTURE_ALPHA_MUL = 1.12;
+export const MICRO_TEXTURE_ALPHA_MAX = 0.72;
 
 function clamp01(t: number): number {
   return Math.max(0, Math.min(1, t));
@@ -26,26 +37,139 @@ function lerpRgb(
   ];
 }
 
-/** Unified heat ramp — same for bid and ask. */
-export function intensityToRgb(intensity: number): [number, number, number] {
-  const t = clamp01(intensity);
+/** Bookmap passive liquidity ramp — 10-stop reference palette. */
+const PASSIVE_PALETTE_STOPS: readonly (readonly [number, number, number])[] = [
+  [11, 26, 43],
+  [16, 50, 74],
+  [22, 89, 120],
+  [29, 137, 179],
+  [79, 195, 247],
+  [212, 217, 74],
+  [240, 160, 32],
+  [227, 91, 43],
+  [214, 40, 40],
+  [255, 240, 208],
+];
 
-  if (t < 0.12) {
-    return lerpRgb([4, 8, 18], [12, 28, 58], t / 0.12);
+export type PassiveIntensityBucket = "weak" | "medium" | "strong" | "extreme";
+
+export function classifyPassiveIntensityBucket(
+  intensity: number,
+): PassiveIntensityBucket {
+  const t = clamp01(intensity);
+  if (t < 0.22) return "weak";
+  if (t < 0.52) return "medium";
+  if (t < 0.78) return "strong";
+  return "extreme";
+}
+
+/** Unified Bookmap passive ramp — texture and wall bands share the same hue steps. */
+export function intensityToPassiveLiquidityRgb(
+  intensity: number,
+): [number, number, number] {
+  const t = clamp01(intensity);
+  const scaled = t * (PASSIVE_PALETTE_STOPS.length - 1);
+  const idx = Math.floor(scaled);
+  const frac = scaled - idx;
+  const a = PASSIVE_PALETTE_STOPS[Math.min(idx, PASSIVE_PALETTE_STOPS.length - 1)]!;
+  const b =
+    PASSIVE_PALETTE_STOPS[
+      Math.min(idx + 1, PASSIVE_PALETTE_STOPS.length - 1)
+    ]!;
+  return lerpRgb(a, b, frac);
+}
+
+/** @deprecated alias — same passive ramp */
+export function intensityToRgb(intensity: number): [number, number, number] {
+  return intensityToPassiveLiquidityRgb(intensity);
+}
+
+/** Texture path uses identical ramp (no separate cyan-flat compression). */
+export function intensityToTextureRgb(intensity: number): [number, number, number] {
+  return intensityToPassiveLiquidityRgb(intensity);
+}
+
+/** Micro scalping historical texture ramp — sharper local hierarchy breakpoints. */
+const MICRO_HISTORICAL_BREAKPOINTS = [0, 0.14, 0.28, 0.46, 0.62, 0.78, 1] as const;
+const MICRO_HISTORICAL_STOPS: readonly (readonly [number, number, number])[] = [
+  [11, 26, 43],
+  [16, 50, 74],
+  [22, 89, 120],
+  [29, 137, 179],
+  [79, 195, 247],
+  [212, 217, 74],
+  [240, 160, 32],
+  [227, 91, 43],
+];
+
+export function intensityToMicroHistoricalTextureRgb(
+  intensity: number,
+): [number, number, number] {
+  const t = clamp01(intensity);
+  let seg = MICRO_HISTORICAL_BREAKPOINTS.length - 2;
+  for (let i = 0; i < MICRO_HISTORICAL_BREAKPOINTS.length - 1; i += 1) {
+    if (t <= MICRO_HISTORICAL_BREAKPOINTS[i + 1]!) {
+      seg = i;
+      break;
+    }
   }
-  if (t < 0.32) {
-    return lerpRgb([12, 28, 58], [22, 72, 128], (t - 0.12) / 0.2);
+  const lo = MICRO_HISTORICAL_BREAKPOINTS[seg]!;
+  const hi = MICRO_HISTORICAL_BREAKPOINTS[seg + 1]!;
+  const frac = hi > lo ? (t - lo) / (hi - lo) : 0;
+  const a = MICRO_HISTORICAL_STOPS[seg]!;
+  const b = MICRO_HISTORICAL_STOPS[seg + 1]!;
+  return lerpRgb(a, b, frac);
+}
+
+export function microAlphaFromRenderIntensity(t: number): number {
+  const v = clamp01(t);
+  if (v < 0.15) return 0.07 + v * 0.35;
+  if (v < 0.35) return 0.14 + (v - 0.15) * 0.55;
+  if (v < 0.6) return 0.25 + (v - 0.35) * 0.6;
+  return 0.4 + (v - 0.6) * 0.45;
+}
+
+export type HistoricalTextureFillOptions = {
+  microScalpMode?: boolean;
+};
+
+/** Historical texture fill — optional micro scalping palette/alpha branch. */
+export function getHistoricalTextureFill(
+  side: "bid" | "ask",
+  intensity: number,
+  alphaCtx: PassiveLiquidityAlphaContext,
+  globalMul = 1,
+  opts?: HistoricalTextureFillOptions,
+): string {
+  if (!opts?.microScalpMode) {
+    return getPassiveLiquidityFill(side, intensity, alphaCtx, globalMul);
   }
-  if (t < 0.52) {
-    return lerpRgb([22, 72, 128], [34, 175, 168], (t - 0.32) / 0.2);
+
+  const rgb = intensityToMicroHistoricalTextureRgb(intensity);
+  const tinted =
+    intensity < 0.55 ? applySubtleSideTint(rgb, side, intensity) : rgb;
+  let a = microAlphaFromRenderIntensity(intensity) * MICRO_TEXTURE_ALPHA_MUL * globalMul;
+  a = Math.min(MICRO_TEXTURE_ALPHA_MAX, a);
+
+  if (!alphaCtx.isActive) {
+    const ageMs = alphaCtx.closedAgeMs ?? 0;
+    const closedMul =
+      ageMs < 60_000
+        ? PALETTE_ALPHA_CLOSED_RECENT_MUL
+        : ageMs < 300_000
+          ? 0.32
+          : PALETTE_ALPHA_CLOSED_OLD_MUL;
+    a *= closedMul;
+  } else if (
+    alphaCtx.farDistanceFade != null &&
+    alphaCtx.farDistanceFade < 1 &&
+    !alphaCtx.isRelevantL2
+  ) {
+    a *= 0.55 + alphaCtx.farDistanceFade * 0.45;
   }
-  if (t < 0.72) {
-    return lerpRgb([34, 175, 168], [250, 204, 21], (t - 0.52) / 0.2);
-  }
-  if (t < 0.88) {
-    return lerpRgb([250, 204, 21], [255, 140, 40], (t - 0.72) / 0.16);
-  }
-  return lerpRgb([255, 140, 40], [235, 45, 45], (t - 0.88) / 0.12);
+
+  const [r, g, b] = tinted;
+  return `rgba(${r}, ${g}, ${b}, ${Math.max(0.07, a)})`;
 }
 
 /** Subtle side tint at low intensities only (±4 on green channel). */
@@ -60,34 +184,161 @@ function applySubtleSideTint(
   return [Math.min(255, r + 3), g, b];
 }
 
+export type PassiveLiquidityAlphaContext = {
+  intensity: number;
+  isActive: boolean;
+  isRelevantL2?: boolean;
+  isWeakGranular?: boolean;
+  closedAgeMs?: number;
+  isRightContinuation?: boolean;
+  /** 0–1 zoom distance fade — hierarchy via alpha, not hue shift */
+  farDistanceFade?: number;
+};
+
 /**
- * Alpha ramps slowly for low intensity; high opacity only for dominant liquidity.
+ * Body opacity driven by intensity bucket — not low-alpha pastel washes.
  */
+export function alphaForPassiveLiquidity(
+  ctx: PassiveLiquidityAlphaContext,
+): number {
+  const t = clamp01(ctx.intensity);
+  let body: number;
+
+  if (t < 0.22) {
+    body =
+      PALETTE_ALPHA_ACTIVE_WEAK_MIN + (t / 0.22) * (0.36 - PALETTE_ALPHA_ACTIVE_WEAK_MIN);
+  } else if (t < 0.52) {
+    body = 0.45 + ((t - 0.22) / 0.3) * 0.17;
+  } else if (t < 0.78) {
+    body =
+      PALETTE_ALPHA_ACTIVE_STRONG_MIN + ((t - 0.52) / 0.26) * 0.2;
+  } else {
+    body =
+      PALETTE_ALPHA_ACTIVE_STRONG_MIN +
+      0.2 +
+      ((t - 0.78) / 0.22) *
+        (PALETTE_ALPHA_ACTIVE_EXTREME_MAX - PALETTE_ALPHA_ACTIVE_STRONG_MIN - 0.2);
+  }
+
+  if (ctx.isRelevantL2 && ctx.isActive) {
+    body = Math.max(body, t >= 0.52 ? 0.78 : t >= 0.22 ? 0.55 : 0.42);
+  }
+
+  if (ctx.isWeakGranular && ctx.isActive) {
+    body *= 0.94;
+  }
+
+  if (!ctx.isActive) {
+    const ageMs = ctx.closedAgeMs ?? 0;
+    let closedMul =
+      ageMs < 60_000
+        ? PALETTE_ALPHA_CLOSED_RECENT_MUL
+        : ageMs < 300_000
+          ? 0.32
+          : PALETTE_ALPHA_CLOSED_OLD_MUL;
+    if (t >= 0.52 && ageMs < 120_000) {
+      closedMul = Math.max(closedMul, 0.48);
+    }
+    body *= closedMul;
+  }
+
+  if (ctx.isRightContinuation && ctx.isActive) {
+    body = Math.max(body, t >= 0.52 ? 0.72 : t >= 0.22 ? 0.48 : body);
+  }
+
+  if (
+    ctx.farDistanceFade != null &&
+    ctx.farDistanceFade < 1 &&
+    !ctx.isRelevantL2
+  ) {
+    body *= 0.55 + ctx.farDistanceFade * 0.45;
+  }
+
+  return Math.min(PALETTE_ALPHA_ACTIVE_EXTREME_MAX, Math.max(0.14, body));
+}
+
+export function getPassiveLiquidityFill(
+  side: "bid" | "ask",
+  intensity: number,
+  alphaCtx: PassiveLiquidityAlphaContext,
+  globalMul = 1,
+): string {
+  const rgb = intensityToPassiveLiquidityRgb(intensity);
+  const tinted =
+    intensity < 0.55 ? applySubtleSideTint(rgb, side, intensity) : rgb;
+  const a = alphaForPassiveLiquidity(alphaCtx) * globalMul;
+  const [r, g, b] = tinted;
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+/** Legacy wall-band alpha — delegates to passive body opacity. */
 export function alphaForVisualIntensity(intensity: number, stale = false): number {
-  const t = clamp01(intensity);
-  let a: number;
-  if (t < 0.15) a = 0.08 + t * 0.35;
-  else if (t < 0.4) a = 0.13 + t * 0.4;
-  else if (t < 0.7) a = 0.28 + t * 0.45;
-  else a = 0.5 + t * 0.42;
-  if (stale) a *= 0.78;
-  return Math.min(0.92, a);
+  return alphaForPassiveLiquidity({
+    intensity,
+    isActive: !stale,
+    closedAgeMs: stale ? 120_000 : 0,
+  });
 }
 
 export function getBookmapBandFill(band: HeatmapBand, alphaMul = 1): string {
   const intensity = band.visualIntensity ?? band.intensity;
-  let rgb = intensityToRgb(intensity);
-  rgb = applySubtleSideTint(rgb, band.side, intensity);
-  const a = alphaForVisualIntensity(intensity, band.stale) * alphaMul;
-  const [r, g, b] = rgb;
-  return `rgba(${r}, ${g}, ${b}, ${a})`;
+  return getPassiveLiquidityFill(
+    band.side,
+    intensity,
+    {
+      intensity,
+      isActive: !band.stale,
+      isRelevantL2: isWallTier(band.tier) || band.maxSize >= 100,
+      closedAgeMs: band.stale ? 90_000 : 0,
+    },
+    alphaMul,
+  );
+}
+
+/** Legacy texture alpha helper — matches passive body opacity. */
+export function alphaForTextureIntensity(
+  intensity: number,
+  alphaCtx?: Partial<PassiveLiquidityAlphaContext>,
+): number {
+  return alphaForPassiveLiquidity({
+    intensity,
+    isActive: alphaCtx?.isActive ?? true,
+    isRelevantL2: alphaCtx?.isRelevantL2,
+    isWeakGranular: alphaCtx?.isWeakGranular,
+    closedAgeMs: alphaCtx?.closedAgeMs,
+    isRightContinuation: alphaCtx?.isRightContinuation,
+    farDistanceFade: alphaCtx?.farDistanceFade,
+  });
+}
+
+/** Bookmap-style passive microstructure — unified ramp + solid body alpha. */
+export function getBookmapTextureFill(
+  side: "bid" | "ask",
+  intensity: number,
+  alphaMul = 1,
+  alphaCtx?: Partial<PassiveLiquidityAlphaContext>,
+): string {
+  return getPassiveLiquidityFill(
+    side,
+    intensity,
+    {
+      intensity,
+      isActive: alphaCtx?.isActive ?? true,
+      isRelevantL2: alphaCtx?.isRelevantL2,
+      isWeakGranular: alphaCtx?.isWeakGranular,
+      closedAgeMs: alphaCtx?.closedAgeMs,
+      isRightContinuation: alphaCtx?.isRightContinuation,
+      farDistanceFade: alphaCtx?.farDistanceFade,
+    },
+    alphaMul,
+  );
 }
 
 export function getBookmapBandStroke(band: HeatmapBand): string | null {
   const intensity = band.visualIntensity ?? band.intensity;
   if (!isWallTier(band.tier) && intensity < 0.72) return null;
-  const [r, g, b] = intensityToRgb(intensity);
-  const a = intensity >= 0.85 ? 0.45 : 0.28;
+  const [r, g, b] = intensityToPassiveLiquidityRgb(intensity);
+  const a = intensity >= 0.85 ? 0.55 : 0.38;
   return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 
