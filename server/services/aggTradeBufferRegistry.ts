@@ -7,6 +7,7 @@
 import WebSocket from "ws";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
 import { DEFAULT_BOOKMAP_MARKET, parseBookmapMarket } from "@shared/bookmapMarket";
+import { getSpotAggTradeWsBase, getSpotAggTradesRestUrls } from "./binanceSpotMarketData";
 
 export type BufferedAggTrade = {
   id: string;
@@ -829,14 +830,9 @@ function createAggTradeBuffer(config: BufferConfig) {
 const spotBuffer = createAggTradeBuffer({
   market: "spot",
   streamSymbol: "BTCUSDT",
-  wsBase: "wss://stream.binance.com:9443",
+  wsBase: getSpotAggTradeWsBase(),
   wsPath: "/ws/btcusdt@aggTrade",
-  restAggTradesUrls: [
-    "https://api1.binance.com/api/v3/aggTrades",
-    "https://api2.binance.com/api/v3/aggTrades",
-    "https://api3.binance.com/api/v3/aggTrades",
-    "https://api.binance.com/api/v3/aggTrades",
-  ],
+  restAggTradesUrls: getSpotAggTradesRestUrls(),
   logTag: "AggTradeBuffer:spot",
 });
 

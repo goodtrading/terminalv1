@@ -38,6 +38,10 @@ import {
   TRADE_DOT_COLOR_MODE,
   USE_BOOKMAP_ENGINE,
 } from "@/lib/bookmapEngineConfig";
+import {
+  logBookmapFrontendDataDiag,
+  logBookmapRailwayEnableAudit,
+} from "@/lib/bookmapRailwayEnableAudit";
 import { useBookmapTrades } from "@/hooks/useBookmapTrades";
 import { formatBookmapRangeShort } from "@/lib/bookmapPriceScaleUtils";
 import {
@@ -633,6 +637,9 @@ export function LiquidityHeatmapPanel({
     perpOverlayOpacity,
     activeDomMarket,
     activeTradeMarket,
+    effectiveSource,
+    spotAvailable,
+    perpAvailable,
     effectiveSpot,
     effectivePerp,
     primaryHeatmapState,
@@ -1708,6 +1715,70 @@ export function LiquidityHeatmapPanel({
   ]);
 
   useEffect(() => {
+    const heatmapCells = engineRenderData?.cells?.length ?? primaryHeatmapState?.heatmapCells.length ?? 0;
+    const textureCells = engineRenderData?.textureCells?.length ?? 0;
+    const liveProjectionLevels = engineRenderData?.liveProjectionLevels?.length ?? 0;
+    const hasOrderbook = Boolean(
+      (effectiveDomState?.bids.length ?? 0) > 0 && (effectiveDomState?.asks.length ?? 0) > 0,
+    );
+    const hasTrades = tradeBufferCount > 0 || receivedTradeCount > 0;
+    const reasonIfEmpty = !hasOrderbook
+      ? "no_orderbook"
+      : !hasRenderableHeatmap && heatmapCells === 0
+        ? "no_engine_heatmap"
+        : !hasTrades
+          ? "no_trades"
+          : null;
+
+    logBookmapFrontendDataDiag({
+      selectedSource: sourceMode,
+      effectiveSource,
+      activeTradeMarket,
+      hasEnginePayload: Boolean(engineRenderData),
+      heatmapCells,
+      textureCells,
+      liveProjectionLevels,
+      tradeDots: engineTradeDots.stats.dotCount,
+      status: feedStatus,
+      error: bookmapEngineError instanceof Error ? bookmapEngineError.message : null,
+      timestampAgeMs: bookmapAgeMs,
+      spotAvailable,
+      perpAvailable,
+    });
+
+    logBookmapRailwayEnableAudit({
+      ok: hasOrderbook && (heatmapCells > 0 || snapshotCount > 0) && (hasTrades || feedStatus === "live"),
+      selectedSource: sourceMode,
+      effectiveSource,
+      spotAvailable,
+      perpAvailable,
+      hasOrderbook,
+      hasTrades,
+      heatmapCells,
+      liveProjectionLevels,
+      tradeDots: engineTradeDots.stats.dotCount,
+      reasonIfEmpty,
+    });
+  }, [
+    sourceMode,
+    effectiveSource,
+    activeTradeMarket,
+    engineRenderData,
+    primaryHeatmapState,
+    effectiveDomState,
+    engineTradeDots.stats.dotCount,
+    feedStatus,
+    bookmapEngineError,
+    bookmapAgeMs,
+    spotAvailable,
+    perpAvailable,
+    hasRenderableHeatmap,
+    snapshotCount,
+    tradeBufferCount,
+    receivedTradeCount,
+  ]);
+
+  useEffect(() => {
     if (!import.meta.env.DEV) return;
     const logLimitHistoryState = () => {
       const spotCells = effectiveSpot?.heatmapCells ?? [];
@@ -2408,23 +2479,13 @@ export function LiquidityHeatmapPanel({
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    if (engineRequested) {
-      const engineFrame =
-        engineRenderData ??
-        createEmptyEngineRenderData(
-          engineRenderBase?.timeMin ?? timeScale.viewport.visibleStartTime,
-          engineRenderBase?.timeMax ?? timeScale.viewport.visibleEndTime,
-          priceScale.heatmapBucketSize,
-          priceScale.domBucketSize,
-          priceScale.labelStep,
-        );
+    if (useEngineRenderer && engineRenderData) {
+      const engineFrame = engineRenderData;
       const renderedLayerNames: string[] = [];
       if (engineFrame.textureModeEnabled && engineFrame.textureCells.length > 0) {
         renderedLayerNames.push("engine-primary-texture");
       }
-      renderedLayerNames.push(
-        engineRenderData ? "engine-primary-bands" : "engine-primary-empty",
-      );
+      renderedLayerNames.push("engine-primary-bands");
       if (sourceMode === "both" && engineOverlayRenderData) {
         if (
           engineOverlayRenderData.textureModeEnabled &&
@@ -2557,46 +2618,35 @@ export function LiquidityHeatmapPanel({
       return;
     }
 
-    if (legacyDebugEnabled) {
-      forensicDrawRef.current = {
-        legacyRendered: true,
-        renderedLayerNames: ["legacy-snapshot-cells"],
-        rendererReceivedDotsCount: 0,
-        rendererDrawnDotsCount: 0,
-        rendererClippedTimeCount: 0,
-        rendererClippedPriceCount: 0,
-      };
-      paintBookmapHeatmapFrame(ctx, {
-        width: w,
-        height: h,
-        minPrice: priceRange.minPrice,
-        maxPrice: priceRange.maxPrice,
-        spot: priceReference ?? tickerSpot,
-        series: getSnapshots().slice(-MAX_LIQUIDITY_SNAPSHOTS),
-        priceStep: priceScale.heatmapBucketSize,
-        minVisibleBtc,
-        majorWallsOnly,
-        showTrades,
-        trades: getRecentTrades(),
-        showPersistentWalls,
-        persistentWalls,
-        crosshair,
-        farWallMarkers,
-        ladderRowHeightPx: Math.max(4, priceScale.heatmapBucketSize > 0 ? 8 : 4),
-      });
-      return;
-    }
-
     forensicDrawRef.current = {
-      legacyRendered: false,
-      renderedLayerNames: ["engine-disabled"],
+      legacyRendered: true,
+      renderedLayerNames: legacyDebugEnabled
+        ? ["legacy-snapshot-cells-debug"]
+        : ["legacy-snapshot-cells"],
       rendererReceivedDotsCount: 0,
       rendererDrawnDotsCount: 0,
       rendererClippedTimeCount: 0,
       rendererClippedPriceCount: 0,
     };
+    paintBookmapHeatmapFrame(ctx, {
+      width: w,
+      height: h,
+      minPrice: priceRange.minPrice,
+      maxPrice: priceRange.maxPrice,
+      spot: priceReference ?? tickerSpot,
+      series: getSnapshots().slice(-MAX_LIQUIDITY_SNAPSHOTS),
+      priceStep: priceScale.heatmapBucketSize,
+      minVisibleBtc,
+      majorWallsOnly,
+      showTrades,
+      trades: getRecentTrades(),
+      showPersistentWalls,
+      persistentWalls,
+      crosshair,
+      farWallMarkers,
+      ladderRowHeightPx: Math.max(4, priceScale.heatmapBucketSize > 0 ? 8 : 4),
+    });
   }, [
-    engineRequested,
     legacyDebugEnabled,
     engineRenderBase,
     useEngineRenderer,

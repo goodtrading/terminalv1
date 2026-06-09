@@ -13,6 +13,11 @@ import {
   runBookmapLimitHistorySnapshotSample,
 } from "./bookmapEngine";
 import { recordBboFromOrderBook } from "./bboHistoryRegistry";
+import {
+  getSpotDepthWsUrl,
+  getSpotRestMirrors,
+  shouldUseBinanceSpotVision,
+} from "./binanceSpotMarketData";
 
 export interface OrderBookLevel {
   price: number;
@@ -26,20 +31,21 @@ export interface OrderBookSnapshot {
 }
 
 // Enhanced configuration for Bookmap-style tracking
-const WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@depth";
-const REST_DEPTH_URL = "https://api.binance.com/api/v3/depth";
-const REST_DEPTH_MIRRORS = [
-  "https://api1.binance.com",
-  "https://api2.binance.com",
-  "https://api3.binance.com",
-  "https://api.binance.com",
-];
+const WS_URL = getSpotDepthWsUrl("btcusdt");
+const REST_DEPTH_MIRRORS = getSpotRestMirrors();
+const REST_DEPTH_URL = `${REST_DEPTH_MIRRORS[0]}/api/v3/depth`;
 const DEPTH_LEVELS = 1000; // Fetch 1000 levels per side for Bookmap
 const DEBUG_ENABLED = process.env.NODE_ENV === 'development';
 const STALE_MS = 10_000;
 const HEALTH_INTERVAL_MS = 5_000;
 
-if (DEBUG_ENABLED) console.debug("[OrderBookService] Using WebSocket URL:", WS_URL, "with depth:", DEPTH_LEVELS);
+if (DEBUG_ENABLED || process.env.NODE_ENV === "production") {
+  console.log("[OrderBookService] Spot feed config:", {
+    vision: shouldUseBinanceSpotVision(),
+    wsUrl: WS_URL,
+    restPrimary: REST_DEPTH_URL,
+  });
+}
 
 let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
 let ws: WebSocket | null = null;

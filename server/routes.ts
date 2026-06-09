@@ -34,6 +34,7 @@ import { scenarioEngine, TerminalSignals } from "./lib/scenarioEngine";
 import { testScenarioEngine } from "./lib/scenarioEngineTest";
 import { resolveCandleLimit } from "@shared/candleLimits";
 import { cachedFetch, getCacheSnapshots } from "./lib/ttlCache";
+import { startBookmapRailwayDataDiag } from "./services/bookmapRailwayDataDiag";
 import { getRecentSlowEndpoints } from "./lib/performanceMonitor";
 import { requireSaasAdmin } from "./middleware/saasAuth";
 
@@ -81,6 +82,28 @@ function isValidBookmapStateSnapshot(value: unknown): boolean {
       payload.asks.length > 0 &&
       payload.heatmapCells.length > 0,
   );
+}
+
+/** Accepts live orderbook before heatmap sampler has produced cells (Railway cold start). */
+function isValidBookmapStateOrBootstrap(value: unknown): boolean {
+  const payload = value as { bids?: unknown; asks?: unknown } | null | undefined;
+  return Boolean(
+    payload &&
+      Array.isArray(payload.bids) &&
+      Array.isArray(payload.asks) &&
+      payload.bids.length > 0 &&
+      payload.asks.length > 0,
+  );
+}
+
+function orderbookFeedStatus(
+  bids: number,
+  asks: number,
+  ageMs: number | null,
+): "live" | "stale" | "offline" {
+  if (bids === 0 && asks === 0) return "offline";
+  if (ageMs != null && ageMs > 10_000) return "stale";
+  return "live";
 }
 
 function isValidLiquidityHeatmapSnapshot(value: unknown): boolean {
@@ -199,6 +222,7 @@ async function probeBinanceDepth(
 // Initialize full depth on server start (spot = legacy default; perp = futures leg)
 initializeFullDepth().catch(console.error);
 initializePerpFullDepth().catch(console.error);
+startBookmapRailwayDataDiag();
 
 // NOTE: Tests removed from auto-execution to prevent startup blocking
 // Use /api/vacuum/test and /api/scenarios/test endpoints for manual testing
@@ -336,12 +360,21 @@ export async function registerRoutes(
               perp: getPerpOrderBookHealth(),
             };
           }
+          const health =
+            market === "perp" ? getPerpOrderBookHealth() : getSpotOrderBookHealth();
+          const feedStatus = orderbookFeedStatus(
+            orderBook.bids.length,
+            orderBook.asks.length,
+            health.ageMs ?? null,
+          );
           return {
             exchange,
             market,
             bids: orderBook.bids.map((level) => [level.price.toString(), level.size.toString()]),
             asks: orderBook.asks.map((level) => [level.price.toString(), level.size.toString()]),
             timestamp: orderBook.timestamp || Date.now(),
+            source: exchange,
+            status: feedStatus,
             ...(warning
               ? {
                   warning,
@@ -365,6 +398,33 @@ export async function registerRoutes(
       res.json(payload);
     } catch (error: any) {
       console.error("[API] Order book fetch error:", error?.message ?? error);
+      try {
+        const recoveryMarket = parseBookmapMarket(req.query.market);
+        const liveBook = getOrderBookForMarket(recoveryMarket);
+        if (liveBook.bids.length > 0 && liveBook.asks.length > 0) {
+          const health =
+            recoveryMarket === "perp"
+              ? getPerpOrderBookHealth()
+              : getSpotOrderBookHealth();
+          return res.json({
+            exchange: recoveryMarket === "perp" ? "binance-perp" : "binance",
+            market: recoveryMarket,
+            bids: liveBook.bids.map((level) => [level.price.toString(), level.size.toString()]),
+            asks: liveBook.asks.map((level) => [level.price.toString(), level.size.toString()]),
+            timestamp: liveBook.timestamp || Date.now(),
+            source: recoveryMarket === "perp" ? "binance-perp" : "binance",
+            status: orderbookFeedStatus(
+              liveBook.bids.length,
+              liveBook.asks.length,
+              health.ageMs ?? null,
+            ),
+            degraded: true,
+            warning: "served_from_live_orderbook_after_cache_miss",
+          });
+        }
+      } catch {
+        // fall through to 503
+      }
       res.status(503).json({
         error: "ORDERBOOK_UNAVAILABLE",
         degraded: true,
@@ -432,7 +492,7 @@ export async function registerRoutes(
         {
           ttlMs: 1_000,
           staleTtlMs: 10_000,
-          validate: isValidBookmapStateSnapshot,
+          validate: isValidBookmapStateOrBootstrap,
           invalidMessage: `Invalid empty bookmap snapshot for ${cacheKey}`,
         },
         async () => {
@@ -474,15 +534,22 @@ export async function registerRoutes(
 
           logBookmapMarketStateDiagnostics(symbol, exchange, market);
 
+          const health =
+            market === "perp" ? getPerpOrderBookHealth() : getSpotOrderBookHealth();
+          const hasHeatmap = state.heatmapCells.length > 0;
           return {
             symbol,
             exchange,
             market,
             ...state,
+            status: hasHeatmap
+              ? orderbookFeedStatus(state.bids.length, state.asks.length, health.ageMs ?? null)
+              : "stale",
+            degraded: !hasHeatmap,
           };
         },
       );
-      if (process.env.NODE_ENV === "production" && !isValidBookmapStateSnapshot(payload)) {
+      if (process.env.NODE_ENV === "production" && !isValidBookmapStateOrBootstrap(payload)) {
         console.warn("[bookmap-feed] /api/bookmap/state invalid payload", {
           symbol,
           exchange,
@@ -496,6 +563,59 @@ export async function registerRoutes(
       res.json(payload);
     } catch (error: any) {
       console.error("[API] /api/bookmap/state error:", error?.message ?? error);
+      try {
+        const recoveryMarket = parseBookmapMarket(req.query.market);
+        const liveBook = getOrderBookForMarket(recoveryMarket);
+        if (liveBook.bids.length > 0 && liveBook.asks.length > 0) {
+          const health =
+            recoveryMarket === "perp"
+              ? getPerpOrderBookHealth()
+              : getSpotOrderBookHealth();
+          return res.json({
+            symbol,
+            exchange,
+            market: recoveryMarket,
+            bids: liveBook.bids.map((b) => ({
+              price: b.price,
+              size: b.size,
+              side: "bid" as const,
+              firstSeenTs: liveBook.timestamp ?? Date.now(),
+              lastUpdateTs: liveBook.timestamp ?? Date.now(),
+              maxSeenSize: b.size,
+              isImportant: false,
+              isStructural: false,
+              isMajor: false,
+              stale: false,
+            })),
+            asks: liveBook.asks.map((a) => ({
+              price: a.price,
+              size: a.size,
+              side: "ask" as const,
+              firstSeenTs: liveBook.timestamp ?? Date.now(),
+              lastUpdateTs: liveBook.timestamp ?? Date.now(),
+              maxSeenSize: a.size,
+              isImportant: false,
+              isStructural: false,
+              isMajor: false,
+              stale: false,
+            })),
+            heatmapCells: [],
+            importantWalls: [],
+            structuralWalls: [],
+            majorWalls: [],
+            timestamp: liveBook.timestamp ?? Date.now(),
+            status: orderbookFeedStatus(
+              liveBook.bids.length,
+              liveBook.asks.length,
+              health.ageMs ?? null,
+            ),
+            degraded: true,
+            warning: "served_from_live_orderbook_after_cache_miss",
+          });
+        }
+      } catch {
+        // fall through to 503
+      }
       res.status(503).json({
         error: "BOOKMAP_STATE_UNAVAILABLE",
         degraded: true,

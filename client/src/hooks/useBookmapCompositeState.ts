@@ -43,7 +43,10 @@ function useCachedMarketState(
   loadedRef: MutableRefObject<Record<BookmapMarketSource, boolean>>,
 ) {
   return useMemo(() => {
-    if (data && data.heatmapCells.length > 0) {
+    const hasBookData =
+      data &&
+      (data.heatmapCells.length > 0 || (data.bids.length > 0 && data.asks.length > 0));
+    if (hasBookData) {
       if (!isOrderbookDead(ageMs)) {
         cacheRef.current[market] = data;
         loadedRef.current[market] = true;
@@ -115,13 +118,35 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
   const activeDomMarket = resolveActiveMarket(sourceMode, domSource);
   const activeTradeMarket = resolveActiveMarket(sourceMode, tradeSource);
 
+  const spotAvailable = useMemo(() => {
+    const data = effectiveSpot ?? spotQuery.data;
+    if (!data) return false;
+    if (isOrderbookDead(spotQuery.ageMs)) return false;
+    return data.heatmapCells.length > 0 || (data.bids.length > 0 && data.asks.length > 0);
+  }, [effectiveSpot, spotQuery.data, spotQuery.ageMs]);
+
+  const perpAvailable = useMemo(() => {
+    const data = effectivePerp ?? perpQuery.data;
+    if (!data) return false;
+    if (isOrderbookDead(perpQuery.ageMs)) return false;
+    return data.heatmapCells.length > 0 || (data.bids.length > 0 && data.asks.length > 0);
+  }, [effectivePerp, perpQuery.data, perpQuery.ageMs]);
+
+  const effectiveSource = useMemo((): BookmapMarketSource => {
+    if (sourceMode === "perp") return "perp";
+    if (sourceMode === "both") return activeDomMarket;
+    if (!spotAvailable && perpAvailable) return "perp";
+    return "spot";
+  }, [sourceMode, activeDomMarket, spotAvailable, perpAvailable]);
+
   const primaryHeatmapState = useMemo((): BookmapState | null => {
     if (sourceMode === "perp") return effectivePerp;
     if (sourceMode === "both") {
       return activeDomMarket === "perp" ? effectivePerp : effectiveSpot;
     }
+    if (!spotAvailable && perpAvailable) return effectivePerp;
     return effectiveSpot;
-  }, [sourceMode, activeDomMarket, effectiveSpot, effectivePerp]);
+  }, [sourceMode, activeDomMarket, effectiveSpot, effectivePerp, spotAvailable, perpAvailable]);
 
   const overlayHeatmapState = useMemo((): BookmapState | null => {
     if (sourceMode !== "both") return null;
@@ -134,9 +159,14 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
 
   const waitingMarkets = useMemo(() => {
     const out: BookmapMarketSource[] = [];
+    const spotFallbackActive =
+      sourceMode === "spot" && !spotAvailable && perpAvailable;
     if (sourceMode === "both" || sourceMode === "spot") {
-      if (!effectiveSpot?.heatmapCells.length && spotQuery.isLoading) out.push("spot");
-      else if (sourceMode === "both" && !everLoadedByMarketRef.current.spot && !effectiveSpot) {
+      if (spotFallbackActive) {
+        // Perp is rendering while spot is offline; do not block UI as "waiting spot".
+      } else if (!spotAvailable && spotQuery.isLoading) {
+        out.push("spot");
+      } else if (sourceMode === "both" && !everLoadedByMarketRef.current.spot && !effectiveSpot) {
         out.push("spot");
       }
     }
@@ -153,6 +183,8 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
     effectivePerp,
     spotQuery.isLoading,
     perpQuery.isLoading,
+    spotAvailable,
+    perpAvailable,
   ]);
 
   const hasRenderableHeatmap = Boolean(
@@ -266,6 +298,9 @@ export function useBookmapCompositeState(options: UseBookmapCompositeStateOption
     perpOverlayOpacity,
     activeDomMarket,
     activeTradeMarket,
+    effectiveSource,
+    spotAvailable,
+    perpAvailable,
     effectiveSpot,
     effectivePerp,
     primaryHeatmapState,
