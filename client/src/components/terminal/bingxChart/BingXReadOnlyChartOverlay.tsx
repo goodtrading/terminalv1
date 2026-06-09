@@ -269,7 +269,8 @@ export function BingXReadOnlyChartOverlay({
     };
   }, [syncLimitOrderLines, candleSeries, viewportVersion]);
 
-  if (import.meta.env.DEV && visible) {
+  useEffect(() => {
+    if (!import.meta.env.DEV || !visible) return;
     console.debug("[bingx-chart] overlay gate", {
       visible,
       chartOverlayActive,
@@ -279,7 +280,15 @@ export function BingXReadOnlyChartOverlay({
       connectionId: Boolean(brokerSession?.connectionId),
       positions: positionsForSymbol.length,
     });
-  }
+  }, [
+    visible,
+    chartOverlayActive,
+    brokerSession?.exchange,
+    brokerSession?.connectionMode,
+    brokerSession?.connected,
+    brokerSession?.connectionId,
+    positionsForSymbol.length,
+  ]);
 
   if (!visible || !chartOverlayActive || !brokerSession) {
     return null;

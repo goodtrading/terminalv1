@@ -8,6 +8,7 @@ import { BrokerSessionProvider } from "@/components/terminal/execution/useBroker
 import { MarketStructureBar } from "@/components/terminal/MarketStructureBar";
 import { BottomPanel } from "@/components/terminal/BottomPanel";
 import { useEffect, useState } from "react";
+import { mountClickInteractionDiag } from "@/dev/clickInteractionDiag";
 import DeribitOptionsBook from "@/components/options/DeribitOptionsBook";
 import { FlowsPanel } from "@/components/flows/FlowsPanel";
 import { VolatilityEnginePanel } from "@/components/terminal/VolatilityEnginePanel";
@@ -29,6 +30,8 @@ const viewMode: "PRO" = "PRO";
       // ignore storage access errors
     }
   }, []);
+
+  useEffect(() => mountClickInteractionDiag(), []);
 
   const toggleBottomPanels = () => {
     setBottomPanelsMinimized((prev) => {

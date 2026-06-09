@@ -172,7 +172,8 @@ export function MainChart({
 
   const showBingXReadOnlyChartOverlay = isBingXVisualSession(brokerSession);
 
-  if (import.meta.env.DEV) {
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
     console.debug("[bingx-chart] overlay gate", {
       exchange: brokerSession.exchange,
       connectionMode: brokerSession.connectionMode,
@@ -181,7 +182,14 @@ export function MainChart({
       showBingXReadOnlyChartOverlay,
       showPaperChartOverlay,
     });
-  }
+  }, [
+    brokerSession.exchange,
+    brokerSession.connectionMode,
+    brokerSession.connected,
+    brokerSession.connectionId,
+    showBingXReadOnlyChartOverlay,
+    showPaperChartOverlay,
+  ]);
 
   const [showAccelZones, setShowAccelZones] = useState(true);
   const [showAbsorbZones, setShowAbsorbZones] = useState(true);
@@ -2175,28 +2183,16 @@ export function MainChart({
             </>
           );
         })()}
-        <div
-          className="absolute inset-0 pr-[100px] z-[5]"
-          style={{ pointerEvents: "auto" }}
-          onContextMenu={handleChartContextMenu}
-        >
+        <div className="absolute inset-0 pr-[100px] z-[5] pointer-events-none">
         <div
           ref={chartContainerRef}
-          className="absolute inset-0"
+          className="absolute inset-0 pointer-events-auto"
           style={{ cursor: measurementDragging ? "crosshair" : undefined }}
+          onContextMenu={handleChartContextMenu}
         />
         {LIVE_CANDLE_CHART_DISABLED && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
-        {chartReady && chartSize && (() => {
-          console.debug("[MainChart Footprint]", {
-            footprintEnabled: activeLayers.footprint,
-            hasChart: !!chartRef.current,
-            hasSeries: !!candleSeriesRef.current,
-            symbol: "BTCUSDT",
-            timeframe: chartTimeframe,
-            chartSize: chartSize
-          });
-          return (
+        {chartReady && chartSize ? (
           <FootprintOverlay
             chartRef={chartRef}
             candleSeriesRef={candleSeriesRef}
@@ -2206,8 +2202,7 @@ export function MainChart({
             width={chartSize.w}
             height={chartSize.h}
           />
-          );
-        })()}
+        ) : null}
                 {chartReady && chartContainerRef.current && chartSize && (() => {
           const tsWidth = chartRef.current?.timeScale().width();
           const timeScaleWidth = (tsWidth != null && tsWidth > 0) ? tsWidth : chartSize.w;
