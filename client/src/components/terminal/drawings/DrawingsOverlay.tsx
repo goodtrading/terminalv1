@@ -737,7 +737,7 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
   return (
     <div
       ref={setContainerRef}
-      className="absolute inset-0 z-[15] pointer-events-none"
+      className="absolute top-0 left-0 z-[15] pointer-events-none"
       style={{ width: chartWidth, height: chartHeight }}
     >
       <DrawingsCanvas

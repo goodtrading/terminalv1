@@ -15,7 +15,7 @@ interface LayerGroupControlsProps {
 
 export function LayerGroupControls({ activeLayers, onLayerToggle, onFitLevels, onResetChart, dataTestId }: LayerGroupControlsProps) {
   return (
-    <div className="flex items-center gap-1 px-2 py-1 bg-terminal-panel border border-terminal-border border-b-0 shrink-0" data-testid={dataTestId ?? "toggle-layer-groups"}>
+    <div className="relative z-30 flex items-center gap-1 px-2 py-1 bg-terminal-panel border border-terminal-border border-b-0 shrink-0 pointer-events-auto" data-testid={dataTestId ?? "toggle-layer-groups"}>
       {(Object.keys(activeLayers) as LayerGroup[]).map((layer) => (
         <button
           key={layer}

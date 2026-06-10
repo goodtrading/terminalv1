@@ -221,6 +221,7 @@ export function MainChart({
   const sessionLiquidityManagerRef = useRef<SessionLiquidityManager>(new SessionLiquidityManager());
   const sessionLiquidityLinesRef = useRef<any[]>([]);
   const boundaryBadgesRef = useRef<HTMLDivElement[]>([]);
+  const lastGammaOverlayLogKeyRef = useRef("");
   
   // Bookmap-style order book tracker for faithful order book visualization
   const bookmapTrackerRef = useRef<BookmapOrderBookTracker>(
@@ -325,13 +326,24 @@ export function MainChart({
     },
     refetchInterval: BTC_TICKER_REFETCH_MS,
     staleTime: 0,
-    enabled: !baseLoading && !!(basePack?.base?.length ?? 0),
   });
 
   useEffect(() => {
-    if (ticker == null || baseLoading || !basePack?.base?.length) return;
-    applyMarketTicker(ticker.price, ticker.timestamp);
-  }, [ticker?.price, ticker?.timestamp, baseLoading, basePack?.base?.length]);
+    if (ticker == null || !ticker.price) return;
+    if (basePack?.base?.length) {
+      applyMarketTicker(ticker.price, ticker.timestamp);
+    }
+  }, [ticker?.price, ticker?.timestamp, basePack?.base?.length]);
+
+  useEffect(() => {
+    const tsPrice = terminalState?.ticker?.price;
+    if (tsPrice == null || tsPrice <= 0 || !basePack?.base?.length) return;
+    applyMarketTicker(tsPrice, terminalState.ticker?.timestamp ?? Date.now());
+  }, [
+    terminalState?.ticker?.price,
+    terminalState?.ticker?.timestamp,
+    basePack?.base?.length,
+  ]);
 
   useEffect(() => {
     const barSec = getChartTimeframeMeta(chartTimeframe).barSec;
@@ -846,28 +858,28 @@ export function MainChart({
         gammaFlipOperationalLegacy?: number | null;
         localFlipReason?: string | null;
       } | undefined;
-      console.log("[GammaOverlaySelection]", {
-        marketGammaFlip: market?.gammaFlip ?? null,
-        optionsGammaFlip: co?.gammaFlip ?? null,
-        gammaFlipGlobal: co?.gammaFlipGlobal ?? null,
-        gammaFlipBroad: co?.gammaFlipBroad ?? null,
-        gammaFlipLocal: co?.gammaFlipLocal ?? null,
-        globalFlipResolved: gammaOverlaySel.globalFlip,
-        selectedFlipForChart: gammaOverlaySel.selectedFlipForChart,
-        selectedFlipType: gammaOverlaySel.selectedFlipType,
-        localTransitionZoneStart: gammaOverlaySel.localZoneStart,
-        localTransitionZoneEnd: gammaOverlaySel.localZoneEnd,
-        legacyFlipIgnored: co?.gammaFlipOperationalLegacy ?? null,
-      });
-      console.log("[GammaFlipModelSelection]", {
-        gammaFlipGlobal: co?.gammaFlipGlobal ?? null,
-        gammaFlipBroad: co?.gammaFlipBroad ?? null,
-        gammaFlipLocal: co?.gammaFlipLocal ?? null,
-        gammaFlipOperationalLegacy: co?.gammaFlipOperationalLegacy ?? null,
-        selectedOperationalFlip: gammaOverlaySel.selectedFlipForChart,
-        selectedContextFlip: gammaOverlaySel.globalFlip,
-        localFlipReason: co?.localFlipReason ?? null,
-      });
+      const logKey = [
+        gammaOverlaySel.selectedFlipForChart,
+        gammaOverlaySel.selectedFlipType,
+        gammaOverlaySel.globalFlip,
+        co?.gammaFlipLocal,
+      ].join("|");
+      if (logKey !== lastGammaOverlayLogKeyRef.current) {
+        lastGammaOverlayLogKeyRef.current = logKey;
+        console.debug("[GammaOverlaySelection]", {
+          marketGammaFlip: market?.gammaFlip ?? null,
+          optionsGammaFlip: co?.gammaFlip ?? null,
+          gammaFlipGlobal: co?.gammaFlipGlobal ?? null,
+          gammaFlipBroad: co?.gammaFlipBroad ?? null,
+          gammaFlipLocal: co?.gammaFlipLocal ?? null,
+          globalFlipResolved: gammaOverlaySel.globalFlip,
+          selectedFlipForChart: gammaOverlaySel.selectedFlipForChart,
+          selectedFlipType: gammaOverlaySel.selectedFlipType,
+          localTransitionZoneStart: gammaOverlaySel.localZoneStart,
+          localTransitionZoneEnd: gammaOverlaySel.localZoneEnd,
+          legacyFlipIgnored: co?.gammaFlipOperationalLegacy ?? null,
+        });
+      }
     }
 
     const sweepDetector = positioning_engines?.liquiditySweepDetector;
@@ -1795,6 +1807,38 @@ export function MainChart({
     [chartContextMenu, probeInstitutionalOverlay, resolveFallbackMenuContext]
   );
 
+  useEffect(() => {
+    const container = chartContainerRef.current;
+    if (!container || !chartReady) return;
+
+    const syncChartPointerTargets = () => {
+      container.querySelectorAll("canvas, .tv-lightweight-charts, table").forEach((node) => {
+        if (node instanceof HTMLElement) node.style.pointerEvents = "auto";
+      });
+    };
+
+    syncChartPointerTargets();
+    const observer = new MutationObserver(syncChartPointerTargets);
+    observer.observe(container, { childList: true, subtree: true });
+
+    const onNativeContextMenu = (e: MouseEvent) => {
+      if (!container.contains(e.target as Node)) return;
+      handleChartContextMenu({
+        preventDefault: () => e.preventDefault(),
+        stopPropagation: () => e.stopPropagation(),
+        clientX: e.clientX,
+        clientY: e.clientY,
+      } as React.MouseEvent);
+    };
+
+    container.addEventListener("contextmenu", onNativeContextMenu, true);
+
+    return () => {
+      observer.disconnect();
+      container.removeEventListener("contextmenu", onNativeContextMenu, true);
+    };
+  }, [chartReady, handleChartContextMenu]);
+
   const hideOverlayKind = useCallback(
     (kind: ChartMenuOverlayKind) => {
       const o = getChartSettings().overlays;
@@ -1985,7 +2029,23 @@ export function MainChart({
     );
   }
 
-  const isLive = !!ticker && !tickerError;
+  const isLive =
+    (!!ticker && !tickerError && (ticker.price ?? 0) > 0) ||
+    (terminalState?.tickerStatus === "fresh" &&
+      (terminalState?.ticker?.price ?? 0) > 0);
+  const headerPrice =
+    lastCandle?.close ??
+    ticker?.price ??
+    terminalState?.ticker?.price ??
+    null;
+  const headerPriceLabel =
+    headerPrice != null && headerPrice > 0
+      ? headerPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })
+      : baseLoading
+        ? "—"
+        : "—";
+  const liveSourceLabel =
+    ticker?.source ?? terminalState?.ticker?.source ?? "feed";
   const layerToMode: Record<Exclude<LayerGroup, "accel" | "absorb" | "gravity">, MapMode> = { levels: "LEVELS", gamma: "GAMMA", cascade: "CASCADE", squeeze: "SQUEEZE", heatmap: "HEATMAP", footprint: "FOOTPRINT" };
   const activeLayers = {
     levels: activePanels.has("LEVELS"),
@@ -2059,17 +2119,19 @@ export function MainChart({
           dataTestId="toggle-map-mode"
         />
       )}
-      <TerminalPanel className="flex-1 w-full min-w-0 min-h-0 border border-terminal-border relative overflow-hidden" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
+      <TerminalPanel className="flex-1 w-full min-w-0 min-h-0 border border-terminal-border relative z-0 overflow-hidden" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
         <div className="absolute inset-0 pointer-events-none z-10">
           <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start">
-            <div className="flex flex-col pointer-events-auto">
+            <div className="flex flex-col pointer-events-none">
               <div className="flex items-baseline flex-wrap gap-x-3 gap-y-2">
                 <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
-                <ChartTimeframeSelector />
-                <span className={`text-2xl font-mono font-bold ${isLive ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{(lastCandle?.close || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                <div className="pointer-events-auto">
+                  <ChartTimeframeSelector />
+                </div>
+                <span className={`text-2xl font-mono font-bold ${isLive ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{headerPriceLabel}</span>
                 <div className="flex items-center ml-2">
                   <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", isLive ? "bg-terminal-positive" : "bg-terminal-negative")} />
-                  <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? `Live (${ticker?.source})` : 'Live Feed Offline'}</span>
+                  <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? `Live (${liveSourceLabel})` : baseLoading ? 'Connecting…' : 'Live Feed Offline'}</span>
                 </div>
               </div>
               {!isSimpleView && (
@@ -2186,9 +2248,9 @@ export function MainChart({
         <div className="absolute inset-0 pr-[100px] z-[5] pointer-events-none">
         <div
           ref={chartContainerRef}
-          className="absolute inset-0 pointer-events-auto"
+          data-chart-container
+          className="absolute inset-0 pointer-events-none"
           style={{ cursor: measurementDragging ? "crosshair" : undefined }}
-          onContextMenu={handleChartContextMenu}
         />
         {LIVE_CANDLE_CHART_DISABLED && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
