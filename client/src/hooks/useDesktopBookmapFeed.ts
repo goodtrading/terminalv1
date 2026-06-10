@@ -11,6 +11,10 @@ import {
 import { parseRawTradeEvent } from "@/components/flows/tradeFeedParse";
 import { appendTradeToBuffer } from "@/components/flows/tradeBubbleUtils";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
+import {
+  writeDesktopLog,
+  writeHeatmapSessionMetadata,
+} from "@/lib/desktopStorage";
 
 const DESKTOP_BOOKMAP_BUCKET_MS = 1_000;
 const DESKTOP_BOOKMAP_MAX_CELLS = 2_400;
@@ -156,6 +160,11 @@ export function useDesktopBookmapFeed(
   const reconnectTimerRef = useRef<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastUpdateRef = useRef<number | null>(null);
+  const firstSnapshotLoggedRef = useRef(false);
+  const firstTradeLoggedRef = useRef(false);
+  const noDataTimeoutLoggedRef = useRef(false);
+  const sessionStartedAtRef = useRef<string | null>(null);
+  const reconnectCountRef = useRef(0);
 
   const [bookmapState, setBookmapState] = useState<BookmapState | null>(null);
   const [snapshotCount, setSnapshotCount] = useState(0);
@@ -173,6 +182,7 @@ export function useDesktopBookmapFeed(
   const [orderbookReceivedAt, setOrderbookReceivedAt] = useState<number | null>(null);
   const [dataUpdatedAt, setDataUpdatedAt] = useState(0);
   const [error, setError] = useState<Error | null>(null);
+  const [reconnectCount, setReconnectCount] = useState(0);
 
   const wsUrl = useMemo(() => {
     const streamSymbol = cleanSymbol.toLowerCase();
@@ -214,6 +224,15 @@ export function useDesktopBookmapFeed(
     setPipelineStats(nextStats);
 
     setBookmapState((prev) => buildBookmapState(cleanSymbol, snapshot, prev?.heatmapCells ?? []));
+    if (!firstSnapshotLoggedRef.current) {
+      firstSnapshotLoggedRef.current = true;
+      void writeDesktopLog("desktop_bookmap_first_data", {
+        symbol: cleanSymbol,
+        bidsCount: snapshot.bids.length,
+        asksCount: snapshot.asks.length,
+        ts: snapshot.ts,
+      });
+    }
   }, [cleanSymbol]);
 
   const ingestTrade = useCallback((raw: unknown) => {
@@ -234,6 +253,16 @@ export function useDesktopBookmapFeed(
     setLastMessageTs(Date.now());
     setTradeVersion((version) => version + 1);
     setTradeTick((tick) => tick + 1);
+    if (!firstTradeLoggedRef.current) {
+      firstTradeLoggedRef.current = true;
+      void writeDesktopLog("desktop_bookmap_first_trade", {
+        symbol: cleanSymbol,
+        price: parsed.price,
+        sizeBtc: parsed.sizeBtc,
+        side: parsed.side,
+        ts: parsed.ts,
+      });
+    }
   }, []);
 
   const handleDepth = useCallback((raw: BinanceDepthWire) => {
@@ -266,6 +295,13 @@ export function useDesktopBookmapFeed(
     setOrderbookReceivedAt(null);
     setDataUpdatedAt(0);
     setError(null);
+    setReconnectCount(0);
+    reconnectCountRef.current = 0;
+    firstSnapshotLoggedRef.current = false;
+    firstTradeLoggedRef.current = false;
+    noDataTimeoutLoggedRef.current = false;
+    const startedAt = nowIso();
+    sessionStartedAtRef.current = startedAt;
 
     if (!canUseSpotFeed) {
       setFeedStatus("offline");
@@ -275,6 +311,23 @@ export function useDesktopBookmapFeed(
 
     let cancelled = false;
     let reconnectAttempt = 0;
+    const noDataTimeoutId = window.setTimeout(() => {
+      if (cancelled || noDataTimeoutLoggedRef.current || snapshotsRef.current.length > 0) return;
+      noDataTimeoutLoggedRef.current = true;
+      void writeDesktopLog("desktop_bookmap_no_data_timeout", {
+        symbol: cleanSymbol,
+        timeoutMs: 15_000,
+        connected: wsRef.current?.readyState === WebSocket.OPEN,
+      });
+    }, 15_000);
+
+    void writeHeatmapSessionMetadata({
+      symbol: cleanSymbol,
+      source: "spot",
+      startedAt,
+      bucketMs: DESKTOP_BOOKMAP_BUCKET_MS,
+      depth: 20,
+    });
 
     const connect = () => {
       if (cancelled) return;
@@ -289,6 +342,11 @@ export function useDesktopBookmapFeed(
         setError(null);
         setTradesStreamConnected(true);
         console.debug("[DESKTOP_BOOKMAP_FEED] ws connected", { symbol: cleanSymbol, url: wsUrl });
+        void writeDesktopLog("desktop_feed_connected", {
+          symbol: cleanSymbol,
+          url: wsUrl,
+          reconnectCount: reconnectCountRef.current,
+        });
       };
 
       ws.onmessage = (event) => {
@@ -306,14 +364,25 @@ export function useDesktopBookmapFeed(
           const nextError = err instanceof Error ? err : new Error("Desktop feed parse error");
           setError(nextError);
           console.debug("[DESKTOP_BOOKMAP_FEED] error", { message: nextError.message });
+          void writeDesktopLog("desktop_feed_error", {
+            symbol: cleanSymbol,
+            message: nextError.message,
+            phase: "parse",
+          });
         }
       };
 
       ws.onerror = () => {
         if (cancelled) return;
-        setError(new Error("Desktop Binance WebSocket error"));
+        const nextError = new Error("Desktop Binance WebSocket error");
+        setError(nextError);
         setFeedStatus((status) => (status === "live" ? "live" : "error"));
         console.debug("[DESKTOP_BOOKMAP_FEED] error/reconnect", { symbol: cleanSymbol });
+        void writeDesktopLog("desktop_feed_error", {
+          symbol: cleanSymbol,
+          message: nextError.message,
+          phase: "websocket",
+        });
       };
 
       ws.onclose = () => {
@@ -322,9 +391,16 @@ export function useDesktopBookmapFeed(
         setFeedStatus((status) => (status === "live" ? "offline" : status));
         const delayMs = Math.min(10_000, 1_000 + reconnectAttempt * 1_000);
         reconnectAttempt += 1;
+        reconnectCountRef.current += 1;
+        setReconnectCount(reconnectCountRef.current);
         console.debug("[DESKTOP_BOOKMAP_FEED] error/reconnect", {
           symbol: cleanSymbol,
           delayMs,
+        });
+        void writeDesktopLog("desktop_feed_reconnect", {
+          symbol: cleanSymbol,
+          delayMs,
+          reconnectCount: reconnectCountRef.current,
         });
         reconnectTimerRef.current = window.setTimeout(connect, delayMs);
       };
@@ -334,28 +410,44 @@ export function useDesktopBookmapFeed(
 
     return () => {
       cancelled = true;
+      window.clearTimeout(noDataTimeoutId);
       if (reconnectTimerRef.current != null) {
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
       wsRef.current?.close();
       wsRef.current = null;
+      if (sessionStartedAtRef.current) {
+        void writeHeatmapSessionMetadata({
+          symbol: cleanSymbol,
+          source: "spot",
+          startedAt: sessionStartedAtRef.current,
+          endedAt: nowIso(),
+          bucketMs: DESKTOP_BOOKMAP_BUCKET_MS,
+          depth: 20,
+        });
+      }
     };
   }, [canUseSpotFeed, cleanSymbol, handleDepth, ingestTrade, wsUrl]);
 
   useEffect(() => {
-    if (!canUseSpotFeed || !import.meta.env.DEV) return;
+    if (!canUseSpotFeed) return;
     const id = window.setInterval(() => {
       const now = Date.now();
-      console.debug("[DESKTOP_BOOKMAP_FEED]", {
+      const payload = {
         connected: tradesStreamConnected,
-        bids: bookmapState?.bids.length ?? 0,
-        asks: bookmapState?.asks.length ?? 0,
-        trades: tradesRef.current.length,
+        bidsCount: bookmapState?.bids.length ?? 0,
+        asksCount: bookmapState?.asks.length ?? 0,
+        tradesCount: tradesRef.current.length,
         lastUpdateAgeMs: lastUpdateRef.current != null ? now - lastUpdateRef.current : null,
+        reconnectCount: reconnectCountRef.current,
         status: feedStatus,
-      });
-    }, 2_000);
+      };
+      if (import.meta.env.DEV) {
+        console.debug("[DESKTOP_BOOKMAP_FEED]", payload);
+      }
+      void writeDesktopLog("desktop_bookmap_heartbeat", payload);
+    }, 30_000);
     return () => window.clearInterval(id);
   }, [canUseSpotFeed, tradesStreamConnected, bookmapState, feedStatus]);
 
@@ -406,5 +498,10 @@ export function useDesktopBookmapFeed(
     orderbookReceivedAt,
     orderbookAgeMs:
       orderbookReceivedAt != null ? Math.max(0, Date.now() - orderbookReceivedAt) : null,
+    reconnectCount,
   };
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
 }

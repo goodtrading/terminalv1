@@ -34,6 +34,10 @@ import {
   desktopBookmapFeedEnabled,
   useDesktopBookmapFeed,
 } from "@/hooks/useDesktopBookmapFeed";
+import {
+  initDesktopStorage,
+  type DesktopStoragePaths,
+} from "@/lib/desktopStorage";
 import { useLiquidityHeatmapFeed } from "@/hooks/useLiquidityHeatmapFeed";
 import {
   BOOKMAP_ENGINE_PRICE_RANGE_PCT,
@@ -721,6 +725,7 @@ export function LiquidityHeatmapPanel({
     priceMax?: number;
     priceRangePct: number;
   }>({ priceRangePct: BOOKMAP_ENGINE_PRICE_RANGE_PCT });
+  const [desktopStoragePaths, setDesktopStoragePaths] = useState<DesktopStoragePaths | null>(null);
 
   const useDesktopLocalBookmap = desktopBookmapFeedEnabled;
 
@@ -830,6 +835,21 @@ export function LiquidityHeatmapPanel({
     orderbookAgeMs,
     orderbookReceivedAt,
   } = feed;
+  const reconnectCount =
+    "reconnectCount" in feed && typeof feed.reconnectCount === "number"
+      ? feed.reconnectCount
+      : 0;
+
+  useEffect(() => {
+    if (!useDesktopLocalBookmap) return;
+    let cancelled = false;
+    void initDesktopStorage().then((paths) => {
+      if (!cancelled) setDesktopStoragePaths(paths);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [useDesktopLocalBookmap]);
 
   const bookmapEngineLoading = primaryQuery.isLoading;
   const bookmapEngineFetching = primaryQuery.isFetching;
@@ -3647,6 +3667,19 @@ export function LiquidityHeatmapPanel({
             {waitingMarkets.length > 0 && (
               <span className="text-[10px] font-mono text-amber-400/80 shrink-0">
                 waiting {waitingMarkets.join(", ")}
+              </span>
+            )}
+            {useDesktopLocalBookmap && (
+              <span
+                className="text-[10px] font-mono text-sky-300/85 shrink-0"
+                title={desktopStoragePaths?.baseDir ?? "Desktop storage initializing"}
+              >
+                Desktop storage: {desktopStoragePaths?.mode === "tauri" ? "OK" : "fallback"} · feed{" "}
+                {tradesStreamConnected ? "connected" : feedStatus} · bids{" "}
+                {effectiveDomState?.bids.length ?? 0} · asks {effectiveDomState?.asks.length ?? 0} ·
+                trades {tradeBufferCount} · age{" "}
+                {orderbookAgeMs != null ? `${Math.round(orderbookAgeMs)}ms` : "—"} · reconnects{" "}
+                {reconnectCount}
               </span>
             )}
             <span className="text-[10px] font-mono text-cyan-400/80 shrink-0">

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -10,6 +11,7 @@ import { TerminalAuthProvider } from "@/contexts/TerminalAuthContext";
 import BlockedAccessScreen from "@/pages/auth/BlockedAccessScreen";
 import LoginRoute from "@/pages/auth/LoginRoute";
 import AdminPage from "@/pages/admin/AdminPage";
+import { initDesktopStorage, isDesktopBuild, writeDesktopLog } from "@/lib/desktopStorage";
 
 function Router() {
   return (
@@ -28,6 +30,19 @@ function Router() {
 
 function App() {
   console.log("GT_MOBILE_DEBUG: APP COMPONENT MOUNTED - MAIN WINDOW LOG", new Date().toISOString());
+
+  useEffect(() => {
+    if (!isDesktopBuild) return;
+    void initDesktopStorage();
+    const handleShutdown = () => {
+      void writeDesktopLog("app_shutdown", { reason: "window_unload" });
+    };
+    window.addEventListener("beforeunload", handleShutdown);
+    return () => {
+      window.removeEventListener("beforeunload", handleShutdown);
+      void writeDesktopLog("app_shutdown", { reason: "react_unmount" });
+    };
+  }, []);
   
   return (
     <QueryClientProvider client={queryClient}>

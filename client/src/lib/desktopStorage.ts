@@ -3,81 +3,280 @@ export const isDesktopBuild = import.meta.env.VITE_PLATFORM === "desktop";
 export const DESKTOP_STORAGE_BUCKETS = [
   "config",
   "cache",
+  "data",
   "logs",
-  "market-data",
-  "heatmap",
   "sessions",
+  "heatmap",
   "temp",
 ] as const;
 
 export type DesktopStorageBucket = (typeof DESKTOP_STORAGE_BUCKETS)[number];
-
 export type DesktopStorageMode = "tauri" | "browser-fallback";
 
-export type DesktopStorageRoots = {
+export type DesktopStoragePaths = {
   mode: DesktopStorageMode;
-  buckets: Record<DesktopStorageBucket, string>;
-  appDataDir?: string;
-  appCacheDir?: string;
-  localStoragePrefix: string;
-  indexedDbName: string;
+  baseDir: string;
+  config: string;
+  cache: string;
+  data: string;
+  logs: string;
+  sessions: string;
+  heatmap: string;
+  temp: string;
+  settingsFile: string;
+  logFile: string;
 };
 
-const LOCAL_STORAGE_PREFIX = "goodtrading.desktop";
-const INDEXED_DB_NAME = "goodtrading-desktop-storage";
+export type DesktopSettings = {
+  appVersion: string;
+  createdAt: string;
+  lastLaunchAt: string;
+  selectedAsset: string;
+  preferredSource: "spot" | "perp";
+  heatmapPersistence: boolean;
+  localDepth: number;
+  diagnosticsEnabled: boolean;
+};
 
-function joinPath(root: string, child: string): string {
-  return `${root.replace(/[\\/]+$/, "")}/${child}`;
+export type DesktopLogEventName =
+  | "app_start"
+  | "storage_initialized"
+  | "desktop_feed_connected"
+  | "desktop_feed_error"
+  | "desktop_feed_reconnect"
+  | "desktop_bookmap_first_data"
+  | "desktop_bookmap_first_trade"
+  | "desktop_bookmap_no_data_timeout"
+  | "desktop_bookmap_heartbeat"
+  | "app_shutdown"
+  | string;
+
+export type HeatmapSessionMetadata = {
+  symbol: string;
+  source: string;
+  startedAt: string;
+  endedAt?: string;
+  bucketMs?: number;
+  depth?: number;
+};
+
+const APP_VERSION = "0.1.0";
+const LOCAL_STORAGE_PREFIX = "goodtrading.desktop";
+const FALLBACK_BASE = "browser-fallback://GoodTrading Terminal";
+
+let cachedPaths: DesktopStoragePaths | null = null;
+let initPromise: Promise<DesktopStoragePaths> | null = null;
+
+function nowIso(): string {
+  return new Date().toISOString();
 }
 
-function browserFallbackRoots(): DesktopStorageRoots {
+function defaultSettings(existing?: Partial<DesktopSettings>): DesktopSettings {
+  const createdAt = existing?.createdAt ?? nowIso();
   return {
-    mode: "browser-fallback",
-    buckets: {
-      config: `${LOCAL_STORAGE_PREFIX}:config`,
-      cache: `${LOCAL_STORAGE_PREFIX}:cache`,
-      logs: `${LOCAL_STORAGE_PREFIX}:logs`,
-      "market-data": `${LOCAL_STORAGE_PREFIX}:market-data`,
-      heatmap: `${LOCAL_STORAGE_PREFIX}:heatmap`,
-      sessions: `${LOCAL_STORAGE_PREFIX}:sessions`,
-      temp: `${LOCAL_STORAGE_PREFIX}:temp`,
-    },
-    localStoragePrefix: LOCAL_STORAGE_PREFIX,
-    indexedDbName: INDEXED_DB_NAME,
+    appVersion: existing?.appVersion ?? APP_VERSION,
+    createdAt,
+    lastLaunchAt: nowIso(),
+    selectedAsset: existing?.selectedAsset ?? "BTCUSDT",
+    preferredSource: existing?.preferredSource ?? "spot",
+    heatmapPersistence: existing?.heatmapPersistence ?? true,
+    localDepth: existing?.localDepth ?? 1000,
+    diagnosticsEnabled: existing?.diagnosticsEnabled ?? true,
   };
 }
 
-export function desktopStorageKey(bucket: DesktopStorageBucket, key: string): string {
-  return `${LOCAL_STORAGE_PREFIX}:${bucket}:${key}`;
+function fallbackPaths(): DesktopStoragePaths {
+  return {
+    mode: "browser-fallback",
+    baseDir: FALLBACK_BASE,
+    config: `${FALLBACK_BASE}/Config`,
+    cache: `${FALLBACK_BASE}/Cache`,
+    data: `${FALLBACK_BASE}/Data`,
+    logs: `${FALLBACK_BASE}/Logs`,
+    sessions: `${FALLBACK_BASE}/Sessions`,
+    heatmap: `${FALLBACK_BASE}/Heatmap`,
+    temp: `${FALLBACK_BASE}/Temp`,
+    settingsFile: `${FALLBACK_BASE}/Config/settings.json`,
+    logFile: `${FALLBACK_BASE}/Logs/desktop.log`,
+  };
 }
 
-export async function resolveDesktopStorageRoots(): Promise<DesktopStorageRoots> {
-  if (!isDesktopBuild) return browserFallbackRoots();
+function storageKey(key: string): string {
+  return `${LOCAL_STORAGE_PREFIX}:${key}`;
+}
 
+async function invokeDesktop<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(command, args);
+}
+
+function readFallbackJson<T>(key: string, fallback: T): T {
   try {
-    const tauriPath = await import("@tauri-apps/api/path");
-    const [appDataDir, appCacheDir] = await Promise.all([
-      tauriPath.appDataDir(),
-      tauriPath.appCacheDir(),
-    ]);
-
-    return {
-      mode: "tauri",
-      appDataDir,
-      appCacheDir,
-      buckets: {
-        config: joinPath(appDataDir, "config"),
-        cache: joinPath(appCacheDir, "cache"),
-        logs: joinPath(appDataDir, "logs"),
-        "market-data": joinPath(appCacheDir, "market-data"),
-        heatmap: joinPath(appCacheDir, "heatmap"),
-        sessions: joinPath(appDataDir, "sessions"),
-        temp: joinPath(appCacheDir, "temp"),
-      },
-      localStoragePrefix: LOCAL_STORAGE_PREFIX,
-      indexedDbName: INDEXED_DB_NAME,
-    };
+    const raw = localStorage.getItem(storageKey(key));
+    return raw ? (JSON.parse(raw) as T) : fallback;
   } catch {
-    return browserFallbackRoots();
+    return fallback;
+  }
+}
+
+function writeFallbackJson(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(storageKey(key), JSON.stringify(value));
+  } catch {
+    // Browser fallback is best-effort only.
+  }
+}
+
+function appendFallbackLog(event: string, payload: Record<string, unknown> = {}): void {
+  const line = { ts: nowIso(), event, payload };
+  const current = readFallbackJson<unknown[]>("logs:desktop", []);
+  writeFallbackJson("logs:desktop", [...current.slice(-499), line]);
+}
+
+export function getCachedDesktopStoragePaths(): DesktopStoragePaths | null {
+  return cachedPaths;
+}
+
+export async function getDesktopStoragePaths(): Promise<DesktopStoragePaths> {
+  if (cachedPaths) return cachedPaths;
+  if (!isDesktopBuild) {
+    cachedPaths = fallbackPaths();
+    return cachedPaths;
+  }
+  try {
+    cachedPaths = await invokeDesktop<DesktopStoragePaths>("get_desktop_storage_paths");
+    return cachedPaths;
+  } catch {
+    cachedPaths = fallbackPaths();
+    return cachedPaths;
+  }
+}
+
+export async function initDesktopStorage(): Promise<DesktopStoragePaths> {
+  if (initPromise) return initPromise;
+
+  initPromise = (async () => {
+    const existing = await readDesktopConfig();
+    const settings = defaultSettings(existing as Partial<DesktopSettings>);
+
+    if (!isDesktopBuild) {
+      cachedPaths = fallbackPaths();
+      writeFallbackJson("config:settings", settings);
+      appendFallbackLog("app_start", { mode: cachedPaths.mode });
+      appendFallbackLog("storage_initialized", { baseDir: cachedPaths.baseDir, mode: cachedPaths.mode });
+      return cachedPaths;
+    }
+
+    try {
+      cachedPaths = await invokeDesktop<DesktopStoragePaths>("init_desktop_storage", { settings });
+      await writeDesktopLog("app_start", { mode: cachedPaths.mode });
+      await writeDesktopLog("storage_initialized", {
+        baseDir: cachedPaths.baseDir,
+        mode: cachedPaths.mode,
+      });
+      return cachedPaths;
+    } catch (error) {
+      cachedPaths = fallbackPaths();
+      writeFallbackJson("config:settings", settings);
+      appendFallbackLog("app_start", { mode: cachedPaths.mode });
+      appendFallbackLog("storage_initialized", {
+        baseDir: cachedPaths.baseDir,
+        mode: cachedPaths.mode,
+        fallbackReason: error instanceof Error ? error.message : String(error),
+      });
+      return cachedPaths;
+    }
+  })();
+
+  return initPromise;
+}
+
+export async function writeDesktopLog(
+  event: DesktopLogEventName,
+  payload: Record<string, unknown> = {},
+): Promise<void> {
+  if (!isDesktopBuild) {
+    appendFallbackLog(event, payload);
+    return;
+  }
+  try {
+    await invokeDesktop<void>("write_desktop_log", {
+      entry: { ts: nowIso(), event, payload },
+    });
+  } catch {
+    appendFallbackLog(event, payload);
+  }
+}
+
+export async function readDesktopConfig(): Promise<Partial<DesktopSettings>> {
+  if (!isDesktopBuild) {
+    return readFallbackJson<Partial<DesktopSettings>>("config:settings", {});
+  }
+  try {
+    return await invokeDesktop<Partial<DesktopSettings>>("read_desktop_config");
+  } catch {
+    return readFallbackJson<Partial<DesktopSettings>>("config:settings", {});
+  }
+}
+
+export async function writeDesktopConfig(
+  configPatch: Partial<DesktopSettings>,
+): Promise<Partial<DesktopSettings>> {
+  if (!isDesktopBuild) {
+    const current = readFallbackJson<Partial<DesktopSettings>>("config:settings", {});
+    const next = { ...current, ...configPatch };
+    writeFallbackJson("config:settings", next);
+    return next;
+  }
+  try {
+    return await invokeDesktop<Partial<DesktopSettings>>("write_desktop_config", { configPatch });
+  } catch {
+    const current = readFallbackJson<Partial<DesktopSettings>>("config:settings", {});
+    const next = { ...current, ...configPatch };
+    writeFallbackJson("config:settings", next);
+    return next;
+  }
+}
+
+export async function writeMarketDataCache(
+  key: string,
+  payload: Record<string, unknown>,
+): Promise<string | null> {
+  if (!isDesktopBuild) {
+    writeFallbackJson(`market-data:${key}`, payload);
+    return null;
+  }
+  try {
+    return await invokeDesktop<string>("write_market_data_cache", { input: { key, payload } });
+  } catch {
+    writeFallbackJson(`market-data:${key}`, payload);
+    return null;
+  }
+}
+
+export async function clearTempCache(): Promise<void> {
+  if (!isDesktopBuild) {
+    writeFallbackJson("temp", {});
+    return;
+  }
+  try {
+    await invokeDesktop<void>("clear_temp_cache");
+  } catch {
+    writeFallbackJson("temp", {});
+  }
+}
+
+export async function writeHeatmapSessionMetadata(
+  metadata: HeatmapSessionMetadata,
+): Promise<string | null> {
+  if (!isDesktopBuild) {
+    writeFallbackJson(`sessions:${metadata.startedAt}`, metadata);
+    return null;
+  }
+  try {
+    return await invokeDesktop<string>("write_heatmap_session_metadata", { metadata });
+  } catch {
+    writeFallbackJson(`sessions:${metadata.startedAt}`, metadata);
+    return null;
   }
 }
