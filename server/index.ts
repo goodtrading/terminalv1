@@ -5,6 +5,12 @@ import dotenv from "dotenv";
 import path from "path";
 import cors from "cors";
 import { recordEndpointTiming } from "./lib/performanceMonitor";
+import {
+  getAllowedCorsOrigins,
+  isProduction,
+  logBootEnvPresence,
+  shouldEnableReplitPush,
+} from "./lib/runtimeEnv";
 
 function safeErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -41,11 +47,7 @@ dotenv.config({
 });
 
 console.log("[ENV] cwd:", process.cwd());
-console.log("[ENV] OPENAI key exists:", !!process.env.OPENAI_API_KEY);
-console.log("[ENV] DATABASE_URL exists:", !!process.env.DATABASE_URL);
-console.log("[ENV] DATABASE_URL length:", process.env.DATABASE_URL?.length || 0);
-console.log("[ENV] SESSION_SECRET exists:", !!process.env.SESSION_SECRET);
-console.log("[ENV] JWT_SECRET exists:", !!process.env.JWT_SECRET);
+logBootEnvPresence();
 
 // Log DATABASE_URL host hint (censored) for Railway debugging
 if (process.env.DATABASE_URL) {
@@ -67,9 +69,11 @@ console.log(
 console.log("[config] live trading: locked (read-only / risk guard)");
 
 const rawKey = process.env.OPENAI_API_KEY || "";
-const visiblePrefix = rawKey ? rawKey.slice(0, 8) : "";
-console.log("[ENV] OPENAI key prefix:", visiblePrefix);
-console.log("[ENV] OPENAI key length:", rawKey.length);
+if (!isProduction) {
+  const visiblePrefix = rawKey ? rawKey.slice(0, 8) : "";
+  console.log("[ENV] OPENAI key prefix:", visiblePrefix);
+  console.log("[ENV] OPENAI key length:", rawKey.length);
+}
 
 function jsonApiNotFound(res: Response, method: string, path: string): void {
   res.status(404).type("application/json").json({
@@ -85,20 +89,12 @@ const httpServer = createServer(app);
 console.log("[BOOT] Express app and HTTP server created");
 
 // CORS configuration - must be before routes
-const allowedOrigins = [
-  "http://localhost:8081",
-  "http://localhost:8082",
-  "http://localhost:8083",
-  "http://localhost:5173",
-  "http://localhost:5174",
-  "http://localhost:19006",
-  "http://127.0.0.1:8081",
-  "http://127.0.0.1:8082",
-  "http://127.0.0.1:8083",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:5174",
-  "https://terminalv1-production.up.railway.app",
-];
+const allowedOrigins = getAllowedCorsOrigins();
+if (isProduction && allowedOrigins.length === 0) {
+  console.warn(
+    "[cors] No production origins configured. Set CORS_ALLOWED_ORIGINS and/or deploy on Railway (RAILWAY_PUBLIC_DOMAIN).",
+  );
+}
 
 const corsOptions = {
   origin(origin: string | undefined, callback: (err: Error | null, allow: boolean) => void) {
@@ -109,7 +105,9 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    console.warn("[cors] blocked origin:", origin);
+    if (!isProduction) {
+      console.warn("[cors] blocked origin:", origin);
+    }
     return callback(null, false);
   },
   credentials: true,
@@ -360,14 +358,19 @@ app.use((req, res, next) => {
     startMobileCache();
     console.log("[BOOT] Mobile cache started");
 
-    console.log("[BOOT] Starting Replit push service...");
-    try {
-      const { replitPushService } = await import("./replit-push");
-      console.log("[BOOT] Replit push service imported successfully");
-      replitPushService.start();
-      console.log("[BOOT] Replit push service start() called");
-    } catch (error) {
-      console.error("[BOOT] Failed to start Replit push service:", error);
+    if (shouldEnableReplitPush()) {
+      console.log("[BOOT] Starting Replit push service...");
+      try {
+        const { replitPushService } = await import("./replit-push");
+        replitPushService.start();
+        console.log("[BOOT] Replit push service started");
+      } catch (error) {
+        console.error("[BOOT] Failed to start Replit push service:", error);
+      }
+    } else {
+      console.log(
+        "[BOOT] Replit push skipped (set ENABLE_REPLIT_PUSH=true to enable)",
+      );
     }
   })();
   } catch (bootErr) {
