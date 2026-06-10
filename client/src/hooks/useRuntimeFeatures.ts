@@ -6,12 +6,13 @@ type RuntimeFeatures = {
   loading: boolean;
 };
 
-const initialHeatmapEnabled =
-  import.meta.env.DEV || import.meta.env.VITE_HEATMAP_ENABLED === "true";
+const isDesktop = import.meta.env.VITE_PLATFORM === "desktop";
+const desktopHeatmapEnabled = isDesktop && import.meta.env.VITE_HEATMAP_ENABLED === "true";
+const initialHeatmapEnabled = desktopHeatmapEnabled || import.meta.env.DEV;
 
 export function useRuntimeFeatures(): RuntimeFeatures {
   const [heatmapEnabled, setHeatmapEnabled] = useState(initialHeatmapEnabled);
-  const [loading, setLoading] = useState(!import.meta.env.DEV);
+  const [loading, setLoading] = useState(!import.meta.env.DEV && !desktopHeatmapEnabled);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,11 +23,11 @@ export function useRuntimeFeatures(): RuntimeFeatures {
         if (!res.ok) throw new Error(`features ${res.status}`);
         const data = (await res.json()) as { heatmapEnabled?: unknown };
         if (!cancelled) {
-          setHeatmapEnabled(data.heatmapEnabled !== false);
+          setHeatmapEnabled(desktopHeatmapEnabled || data.heatmapEnabled !== false);
         }
       } catch {
         if (!cancelled) {
-          setHeatmapEnabled(import.meta.env.DEV);
+          setHeatmapEnabled(desktopHeatmapEnabled || import.meta.env.DEV);
         }
       } finally {
         if (!cancelled) setLoading(false);
