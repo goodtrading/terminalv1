@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { apiUrl } from "@/lib/apiBase";
 import {
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_ENGINE_PRICE_RANGE_PCT,
@@ -94,7 +95,7 @@ export function useBookmapState(options: UseBookmapStateOptions = {}) {
         priceMax,
         includeStale,
       });
-      const res = await fetch(url, { credentials: "include" });
+      const res = await fetch(apiUrl(url), { credentials: "include" });
       if (!res.ok) {
         const text = (await res.text()) || res.statusText;
         throw new Error(`${res.status}: ${text}`);

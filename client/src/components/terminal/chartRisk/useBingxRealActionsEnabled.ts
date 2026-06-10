@@ -1,3 +1,4 @@
+import { apiUrl } from "../../../lib/apiBase";
 import { useQuery } from "@tanstack/react-query";
 
 /** Shape from GET /api/execution/status (subset for chart gating). */
@@ -39,7 +40,7 @@ export function useBingxRealActionsEnabled(): boolean {
   const { data } = useQuery<ChartExecutionStatus>({
     queryKey: ["/api/execution/status"],
     queryFn: async () => {
-      const res = await fetch("/api/execution/status");
+      const res = await fetch(apiUrl("/api/execution/status"));
       if (!res.ok) return {};
       return (await res.json()) as ChartExecutionStatus;
     },

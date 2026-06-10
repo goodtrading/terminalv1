@@ -1,3 +1,4 @@
+import { apiUrl } from "../../lib/apiBase";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTerminalState } from "@/hooks/useTerminalState";
 
@@ -314,7 +315,7 @@ export function AIChatPanel() {
       const message = `Analyze the new market condition after this event: ${eventType}`;
 
       try {
-        const resp = await fetch("/api/ai/chat", {
+        const resp = await fetch(apiUrl("/api/ai/chat"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -441,7 +442,7 @@ export function AIChatPanel() {
         : opts?.marketContext;
 
     try {
-      const resp = await fetch("/api/ai/chat", {
+      const resp = await fetch(apiUrl("/api/ai/chat"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -593,7 +594,7 @@ export function AIChatPanel() {
                   includeLiveContextOverride: true,
                   marketContext: (async () => {
                     // Fetch terminal state only on-demand (avoid rerenders/tick updates).
-                    const res = await fetch("/api/terminal/state");
+                    const res = await fetch(apiUrl("/api/terminal/state"));
                     if (!res.ok) return undefined;
                     const s = await res.json().catch(() => null);
                     return s ? buildCompactContext(s) : undefined;

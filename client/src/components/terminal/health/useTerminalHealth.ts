@@ -1,3 +1,4 @@
+import { apiUrl } from "../../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getMarketEngineInternals } from "@/stores/marketEngineStore";
@@ -175,7 +176,7 @@ export function useTerminalHealth() {
   }>({
     queryKey: ["/api/execution/status"],
     queryFn: async () => {
-      const res = await fetch("/api/execution/status");
+      const res = await fetch(apiUrl("/api/execution/status"));
       if (!res.ok) throw new Error("Status unavailable");
       return res.json() as ExecutionRiskGuardState & {
         liveTradingEnabled: boolean;
@@ -193,7 +194,7 @@ export function useTerminalHealth() {
   }>({
     queryKey: ["btc-ticker", "system-health"],
     queryFn: async () => {
-      const res = await fetch("/api/market/ticker?symbol=BTCUSDT");
+      const res = await fetch(apiUrl("/api/market/ticker?symbol=BTCUSDT"));
       if (!res.ok) throw new Error("Ticker failed");
       return res.json() as { price: number; timestamp?: number };
     },
@@ -208,7 +209,7 @@ export function useTerminalHealth() {
   }>({
     queryKey: ["orderbook-raw", "system-health"],
     queryFn: async () => {
-      const res = await fetch("/api/orderbook/raw");
+      const res = await fetch(apiUrl("/api/orderbook/raw"));
       if (!res.ok) throw new Error("Orderbook failed");
       return res.json();
     },

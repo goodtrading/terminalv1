@@ -1,3 +1,4 @@
+import { apiUrl } from "../lib/apiBase";
 import { useQuery } from "@tanstack/react-query";
 import type { BookmapBboHistoryResponse } from "@shared/bookmapBboHistory";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
@@ -13,7 +14,7 @@ async function fetchBboMarketStats(
   market: BookmapMarketSource,
 ): Promise<BboMarketDebugStats> {
   const params = new URLSearchParams({ symbol, market });
-  const res = await fetch(`/api/bookmap/bbo-history?${params}`);
+  const res = await fetch(apiUrl(`/api/bookmap/bbo-history?${params}`));
   if (!res.ok) throw new Error(`BBO history ${res.status}`);
   const data = (await res.json()) as BookmapBboHistoryResponse;
   const pts = data.points?.length ?? 0;

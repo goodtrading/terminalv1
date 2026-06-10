@@ -1,3 +1,4 @@
+import { apiUrl } from "../../../lib/apiBase";
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { AggTrade } from "./footprintTypes";
@@ -52,7 +53,7 @@ async function fetchAggTradesWithMeta(
   const url = `/api/market/agg-trades?${params}`;
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(apiUrl(url));
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
@@ -146,7 +147,7 @@ export function useFootprintTradesStream(
       since: Date.now().toString(),
     });
 
-    const eventSource = new EventSource(`/api/market/agg-trades/stream?${params}`);
+    const eventSource = new EventSource(apiUrl(`/api/market/agg-trades/stream?${params}`));
 
     eventSource.onmessage = (event) => {
       try {

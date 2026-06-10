@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { apiUrl } from "@/lib/apiBase";
 import { ReportBadge } from "../ReportBadge";
 import { ExecutionProfile } from "../ExecutionProfile";
 import { ReportMetricCard } from "../ReportMetricCard";
@@ -28,7 +29,7 @@ const SOURCE_TABS: { id: ExecutionReportSource; label: string }[] = [
 
 function downloadCsv(url: string, filename: string): void {
   const a = document.createElement("a");
-  a.href = url;
+  a.href = apiUrl(url);
   a.download = filename;
   a.rel = "noopener";
   document.body.appendChild(a);

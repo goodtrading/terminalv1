@@ -1,3 +1,4 @@
+import { apiUrl } from "../../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TerminalPanel } from "../TerminalPanel";
 import { cn } from "@/lib/utils";
@@ -318,7 +319,7 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
 
   const loadStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/exchanges/status");
+      const res = await fetch(apiUrl("/api/exchanges/status"));
       if (!res.ok) return;
       const data = (await res.json()) as {
         exchanges: Array<{

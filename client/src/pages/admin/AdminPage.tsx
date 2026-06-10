@@ -1,3 +1,4 @@
+import { apiUrl } from "../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
@@ -111,8 +112,8 @@ export default function AdminPage() {
     try {
       const headers: HeadersInit = { Authorization: `Bearer ${token}` };
       const [uRes, pRes] = await Promise.all([
-        fetch("/api/admin/users", { credentials: "include", headers }),
-        fetch("/api/plans", { credentials: "include" }),
+        fetch(apiUrl("/api/admin/users"), { credentials: "include", headers }),
+        fetch(apiUrl("/api/plans"), { credentials: "include" }),
       ]);
       if (!uRes.ok) {
         if (uRes.status === 401) {
@@ -165,7 +166,7 @@ export default function AdminPage() {
   ) => {
     const token = getAuthToken();
     if (!token) return;
-    const res = await fetch(`/api/admin/users/${id}`, {
+    const res = await fetch(apiUrl(`/api/admin/users/${id}`), {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -193,7 +194,7 @@ export default function AdminPage() {
       console.error("[admin activate subscription] invalid grantPlanId:", grantPlanId, "plans:", plans);
       return;
     }
-    const res = await fetch(`/api/admin/users/${userId}/subscription`, {
+    const res = await fetch(apiUrl(`/api/admin/users/${userId}/subscription`), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -216,7 +217,7 @@ export default function AdminPage() {
   const deactivateSubscription = async (userId: number) => {
     const token = getAuthToken();
     if (!token) return;
-    const res = await fetch(`/api/admin/users/${userId}/subscription/deactivate`, {
+    const res = await fetch(apiUrl(`/api/admin/users/${userId}/subscription/deactivate`), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

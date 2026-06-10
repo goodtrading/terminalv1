@@ -1,3 +1,4 @@
+import { apiUrl } from "../lib/apiBase";
 /**
  * Mobile Terminal State Hook - Backend-First Architecture
  * Consumes /api/mobile/state directly (no frontend adaptation)
@@ -128,7 +129,7 @@ export function useMobileTerminalState() {
       console.log("GT_MOBILE_DEBUG: FETCHING from /api/mobile/state", new Date().toISOString());
       
       // Use backend endpoint directly - no frontend adaptation
-      const response = await fetch("/api/mobile/state");
+      const response = await fetch(apiUrl("/api/mobile/state"));
       if (!response.ok) {
         throw new Error(`Failed to fetch mobile state: ${response.status}`);
       }

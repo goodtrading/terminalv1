@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.goodtrading.terminal",
   "build": {
-    "frontendDist": "../dist",
+    "frontendDist": "../dist/public",
     "devUrl": "http://localhost:5000",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build:desktop:web"

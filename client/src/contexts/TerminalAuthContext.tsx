@@ -1,3 +1,4 @@
+import { apiUrl } from "../lib/apiBase";
 import {
   createContext,
   useCallback,
@@ -191,7 +192,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string) => {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch(apiUrl("/api/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -230,7 +231,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(
     async (email: string, password: string) => {
-      const res = await fetch("/api/auth/register", {
+      const res = await fetch(apiUrl("/api/auth/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -269,7 +270,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     invalidateSession();
-    void fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    void fetch(apiUrl("/api/auth/logout"), { method: "POST", credentials: "include" });
   }, [invalidateSession]);
 
   const value = useMemo(

@@ -1,3 +1,4 @@
+import { apiUrl } from "../../../lib/apiBase";
 import { useQuery } from "@tanstack/react-query";
 import type {
   ExecutionReportApiResponse,
@@ -13,7 +14,7 @@ async function fetchExecutionReport(
 ): Promise<ExecutionReportPayload> {
   const params = new URLSearchParams({ source });
   if (symbol?.trim()) params.set("symbol", symbol.trim());
-  const res = await fetch(`/api/reports/execution?${params}`);
+  const res = await fetch(apiUrl(`/api/reports/execution?${params}`));
   if (!res.ok) {
     throw new Error("Failed to load execution report");
   }

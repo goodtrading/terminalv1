@@ -1,3 +1,4 @@
+import { apiUrl } from "../lib/apiBase";
 import { useEffect, useState } from "react";
 
 type RuntimeFeatures = {
@@ -17,7 +18,7 @@ export function useRuntimeFeatures(): RuntimeFeatures {
 
     async function loadRuntimeFeatures() {
       try {
-        const res = await fetch("/api/runtime/features", { credentials: "include" });
+        const res = await fetch(apiUrl("/api/runtime/features"), { credentials: "include" });
         if (!res.ok) throw new Error(`features ${res.status}`);
         const data = (await res.json()) as { heatmapEnabled?: unknown };
         if (!cancelled) {

@@ -1,3 +1,4 @@
+import { apiUrl } from "../../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TerminalPanel } from "../TerminalPanel";
@@ -184,7 +185,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
 
   const loadStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/execution/status");
+      const res = await fetch(apiUrl("/api/execution/status"));
       if (!res.ok) return;
       const data = (await res.json()) as {
         liveTradingEnabled: boolean;
@@ -253,7 +254,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
   const { data: paperSettings } = useQuery<PaperTradingSettings>({
     queryKey: ["/api/paper/settings"],
     queryFn: async () => {
-      const res = await fetch("/api/paper/settings");
+      const res = await fetch(apiUrl("/api/paper/settings"));
       if (!res.ok) throw new Error("Paper settings failed");
       return res.json() as Promise<PaperTradingSettings>;
     },
@@ -289,7 +290,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
   } = useQuery<PaperAccountSnapshot>({
     queryKey: ["/api/paper/account"],
     queryFn: async () => {
-      const res = await fetch("/api/paper/account");
+      const res = await fetch(apiUrl("/api/paper/account"));
       if (!res.ok) throw new Error("Paper account sync failed");
       const json = (await res.json()) as PaperAccountSnapshot;
       if (
@@ -312,7 +313,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
   }>({
     queryKey: ["/api/paper/orders"],
     queryFn: async () => {
-      const res = await fetch("/api/paper/orders");
+      const res = await fetch(apiUrl("/api/paper/orders"));
       if (!res.ok) throw new Error("Paper orders sync failed");
       return res.json() as Promise<{ orders: PaperOrderSnapshot[] }>;
     },
@@ -326,7 +327,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
   }>({
     queryKey: ["/api/paper/position"],
     queryFn: async () => {
-      const res = await fetch("/api/paper/position");
+      const res = await fetch(apiUrl("/api/paper/position"));
       if (!res.ok) throw new Error("Paper position sync failed");
       return res.json() as Promise<{ position: PaperPositionSnapshot | null }>;
     },
@@ -355,7 +356,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
   }>({
     queryKey: ["/api/paper/trades"],
     queryFn: async () => {
-      const res = await fetch("/api/paper/trades");
+      const res = await fetch(apiUrl("/api/paper/trades"));
       if (!res.ok) throw new Error("Paper trades sync failed");
       return res.json() as Promise<{ trades: PaperTradeLedgerSnapshot[] }>;
     },
@@ -458,7 +459,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
         }
         previewBody = built.payload;
       }
-      const res = await fetch(url, {
+      const res = await fetch(apiUrl(url), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(previewBody),
@@ -510,7 +511,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
         setPaperMessage(built.error);
         return;
       }
-      const res = await fetch("/api/paper/submit", {
+      const res = await fetch(apiUrl("/api/paper/submit"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(built.payload),
@@ -553,7 +554,7 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
     setActionLoading(true);
     setPaperMessage(null);
     try {
-      const res = await fetch(path, { method: "POST" });
+      const res = await fetch(apiUrl(path), { method: "POST" });
       const data = await res.json();
       setPaperMessage(data.message ?? successMsg);
       await refetchPaper();

@@ -1,3 +1,4 @@
+import { apiUrl } from "../../../lib/apiBase";
 import {
   createContext,
   useCallback,
@@ -249,7 +250,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
   const refreshBrokerStatus = useCallback(async () => {
     setLoginStatusLoading(true);
     try {
-      const res = await fetch("/api/broker/bingx/login-status");
+      const res = await fetch(apiUrl("/api/broker/bingx/login-status"));
       if (!res.ok) throw new Error("Failed to load broker login status");
       const data = (await res.json()) as BingxLoginStatusResponse;
       setLoginStatus(data);
@@ -490,7 +491,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
     );
 
     try {
-      const res = await fetch("/api/broker/bingx/login-status");
+      const res = await fetch(apiUrl("/api/broker/bingx/login-status"));
       if (!res.ok) throw new Error("Broker login status unavailable");
       const data = (await res.json()) as BingxLoginStatusResponse;
       setLoginStatus(data);
@@ -736,7 +737,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
 
   const simulateBingXDemoConnection = useCallback(async () => {
     try {
-      const res = await fetch("/api/broker/bingx/login-status");
+      const res = await fetch(apiUrl("/api/broker/bingx/login-status"));
       if (!res.ok) return;
       const data = (await res.json()) as BingxLoginStatusResponse;
       setLoginStatus(data);

@@ -1,3 +1,4 @@
+import { apiUrl } from "../../lib/apiBase";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -412,7 +413,7 @@ const viewMode: OptionsViewMode = "PRO";
       const params = new URLSearchParams({ currency });
       if (selectedExpiry) params.append("expiry", selectedExpiry);
       
-      const response = await fetch(`/api/options/deribit/book?${params}`);
+      const response = await fetch(apiUrl(`/api/options/deribit/book?${params}`));
       if (!response.ok) {
         throw new Error("Failed to fetch options book");
       }
@@ -937,7 +938,7 @@ const viewMode: OptionsViewMode = "PRO";
     const params = new URLSearchParams({
       instruments: visibleInstrumentNames.join(","),
     });
-    const source = new EventSource(`/api/options/deribit/top-of-book/stream?${params}`);
+    const source = new EventSource(apiUrl(`/api/options/deribit/top-of-book/stream?${params}`));
     let closed = false;
 
     const handleTopOfBook = (event: Event) => {
@@ -985,7 +986,7 @@ const viewMode: OptionsViewMode = "PRO";
         return { generatedAt: Date.now(), tickers: {}, errors: [] };
       }
       
-      const response = await fetch("/api/options/deribit/tickers", {
+      const response = await fetch(apiUrl("/api/options/deribit/tickers"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1017,7 +1018,7 @@ const viewMode: OptionsViewMode = "PRO";
       const params = new URLSearchParams({
         instruments: visibleInstrumentNames.join(","),
       });
-      const response = await fetch(`/api/options/deribit/top-of-book?${params}`);
+      const response = await fetch(apiUrl(`/api/options/deribit/top-of-book?${params}`));
       if (!response.ok) {
         return { serverNow: Date.now(), timestamp: Date.now(), staleMs: 5000, items: {} };
       }

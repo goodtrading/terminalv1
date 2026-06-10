@@ -1,3 +1,4 @@
+import { apiUrl } from "../lib/apiBase";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -151,7 +152,7 @@ export function useLiquidityHeatmapFeed(
   const { data: ticker } = useQuery({
     queryKey: ["flows-ticker", symbol],
     queryFn: async () => {
-      const res = await fetch(`/api/market/ticker?symbol=${encodeURIComponent(symbol)}`);
+      const res = await fetch(apiUrl(`/api/market/ticker?symbol=${encodeURIComponent(symbol)}`));
       if (!res.ok) throw new Error("Ticker failed");
       return res.json() as { price?: number; last?: number };
     },
@@ -311,7 +312,7 @@ export function useLiquidityHeatmapFeed(
 
     const poll = async () => {
       try {
-        const res = await fetch(endpoint);
+        const res = await fetch(apiUrl(endpoint));
         if (!res.ok) throw new Error(`Orderbook ${res.status}`);
         const raw = (await res.json()) as RawBookResponse;
         if (cancelled) return;
@@ -442,7 +443,7 @@ export function useLiquidityHeatmapFeed(
           endTime: String(endMs),
           limit: "2000",
         });
-        const res = await fetch(`/api/market/agg-trades?${params}`);
+        const res = await fetch(apiUrl(`/api/market/agg-trades?${params}`));
         if (!res.ok || cancelled) return;
         const rows = (await res.json()) as unknown[];
         if (!Array.isArray(rows)) {
@@ -488,7 +489,7 @@ export function useLiquidityHeatmapFeed(
       });
       const url = `/api/market/agg-trades/stream?${params}`;
       setSseUrl(url);
-      es = new EventSource(url);
+      es = new EventSource(apiUrl(url));
 
       es.addEventListener("open", () => {
         const isReconnect = hadStreamConnected;

@@ -1,4 +1,5 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { apiUrl } from "../../lib/apiBase";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartContextMenu, type ChartContextMenuAction } from "./chart/ChartContextMenu";
 import { ChartSettingsModal } from "./chart/ChartSettingsModal";
 import { ChartTimeframeSelector } from "./chart/ChartTimeframeSelector";
@@ -317,7 +318,7 @@ export function MainChart({
   const { data: ticker, error: tickerError } = useQuery({
     queryKey: ["btc-ticker"],
     queryFn: async () => {
-      const res = await fetch("/api/market/ticker?symbol=BTCUSDT");
+      const res = await fetch(apiUrl("/api/market/ticker?symbol=BTCUSDT"));
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.details || "Ticker fetch failed");
@@ -372,7 +373,7 @@ export function MainChart({
   const { data: rawOrderBook } = useQuery({
     queryKey: ["orderbook-raw"],
     queryFn: async () => {
-      const res = await fetch("/api/orderbook/raw");
+      const res = await fetch(apiUrl("/api/orderbook/raw"));
       if (!res.ok) {
         throw new Error("Failed to fetch raw order book");
       }
@@ -392,7 +393,7 @@ export function MainChart({
     const { data: ticker } = useQuery({
       queryKey: ["btc-ticker"],
       queryFn: async () => {
-        const res = await fetch("/api/market/ticker?symbol=BTCUSDT");
+        const res = await fetch(apiUrl("/api/market/ticker?symbol=BTCUSDT"));
         if (!res.ok) {
           const err = await res.json();
           throw new Error(err.details || "Ticker fetch failed");

@@ -1,3 +1,4 @@
+import { apiUrl } from "../../../lib/apiBase";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -48,7 +49,7 @@ export function TradeEditModal({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/paper/trades/${encodeURIComponent(trade.id)}`, {
+      const res = await fetch(apiUrl(`/api/paper/trades/${encodeURIComponent(trade.id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

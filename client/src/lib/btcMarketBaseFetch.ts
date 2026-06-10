@@ -1,4 +1,5 @@
 import type { MarketCandle } from "@/lib/marketCandleTypes";
+import { apiUrl } from "@/lib/apiBase";
 import { buildMarketCandlesUrl } from "@shared/candleLimits";
 
 export type BtcMarketBasePack = {
@@ -54,7 +55,7 @@ export async function fetchMarketCandles(
 }
 
 async function fetchNormalized(url: string): Promise<MarketCandle[]> {
-  const res = await fetch(url);
+  const res = await fetch(apiUrl(url));
   if (!res.ok) throw new Error(`Candles fetch failed: ${res.status}`);
   const raw = await res.json();
   if (!Array.isArray(raw)) return [];

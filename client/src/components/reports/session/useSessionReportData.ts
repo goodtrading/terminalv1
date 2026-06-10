@@ -1,3 +1,4 @@
+import { apiUrl } from "../../../lib/apiBase";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTerminalState } from "@/hooks/useTerminalState";
@@ -35,7 +36,7 @@ export function useSessionReportData() {
     queryKey: ["/api/reports/session-narrative", narrativeSource],
     queryFn: async (): Promise<SessionExecutionNarrative | null> => {
       const params = new URLSearchParams({ source: narrativeSource });
-      const res = await fetch(`/api/reports/session-narrative?${params}`);
+      const res = await fetch(apiUrl(`/api/reports/session-narrative?${params}`));
       if (!res.ok) return null;
       const body = (await res.json()) as SessionNarrativeApiResponse;
       return body.narrative ?? null;

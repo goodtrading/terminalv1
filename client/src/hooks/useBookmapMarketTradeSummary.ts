@@ -1,3 +1,4 @@
+import { apiUrl } from "../lib/apiBase";
 import { useQuery } from "@tanstack/react-query";
 import { parseRawTradeEvent } from "@/components/flows/tradeFeedParse";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
@@ -60,7 +61,7 @@ export function useBookmapMarketTradeSummary(
         endTime: String(endMs),
         limit: "2000",
       });
-      const res = await fetch(`/api/market/agg-trades?${params}`);
+      const res = await fetch(apiUrl(`/api/market/agg-trades?${params}`));
       if (!res.ok) throw new Error(`Trades ${res.status}`);
       const rows = (await res.json()) as unknown[];
       return buildSummary(Array.isArray(rows) ? rows : []);

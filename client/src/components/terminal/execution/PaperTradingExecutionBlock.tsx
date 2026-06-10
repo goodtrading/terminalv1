@@ -1,3 +1,4 @@
+import { apiUrl } from "../../../lib/apiBase";
 import { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
@@ -110,7 +111,7 @@ export function PaperTradingExecutionBlock({
   const { data: ticker } = useQuery<{ price: number; timestamp?: number }>({
     queryKey: ["btc-ticker", "paper-ticket"],
     queryFn: async () => {
-      const res = await fetch("/api/market/ticker?symbol=BTCUSDT");
+      const res = await fetch(apiUrl("/api/market/ticker?symbol=BTCUSDT"));
       if (!res.ok) throw new Error("Ticker unavailable");
       return res.json() as Promise<{ price: number; timestamp?: number }>;
     },

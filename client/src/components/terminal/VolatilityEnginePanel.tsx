@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { useTerminalState } from "@/hooks/useTerminalState";
+import { apiUrl } from "@/lib/apiBase";
 import { buildMarketCandlesUrl } from "@shared/candleLimits";
 import {
   calculateVolatilityEngine,
@@ -47,7 +48,7 @@ function formatMovePts(n: number): string {
 
 async function fetchVolEngineCandles(): Promise<ReturnType<typeof normalizeVolatilityCandles>> {
   const url = buildMarketCandlesUrl("BTCUSDT", "15m", VOL_CANDLE_LIMIT);
-  const res = await fetch(url);
+  const res = await fetch(apiUrl(url));
   if (!res.ok) return [];
   const raw = await res.json().catch(() => []);
   return normalizeVolatilityCandles(raw);
