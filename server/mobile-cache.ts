@@ -5,6 +5,12 @@
 
 import { getTerminalState } from "./terminal-state";
 import { adaptTerminalStateForMobileOptimized, OptimizedMobileTerminalState } from "./mobile-adapter-optimized";
+import { envInt, isProduction } from "./lib/runtimeEnv";
+
+const MOBILE_CACHE_REFRESH_MS = envInt(
+  "MOBILE_CACHE_REFRESH_MS",
+  isProduction ? 10_000 : 2_000,
+);
 
 interface CachedMobileState {
   data: OptimizedMobileTerminalState;
@@ -35,9 +41,9 @@ async function buildMobileState(): Promise<CachedMobileState> {
     const buildTime = Date.now() - startTime;
     totalBuilds++;
     totalBuildTime += buildTime;
-    
-    console.log(`[CACHE] State built in ${buildTime}ms (avg: ${(totalBuildTime/totalBuilds).toFixed(1)}ms)`);
-    
+    if (!isProduction) {
+      console.log(`[CACHE] State built in ${buildTime}ms (avg: ${(totalBuildTime/totalBuilds).toFixed(1)}ms)`);
+    }
     return {
       data: mobileState,
       timestamp: Date.now(),
@@ -52,7 +58,7 @@ async function buildMobileState(): Promise<CachedMobileState> {
  * Start background cache refresh every 2 seconds
  */
 export function startMobileCache(): void {
-  console.log("[CACHE] Starting mobile state cache (2s refresh)");
+  console.log(`[CACHE] Starting mobile state cache (${MOBILE_CACHE_REFRESH_MS}ms refresh)`);
   
   // Initial build
   buildMobileState().then(state => {
@@ -69,7 +75,7 @@ export function startMobileCache(): void {
         console.error("[CACHE] Failed to refresh cache:", error);
       }
     }
-  }, 2000);
+  }, MOBILE_CACHE_REFRESH_MS);
 }
 
 /**

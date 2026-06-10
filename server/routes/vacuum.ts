@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { liquidityVacuumEngine, VacuumEngineInput } from "../lib/liquidityVacuumEngine";
+import { getInternalApiBaseUrl } from "../lib/runtimeEnv";
 
 const router = Router();
+const internalApiBase = () => getInternalApiBaseUrl();
 
 // Get vacuum analysis
 router.get("/vacuum", async (req, res) => {
@@ -58,7 +60,7 @@ router.get("/vacuum", async (req, res) => {
 // Helper functions to fetch market data
 async function fetchMarketState() {
   try {
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:3000'}/api/market-state`);
+    const response = await fetch(`${internalApiBase()}/api/market-state`);
     if (!response.ok) return null;
     return await response.json();
   } catch (error) {
@@ -69,7 +71,7 @@ async function fetchMarketState() {
 
 async function fetchOptionsPositioning() {
   try {
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:3000'}/api/options-positioning`);
+    const response = await fetch(`${internalApiBase()}/api/options-positioning`);
     if (!response.ok) return null;
     return await response.json();
   } catch (error) {
@@ -80,7 +82,7 @@ async function fetchOptionsPositioning() {
 
 async function fetchHeatmapData() {
   try {
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:3000'}/api/liquidity-heatmap`);
+    const response = await fetch(`${internalApiBase()}/api/liquidity-heatmap`);
     if (!response.ok) return null;
     return await response.json();
   } catch (error) {
@@ -91,7 +93,7 @@ async function fetchHeatmapData() {
 
 async function fetchOrderbookData() {
   try {
-    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:3000'}/api/orderbook/raw`);
+    const response = await fetch(`${internalApiBase()}/api/orderbook/raw`);
     if (!response.ok) return null;
     const data = await response.json();
     
