@@ -1,0 +1,16 @@
+# GoodTrading — single-service deploy (Express API + static Vite client)
+# Docs: MIGRATION_RAILWAY_NEW_ACCOUNT.md
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "node scripts/prebuild-railway.mjs && npm ci && npm run build"
+
+[build.env]
+VITE_CACHE_DIR = "/tmp/goodtrading-vite-cache"
+
+[deploy]
+startCommand = "npm run start"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
