@@ -30,6 +30,10 @@ import {
 } from "./bookmapExecutionOrderOverlay";
 import { HEATMAP_PAD } from "./bookmapHeatmapRenderer";
 import { usePaperTradeOverlay } from "@/components/terminal/paperChart/usePaperTradeOverlay";
+import {
+  desktopBookmapFeedEnabled,
+  useDesktopBookmapFeed,
+} from "@/hooks/useDesktopBookmapFeed";
 import { useLiquidityHeatmapFeed } from "@/hooks/useLiquidityHeatmapFeed";
 import {
   BOOKMAP_ENGINE_PRICE_RANGE_PCT,
@@ -718,10 +722,12 @@ export function LiquidityHeatmapPanel({
     priceRangePct: number;
   }>({ priceRangePct: BOOKMAP_ENGINE_PRICE_RANGE_PCT });
 
+  const useDesktopLocalBookmap = desktopBookmapFeedEnabled;
+
   const composite = useBookmapCompositeState({
     symbol,
     exchange: "binance",
-    enabled: USE_BOOKMAP_ENGINE,
+    enabled: USE_BOOKMAP_ENGINE && !useDesktopLocalBookmap,
     includeStale: true,
     priceRangePct: engineFetchBounds.priceRangePct,
     priceMin: engineFetchBounds.priceMin,
@@ -741,17 +747,17 @@ export function LiquidityHeatmapPanel({
     activeDomMarket,
     activeTradeMarket,
     effectiveSource,
-    spotAvailable,
+    spotAvailable: remoteSpotAvailable,
     perpAvailable,
-    effectiveSpot,
+    effectiveSpot: remoteEffectiveSpot,
     effectivePerp,
-    primaryHeatmapState,
+    primaryHeatmapState: remotePrimaryHeatmapState,
     overlayHeatmapState,
-    effectiveDomState,
-    waitingMarkets,
-    hasRenderableHeatmap,
-    usingCachedPrimary,
-    primaryQuery,
+    effectiveDomState: remoteEffectiveDomState,
+    waitingMarkets: remoteWaitingMarkets,
+    hasRenderableHeatmap: remoteHasRenderableHeatmap,
+    usingCachedPrimary: remoteUsingCachedPrimary,
+    primaryQuery: remotePrimaryQuery,
     spotAgeMs,
     perpAgeMs,
     spotDataUpdatedAt,
@@ -771,6 +777,36 @@ export function LiquidityHeatmapPanel({
       }),
     [paperTrade.paperActive, paperTrade.openLimitOrders, paperTrade.overlay],
   );
+
+  const desktopFeed = useDesktopBookmapFeed(symbol, useDesktopLocalBookmap, {
+    tradeMarket: activeTradeMarket,
+    orderbookMarket: activeDomMarket,
+  });
+
+  const primaryHeatmapState = desktopFeed.enabled
+    ? desktopFeed.bookmapState
+    : remotePrimaryHeatmapState;
+  const effectiveSpot = desktopFeed.enabled
+    ? desktopFeed.bookmapState
+    : remoteEffectiveSpot;
+  const effectiveDomState = desktopFeed.enabled
+    ? desktopFeed.bookmapState
+    : remoteEffectiveDomState;
+  const spotAvailable = desktopFeed.enabled
+    ? Boolean(desktopFeed.bookmapState)
+    : remoteSpotAvailable;
+  const hasRenderableHeatmap = desktopFeed.enabled
+    ? Boolean(desktopFeed.bookmapState?.heatmapCells.length)
+    : remoteHasRenderableHeatmap;
+  const usingCachedPrimary = desktopFeed.enabled ? false : remoteUsingCachedPrimary;
+  const waitingMarkets = desktopFeed.enabled ? [] : remoteWaitingMarkets;
+  const primaryQuery = desktopFeed.enabled ? desktopFeed.query : remotePrimaryQuery;
+
+  const remoteFeed = useLiquidityHeatmapFeed(symbol, !useDesktopLocalBookmap, {
+    tradeMarket: activeTradeMarket,
+    orderbookMarket: activeDomMarket,
+  });
+  const feed = desktopFeed.enabled ? desktopFeed : remoteFeed;
 
   const {
     getSnapshots,
@@ -793,10 +829,7 @@ export function LiquidityHeatmapPanel({
     orderbookMarket: orderbookFeedMarket,
     orderbookAgeMs,
     orderbookReceivedAt,
-  } = useLiquidityHeatmapFeed(symbol, true, {
-    tradeMarket: activeTradeMarket,
-    orderbookMarket: activeDomMarket,
-  });
+  } = feed;
 
   const bookmapEngineLoading = primaryQuery.isLoading;
   const bookmapEngineFetching = primaryQuery.isFetching;
