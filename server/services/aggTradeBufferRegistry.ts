@@ -8,6 +8,7 @@ import WebSocket from "ws";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
 import { DEFAULT_BOOKMAP_MARKET, parseBookmapMarket } from "@shared/bookmapMarket";
 import { getSpotAggTradeWsBase, getSpotAggTradesRestUrls } from "./binanceSpotMarketData";
+import { isHeatmapEnabled } from "../lib/runtimeEnv";
 
 export type BufferedAggTrade = {
   id: string;
@@ -31,6 +32,7 @@ const COMPACT_AFTER_DROPPED = 40_000;
 const SEED_REST_LIMIT = 1000;
 const MAX_BUFFER_RETURN = 120_000;
 const DEBUG = process.env.NODE_ENV === "development";
+const HEATMAP_ENABLED = isHeatmapEnabled();
 const TRADE_STALE_MS = 3_000;
 const TRADE_HEALTH_MS = 2_000;
 /** Perp WS considered silent if no raw message in this window. */
@@ -827,31 +829,35 @@ function createAggTradeBuffer(config: BufferConfig) {
   };
 }
 
-const spotBuffer = createAggTradeBuffer({
-  market: "spot",
-  streamSymbol: "BTCUSDT",
-  wsBase: getSpotAggTradeWsBase(),
-  wsPath: "/ws/btcusdt@aggTrade",
-  restAggTradesUrls: getSpotAggTradesRestUrls(),
-  logTag: "AggTradeBuffer:spot",
-});
+const spotBuffer = HEATMAP_ENABLED
+  ? createAggTradeBuffer({
+      market: "spot",
+      streamSymbol: "BTCUSDT",
+      wsBase: getSpotAggTradeWsBase(),
+      wsPath: "/ws/btcusdt@aggTrade",
+      restAggTradesUrls: getSpotAggTradesRestUrls(),
+      logTag: "AggTradeBuffer:spot",
+    })
+  : null;
 
-const perpBuffer = createAggTradeBuffer({
-  market: "perp",
-  streamSymbol: "BTCUSDT",
-  wsBase: "wss://fstream.binance.com",
-  wsPath: "/ws/btcusdt@aggTrade",
-  restAggTradesUrls: ["https://fapi.binance.com/fapi/v1/aggTrades"],
-  logTag: "AggTradeBuffer:perp",
-});
+const perpBuffer = HEATMAP_ENABLED
+  ? createAggTradeBuffer({
+      market: "perp",
+      streamSymbol: "BTCUSDT",
+      wsBase: "wss://fstream.binance.com",
+      wsPath: "/ws/btcusdt@aggTrade",
+      restAggTradesUrls: ["https://fapi.binance.com/fapi/v1/aggTrades"],
+      logTag: "AggTradeBuffer:perp",
+    })
+  : null;
 
-const buffers: Record<BookmapMarketSource, ReturnType<typeof createAggTradeBuffer>> = {
-  spot: spotBuffer,
-  perp: perpBuffer,
+const buffers: Partial<Record<BookmapMarketSource, ReturnType<typeof createAggTradeBuffer>>> = {
+  spot: spotBuffer ?? undefined,
+  perp: perpBuffer ?? undefined,
 };
 
-function resolveBuffer(market?: unknown): ReturnType<typeof createAggTradeBuffer> {
-  return buffers[parseBookmapMarket(market)];
+function resolveBuffer(market?: unknown): ReturnType<typeof createAggTradeBuffer> | null {
+  return buffers[parseBookmapMarket(market)] ?? null;
 }
 
 export function queryBufferedAggTrades(
@@ -860,7 +866,7 @@ export function queryBufferedAggTrades(
   endMs: number,
   market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
 ): BufferedAggTrade[] {
-  return resolveBuffer(market).query(symbol, startMs, endMs);
+  return resolveBuffer(market)?.query(symbol, startMs, endMs) ?? [];
 }
 
 export function subscribeAggTradeBuffer(
@@ -868,14 +874,21 @@ export function subscribeAggTradeBuffer(
   listener: (trade: BufferedAggTrade) => void,
   market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
 ): () => void {
-  return resolveBuffer(market).subscribe(symbol, listener);
+  return resolveBuffer(market)?.subscribe(symbol, listener) ?? (() => {});
 }
 
 export function getBufferCoverage(
   symbol: string,
   market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
 ) {
-  return resolveBuffer(market).getCoverage(symbol);
+  return (
+    resolveBuffer(market)?.getCoverage(symbol) ?? {
+      connected: false,
+      oldestMs: null,
+      newestMs: null,
+      size: 0,
+    }
+  );
 }
 
 /** Stable buffer id for diagnostics (exchange:symbol:market). */
@@ -900,21 +913,70 @@ export function trackAggTradeSseClient(
 }
 
 export function getPerpTradesBufferHealth() {
-  return perpBuffer.getHealth("BTCUSDT");
+  return getTradesBufferHealth("BTCUSDT", "perp");
 }
 
 export function getTradesBufferHealth(
   symbol = "BTCUSDT",
   market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
 ) {
-  return resolveBuffer(market).getHealth(symbol);
+  return (
+    resolveBuffer(market)?.getHealth(symbol) ?? {
+      connected: false,
+      oldestMs: null,
+      newestMs: null,
+      size: 0,
+      bufferNewestAgeMs: null,
+      lastWsMessageAt: null,
+      lastWsMessageAgeMs: null,
+      lastAcceptedTradeAt: null,
+      latestTradeTs: null,
+      tradesInBuffer: 0,
+      bufferKey: aggTradeBufferKey(symbol, market),
+      reconnectCount: 0,
+      sseClients: 0,
+      lastTradePrice: null,
+      lastTradeSize: null,
+      lastTradeSide: null,
+      lastError: "HEATMAP_DISABLED",
+      lastRestSeedTs: null,
+      lastRestSeedAgeMs: null,
+      lastRestSeedFetchedCount: 0,
+      lastRestSeedAcceptedCount: 0,
+      lastRestSeedMode: null,
+    }
+  );
 }
 
 export function getAggTradeBufferState(
   symbol = "BTCUSDT",
   market: BookmapMarketSource,
 ) {
-  return resolveBuffer(market).getBufferState(symbol);
+  const m = parseBookmapMarket(market);
+  return (
+    resolveBuffer(m)?.getBufferState(symbol) ?? {
+      disabled: true,
+      key: aggTradeBufferKey(symbol, m),
+      market: m,
+      connected: false,
+      subscriberCount: m === "perp" ? perpSseClients : spotSseClients,
+      bufferCount: 0,
+      latestTradeTs: null,
+      latestTradeAgeMs: null,
+      lastWsMessageAt: null,
+      lastWsMessageAgeMs: null,
+      lastAcceptedTradeAt: null,
+      lastRestSeedAt: null,
+      lastRestSeedCount: 0,
+      lastRestSeedAcceptedCount: 0,
+      lastRestSeedMode: null,
+      oldestTradeTs: null,
+      coverageMs: null,
+      lastError: "HEATMAP_DISABLED",
+      reconnectCount: 0,
+      wsUrl: null,
+    }
+  );
 }
 
 export function getAllAggTradeBufferStates(symbol = "BTCUSDT") {
@@ -924,13 +986,13 @@ export function getAllAggTradeBufferStates(symbol = "BTCUSDT") {
   };
 }
 
-if (DEBUG) {
+if (DEBUG && HEATMAP_ENABLED) {
   setInterval(() => {
     const states = getAllAggTradeBufferStates("BTCUSDT");
     console.debug("[AGG_TRADE_BUFFER_STATE]", states);
     console.debug("[AGG_TRADE_PUSH_TRACE]", {
-      spot: spotBuffer.flushPushTrace(),
-      perp: perpBuffer.flushPushTrace(),
+      spot: spotBuffer?.flushPushTrace(),
+      perp: perpBuffer?.flushPushTrace(),
     });
   }, 2_000);
 }

@@ -14,6 +14,7 @@ import {
 } from "./bookmapEngine";
 import { recordBboFromOrderBook } from "./bboHistoryRegistry";
 import type { OrderBookLevel, OrderBookSnapshot } from "./orderbookService";
+import { isHeatmapEnabled } from "../lib/runtimeEnv";
 
 const WS_URL = "wss://fstream.binance.com/ws/btcusdt@depth";
 const REST_DEPTH_URL = "https://fapi.binance.com/fapi/v1/depth";
@@ -22,8 +23,9 @@ const DEBUG_ENABLED = process.env.NODE_ENV === "development";
 const STALE_MS = 3_000;
 const HEALTH_INTERVAL_MS = 1_500;
 const RECONNECT_MS = 5_000;
+const HEATMAP_ENABLED = isHeatmapEnabled();
 
-if (DEBUG_ENABLED) {
+if (HEATMAP_ENABLED && DEBUG_ENABLED) {
   console.debug("[OrderBookServicePerp] Using WebSocket URL:", WS_URL, "depth:", DEPTH_LEVELS);
 }
 
@@ -156,6 +158,7 @@ function logPerpHealth(reason?: string): void {
 }
 
 export async function initializePerpFullDepth(): Promise<void> {
+  if (!HEATMAP_ENABLED) return;
   const response = await fetch(`${REST_DEPTH_URL}?symbol=BTCUSDT&limit=${DEPTH_LEVELS}`);
   if (!response.ok) {
     throw new Error(`Perp REST depth failed: ${response.status}`);
@@ -192,6 +195,7 @@ export async function initializePerpFullDepth(): Promise<void> {
 }
 
 export async function resyncPerpOrderBook(reason: string): Promise<void> {
+  if (!HEATMAP_ENABLED) return;
   if (resyncInFlight) return;
   const now = Date.now();
   if (now - lastResyncAttemptMs < RESYNC_COOLDOWN_MS) return;
@@ -330,10 +334,12 @@ function runPerpLimitHistorySample(): void {
   });
 }
 
-connect();
-healthInterval = setInterval(runHealthCheck, HEALTH_INTERVAL_MS);
-if (BOOKMAP_HISTORY_SAMPLER_ENABLED) {
-  setInterval(runPerpLimitHistorySample, BOOKMAP_SNAPSHOT_SAMPLE_MS);
+if (HEATMAP_ENABLED) {
+  connect();
+  healthInterval = setInterval(runHealthCheck, HEALTH_INTERVAL_MS);
+  if (BOOKMAP_HISTORY_SAMPLER_ENABLED) {
+    setInterval(runPerpLimitHistorySample, BOOKMAP_SNAPSHOT_SAMPLE_MS);
+  }
 }
 
 export function getPerpOrderBook(): OrderBookSnapshot {

@@ -18,6 +18,7 @@ import {
   getSpotRestMirrors,
   shouldUseBinanceSpotVision,
 } from "./binanceSpotMarketData";
+import { isHeatmapEnabled } from "../lib/runtimeEnv";
 
 export interface OrderBookLevel {
   price: number;
@@ -38,8 +39,9 @@ const DEPTH_LEVELS = 1000; // Fetch 1000 levels per side for Bookmap
 const DEBUG_ENABLED = process.env.NODE_ENV === 'development';
 const STALE_MS = 10_000;
 const HEALTH_INTERVAL_MS = 5_000;
+const HEATMAP_ENABLED = isHeatmapEnabled();
 
-if (DEBUG_ENABLED || process.env.NODE_ENV === "production") {
+if (HEATMAP_ENABLED && (DEBUG_ENABLED || process.env.NODE_ENV === "production")) {
   console.log("[OrderBookService] Spot feed config:", {
     vision: shouldUseBinanceSpotVision(),
     wsUrl: WS_URL,
@@ -154,6 +156,7 @@ async function fetchSpotDepthFromRest(): Promise<{
 }
 
 export async function initializeFullDepth(): Promise<void> {
+  if (!HEATMAP_ENABLED) return;
   try {
     const depth = await fetchSpotDepthFromRest();
     const ts = Date.now();
@@ -202,6 +205,7 @@ export async function initializeFullDepth(): Promise<void> {
 }
 
 export async function resyncSpotOrderBook(reason: string): Promise<void> {
+  if (!HEATMAP_ENABLED) return;
   if (resyncInFlight) return resyncPromise ?? Promise.resolve();
   const now = Date.now();
   if (now - lastResyncAttemptMs < RESYNC_COOLDOWN_MS) return;
@@ -375,10 +379,12 @@ function runSpotLimitHistorySample(): void {
   });
 }
 
-connect();
-healthInterval = setInterval(runHealthCheck, HEALTH_INTERVAL_MS);
-if (BOOKMAP_HISTORY_SAMPLER_ENABLED) {
-  setInterval(runSpotLimitHistorySample, BOOKMAP_SNAPSHOT_SAMPLE_MS);
+if (HEATMAP_ENABLED) {
+  connect();
+  healthInterval = setInterval(runHealthCheck, HEALTH_INTERVAL_MS);
+  if (BOOKMAP_HISTORY_SAMPLER_ENABLED) {
+    setInterval(runSpotLimitHistorySample, BOOKMAP_SNAPSHOT_SAMPLE_MS);
+  }
 }
 
 /**

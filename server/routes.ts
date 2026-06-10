@@ -37,6 +37,7 @@ import { cachedFetch, getCacheSnapshots } from "./lib/ttlCache";
 import { startBookmapRailwayDataDiag } from "./services/bookmapRailwayDataDiag";
 import { getRecentSlowEndpoints } from "./lib/performanceMonitor";
 import { requireSaasAdmin } from "./middleware/saasAuth";
+import { isHeatmapEnabled } from "./lib/runtimeEnv";
 
 // Debug flags to prevent event-loop blocking from log spam.
 // Keep these false by default; enable locally when diagnosing.
@@ -54,6 +55,7 @@ const HEATMAP_CACHE_TTL_MS = 1_000;
 const TICKER_CACHE_TTL_MS = 1_000;
 const ORDERBOOK_RAW_CACHE_TTL_MS = 1_000;
 const CANDLES_CACHE_TTL_MS = 60_000;
+const HEATMAP_ENABLED = isHeatmapEnabled();
 
 const BINANCE_CONNECTIVITY_TIMEOUT_MS = 6_000;
 const OPTIONS_TOP_OF_BOOK_SSE_MIN_INTERVAL_MS = 500;
@@ -121,6 +123,42 @@ function isValidLiquidityHeatmapSnapshot(value: unknown): boolean {
       payload.bids.length > 0 &&
       payload.asks.length > 0,
   );
+}
+
+function buildDisabledBookmapPayload(symbol = "BTCUSDT", market = parseBookmapMarket(undefined)) {
+  return {
+    disabled: true,
+    reason: "HEATMAP_DISABLED",
+    message: "Heatmap disponible en GoodTrading Desktop",
+    symbol,
+    market,
+    exchange: "binance",
+    bids: [],
+    asks: [],
+    heatmapCells: [],
+    importantWalls: [],
+    structuralWalls: [],
+    majorWalls: [],
+    timestamp: Date.now(),
+    status: "disabled",
+    degraded: true,
+  };
+}
+
+function buildDisabledHeatmapPayload() {
+  return {
+    disabled: true,
+    reason: "HEATMAP_DISABLED",
+    message: "Heatmap disponible en GoodTrading Desktop",
+    liquidityHeatZones: [],
+    gammaAccelerationZones: [],
+    bids: [],
+    asks: [],
+    heatmapSummary: {
+      source: "disabled",
+      timestamp: Date.now(),
+    },
+  };
 }
 
 function parseInstrumentListParam(value: unknown): string[] {
@@ -219,10 +257,12 @@ async function probeBinanceDepth(
   }
 }
 
-// Initialize full depth on server start (spot = legacy default; perp = futures leg)
-initializeFullDepth().catch(console.error);
-initializePerpFullDepth().catch(console.error);
-startBookmapRailwayDataDiag();
+// Initialize full depth on server start only when Bookmap/heatmap is enabled.
+if (HEATMAP_ENABLED) {
+  initializeFullDepth().catch(console.error);
+  initializePerpFullDepth().catch(console.error);
+  startBookmapRailwayDataDiag();
+}
 
 // NOTE: Tests removed from auto-execution to prevent startup blocking
 // Use /api/vacuum/test and /api/scenarios/test endpoints for manual testing
@@ -246,6 +286,12 @@ export async function registerRoutes(
 ): Promise<Server> {
   const { registerDebugDbRoutes } = await import("./routes/debugDbRoutes");
   registerDebugDbRoutes(app);
+
+  app.get("/api/runtime/features", (_req: Request, res: Response) => {
+    res.json({
+      heatmapEnabled: HEATMAP_ENABLED,
+    });
+  });
 
   app.get("/api/system/performance", requireSaasAdmin, (_req: Request, res: Response) => {
     const memory = process.memoryUsage();
@@ -309,6 +355,21 @@ export async function registerRoutes(
     const source = (req.query.source as string)?.toLowerCase();
     const symbol = (req.query.symbol as string) || "BTCUSDT";
     const market = parseBookmapMarket(req.query.market);
+    if (!HEATMAP_ENABLED) {
+      return res.json({
+        disabled: true,
+        reason: "HEATMAP_DISABLED",
+        message: "Heatmap disponible en GoodTrading Desktop",
+        exchange: "disabled",
+        market,
+        bids: [],
+        asks: [],
+        timestamp: Date.now(),
+        source: "disabled",
+        status: "disabled",
+        degraded: true,
+      });
+    }
     const cacheKey = `orderbook:raw:${source ?? "default"}:${symbol}:${market}`;
     const krakenFallbackEnabled =
       String(process.env.ALLOW_KRAKEN_ORDERBOOK_FALLBACK ?? "").toLowerCase() === "true";
@@ -436,6 +497,16 @@ export async function registerRoutes(
   app.get("/api/bookmap/bbo-history", (req: Request, res: Response) => {
     const symbol = ((req.query.symbol as string) || "BTCUSDT").toUpperCase();
     const market = parseBookmapMarket(req.query.market);
+    if (!HEATMAP_ENABLED) {
+      return res.json({
+        symbol,
+        market,
+        disabled: true,
+        reason: "HEATMAP_DISABLED",
+        points: [],
+        serverTime: Date.now(),
+      });
+    }
     const startMs =
       req.query.startTime != null ? Number(req.query.startTime) : undefined;
     const endMs = req.query.endTime != null ? Number(req.query.endTime) : undefined;
@@ -465,6 +536,12 @@ export async function registerRoutes(
     const symbol = ((req.query.symbol as string) || "BTCUSDT").toUpperCase();
     const exchange = ((req.query.exchange as string) || "binance").toLowerCase();
     const market = parseBookmapMarket(req.query.market);
+    if (!HEATMAP_ENABLED) {
+      return res.json({
+        ...buildDisabledBookmapPayload(symbol, market),
+        exchange,
+      });
+    }
     const priceRangePct = req.query.priceRangePct
       ? Number(req.query.priceRangePct)
       : undefined;
@@ -981,6 +1058,24 @@ export async function registerRoutes(
     const symbolRaw = (req.query.symbol as string) || "BTCUSDT";
     const symbol = symbolRaw.replace(/[^A-Za-z0-9]/g, "").toUpperCase() || "BTCUSDT";
     const market = parseBookmapMarket(req.query.market);
+    if (!HEATMAP_ENABLED) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      res.write(
+        `event: disabled\ndata: ${JSON.stringify({
+          ok: false,
+          reason: "HEATMAP_DISABLED",
+          message: "Heatmap disponible en GoodTrading Desktop",
+          symbol,
+          market,
+        })}\n\n`,
+      );
+      res.end();
+      return;
+    }
     const sinceRaw = req.query.since != null ? Number(req.query.since) : NaN;
     const since = Number.isFinite(sinceRaw) ? Math.floor(sinceRaw) : Date.now() - 2_000;
 
@@ -1028,6 +1123,9 @@ export async function registerRoutes(
   });
 
   app.get("/api/liquidity/heatmap", async (_req, res) => {
+    if (!HEATMAP_ENABLED) {
+      return res.json(buildDisabledHeatmapPayload());
+    }
     try {
       const heatmap = await cachedFetch(
         "liquidity:heatmap",
