@@ -6,8 +6,12 @@
 import { storage } from "./storage";
 import { DeribitOptionsGateway } from "./deribit-gateway";
 import { MarketDataGateway } from "./market-gateway";
+import { envInt, isDev, isProduction } from "./lib/runtimeEnv";
 
-const REFRESH_INTERVAL_MS = 5 * 1000; // 5 seconds - make options/Vanna/Charm reactive
+const REFRESH_INTERVAL_MS = envInt(
+  "OPTIONS_ENGINE_REFRESH_MS",
+  isProduction ? 180_000 : 5_000,
+);
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -23,7 +27,9 @@ export async function refreshOptionsEngine(): Promise<void> {
       );
       return;
     }
-    console.log("[OptionsEngine] SPOT USADO:", spot);
+    if (isDev) {
+      console.log("[OptionsEngine] SPOT USADO:", spot);
+    }
 
     if (options.length === 0) {
       console.log("[OptionsEngine] No options data, keeping last state");
@@ -34,8 +40,10 @@ export async function refreshOptionsEngine(): Promise<void> {
 
     const totalGex = summary.totalGex ?? 0;
     const gammaFlip = summary.gammaFlip ?? null;
-    console.log("[OptionsEngine] GEX CALCULADO:", totalGex);
-    console.log("[OptionsEngine] GAMMA FLIP:", gammaFlip);
+    if (isDev) {
+      console.log("[OptionsEngine] GEX CALCULADO:", totalGex);
+      console.log("[OptionsEngine] GAMMA FLIP:", gammaFlip);
+    }
     const callWall = summary.callWall ?? 0;
     const putWall = summary.putWall ?? 0;
     const s = summary as any;
@@ -55,10 +63,12 @@ export async function refreshOptionsEngine(): Promise<void> {
       endStrike: z.end,
     }));
 
-    console.log("[OptionsEngine][PassToStorage]", {
-      totalVanna: s.totalVanna,
-      totalCharm: s.totalCharm,
-    });
+    if (isDev) {
+      console.log("[OptionsEngine][PassToStorage]", {
+        totalVanna: s.totalVanna,
+        totalCharm: s.totalCharm,
+      });
+    }
 
     storage.updateFromDeribitSummary(
       {
@@ -77,7 +87,7 @@ export async function refreshOptionsEngine(): Promise<void> {
       },
       spot
     );
-    console.log("[OptionsEngine] refresh success");
+    if (isDev) console.log("[OptionsEngine] refresh success");
   } catch (e) {
     console.log("[OptionsEngine] refresh failed:", e instanceof Error ? e.message : "unknown");
   }
@@ -86,7 +96,9 @@ export async function refreshOptionsEngine(): Promise<void> {
 export function startOptionsRefreshInterval(): void {
   if (refreshTimer) return;
   refreshTimer = setInterval(refreshOptionsEngine, REFRESH_INTERVAL_MS);
-  console.log("[OptionsEngine] refresh scheduler started (every 3 min)");
+  console.log(
+    `[OptionsEngine] refresh scheduler started (every ${Math.round(REFRESH_INTERVAL_MS / 1000)}s)`,
+  );
   setTimeout(() => refreshOptionsEngine(), 10000); // First refresh 10 sec after startup
 }
 

@@ -1600,65 +1600,44 @@ export async function registerRoutes(
 
   // --- Deribit Options Book Endpoint ---
   app.get("/api/options/deribit/book", async (req, res) => {
-    console.log("BOOK_ENDPOINT_VERSION_V4");
-    console.log("SERVER_TIME", new Date().toISOString());
-    console.log("[DERIBIT_OPTIONS_BOOK_FETCH] Request received");
-    try {
-      const currency = (req.query.currency as string)?.toUpperCase() || "BTC";
-      const expiry = req.query.expiry as string | undefined;
+    const startedAt = Date.now();
+    const currencyRaw = (req.query.currency as string)?.toUpperCase() || "BTC";
+    const expiry = req.query.expiry as string | undefined;
 
+    console.log("[DERIBIT_OPTIONS_BOOK_FETCH] Request received", {
+      currency: currencyRaw,
+      expiry: expiry ?? null,
+    });
+
+    if (!["BTC", "ETH"].includes(currencyRaw)) {
+      return res.status(400).json({
+        error: "INVALID_CURRENCY",
+        message: "Currency must be BTC or ETH",
+        details: "Currency must be BTC or ETH",
+      });
+    }
+
+    const currency = currencyRaw as "BTC" | "ETH";
+
+    const { fetchDeribitBookRaw, emptyDeribitOptionsBookPayload } =
+      await import("./lib/deribitOptionsBookApi");
+
+    try {
       console.log("[DERIBIT_OPTIONS_DEBUG] incoming query", { currency, expiry });
 
-      if (!["BTC", "ETH"].includes(currency)) {
-        return res.status(400).json({
-          error: "INVALID_CURRENCY",
-          details: "Currency must be BTC or ETH"
-        });
+      const { instruments, summaries, underlyingPrice: cachedUnderlyingPrice } =
+        await fetchDeribitBookRaw(currency);
+
+      let underlyingPrice = cachedUnderlyingPrice;
+      const summaryByInstrument = new Map<string, (typeof summaries)[number]>();
+      for (const summary of summaries) {
+        if (summary?.instrument_name) {
+          summaryByInstrument.set(summary.instrument_name, summary);
+        }
       }
-
-      // Fetch instruments and book summary from Deribit API
-      const [instrumentsResponse, summaryResponse] = await Promise.all([
-        fetch(`https://www.deribit.com/api/v2/public/get_instruments?currency=${currency}&kind=option&expired=false`),
-        fetch(`https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=${currency}&kind=option`)
-      ]);
-
-      if (!instrumentsResponse.ok || !summaryResponse.ok) {
-        throw new Error("Failed to fetch data from Deribit API");
-      }
-
-      const [instrumentsData, summaryData] = await Promise.all([
-        instrumentsResponse.json(),
-        summaryResponse.json()
-      ]);
-
-      if (instrumentsData.error || summaryData.error) {
-        throw new Error(instrumentsData.error?.message || summaryData.error?.message || "Deribit API error");
-      }
-
-      const instruments = instrumentsData.result || [];
-      const summaries = summaryData.result || [];
 
       console.log("[DERIBIT_OPTIONS_DEBUG] instruments count", instruments.length);
       console.log("[DERIBIT_OPTIONS_DEBUG] summaries count", summaries.length);
-
-      // Get underlying price from Deribit index price API
-      let underlyingPrice = null;
-      try {
-        const indexName = currency === "BTC" ? "btc_usd" : "eth_usd";
-        console.log("[OPTIONS_UNDERLYING_DEBUG] fetching Deribit index price for", indexName);
-        
-        const indexResponse = await fetch(`https://www.deribit.com/api/v2/public/get_index_price?index_name=${indexName}`);
-        const indexData = await indexResponse.json();
-        
-        if (indexData?.result?.index_price && Number.isFinite(indexData.result.index_price)) {
-          underlyingPrice = indexData.result.index_price;
-          console.log("[OPTIONS_UNDERLYING_DEBUG] Deribit index price found:", underlyingPrice);
-        } else {
-          console.log("[OPTIONS_UNDERLYING_DEBUG] Deribit index price response invalid:", indexData);
-        }
-      } catch (error) {
-        console.log("[OPTIONS_UNDERLYING_DEBUG] Deribit index price API failed:", error);
-      }
 
       // Helper function to normalize expiry formats
       const normalizeExpiry = (input: string | undefined | null): string | null => {
@@ -1769,7 +1748,7 @@ export async function registerRoutes(
             strikeMap.set(strike, {});
           }
           
-          const summary = summaries.find((s: any) => s.instrument_name === instrument.instrument_name);
+          const summary = summaryByInstrument.get(instrument.instrument_name);
           const bestBidPrice = toFiniteNumberOrNull(summary?.best_bid_price, summary?.bid_price);
           const bestAskPrice = toFiniteNumberOrNull(summary?.best_ask_price, summary?.ask_price);
           const bestBidSize = toFiniteNumberOrNull(
@@ -1970,16 +1949,32 @@ export async function registerRoutes(
         expiryCount: expiries.length,
         rowCount: rows.length,
         selectedExpiry,
-        underlyingPrice
+        underlyingPrice,
+        durationMs: Date.now() - startedAt,
       });
 
       res.json(response);
-    } catch (error: any) {
-      console.error("[DERIBIT_OPTIONS_BOOK_ERROR]", error);
-      res.status(500).json({
-        error: "DERIBIT_BOOK_ERROR",
-        details: error.message
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Unknown Deribit book error";
+      const isTimeout =
+        error instanceof Error &&
+        (error.name === "AbortError" || /aborted|timeout/i.test(message));
+      console.error("[DERIBIT_OPTIONS_BOOK_ERROR]", {
+        currency,
+        expiry: expiry ?? null,
+        isTimeout,
+        durationMs: Date.now() - startedAt,
+        message,
       });
+      res.status(isTimeout ? 504 : 503).json(
+        emptyDeribitOptionsBookPayload(currency, {
+          error: isTimeout ? "DERIBIT_TIMEOUT" : "DERIBIT_BOOK_ERROR",
+          message: isTimeout
+            ? "Deribit options request timed out"
+            : message,
+        }),
+      );
     }
   });
 

@@ -47,4 +47,8 @@ export type DeribitOptionsBookResponse = {
   expiries: string[];
   rows: DeribitOptionBookRow[];
   generatedAt: number;
+  /** Present when Deribit fetch failed but response is still usable */
+  error?: string;
+  message?: string;
+  degraded?: boolean;
 };

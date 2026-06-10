@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import type { DeribitOptionsBookResponse, DeribitOptionBookRow, DeribitOptionSide, DeribitOptionSizeStats } from "@shared/types/deribit-options";
 import {
@@ -21,6 +21,41 @@ type OptionsViewMode = "PRO" | "GT" | "BASIC";
 // Debug flags
 const OPTIONS_DERIVED_DEBUG = false;
 const OPTIONS_INTEL_DEBUG = false;
+const OPTIONS_BOOK_FETCH_TIMEOUT_MS = 20_000;
+
+function logOptionsLoadDiag(payload: Record<string, unknown>) {
+  if (import.meta.env.DEV) {
+    console.debug("[OPTIONS_LOAD_DIAG]", payload);
+  }
+}
+
+function normalizeDeribitBookPayload(
+  raw: unknown,
+  currency: string,
+): DeribitOptionsBookResponse {
+  const obj =
+    raw && typeof raw === "object"
+      ? (raw as Partial<DeribitOptionsBookResponse> & Record<string, unknown>)
+      : {};
+  const rows = Array.isArray(obj.rows)
+    ? obj.rows
+    : Array.isArray(obj.data)
+      ? (obj.data as DeribitOptionBookRow[])
+      : [];
+  const expiries = Array.isArray(obj.expiries) ? obj.expiries : [];
+
+  return {
+    currency: (obj.currency as "BTC" | "ETH") ?? (currency as "BTC" | "ETH"),
+    underlyingPrice: obj.underlyingPrice ?? null,
+    selectedExpiry: obj.selectedExpiry ?? null,
+    expiries,
+    rows,
+    generatedAt: typeof obj.generatedAt === "number" ? obj.generatedAt : Date.now(),
+    error: typeof obj.error === "string" ? obj.error : undefined,
+    message: typeof obj.message === "string" ? obj.message : undefined,
+    degraded: Boolean(obj.degraded),
+  };
+}
 
 // Local type for derived metrics per strike
 type OptionsDerivedRow = DeribitOptionBookRow & {
@@ -386,6 +421,8 @@ function mergeRequiredDefaultColumnIds(order: string[]): string[] {
 export default function DeribitOptionsBook() {
   const [currency, setCurrency] = useState<"BTC" | "ETH">("BTC");
   const [selectedExpiry, setSelectedExpiry] = useState<string>("");
+  /** Only changes on manual expiry pick or currency reset — avoids refetch loop on auto-select. */
+  const [fetchExpiry, setFetchExpiry] = useState<string>("");
   const [filter, setFilter] = useState<"ALL" | "ATM" | "RANGE" | "MOVEMENT" | "DISTANCE">("ATM");
   const [isColumnPanelOpen, setIsColumnPanelOpen] = useState(false);
   const [topOfBookStreamData, setTopOfBookStreamData] = useState<OptionTopOfBookPayload | null>(null);
@@ -406,25 +443,92 @@ export default function DeribitOptionsBook() {
 const viewMode: OptionsViewMode = "PRO";
 
   // Main data fetching
-  const { data: bookData, isLoading, error, refetch } = useQuery<DeribitOptionsBookResponse>({
-    queryKey: ["deribit-options-book", currency, selectedExpiry],
+  const { data: bookData, isLoading, isPending, isFetching, error, refetch } = useQuery<DeribitOptionsBookResponse>({
+    queryKey: ["deribit-options-book", currency, fetchExpiry],
     queryFn: async () => {
       const params = new URLSearchParams({ currency });
-      if (selectedExpiry) params.append("expiry", selectedExpiry);
-      
-      const response = await fetch(`/api/options/deribit/book?${params}`);
-      if (!response.ok) {
-        throw new Error("Failed to fetch options book");
+      if (fetchExpiry) params.append("expiry", fetchExpiry);
+
+      const url = `/api/options/deribit/book?${params}`;
+      const startedAt = performance.now();
+      logOptionsLoadDiag({
+        phase: "start",
+        url,
+        currency,
+        selectedExpiry: fetchExpiry || null,
+      });
+
+      try {
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(OPTIONS_BOOK_FETCH_TIMEOUT_MS),
+        });
+        const durationMs = Math.round(performance.now() - startedAt);
+
+        let raw: unknown;
+        try {
+          raw = await response.json();
+        } catch {
+          logOptionsLoadDiag({
+            phase: "error",
+            url,
+            status: response.status,
+            durationMs,
+            error: "invalid_json",
+          });
+          throw new Error("Invalid options book response");
+        }
+
+        const shape =
+          raw && typeof raw === "object" ? Object.keys(raw as object) : [];
+        const rowCount = Array.isArray((raw as { rows?: unknown[] })?.rows)
+          ? (raw as { rows: unknown[] }).rows.length
+          : 0;
+
+        logOptionsLoadDiag({
+          phase: "response",
+          url,
+          status: response.status,
+          durationMs,
+          shape,
+          rowCount,
+          degraded: Boolean((raw as { degraded?: boolean })?.degraded),
+          error: (raw as { error?: string })?.error ?? null,
+        });
+
+        const data = normalizeDeribitBookPayload(raw, currency);
+
+        if (!response.ok && !data.degraded && rowCount === 0) {
+          throw new Error(data.message || "Failed to fetch options book");
+        }
+
+        return data;
+      } catch (err) {
+        const durationMs = Math.round(performance.now() - startedAt);
+        const message = err instanceof Error ? err.message : String(err);
+        const isTimeout =
+          (err instanceof DOMException && err.name === "TimeoutError") ||
+          /timed out|timeout|aborted/i.test(message);
+
+        logOptionsLoadDiag({
+          phase: "error",
+          url,
+          durationMs,
+          error: message,
+          isTimeout,
+        });
+
+        throw new Error(isTimeout ? "Options request timed out" : message);
       }
-      const data = await response.json();
-      console.log("[OPTIONS_UI_RESPONSE_RAW]", data);
-      console.log("[OPTIONS_UI_UNDERLYING]", data?.underlyingPrice, typeof data?.underlyingPrice);
-      return data;
     },
     refetchInterval: CACHE_TTL_MS,
     staleTime: CACHE_TTL_MS,
     retry: false,
+    placeholderData: keepPreviousData,
   });
+
+  const isBookLoading = (isPending || isLoading) && !bookData;
+  const isBookEmpty =
+    !!bookData && (!Array.isArray(bookData.rows) || bookData.rows.length === 0);
 
   useEffect(() => {
     console.log("FIRST_ROW_FROM_API", bookData?.rows?.[0]);
@@ -441,18 +545,20 @@ const viewMode: OptionsViewMode = "PRO";
 
   // Get visible instrument names for enrichment (will be added after derivedRows is defined)
 
-  // Auto-select first expiry when data loads and reset on currency change
+  // Sync UI expiry from API without triggering a second fetch
   useEffect(() => {
-    if (bookData?.expiries.length) {
-      if (!selectedExpiry || !bookData.expiries.includes(selectedExpiry)) {
-        setSelectedExpiry(bookData.expiries[0]);
-      }
+    if (!bookData?.expiries.length) return;
+    const apiExpiry = bookData.selectedExpiry || bookData.expiries[0];
+    if (!apiExpiry) return;
+    if (!selectedExpiry || !bookData.expiries.includes(selectedExpiry)) {
+      setSelectedExpiry(apiExpiry);
     }
   }, [bookData, selectedExpiry]);
 
-  // Reset selected expiry when currency changes
+  // Reset expiry fetch when currency changes
   useEffect(() => {
     setSelectedExpiry("");
+    setFetchExpiry("");
   }, [currency]);
 
   const formatNumber = (value: number | null | undefined, decimals: number = 2): string => {
@@ -2459,7 +2565,10 @@ const viewMode: OptionsViewMode = "PRO";
             {bookData.expiries.map(expiry => (
               <button
                 key={expiry}
-                onClick={() => setSelectedExpiry(expiry)}
+                onClick={() => {
+                  setSelectedExpiry(expiry);
+                  setFetchExpiry(expiry);
+                }}
                 className={cn(
                   "px-2 py-1 text-xs font-medium border whitespace-nowrap transition-colors",
                   selectedExpiry === expiry
@@ -2540,14 +2649,30 @@ const viewMode: OptionsViewMode = "PRO";
               </div>
 
       {/* Loading State */}
-      {isLoading && (
+      {isBookLoading && (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-terminal-muted text-sm">Loading options data...</div>
         </div>
       )}
 
+      {isFetching && !isBookLoading && bookData && (
+        <div className="px-4 py-1 text-[10px] text-terminal-muted border-b border-terminal-border/40">
+          Refreshing options book…
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!isBookLoading && !error && isBookEmpty && (
+        <div className="flex-1 flex flex-col items-center justify-center gap-1">
+          <div className="text-terminal-muted text-sm">No options data available</div>
+          {bookData?.message && (
+            <div className="text-terminal-muted/70 text-xs">{bookData.message}</div>
+          )}
+        </div>
+      )}
+
       {/* Options Table */}
-      {!isLoading && bookData && (
+      {!isBookLoading && !isBookEmpty && bookData && (
         <div className="flex-1 overflow-auto">
           <div className="min-w-[1400px]">
             <table className="w-full border-collapse">
