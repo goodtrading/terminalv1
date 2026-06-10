@@ -4,6 +4,7 @@ import { getSpotOrderBookHealth } from "./orderbookService";
 import { getPerpOrderBookHealth } from "./orderbookServicePerp";
 import { getBookmapEngine } from "./bookmapEngine";
 import { getAggTradeBufferState, getTradesBufferHealth } from "./aggTradeBufferRegistry";
+import { shouldEnableBookmapRailwayDiag } from "../lib/runtimeEnv";
 
 const DIAG_INTERVAL_MS = 2_000;
 let lastDiagAt = 0;
@@ -91,6 +92,7 @@ export function logBookmapRailwayDataDiag(selectedSource: BookmapMarketSource = 
 }
 
 export function startBookmapRailwayDataDiag(): void {
+  if (!shouldEnableBookmapRailwayDiag()) return;
   if (intervalStarted) return;
   intervalStarted = true;
   setInterval(() => logBookmapRailwayDataDiag("spot"), DIAG_INTERVAL_MS);

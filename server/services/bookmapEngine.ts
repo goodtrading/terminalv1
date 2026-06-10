@@ -487,11 +487,18 @@ export class BookmapEngine {
 
     if (size <= 0) {
       if (!existing) return;
-      if (existing.isImportant || existing.isStructural || existing.isMajor) {
-        existing.size = 0;
-        existing.stale = true;
-        existing.lastUpdateTs = ts;
-      } else {
+      existing.size = 0;
+      existing.stale = true;
+      existing.lastUpdateTs = ts;
+      const mid = this.estimateMidPrice();
+      const pct =
+        mid != null && mid > 0 ? (Math.abs(price - mid) / mid) * 100 : 100;
+      const preserveRestingFootprint =
+        isPreservedBookLevel(existing) ||
+        existing.maxSeenSize >= BOOKMAP_SAMPLE_MIN_BTC ||
+        (existing.maxSeenSize >= BOOKMAP_SAMPLE_NEAR_MID_MIN_BTC &&
+          pct <= 0.35);
+      if (!preserveRestingFootprint) {
         this.levels.delete(key);
       }
       return;
@@ -540,9 +547,7 @@ export class BookmapEngine {
 
   private updateHeatmapCell(price: number, side: BookSide, size: number, ts: number): void {
     if (size <= 0) return;
-
-    const timeBucket = Math.floor(ts / this.bucketMs) * this.bucketMs;
-    this.writeHeatmapCell(timeBucket, price, side, size, ts);
+    this.updateSamplerHeatmapCell(price, side, size, ts);
   }
 
   private writeHeatmapCell(

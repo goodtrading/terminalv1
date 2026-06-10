@@ -75,6 +75,52 @@ import {
   type HeatmapBand,
 } from "./bookmapBandTypes";
 import { bucketPrice } from "./domLadderUtils";
+import {
+  resolveLiveDomBookLevels,
+  resolveLiveDomPriorityConfig,
+  selectActiveLiveDomLevels,
+  type ActiveLiveDomLevel,
+  type LiveDomBookLevel,
+  type LiveDomSelectionResult,
+} from "./bookmapLiveDomPriority";
+import {
+  clampPulledRestingSpanEnds,
+  materializeRestingLiquidityHeatmapCells,
+  resolveRestingLiquidityWriteConfig,
+} from "./bookmapRestingLiquidity";
+import {
+  applyLifecycleChunkTextureMod,
+  blendLifecycleRunIntensity,
+  canCoalesceLifecycleTextureTier,
+  getLifecycleCellMeta,
+  recordLifecycleTexturePrepareStats,
+  type LifecycleTextureTier,
+} from "./bookmapLifecycleTextureIntegration";
+import {
+  baseTextureAlphaForIntensity,
+  BOOKMAP_BASE_TEXTURE_MIN_RENDER_INTENSITY,
+  classifyPassiveBaseTier,
+  BOOKMAP_BASE_TEXTURE_NEAR035_MIN_BTC,
+  classifyTextureSourceKind,
+  computeBaseVisualIntensity,
+  recordPassiveBaseTexturePrepareStats,
+  resolveTextureSourceKindForPrepared,
+  selectPassiveBaseTextureSources,
+  type TextureSourceKind,
+} from "./bookmapPassiveBaseTexture";
+import {
+  applyStableGapModulation,
+  BOOKMAP_VISUAL_FORCE_BOOKMAP_LIKE,
+  clampBookmapLikeRenderIntensity,
+  finalizeColorHierarchyStats,
+  nearTickPassiveMistAlpha,
+  passesNearTickPassiveMistRule,
+  resetBookmapVisualForceFrameStats,
+  recordBaseLongFlatSpanCount,
+  setNearTickPassiveMistCoverage,
+  shouldForceGranularBookmapTexture,
+} from "./bookmapVisualForceBookmapLike";
+import { dedupeLiveProjectionAgainstActiveDom } from "./bookmapLayerResponsibilities";
 
 /** P7.2 — granular historical limit-order texture (not merged into bands). */
 export const BOOKMAP_TEXTURE_MODE_ENABLED = true;
@@ -157,6 +203,18 @@ export type PreparedEngineCell = {
   /** First timeBucket of coalesced resting run. */
   runStartTimeBucket?: number;
   cellsInRun?: number;
+  /** P4.1 — lifecycle historical texture integration */
+  lifecycleHistorical?: boolean;
+  lifecycleActive?: boolean;
+  lifecyclePulled?: boolean;
+  lifecycleFootprint?: boolean;
+  lifecycleWall?: boolean;
+  lifecycleStrong?: boolean;
+  lifecycleTextureMod?: number;
+  lifecycleTextureTier?: LifecycleTextureTier;
+  lifecycleKey?: string;
+  /** P5 — passive base vs lifecycle vs wall */
+  textureSourceKind?: TextureSourceKind;
 };
 
 export type PreparedEngineTextureCell = PreparedEngineCell;
@@ -166,6 +224,16 @@ export type PreparedLiveProjectionLevel = {
   side: "bid" | "ask";
   sizeBtc: number;
   intensity: number;
+  /** Right-edge live DOM — never use historical stableL2 fill. */
+  isActiveLiveDom?: boolean;
+  liveDomSource?: "best" | "near-tick" | "top-dom" | "viewport-top" | "wall";
+  /** Rank-based right-side alpha (0.10–0.65). */
+  microScalpAlpha?: number;
+  selectionScore?: number;
+  /** Smoothed visual score from live DOM cache (0–1). */
+  liveDomVisualScore?: number;
+  liveDomColorTier?: "low" | "medium" | "strong" | "wall";
+  liveDomFadeAlpha?: number;
 };
 
 export type LiveProjectionPrepareStats = {
@@ -253,10 +321,15 @@ export type PreparedEngineRenderData = {
   /** P7.5 — current book levels projected into right-space (not historical cells). */
   liveProjectionLevels: PreparedLiveProjectionLevel[];
   liveProjectionStats: LiveProjectionPrepareStats;
+  /** Fast-updating top/near-tick subset — diagnostic only; rendered via liveProjectionLevels. */
+  activeDomBands: PreparedLiveProjectionLevel[];
+  liveDomSelection?: LiveDomSelectionResult;
   /** Micro scalping visual context — historical texture hierarchy only. */
   microScalpVisual?: MicroScalpVisualContext;
   /** DEV — historical color retention stats from last prepare pass. */
   historicalColorRetention?: HistoricalColorRetentionStats;
+  /** DEV — merged server + DOM-materialized heatmap cells for resting liquidity audit. */
+  restingLiquidityRawCells?: HeatmapCell[];
   /** DEV — historical lock audit from last prepare pass. */
   historicalColorLockAudit?: HistoricalColorLockAudit;
 };
@@ -276,7 +349,6 @@ const TIER_RANK: Record<EngineWallTier, number> = {
   structural: 2,
   major: 3,
 };
-const DOM_ANCHOR_MAX_LEVELS = 400;
 
 type WallLike = Pick<
   BookLevel,
@@ -331,94 +403,10 @@ function capCells(
   return [...mustKeep, ...rest.slice(0, budget)];
 }
 
-function currentBookAnchorCells(
-  state: BookmapState,
-  minPrice: number,
-  maxPrice: number,
-  heatmapBucketSize: number,
-): PreparedEngineCell[] {
-  const levels = currentBookAnchorLevels(
-    state,
-    minPrice,
-    maxPrice,
-    heatmapBucketSize,
-  );
-
-  if (!levels.length) return [];
-
-  const timeBucket =
-    Math.floor((state.timestamp || Date.now()) / BOOKMAP_ENGINE_BUCKET_MS) *
-    BOOKMAP_ENGINE_BUCKET_MS;
-
-  return levels.map((level) => ({
-    timeBucket,
-    price: level.price,
-    side: level.side,
-    intensity: 0,
-    isMajor: level.maxSeenSize >= WALL_MAJOR_BTC,
-    maxSizeInBucket: Math.max(level.size, level.maxSeenSize),
-  }));
-}
-
-function currentBookAnchorLevels(
-  state: BookmapState,
-  minPrice: number,
-  maxPrice: number,
-  bucketSize: number,
-): BookLevel[] {
-  const step = Math.max(1, bucketSize);
-  const byKey = new Map<string, BookLevel>();
-
-  for (const level of [...state.bids, ...state.asks]) {
-    const size = Math.max(level.size, level.maxSeenSize);
-    if (level.stale || size < WALL_IMPORTANT_BTC) continue;
-    if (level.price < minPrice || level.price > maxPrice) continue;
-
-    const price = bucketPrice(level.price, step);
-    const key = `${level.side}:${price}`;
-    const prev = byKey.get(key);
-    if (!prev) {
-      byKey.set(key, {
-        ...level,
-        price,
-        size: level.size,
-        maxSeenSize: size,
-        isImportant: size >= WALL_IMPORTANT_BTC,
-        isStructural: size >= WALL_STRUCTURAL_BTC,
-        isMajor: size >= WALL_MAJOR_BTC,
-      });
-      continue;
-    }
-
-    const maxSeenSize = Math.max(prev.maxSeenSize, size);
-    prev.size += level.size;
-    prev.maxSeenSize = maxSeenSize;
-    prev.firstSeenTs = Math.min(prev.firstSeenTs, level.firstSeenTs);
-    prev.lastUpdateTs = Math.max(prev.lastUpdateTs, level.lastUpdateTs);
-    prev.isImportant = prev.isImportant || maxSeenSize >= WALL_IMPORTANT_BTC;
-    prev.isStructural = prev.isStructural || maxSeenSize >= WALL_STRUCTURAL_BTC;
-    prev.isMajor = prev.isMajor || maxSeenSize >= WALL_MAJOR_BTC;
-    prev.stale = prev.stale && level.stale;
-  }
-
-  return Array.from(byKey.values())
-    .sort((a, b) => b.maxSeenSize - a.maxSeenSize)
-    .slice(0, DOM_ANCHOR_MAX_LEVELS);
-}
-
-function shouldIncludeLiveProjectionLevel(
-  sizeBtc: number,
-  price: number,
-  midPrice: number | null | undefined,
-): boolean {
-  if (sizeBtc >= BOOKMAP_LIVE_PROJECTION_MIN_MAJOR_BTC) return true;
-  if (midPrice != null && midPrice > 0 && sizeBtc >= BOOKMAP_LIVE_PROJECTION_MIN_NEAR_BTC) {
-    const pct = (Math.abs(price - midPrice) / midPrice) * 100;
-    if (pct <= BOOKMAP_LIVE_PROJECTION_NEAR_MID_1_PCT) return true;
-  }
-  if (sizeBtc >= BOOKMAP_LIVE_PROJECTION_MIN_MEDIUM_BTC) return true;
-  return false;
-}
+export type PrepareEngineRenderOptions = {
+  liveDomBook?: LiveDomBookLevel[] | null;
+  liveDomTimestamp?: number | null;
+};
 
 function prepareLiveBookProjection(
   state: BookmapState,
@@ -426,7 +414,15 @@ function prepareLiveBookProjection(
   maxPrice: number,
   spotPrice: number | null | undefined,
   visualScale: AdaptiveVisualScale,
-): { levels: PreparedLiveProjectionLevel[]; stats: LiveProjectionPrepareStats } {
+  verticalMode?: VerticalCompressionMode,
+  liveDomBook?: LiveDomBookLevel[] | null,
+  liveDomTimestamp?: number | null,
+): {
+  levels: PreparedLiveProjectionLevel[];
+  activeDomBands: PreparedLiveProjectionLevel[];
+  selection: LiveDomSelectionResult;
+  stats: LiveProjectionPrepareStats;
+} {
   const emptyStats = (
     overrides: Partial<LiveProjectionPrepareStats> = {},
   ): LiveProjectionPrepareStats => ({
@@ -444,69 +440,93 @@ function prepareLiveBookProjection(
   });
 
   if (!BOOKMAP_LIVE_PROJECTION_ENABLED) {
-    return { levels: [], stats: emptyStats({ liveProjectionEnabled: false }) };
+    const emptySelection: LiveDomSelectionResult = {
+      levels: [],
+      activeDomBands: [],
+      candidateCount: 0,
+      nearTickCount: 0,
+      topDomCount: 0,
+      wallCount: 0,
+      selectedLiveProjectionCount: 0,
+      selectedActiveDomBandCount: 0,
+      pullingDetectedCount: 0,
+      spoofingCandidateCount: 0,
+      bestBid: null,
+      bestAsk: null,
+      midPrice: null,
+      nearTickBidCount005: 0,
+      nearTickAskCount005: 0,
+      nearTickBidCount015: 0,
+      nearTickAskCount015: 0,
+      nearTickBidCount035: 0,
+      nearTickAskCount035: 0,
+      currentBookVisibleLevelsCount: 0,
+      topDomBidSize: 0,
+      topDomAskSize: 0,
+      largestDomBidPrices: [],
+      largestDomAskPrices: [],
+      largestDomBidSizes: [],
+      largestDomAskSizes: [],
+      missingTopDomLevelsCount: 0,
+      missingNearTickLevelsCount: 0,
+      estimatedCoveragePct: 0,
+    };
+    return {
+      levels: [],
+      activeDomBands: [],
+      selection: emptySelection,
+      stats: emptyStats({ liveProjectionEnabled: false }),
+    };
   }
 
-  const timeMax = state.timestamp || Date.now();
-  const startTime =
-    Math.floor(timeMax / BOOKMAP_ENGINE_BUCKET_MS) * BOOKMAP_ENGINE_BUCKET_MS;
+  const config = resolveLiveDomPriorityConfig(
+    verticalMode,
+    maxPrice - minPrice,
+  );
+  const bookLevels = resolveLiveDomBookLevels(state, liveDomBook, liveDomTimestamp);
+  const now = liveDomTimestamp ?? state.timestamp ?? Date.now();
 
   let currentBidLevelCount = 0;
   let currentAskLevelCount = 0;
-  for (const level of state.bids) {
-    if (!level.stale && level.size > 0) currentBidLevelCount += 1;
-  }
-  for (const level of state.asks) {
-    if (!level.stale && level.size > 0) currentAskLevelCount += 1;
+  for (const level of bookLevels) {
+    if (level.size > 0 && level.side === "bid") currentBidLevelCount += 1;
+    if (level.size > 0 && level.side === "ask") currentAskLevelCount += 1;
   }
 
-  const byKey = new Map<
-    string,
-    { price: number; side: "bid" | "ask"; sizeBtc: number }
-  >();
-  let projectedLevelsFilteredBySize = 0;
-  let projectedLevelsFilteredByPrice = 0;
+  const selection = selectActiveLiveDomLevels({
+    levels: bookLevels,
+    minPrice,
+    maxPrice,
+    midPrice: spotPrice,
+    config,
+    now,
+    mapIntensity: (sizeBtc, price, pct) => {
+      let intensity = mapTextureSizeToVisualIntensity(sizeBtc, visualScale);
+      if (config.mode === "micro" && pct <= 0.15) {
+        const nearBoost = pct <= 0.05 ? 1.35 : 1.12;
+        intensity = Math.min(
+          0.95,
+          Math.max(intensity * nearBoost, 0.06 + Math.min(0.22, sizeBtc * 0.04)),
+        );
+      }
+      return intensity;
+    },
+  });
 
-  for (const level of [...state.bids, ...state.asks]) {
-    if (level.stale || level.size <= 0) continue;
-    if (level.price < minPrice || level.price > maxPrice) {
-      projectedLevelsFilteredByPrice += 1;
-      continue;
-    }
-    const sizeBtc = level.size;
-    if (!shouldIncludeLiveProjectionLevel(sizeBtc, level.price, spotPrice)) {
-      projectedLevelsFilteredBySize += 1;
-      continue;
-    }
-    const bp = bucketPrice(level.price, BOOKMAP_TEXTURE_PRICE_BUCKET_USD);
-    const key = `${level.side}:${bp}`;
-    const prev = byKey.get(key);
-    if (!prev) {
-      byKey.set(key, { price: bp, side: level.side, sizeBtc });
-    } else {
-      prev.sizeBtc += sizeBtc;
-    }
-  }
+  const mapLevel = (row: ActiveLiveDomLevel): PreparedLiveProjectionLevel => ({
+    price: row.price,
+    side: row.side,
+    sizeBtc: row.sizeBtc,
+    intensity: row.intensity,
+    isActiveLiveDom: true,
+    liveDomSource: row.liveDomSource,
+    microScalpAlpha: row.microScalpAlpha,
+    selectionScore: row.selectionScore,
+  });
 
-  const bidPicked = Array.from(byKey.values())
-    .filter((row) => row.side === "bid")
-    .sort((a, b) => b.sizeBtc - a.sizeBtc)
-    .slice(0, BOOKMAP_LIVE_PROJECTION_MAX_PER_SIDE);
-  const askPicked = Array.from(byKey.values())
-    .filter((row) => row.side === "ask")
-    .sort((a, b) => b.sizeBtc - a.sizeBtc)
-    .slice(0, BOOKMAP_LIVE_PROJECTION_MAX_PER_SIDE);
-
-  const levels: PreparedLiveProjectionLevel[] = [...bidPicked, ...askPicked]
-    .map((row) => ({
-      price: row.price,
-      side: row.side,
-      sizeBtc: row.sizeBtc,
-      intensity: mapTextureSizeToVisualIntensity(row.sizeBtc, visualScale),
-    }))
-    .filter(
-      (row) => row.intensity >= BOOKMAP_LIVE_PROJECTION_MIN_RENDER_INTENSITY,
-    );
+  const levels: PreparedLiveProjectionLevel[] = selection.levels.map(mapLevel);
+  const activeDomBands: PreparedLiveProjectionLevel[] =
+    selection.activeDomBands.map(mapLevel);
 
   let minProjectedSizeBtc = 0;
   let maxProjectedSizeBtc = 0;
@@ -519,19 +539,31 @@ function prepareLiveBookProjection(
 
   const projectedBidLevelCount = levels.filter((l) => l.side === "bid").length;
   const projectedAskLevelCount = levels.filter((l) => l.side === "ask").length;
+  const projectedLevelsFilteredBySize = Math.max(
+    0,
+    selection.candidateCount - levels.length,
+  );
+
+  const liveDedup = dedupeLiveProjectionAgainstActiveDom(
+    levels,
+    activeDomBands,
+    config.priceBucketUsd,
+  );
 
   return {
-    levels,
+    levels: liveDedup.deduped,
+    activeDomBands,
+    selection,
     stats: emptyStats({
       currentBidLevelCount,
       currentAskLevelCount,
       projectedBidLevelCount,
       projectedAskLevelCount,
       projectedLevelsFilteredBySize,
-      projectedLevelsFilteredByPrice,
+      projectedLevelsFilteredByPrice: 0,
       minProjectedSizeBtc,
       maxProjectedSizeBtc,
-      liveProjectionStartTime: startTime,
+      liveProjectionStartTime: now,
     }),
   };
 }
@@ -636,22 +668,100 @@ function prepareTextureCells(
   midPrice: number | null | undefined,
   timeMax: number,
   maxCells: number,
+  viewportMaxSize?: number,
 ): {
   cells: PreparedEngineTextureCell[];
   filteredByIntensity: number;
   capHit: boolean;
+  cellsWithEndTime?: number;
+  cellsUsingSyntheticEndTime?: number;
 } {
-  const scored = cells.map((cell) => ({
-    ...cell,
-    intensity: mapTextureSizeToVisualIntensity(
+  const maxSize = Math.max(viewportMaxSize ?? 10, 1);
+  const scored = cells.map((cell) => {
+    const kind = resolveTextureSourceKindForPrepared(cell);
+    const sizeIntensity = mapTextureSizeToVisualIntensity(
       cell.maxSizeInBucket,
       visualScale,
-    ),
-  }));
+    );
 
-  const visible = scored.filter(
-    (c) => c.intensity >= BOOKMAP_TEXTURE_MIN_RENDER_INTENSITY,
-  );
+    if (kind === "lifecycle" && cell.lifecycleHistorical) {
+      const lifecycleIntensity = Math.max(
+        cell.intensity ?? 0,
+        sizeIntensity * 0.55,
+      );
+      const clampedLifecycle = clampBookmapLikeRenderIntensity({
+        intensity: lifecycleIntensity,
+        sourceKind: "lifecycle",
+        lifecycleTier: cell.lifecycleTextureTier,
+        isStructuralWall: cell.lifecycleWall && cell.maxSizeInBucket >= WALL_STRUCTURAL_BTC,
+        isMajorWall: cell.maxSizeInBucket >= WALL_MAJOR_BTC,
+      });
+      return {
+        ...cell,
+        textureSourceKind: "lifecycle" as const,
+        intensity: clampedLifecycle,
+        historicalRenderIntensity: Math.max(
+          cell.historicalRenderIntensity ?? 0,
+          cell.intensity ?? 0,
+          clampedLifecycle,
+        ),
+        historicalRenderAlphaFloor: Math.max(
+          cell.historicalRenderAlphaFloor ?? 0,
+          (cell.intensity ?? clampedLifecycle) * 0.45,
+        ),
+      };
+    }
+
+    const pct =
+      midPrice != null && midPrice > 0
+        ? (Math.abs(cell.price - midPrice) / midPrice) * 100
+        : 50;
+    const tier = classifyPassiveBaseTier(cell.maxSizeInBucket, pct);
+    let baseIntensity = computeBaseVisualIntensity({
+      sizeBtc: cell.maxSizeInBucket,
+      price: cell.price,
+      midPrice,
+      localRankScore: cell.localRankScore,
+      persistenceMs: cell.persistenceMs,
+      viewportMaxSize: maxSize,
+      tier,
+    });
+    const localRank = Math.min(1, cell.maxSizeInBucket / maxSize);
+    baseIntensity = clampBookmapLikeRenderIntensity({
+      intensity: baseIntensity,
+      sourceKind: kind === "wall" ? "wall" : "base",
+      tier,
+      localRankScore: localRank,
+      absoluteSizeScore: localRank,
+      topPercentile: localRank >= 0.95,
+    });
+    let baseAlpha = baseTextureAlphaForIntensity(baseIntensity, tier);
+    if (
+      BOOKMAP_VISUAL_FORCE_BOOKMAP_LIKE &&
+      pct <= 0.35 &&
+      passesNearTickPassiveMistRule(cell.maxSizeInBucket, cell.price, midPrice)
+    ) {
+      baseAlpha = Math.max(
+        baseAlpha,
+        nearTickPassiveMistAlpha(cell.price, midPrice, cell.maxSizeInBucket),
+      );
+    }
+    return {
+      ...cell,
+      textureSourceKind: kind === "wall" ? ("wall" as const) : ("base" as const),
+      intensity: baseIntensity,
+      dataIntensity: sizeIntensity,
+      historicalRenderIntensity: baseIntensity,
+      historicalRenderAlphaFloor: baseAlpha,
+    };
+  });
+
+  const minRender =
+    scored.some((c) => resolveTextureSourceKindForPrepared(c) === "base")
+      ? BOOKMAP_BASE_TEXTURE_MIN_RENDER_INTENSITY
+      : BOOKMAP_TEXTURE_MIN_RENDER_INTENSITY;
+
+  const visible = scored.filter((c) => c.intensity >= minRender);
   const filteredByIntensity = scored.length - visible.length;
   const merged = mergeTextureCellsToTimeSpans(
     visible,
@@ -721,7 +831,9 @@ function mergeTextureCellsToTimeSpans(
     if (
       !bridged &&
       sampleCount < BOOKMAP_TEXTURE_ORPHAN_MIN_SAMPLES &&
-      runMaxSize < BOOKMAP_TEXTURE_ORPHAN_MAX_BTC
+      runMaxSize < BOOKMAP_TEXTURE_ORPHAN_MAX_BTC &&
+      runMaxSize < BOOKMAP_BASE_TEXTURE_NEAR035_MIN_BTC &&
+      !runStart.lifecycleHistorical
     ) {
       return;
     }
@@ -807,35 +919,6 @@ function textureSizeBounds(cells: PreparedEngineTextureCell[]): {
   };
 }
 
-function mergePreparedCells(
-  cells: PreparedEngineCell[],
-  anchors: PreparedEngineCell[],
-): PreparedEngineCell[] {
-  if (!anchors.length) return cells;
-
-  const byKey = new Map<string, PreparedEngineCell>();
-  for (const cell of cells) {
-    byKey.set(`${cell.timeBucket}:${cell.side}:${cell.price}`, cell);
-  }
-
-  for (const anchor of anchors) {
-    const key = `${anchor.timeBucket}:${anchor.side}:${anchor.price}`;
-    const prev = byKey.get(key);
-    if (!prev) {
-      byKey.set(key, anchor);
-      continue;
-    }
-
-    prev.maxSizeInBucket = Math.max(
-      prev.maxSizeInBucket,
-      anchor.maxSizeInBucket,
-    );
-    prev.isMajor = prev.isMajor || anchor.isMajor;
-  }
-
-  return Array.from(byKey.values());
-}
-
 export function prepareEngineRenderData(
   state: BookmapState,
   minPrice: number,
@@ -847,23 +930,90 @@ export function prepareEngineRenderData(
   domBucketSize = 50,
   spotPrice?: number | null,
   verticalCompressionMode?: VerticalCompressionMode,
+  options?: PrepareEngineRenderOptions,
 ): PreparedEngineRenderData | null {
-  const rawHeatmapCellCount = state.heatmapCells.length;
-  const rawInRange = state.heatmapCells.filter(
+  const priceSpan = maxPrice - minPrice;
+  const restingConfig = resolveRestingLiquidityWriteConfig(
+    verticalCompressionMode,
+    priceSpan,
+  );
+  const bookLevels = resolveLiveDomBookLevels(
+    state,
+    options?.liveDomBook,
+    options?.liveDomTimestamp,
+  );
+  const staleBookLevels = [...state.bids, ...state.asks].filter(
+    (l) => l.stale || l.size <= 0,
+  );
+  const dataEndTime = state.timestamp || Date.now();
+  const materializedHeatmapCells = materializeRestingLiquidityHeatmapCells({
+    serverCells: state.heatmapCells,
+    bookLevels,
+    staleBookLevels,
+    midPrice: spotPrice ?? null,
+    minPrice,
+    maxPrice,
+    dataEndTime,
+    config: restingConfig,
+    verticalMode: verticalCompressionMode,
+    bestBid: state.bids.find((b) => b.size > 0 && !b.stale)?.price ?? null,
+    bestAsk: state.asks.find((a) => a.size > 0 && !a.stale)?.price ?? null,
+    structuralWalls: state.structuralWalls,
+    majorWalls: state.majorWalls,
+  });
+
+  const rawHeatmapCellCount = materializedHeatmapCells.length;
+  const rawInRange = materializedHeatmapCells.filter(
     (c) => c.price >= minPrice && c.price <= maxPrice && c.maxSizeInBucket > 0,
   );
   const cellsFilteredByPrice = rawHeatmapCellCount - rawInRange.length;
 
-  const textureSource = rawInRange.filter(
-    (c) =>
-      c.maxSizeInBucket >= BOOKMAP_TEXTURE_MIN_BTC &&
-      c.maxSizeInBucket < BOOKMAP_TEXTURE_WALL_BAND_MIN_BTC,
-  );
-  const wallBandSource = rawInRange.filter(
-    (c) => c.maxSizeInBucket >= BOOKMAP_TEXTURE_WALL_BAND_MIN_BTC,
-  );
-  const cellsFilteredBySize =
-    rawInRange.length - textureSource.length - wallBandSource.length;
+  const passiveBase = selectPassiveBaseTextureSources({
+    cells: rawInRange,
+    midPrice: spotPrice ?? null,
+    minPrice,
+    maxPrice,
+    verticalMode: verticalCompressionMode,
+    bookLevels,
+    dataEndTime,
+    priceBucketUsd: restingConfig.priceBucketUsd,
+  });
+
+  const lifecycleTextureSource = rawInRange.filter((c) => {
+    const meta = getLifecycleCellMeta(c.timeBucket, c.side, c.price);
+    return meta != null;
+  });
+
+  const textureSourceMap = new Map<string, HeatmapCell>();
+  for (const cell of passiveBase.baseCells) {
+    textureSourceMap.set(
+      `${cell.timeBucket}:${cell.side}:${cell.price}`,
+      cell,
+    );
+  }
+  for (const cell of passiveBase.degradedWallBaseCells) {
+    const key = `${cell.timeBucket}:${cell.side}:${cell.price}`;
+    if (!textureSourceMap.has(key)) textureSourceMap.set(key, cell);
+  }
+  for (const cell of lifecycleTextureSource) {
+    textureSourceMap.set(
+      `${cell.timeBucket}:${cell.side}:${cell.price}`,
+      cell,
+    );
+  }
+  const textureSource = Array.from(textureSourceMap.values());
+
+  const wallBandSource = passiveBase.trueWallCells;
+  const usedTextureKeys = new Set<string>();
+  for (const c of textureSource) {
+    usedTextureKeys.add(`${c.timeBucket}:${c.side}:${c.price}`);
+  }
+  for (const c of wallBandSource) {
+    usedTextureKeys.add(`${c.timeBucket}:${c.side}:${c.price}`);
+  }
+  const cellsFilteredBySize = rawInRange.filter(
+    (c) => !usedTextureKeys.has(`${c.timeBucket}:${c.side}:${c.price}`),
+  ).length;
 
   const textureAgg = aggregateHeatmapCellsByBucket(
     textureSource,
@@ -881,7 +1031,10 @@ export function prepareEngineRenderData(
   if (
     !textureAgg.length &&
     !wallCellsInRange.length &&
-    !state.importantWalls.length
+    !state.importantWalls.length &&
+    !state.structuralWalls.length &&
+    !state.majorWalls.length &&
+    !bookLevels.some((l) => l.size > 0)
   ) {
     return null;
   }
@@ -891,37 +1044,29 @@ export function prepareEngineRenderData(
     ...state.importantWalls,
     ...state.structuralWalls,
     ...state.majorWalls,
-    ...currentBookAnchorLevels(state, minPrice, maxPrice, wallStep),
   ];
   const aggregatedWalls = aggregateBookLevelsByBucket(wallLevels, wallStep);
   const walls = dedupeWalls(aggregatedWalls);
 
   const wallPrices = new Set(walls.map((w) => `${w.side}:${w.price}`));
-  const anchorCells = currentBookAnchorCells(
-    state,
-    minPrice,
-    maxPrice,
-    heatmapBucketSize,
-  );
   const protectedPrices = new Set(wallPrices);
-  for (const cell of anchorCells) {
-    protectedPrices.add(`${cell.side}:${cell.price}`);
-  }
 
   const preparedWallCells: PreparedEngineCell[] = wallCellsInRange.map((cell) =>
     cellToPrepared(cell),
   );
 
-  const cappedWallCells = capCells(
-    mergePreparedCells(preparedWallCells, anchorCells),
-    protectedPrices,
-    maxCells,
-  );
+  const cappedWallCells = capCells(preparedWallCells, protectedPrices, maxCells);
 
   const timeMax = state.timestamp || Date.now();
 
   const preparedTextureRaw: PreparedEngineTextureCell[] = textureAgg.map((cell) =>
     cellToPrepared(cell),
+  );
+  const viewportMaxSize = Math.max(
+    1,
+    ...preparedTextureRaw.map((c) => c.maxSizeInBucket),
+    ...bookLevels.map((l) => l.size),
+    WALL_IMPORTANT_BTC,
   );
   const bucketTimes = [
     ...cappedWallCells.map((c) => c.timeBucket),
@@ -932,7 +1077,6 @@ export function prepareEngineRenderData(
       ? Math.min(...bucketTimes)
       : timeMax - 15 * 60 * 1000;
 
-  const priceSpan = maxPrice - minPrice;
   const {
     bands,
     mergedBands,
@@ -962,6 +1106,7 @@ export function prepareEngineRenderData(
         spotPrice,
         timeMax,
         BOOKMAP_TEXTURE_MAX_PREPARE_CELLS,
+        viewportMaxSize,
       )
     : {
         cells: [] as PreparedEngineTextureCell[],
@@ -970,8 +1115,34 @@ export function prepareEngineRenderData(
         cellsWithEndTime: 0,
         cellsUsingSyntheticEndTime: 0,
       };
-  const textureCells = texturePrepared.cells;
+  const textureCells = clampPulledRestingSpanEnds(
+    texturePrepared.cells,
+    staleBookLevels,
+    BOOKMAP_TEXTURE_SAMPLER_MS,
+  );
+  const lifecycleMerged = textureCells.filter((c) => c.lifecycleHistorical).length;
+  const lifecycleSpanDurations = textureCells
+    .filter((c) => c.lifecycleHistorical && c.endTimeBucket != null)
+    .map((c) => (c.endTimeBucket ?? c.timeBucket) - c.timeBucket);
+  recordLifecycleTexturePrepareStats({
+    mergedCount: lifecycleMerged,
+    renderedCount: lifecycleMerged,
+    spanDurationsMs: lifecycleSpanDurations,
+  });
   const textureBounds = textureSizeBounds(textureCells);
+  const viewportPriceBucketCount = Math.max(
+    1,
+    Math.ceil(priceSpan / Math.max(1, BOOKMAP_TEXTURE_PRICE_BUCKET_USD)),
+  );
+  recordPassiveBaseTexturePrepareStats({
+    preparedCells: textureCells,
+    wallBandCellCount: wallBandSource.length,
+    viewportPriceBucketCount,
+    midPrice: spotPrice ?? null,
+  });
+  resetBookmapVisualForceFrameStats(viewportPriceBucketCount);
+  setNearTickPassiveMistCoverage(viewportPriceBucketCount);
+  finalizeColorHierarchyStats();
   const wallBandCount = bands.filter(
     (b) => b.maxSize >= BOOKMAP_TEXTURE_WALL_BAND_MIN_BTC || b.tier !== "low",
   ).length;
@@ -986,6 +1157,9 @@ export function prepareEngineRenderData(
     maxPrice,
     spotPrice,
     visualScale,
+    verticalCompressionMode,
+    options?.liveDomBook,
+    options?.liveDomTimestamp,
   );
 
   const textureStats: BookmapTexturePrepareStats = {
@@ -1033,6 +1207,9 @@ export function prepareEngineRenderData(
     },
     liveProjectionLevels: liveProjection.levels,
     liveProjectionStats: liveProjection.stats,
+    activeDomBands: liveProjection.activeDomBands,
+    liveDomSelection: liveProjection.selection,
+    restingLiquidityRawCells: materializedHeatmapCells,
   };
 }
 
@@ -1912,13 +2089,32 @@ export function buildBookmapLiveProjectionDiag(opts: {
 
 function cellToPrepared(cell: HeatmapCell): PreparedEngineCell {
   const size = cell.maxSizeInBucket;
+  const meta = getLifecycleCellMeta(cell.timeBucket, cell.side, cell.price);
+  const textureSourceKind = classifyTextureSourceKind(cell);
+  const lifecycleKey = meta
+    ? (`${cell.side}:${cell.price}` as `${"bid" | "ask"}:${number}`)
+    : undefined;
+
   return {
     timeBucket: cell.timeBucket,
     price: cell.price,
     side: cell.side,
-    intensity: 0,
-    isMajor: size >= 300,
+    intensity: meta?.historicalLifecycleIntensity ?? 0,
+    isMajor: size >= WALL_MAJOR_BTC,
     maxSizeInBucket: size,
+    historicalRenderIntensity: meta?.peakRetentionFloor,
+    historicalRenderAlphaFloor: meta?.historicalLifecycleAlpha,
+    lifecycleHistorical: meta != null,
+    lifecycleActive: meta?.lifecycleActive,
+    lifecyclePulled: meta?.lifecyclePulled,
+    lifecycleFootprint: meta?.lifecycleFootprint,
+    lifecycleWall: meta?.lifecycleWall,
+    lifecycleStrong: meta?.lifecycleStrong,
+    lifecycleTextureMod: meta?.lifecycleTextureMod,
+    lifecycleTextureTier: meta?.lifecycleTier,
+    lifecycleKey,
+    persistenceMs: meta?.persistenceMs,
+    textureSourceKind,
   };
 }
 
@@ -2287,15 +2483,16 @@ export function mapWallSizeToStableVisualIntensity(maxSizeBtc: number): number {
 function extendActiveWallBandEnd(
   band: HeatmapBand,
   dataEndTime: number,
-  visibleEndTime: number,
+  _visibleEndTime: number,
   samplerMs: number,
 ): HeatmapBand {
   const isLive =
     !band.stale && band.endTime >= dataEndTime - samplerMs * 2;
   if (isLive && (isWallTier(band.tier) || band.maxSize >= WALL_IMPORTANT_BTC)) {
+    // Right-space is owned exclusively by live projection — wall bands stop at data edge.
     return {
       ...band,
-      endTime: Math.max(band.endTime, visibleEndTime),
+      endTime: Math.max(band.endTime, dataEndTime),
     };
   }
   return band;
@@ -2303,7 +2500,7 @@ function extendActiveWallBandEnd(
 
 /**
  * Merge wall-tier bands at the same price into continuous spans with stable
- * orange/red intensity. Active walls extend to visibleEndTime.
+ * orange/red intensity. Active walls extend to dataEndTime only (not right-space).
  */
 export function prepareWallBandsForContinuousRender(
   bands: HeatmapBand[],
@@ -2614,6 +2811,32 @@ export function allowsL2GranularTexture(bandClass: L2BandRenderClass): boolean {
   return bandClass === "weakGranularTextureBand";
 }
 
+function lifecycleRunAlphaCap(
+  run: PreparedEngineTextureCell,
+  next: PreparedEngineTextureCell,
+): number {
+  const tiers = [run.lifecycleTextureTier, next.lifecycleTextureTier];
+  const footprint = run.lifecycleFootprint || next.lifecycleFootprint;
+  const wall =
+    run.lifecycleWall ||
+    next.lifecycleWall ||
+    tiers.includes("wall");
+  const strong =
+    run.lifecycleStrong ||
+    next.lifecycleStrong ||
+    tiers.includes("strong");
+
+  if (footprint) {
+    if (wall) return 0.34;
+    if (strong) return 0.24;
+    return 0.18;
+  }
+  if (wall) return 0.52;
+  if (strong) return 0.34;
+  if (tiers.includes("trace")) return 0.12;
+  return 0.22;
+}
+
 function mergeTextureRunCellPeaks(
   run: PreparedEngineTextureCell,
   next: PreparedEngineTextureCell,
@@ -2621,32 +2844,62 @@ function mergeTextureRunCellPeaks(
   runMaxSize: number,
   cellsInRun: number,
 ): PreparedEngineTextureCell {
+  const lifecycleRun = run.lifecycleHistorical && next.lifecycleHistorical;
+  const mergedIntensity = lifecycleRun
+    ? blendLifecycleRunIntensity(run.intensity ?? 0, next.intensity ?? 0)
+    : Math.max(run.intensity ?? 0, next.intensity ?? 0);
+
   return {
     ...run,
     endTimeBucket: runEnd,
     maxSizeInBucket: runMaxSize,
     cellsInRun,
     runStartTimeBucket: run.runStartTimeBucket ?? run.timeBucket,
-    intensity: Math.max(run.intensity ?? 0, next.intensity ?? 0),
-    dataIntensity: Math.max(run.dataIntensity ?? 0, next.dataIntensity ?? 0),
-    microScalpRenderIntensity: Math.max(
-      run.microScalpRenderIntensity ?? 0,
-      next.microScalpRenderIntensity ?? 0,
-    ),
+    intensity: mergedIntensity,
+    dataIntensity: lifecycleRun
+      ? blendLifecycleRunIntensity(run.dataIntensity ?? 0, next.dataIntensity ?? 0)
+      : Math.max(run.dataIntensity ?? 0, next.dataIntensity ?? 0),
+    microScalpRenderIntensity: lifecycleRun
+      ? blendLifecycleRunIntensity(
+          run.microScalpRenderIntensity ?? 0,
+          next.microScalpRenderIntensity ?? 0,
+        )
+      : Math.max(
+          run.microScalpRenderIntensity ?? 0,
+          next.microScalpRenderIntensity ?? 0,
+        ),
     historicalRenderIntensity: Math.max(
       run.historicalRenderIntensity ?? 0,
       next.historicalRenderIntensity ?? 0,
     ),
-    historicalRenderAlphaFloor: Math.max(
-      run.historicalRenderAlphaFloor ?? 0,
-      next.historicalRenderAlphaFloor ?? 0,
-      run.historicalRenderAlpha ?? 0,
-      next.historicalRenderAlpha ?? 0,
+    historicalRenderAlphaFloor: Math.min(
+      Math.max(
+        run.historicalRenderAlphaFloor ?? 0,
+        next.historicalRenderAlphaFloor ?? 0,
+        run.historicalRenderAlpha ?? 0,
+        next.historicalRenderAlpha ?? 0,
+      ),
+      lifecycleRun ? lifecycleRunAlphaCap(run, next) : 0.22,
     ),
     historicalColorLocked:
       run.historicalColorLocked === true || next.historicalColorLocked === true,
     continuityRunLength:
       (run.continuityRunLength ?? 1) + (next.continuityRunLength ?? 1),
+    lifecycleHistorical: lifecycleRun || run.lifecycleHistorical || next.lifecycleHistorical,
+    lifecycleFootprint: run.lifecycleFootprint || next.lifecycleFootprint,
+    lifecycleWall: run.lifecycleWall || next.lifecycleWall,
+    lifecycleStrong: run.lifecycleStrong || next.lifecycleStrong,
+    lifecycleTextureTier:
+      run.lifecycleTextureTier === "wall" || next.lifecycleTextureTier === "wall"
+        ? "wall"
+        : run.lifecycleTextureTier === "strong" ||
+            next.lifecycleTextureTier === "strong"
+          ? "strong"
+          : run.lifecycleTextureTier === "normal" ||
+              next.lifecycleTextureTier === "normal"
+            ? "normal"
+            : run.lifecycleTextureTier ?? next.lifecycleTextureTier,
+    lifecycleKey: run.lifecycleKey ?? next.lifecycleKey,
   };
 }
 
@@ -2656,6 +2909,7 @@ export function coalesceL2TextureSpans(
 ): {
   merged: PreparedEngineTextureCell[];
   materialSplitCount: number;
+  longFlatSpanCount: number;
   runSourceIntensityVariance: Array<{
     min: number;
     max: number;
@@ -2672,6 +2926,7 @@ export function coalesceL2TextureSpans(
         cellsInRun: 1,
       })),
       materialSplitCount: 0,
+      longFlatSpanCount: 0,
       runSourceIntensityVariance: only
         ? [{ min: peak, max: peak, cellsInRun: 1 }]
         : [],
@@ -2693,6 +2948,7 @@ export function coalesceL2TextureSpans(
     cellsInRun: number;
   }> = [];
   let materialSplitCount = 0;
+  let longFlatSpanCount = 0;
 
   for (const group of Array.from(byKey.values())) {
     group.sort((a, b) => a.timeBucket - b.timeBucket);
@@ -2709,6 +2965,25 @@ export function coalesceL2TextureSpans(
     let cellsInRun = 1;
 
     const flushRun = () => {
+      const intensitySpread = runIntensityMax - runIntensityMin;
+      if (
+        cellsInRun >= 5 &&
+        intensitySpread < 0.06 &&
+        current.lifecycleHistorical &&
+        (current.lifecycleTextureTier === "trace" ||
+          current.lifecycleTextureTier === "normal" ||
+          !canCoalesceLifecycleTextureTier(current.lifecycleTextureTier))
+      ) {
+        longFlatSpanCount += 1;
+      }
+      if (
+        cellsInRun >= 5 &&
+        intensitySpread < 0.06 &&
+        !current.lifecycleHistorical &&
+        (current.textureSourceKind === "base" || !current.textureSourceKind)
+      ) {
+        recordBaseLongFlatSpanCount(1);
+      }
       merged.push({
         ...current,
         endTimeBucket: currentEnd,
@@ -2732,7 +3007,12 @@ export function coalesceL2TextureSpans(
         next.maxSizeInBucket,
       );
       const nextPeak = computeTextureSpanPeakIntensity(next);
-      if (gap <= samplerMs * 2 && !materialChange) {
+      const canMergeLifecycle =
+        !current.lifecycleHistorical ||
+        !next.lifecycleHistorical ||
+        (canCoalesceLifecycleTextureTier(current.lifecycleTextureTier) &&
+          canCoalesceLifecycleTextureTier(next.lifecycleTextureTier));
+      if (gap <= samplerMs * 2 && !materialChange && canMergeLifecycle) {
         currentEnd = Math.max(currentEnd, nextEnd);
         runMaxSize = Math.max(runMaxSize, next.maxSizeInBucket);
         cellsInRun += 1;
@@ -2763,7 +3043,7 @@ export function coalesceL2TextureSpans(
     flushRun();
   }
 
-  return { merged, materialSplitCount, runSourceIntensityVariance };
+  return { merged, materialSplitCount, longFlatSpanCount, runSourceIntensityVariance };
 }
 
 function buildTextureBucketSizeLookup(
@@ -2786,20 +3066,47 @@ export function subdivideTextureSpanIntoGranularChunks(
 ): PreparedEngineTextureCell[] {
   if (spanEnd <= spanStart) return [];
   const stableIntensity = peakIntensity ?? cell.intensity ?? 0;
+  const alphaFloor = cell.historicalRenderAlphaFloor ?? stableIntensity * 0.45;
   const chunks: PreparedEngineTextureCell[] = [];
   let t = spanStart;
   while (t < spanEnd) {
     const end = Math.min(t + samplerMs, spanEnd);
+    let chunkIntensity = stableIntensity;
+    let chunkAlpha = alphaFloor;
+    if (cell.lifecycleHistorical && cell.lifecycleKey) {
+      const modulated = applyLifecycleChunkTextureMod(
+        stableIntensity,
+        alphaFloor,
+        cell.lifecycleKey,
+        t,
+      );
+      chunkIntensity = modulated.intensity;
+      chunkAlpha = modulated.alpha;
+    } else if (BOOKMAP_VISUAL_FORCE_BOOKMAP_LIKE) {
+      const gapKey = `${cell.side}:${cell.price}`;
+      const modulated = applyStableGapModulation({
+        key: gapKey,
+        timeBucket: t,
+        alpha: alphaFloor,
+        intensity: stableIntensity,
+        protectedNearTick: false,
+        lifecycleTier: cell.lifecycleTextureTier,
+        sourceKind: cell.textureSourceKind ?? "base",
+      });
+      chunkIntensity = modulated.intensity;
+      chunkAlpha = modulated.alpha;
+    }
     chunks.push({
       ...cell,
       timeBucket: t,
       endTimeBucket: end,
-      intensity: stableIntensity,
-      microScalpRenderIntensity: stableIntensity,
+      intensity: chunkIntensity,
+      microScalpRenderIntensity: chunkIntensity,
       historicalRenderIntensity: Math.max(
         cell.historicalRenderIntensity ?? 0,
-        stableIntensity,
+        chunkIntensity,
       ),
+      historicalRenderAlphaFloor: chunkAlpha,
     });
     t = end;
   }
@@ -2835,8 +3142,16 @@ export function prepareL2BandDrawQueue(
     opts.visualRegime ??
     (opts.microVisualHierarchyActive ? "micro" : "std");
   const bucketSizeLookup = buildTextureBucketSizeLookup(opts.cells);
-  const { merged, materialSplitCount, runSourceIntensityVariance } =
+  const { merged, materialSplitCount, runSourceIntensityVariance, longFlatSpanCount } =
     coalesceL2TextureSpans(opts.cells, opts.samplerMs);
+  recordLifecycleTexturePrepareStats({
+    mergedCount: merged.filter((c) => c.lifecycleHistorical).length,
+    renderedCount: merged.filter((c) => c.lifecycleHistorical).length,
+    spanDurationsMs: merged
+      .filter((c) => c.lifecycleHistorical && c.endTimeBucket != null)
+      .map((c) => (c.endTimeBucket ?? c.timeBucket) - c.timeBucket),
+    longFlatSpanCount,
+  });
   if (opts.l2Stats && materialSplitCount > 0) {
     opts.l2Stats.stableBandsSplitByMaterialSizeChangeCount += materialSplitCount;
   }
@@ -2915,7 +3230,13 @@ export function prepareL2BandDrawQueue(
       isWallPullCandidate: weight.isWallPullCandidate,
     });
 
-    const usesGranularBlocks = allowsL2GranularTexture(bandClass);
+    const usesGranularBlocks =
+      allowsL2GranularTexture(bandClass) ||
+      shouldForceGranularBookmapTexture(
+        cell,
+        spanEnd - spanStart,
+        opts.samplerMs,
+      );
 
     if (opts.l2Stats) {
       if (isActive && isRelevantL2) {

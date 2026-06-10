@@ -334,6 +334,33 @@ export function getBookmapTextureFill(
   );
 }
 
+export type LiveDomMicrostructureTier = "low" | "medium" | "strong" | "wall";
+
+/** Live DOM right-edge palette — distinct from historical texture ramp. */
+export function getLiveDomMicrostructureFill(
+  side: "bid" | "ask",
+  tier: LiveDomMicrostructureTier,
+  alpha: number,
+): string {
+  const sideBias =
+    side === "bid"
+      ? ([-6, 8, 4] as const)
+      : ([8, -4, -6] as const);
+  const palettes: Record<LiveDomMicrostructureTier, [number, number, number]> = {
+    low: [14, 38, 58],
+    medium: [24, 118, 148],
+    strong: [196, 178, 72],
+    wall: side === "bid" ? [214, 118, 48] : [208, 72, 52],
+  };
+  const base = palettes[tier];
+  const rgb: [number, number, number] = [
+    Math.max(0, Math.min(255, base[0] + sideBias[0])),
+    Math.max(0, Math.min(255, base[1] + sideBias[1])),
+    Math.max(0, Math.min(255, base[2] + sideBias[2])),
+  ];
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${Math.min(0.65, Math.max(0.08, alpha))})`;
+}
+
 export function getBookmapBandStroke(band: HeatmapBand): string | null {
   const intensity = band.visualIntensity ?? band.intensity;
   if (!isWallTier(band.tier) && intensity < 0.72) return null;

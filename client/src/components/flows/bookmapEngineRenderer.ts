@@ -7,6 +7,8 @@ import {
   PERP_RENDER_CLOSED_CAP,
   resolveZoomRegime,
   WALL_IMPORTANT_BTC,
+  WALL_MAJOR_BTC,
+  WALL_STRUCTURAL_BTC,
   type BookmapZoomRegime,
 } from "@/lib/bookmapEngineConfig";
 import type { BookmapTimeViewport } from "@/hooks/useBookmapTimeScale";
@@ -147,6 +149,59 @@ import {
 } from "./bookmapEngineTradeDots";
 import type { ExecutionRailLength } from "@/components/terminal/bookmap/bookmapSettings";
 import type { PassiveConfluenceLevel } from "./bookmapConfluence";
+import type { BookmapLayerAudit } from "./bookmapLayerAudit";
+import { buildBookmapLayerAudit } from "./bookmapLayerAudit";
+import type { MicroScalpLayerRenderStats } from "./bookmapMicroScalpLayerAudit";
+import type { BookmapRenderArchitectureFrameStats } from "./bookmapRenderArchitectureAudit";
+import {
+  clipHistoricalSpanToDataEdge,
+  dedupeLiveProjectionAgainstActiveDom,
+  filterWallBandsForLiveSeam,
+  resolveLiveProjectionStrictStart,
+  resolveWallBandRenderEndTime,
+} from "./bookmapLayerResponsibilities";
+import {
+  applyLiveDomHierarchyVisual,
+  buildLiquidityContinuityPlan,
+  computeLiveDomVisualScore,
+  createEmptyLiveDomRenderCapture,
+  enrichLiquidityContinuityStatsFromRender,
+  getLiquidityVisualKey,
+  lookupLiveContinuityResolution,
+  normalizeLiquidityBucketPrice,
+  resolveLiveDomAlphaCap,
+  resolveLiveDomContinuationVisual,
+  type LiquidityContinuityPlan,
+  type LiveDomRenderCapture,
+} from "./bookmapLiquidityVisualIdentity";
+import {
+  applyQuantileVisualExpansion,
+  computeScoreQuantiles,
+  createEmptyRightSideDensityCapture,
+  isProtectedLiveDomLevel,
+  recordLiveDomDensityTier,
+  resolveWallBandRightSideAlphaCap,
+  shouldSkipLiveDomForDensity,
+  type RightSideDensityRenderCapture,
+} from "./bookmapRightSideDensity";
+import {
+  applyRightSideTemporalFade,
+  BOOKMAP_BASE_TEXTURE_MIN_RENDER_INTENSITY,
+  classifyRightSideFadeTier,
+  resolveTextureSourceKindForPrepared,
+} from "./bookmapPassiveBaseTexture";
+import {
+  applyStableGapModulation,
+  applyWallBandBaseIntegrationAlpha,
+  BOOKMAP_VISUAL_FORCE_BOOKMAP_LIKE,
+  clampBookmapLikeRenderIntensity,
+  classifyRightSideLengthTier,
+  finalizeDotsReadabilityStats,
+  finalizeColorHierarchyStats,
+  recordHeatmapAlphaNearDots,
+  resolveRightSideVisualLengthFraction,
+  stableVisualHash,
+} from "./bookmapVisualForceBookmapLike";
 import type {
   ConfluenceMinDisplayTier,
   ConfluenceVisualOpacity,
@@ -247,6 +302,12 @@ export type BookmapEngineFrameParams = {
     maxProjectionWidthPx?: number;
     projectionOverlapsHistory?: boolean;
   };
+  /** DEV — populated each frame with [BOOKMAP_LAYER_AUDIT] payload. */
+  layerAuditSink?: { audit: BookmapLayerAudit | null };
+  /** DEV — micro scalping right-side render counters. */
+  microScalpLayerAuditSink?: { stats: MicroScalpLayerRenderStats | null };
+  /** DEV — render architecture frame counters (scalar, per frame). */
+  renderArchitectureFrameStatsOut?: BookmapRenderArchitectureFrameStats;
   showDivergenceMarkers?: boolean;
 };
 
@@ -340,15 +401,9 @@ function renderLiveDataEdge(
 function resolveBandEndTime(
   band: HeatmapBand,
   dataEndTime: number,
-  projectionEndTime: number,
+  _projectionEndTime: number,
 ): number {
-  if (band.stale) return band.endTime;
-  if (!isWallTier(band.tier)) return band.endTime;
-  const liveSlack = BOOKMAP_ENGINE_BUCKET_MS * 2;
-  if (band.endTime >= dataEndTime - liveSlack) {
-    return Math.max(band.endTime, projectionEndTime);
-  }
-  return band.endTime;
+  return resolveWallBandRenderEndTime(band, dataEndTime);
 }
 
 /** Single vertical geometry for texture, wall bands, and live projection. */
@@ -700,6 +755,14 @@ function resolveTextureSegmentBodyAlpha(
   } else {
     bodyAlpha = alphaForPassiveLiquidity(alphaCtx) * globalMul;
   }
+  const lifecycleAlphaFloor = segment.cell.historicalRenderAlphaFloor;
+  if (
+    segment.cell.lifecycleHistorical &&
+    lifecycleAlphaFloor != null &&
+    lifecycleAlphaFloor > 0
+  ) {
+    bodyAlpha = Math.min(bodyAlpha, lifecycleAlphaFloor * globalMul);
+  }
   const alphaFloor =
     segment.alphaFloor ??
     cell.historicalRenderAlphaFloor ??
@@ -740,8 +803,15 @@ function renderHeatmapTextureCells(
   avgTextureCellWidthPx: number;
   minTextureCellWidthPx: number;
   maxTextureCellWidthPx: number;
+  historicalTextureLeftSideCount: number;
+  historicalTextureRightSideCount: number;
+  pulledFootprintLeftSideCount: number;
+  pulledFootprintRightSideCount: number;
+  beforeHistoricalRightSideCount: number;
+  phase2ClipApplied: boolean;
   spanColorAudit: HistoricalSpanColorAudit;
   spanRenderContinuityAudit: SpanRenderContinuityAudit;
+  spanTextureBalanceAudit: SpanTextureBalanceAudit;
 } {
   if (!cells.length) {
     const emptyContinuity = createEmptySpanRenderContinuityAudit();
@@ -752,6 +822,12 @@ function renderHeatmapTextureCells(
       avgTextureCellWidthPx: 0,
       minTextureCellWidthPx: 0,
       maxTextureCellWidthPx: 0,
+      historicalTextureLeftSideCount: 0,
+      historicalTextureRightSideCount: 0,
+      pulledFootprintLeftSideCount: 0,
+      pulledFootprintRightSideCount: 0,
+      beforeHistoricalRightSideCount: 0,
+      phase2ClipApplied: true,
       spanColorAudit: {
         textureCellCount: 0,
         renderedSpanCount: 0,
@@ -768,6 +844,7 @@ function renderHeatmapTextureCells(
         historicalSpanColorProblemClassification: "empty",
       },
       spanRenderContinuityAudit: emptyContinuity,
+      spanTextureBalanceAudit: createEmptySpanTextureBalanceAudit(),
     };
   }
 
@@ -802,9 +879,13 @@ function renderHeatmapTextureCells(
   });
   const filteredByTime = cells.length - inViewport.length;
 
-  const eligible = inViewport.filter(
-    (c) => (c.intensity ?? 0) >= BOOKMAP_TEXTURE_MIN_RENDER_INTENSITY,
-  );
+  const eligible = inViewport.filter((c) => {
+    const minI =
+      resolveTextureSourceKindForPrepared(c) === "base"
+        ? BOOKMAP_BASE_TEXTURE_MIN_RENDER_INTENSITY
+        : BOOKMAP_TEXTURE_MIN_RENDER_INTENSITY;
+    return (c.intensity ?? 0) >= minI;
+  });
   const drawCapHit = eligible.length > BOOKMAP_TEXTURE_MAX_DRAW_CELLS;
   const drawPool = drawCapHit
     ? [...eligible]
@@ -949,6 +1030,13 @@ function renderHeatmapTextureCells(
   let spansTooFlatCount = 0;
   let spansTooFragmentedCount = 0;
   let spansWithOverlay = 0;
+  let historicalTextureLeftSideCount = 0;
+  let historicalTextureRightSideCount = 0;
+  let pulledFootprintLeftSideCount = 0;
+  let pulledFootprintRightSideCount = 0;
+  let beforeHistoricalRightSideCount = 0;
+  const dataEdgeMs = historyEnd;
+  const dataEdgeX = timeToX(dataEdgeMs);
 
   for (const group of sortedGroups) {
     const rep = group.representative;
@@ -958,8 +1046,36 @@ function renderHeatmapTextureCells(
     if (chunkCount > 1) spansAsChunks += 1;
     else spansAsSingleRect += 1;
 
-    const vi = resolveTextureSegmentIntensity(rep, group.peakIntensity);
-    if (vi < BOOKMAP_TEXTURE_MIN_RENDER_INTENSITY) continue;
+    const viRaw = resolveTextureSegmentIntensity(rep, group.peakIntensity);
+    const minRenderI =
+      resolveTextureSourceKindForPrepared(cell) === "base"
+        ? BOOKMAP_BASE_TEXTURE_MIN_RENDER_INTENSITY
+        : BOOKMAP_TEXTURE_MIN_RENDER_INTENSITY;
+    if (viRaw < minRenderI) continue;
+
+    const sourceKind = resolveTextureSourceKindForPrepared(cell);
+    const maxSize = renderCtx.viewportMaxSize ?? rep.stableSizeBtc;
+    const localRank = Math.min(1, rep.stableSizeBtc / Math.max(1, maxSize));
+    let vi = BOOKMAP_VISUAL_FORCE_BOOKMAP_LIKE
+      ? clampBookmapLikeRenderIntensity({
+          intensity: viRaw,
+          sourceKind,
+          lifecycleTier: cell.lifecycleTextureTier,
+          tier:
+            sourceKind === "base"
+              ? rep.stableSizeBtc >= 8
+                ? "strong"
+                : rep.stableSizeBtc >= 2
+                  ? "medium"
+                  : "low"
+              : undefined,
+          localRankScore: localRank,
+          absoluteSizeScore: localRank,
+          isStructuralWall:
+            cell.maxSizeInBucket >= WALL_STRUCTURAL_BTC,
+          isMajorWall: cell.maxSizeInBucket >= WALL_MAJOR_BTC || cell.isMajor,
+        })
+      : viRaw;
 
     const bodyAlpha = resolveTextureSegmentBodyAlpha(
       rep,
@@ -985,6 +1101,11 @@ function renderHeatmapTextureCells(
       renderCtx.historicalColorLockAudit.alphaFinalSum += bodyAlpha;
     }
 
+    const nearRecentDots =
+      cell.timeBucket >= dataEdgeMs - effectiveTextureBucketMs * 4 &&
+      weight.pctFromMid <= 0.25;
+    recordHeatmapAlphaNearDots(bodyAlpha, nearRecentDots);
+
     const { yTop, height } = textureCellVerticalBounds(
       cell.price,
       priceToY,
@@ -994,14 +1115,33 @@ function renderHeatmapTextureCells(
     if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
 
     if (spanBaseEnabled) {
-      const x0 = timeToX(group.spanStart);
-      let x1 = timeToX(group.spanEnd);
+      const clip = clipHistoricalSpanToDataEdge(
+        group.spanStart,
+        group.spanEnd,
+        dataEdgeMs,
+      );
+      if (!clip) continue;
+
+      const isPulledFootprint = rep.bandClass === "closedRelevantHistoryBand";
+      if (clip.wouldExtendPastEdge) {
+        beforeHistoricalRightSideCount += 1;
+      }
+      historicalTextureLeftSideCount += 1;
+      if (isPulledFootprint) pulledFootprintLeftSideCount += 1;
+
+      const x0 = timeToX(clip.clippedStart);
+      let x1 = timeToX(clip.clippedEnd);
       let spanW = x1 - x0;
       if (spanW < BOOKMAP_TEXTURE_MIN_CELL_WIDTH_PX) {
         spanW = BOOKMAP_TEXTURE_MIN_CELL_WIDTH_PX;
         x1 = x0 + spanW;
       }
       spanW += BOOKMAP_TEXTURE_CELL_OVERLAP_PX;
+      if (x0 >= dataEdgeX) continue;
+      if (x1 > dataEdgeX) {
+        spanW = Math.max(0, dataEdgeX - x0) + BOOKMAP_TEXTURE_CELL_OVERLAP_PX;
+        x1 = dataEdgeX;
+      }
       ctx.fillStyle = microVisualMode
         ? getHistoricalTextureFill(cell.side, vi, alphaCtx, globalMul, {
             microScalpMode: true,
@@ -1109,6 +1249,11 @@ function renderHeatmapTextureCells(
         let spanThinOps = 0;
 
         for (const op of overlayOps) {
+          if (op.x0 >= dataEdgeX) continue;
+          const clippedX1 = Math.min(op.x1, dataEdgeX);
+          const opW = clippedX1 - op.x0;
+          if (opW < 1) continue;
+
           const overlayVi = Math.max(
             vi * 0.92,
             Math.min(op.overlayIntensity, vi * 1.04),
@@ -1125,7 +1270,6 @@ function renderHeatmapTextureCells(
             spanOverlayAlphaMax = overlayAlpha;
           }
 
-          const opW = op.x1 - op.x0;
           chunkWidthSum += opW;
           chunkWidthCount += 1;
           if (opW < BOOKMAP_TEXTURE_CHUNK_OVERLAY_MIN_WIDTH_PX) {
@@ -1252,6 +1396,12 @@ function renderHeatmapTextureCells(
     avgTextureCellWidthPx: rendered > 0 ? widthSum / rendered : 0,
     minTextureCellWidthPx: rendered > 0 && widthMin !== Infinity ? widthMin : 0,
     maxTextureCellWidthPx: widthMax,
+    historicalTextureLeftSideCount,
+    historicalTextureRightSideCount,
+    pulledFootprintLeftSideCount,
+    pulledFootprintRightSideCount,
+    beforeHistoricalRightSideCount,
+    phase2ClipApplied: true,
     spanColorAudit,
     spanRenderContinuityAudit: continuityAudit,
     spanTextureBalanceAudit: textureBalanceAudit,
@@ -1270,6 +1420,8 @@ export type LiveProjectionRenderResult = {
 
 function resolveLiveProjectionWindow(
   timeViewport: BookmapTimeViewport,
+  strictDataEdgeStart = false,
+  forceNoHistoryOverlap = false,
 ): {
   startTime: number;
   endTime: number;
@@ -1284,12 +1436,53 @@ function resolveLiveProjectionWindow(
     timeViewport.visibleStartTime,
     dataEdge - BOOKMAP_LIVE_PROJECTION_HISTORY_OVERLAP_MS,
   );
+  const useStrict = strictDataEdgeStart || forceNoHistoryOverlap;
+  const startTime = useStrict ? dataEdge : overlapStart;
   return {
-    startTime: overlapStart,
+    startTime,
     endTime: projectionEnd,
-    overlapsHistory: overlapStart < dataEdge,
+    overlapsHistory: !useStrict && startTime < dataEdge,
   };
 }
+
+function emptyMicroScalpRenderStats(): MicroScalpLayerRenderStats {
+  return {
+    liveProjectionRectCount: 0,
+    activeDomBandRectCount: 0,
+    wallBandRightSideRectCount: 0,
+    structuralWallRightSideRectCount: 0,
+    majorWallRightSideRectCount: 0,
+    rightSideTotalRectCount: 0,
+    rightSideCoveragePct: 0,
+    rightSideDominantLayer: "none",
+    rightSideWidthPx: 0,
+    duplicatedActiveDomAndProjectionBucketsCount: 0,
+    duplicatedWallAndLiveBucketsCount: 0,
+    avgRightSideAlpha: 0,
+    maxRightSideAlpha: 0,
+  };
+}
+
+type LiveProjectionRenderOpts = {
+  strictDataEdgeStart?: boolean;
+  forceNoHistoryOverlap?: boolean;
+  layerTag?: "active-dom" | "live-projection";
+  statsOut?: MicroScalpLayerRenderStats;
+  activeDomPriceKeys?: Set<string>;
+  priceBucketStep?: number;
+  minPrice?: number;
+  maxPrice?: number;
+  continuityPlan?: LiquidityContinuityPlan | null;
+  continuityRenderStatsOut?: {
+    seamBlendAppliedCount: number;
+    continuingFromHistoricalRenderCount: number;
+    liveOnlyFadeRenderCount: number;
+  };
+  liveDomRenderCaptureOut?: LiveDomRenderCapture;
+  rightSideDensityCaptureOut?: RightSideDensityRenderCapture;
+  midPrice?: number | null;
+  verticalMode?: string;
+};
 
 /** P7.5/P7.6 — project current resting limits into right-space only (not historical). */
 function renderLiveBookProjection(
@@ -1299,6 +1492,7 @@ function renderLiveBookProjection(
   timeViewport: BookmapTimeViewport,
   visualSettings: BookmapVisualSettings | undefined,
   visualCtx?: TextureVisualRenderContext,
+  renderOpts?: LiveProjectionRenderOpts,
 ): LiveProjectionRenderResult {
   const empty: LiveProjectionRenderResult = {
     rendered: 0,
@@ -1310,7 +1504,11 @@ function renderLiveBookProjection(
     projectionOverlapsHistory: false,
   };
 
-  const window = resolveLiveProjectionWindow(timeViewport);
+  const window = resolveLiveProjectionWindow(
+    timeViewport,
+    renderOpts?.strictDataEdgeStart ?? false,
+    renderOpts?.forceNoHistoryOverlap ?? false,
+  );
   if (!window || !levels.length) return empty;
 
   const { priceToY, timeToX } = metrics;
@@ -1319,6 +1517,10 @@ function renderLiveBookProjection(
   const w = Math.max(0, x1 - x0);
   if (w < 2 || x1 <= HEATMAP_PAD.left) {
     return { ...empty, projectionOverlapsHistory: window.overlapsHistory };
+  }
+
+  if (renderOpts?.statsOut) {
+    renderOpts.statsOut.rightSideWidthPx = w;
   }
 
   const heatmapOpacity = visualSettings?.heatmap.opacity ?? 1;
@@ -1343,6 +1545,78 @@ function renderLiveBookProjection(
 
   const sorted = [...levels].sort((a, b) => a.intensity - b.intensity);
   let rendered = 0;
+  let alphaSum = 0;
+  let alphaMax = 0;
+  const renderedPriceKeys = new Set<string>();
+
+  const bucketStep = renderOpts?.priceBucketStep ?? metrics.domBucketSize;
+  const domBucketSize = metrics.domBucketSize;
+  const verticalMode = renderOpts?.verticalMode ?? renderCtx.regime;
+  const priceSpan =
+    renderOpts?.maxPrice != null && renderOpts?.minPrice != null
+      ? Math.max(1, renderOpts.maxPrice - renderOpts.minPrice)
+      : 1;
+  const viewportBuckets = Math.max(
+    1,
+    Math.ceil(priceSpan / Math.max(1, bucketStep)),
+  );
+
+  if (renderOpts?.rightSideDensityCaptureOut) {
+    renderOpts.rightSideDensityCaptureOut.plotHeightPx = metrics.plotH;
+    renderOpts.rightSideDensityCaptureOut.rightSideWidthPx = w;
+    renderOpts.rightSideDensityCaptureOut.viewportPriceBucketCount =
+      viewportBuckets;
+  }
+
+  type PreScore = { level: PreparedLiveProjectionLevel; visualScore: number };
+  const preScores: PreScore[] = [];
+  for (const level of sorted) {
+    const baseVi = Math.max(0, Math.min(1, level.intensity));
+    const minIntensity =
+      level.isActiveLiveDom === true
+        ? Math.min(BOOKMAP_LIVE_PROJECTION_MIN_RENDER_INTENSITY, 0.016)
+        : BOOKMAP_LIVE_PROJECTION_MIN_RENDER_INTENSITY;
+    if (baseVi < minIntensity) continue;
+
+    const liveIsNearTick =
+      level.liveDomSource === "near-tick" || level.liveDomSource === "best";
+    const liveIsTopDom =
+      level.liveDomSource === "top-dom" ||
+      level.liveDomSource === "viewport-top";
+    const liveIsWall =
+      level.liveDomSource === "wall" || level.sizeBtc >= WALL_IMPORTANT_BTC;
+
+    preScores.push({
+      level,
+      visualScore: computeLiveDomVisualScore({
+        liveRank: level.selectionScore,
+        liveDomVisualScore: level.liveDomVisualScore,
+        sizeBtc: level.sizeBtc,
+        viewportMaxSize: renderCtx.viewportMaxSize,
+        liveIsNearTick,
+        liveIsTopDom,
+        liveIsWallCandidate: liveIsWall,
+        midPrice: renderCtx.midPrice,
+        price: level.price,
+      }),
+    });
+  }
+
+  const scoreQuantiles = computeScoreQuantiles(
+    preScores.map((p) => p.visualScore),
+  );
+  if (renderOpts?.rightSideDensityCaptureOut) {
+    renderOpts.rightSideDensityCaptureOut.liveScoreP50 = scoreQuantiles.p50;
+    renderOpts.rightSideDensityCaptureOut.liveScoreP80 = scoreQuantiles.p80;
+    renderOpts.rightSideDensityCaptureOut.liveScoreP95 = scoreQuantiles.p95;
+    renderOpts.rightSideDensityCaptureOut.scoreContrastExpanded =
+      preScores.length >= 3;
+  }
+
+  const projectedCoverage = preScores.length / viewportBuckets;
+  const densityTrimActive =
+    projectedCoverage > 0.45 &&
+    (verticalMode === "micro" || verticalMode.includes("micro"));
 
   ctx.save();
   ctx.beginPath();
@@ -1356,10 +1630,17 @@ function renderLiveBookProjection(
 
   for (const level of sorted) {
     const baseVi = Math.max(0, Math.min(1, level.intensity));
-    if (baseVi < BOOKMAP_LIVE_PROJECTION_MIN_RENDER_INTENSITY) continue;
+    const minIntensity =
+      level.isActiveLiveDom === true
+        ? Math.min(BOOKMAP_LIVE_PROJECTION_MIN_RENDER_INTENSITY, 0.016)
+        : BOOKMAP_LIVE_PROJECTION_MIN_RENDER_INTENSITY;
+    if (baseVi < minIntensity) continue;
 
     const fillKey = stableL2FillKey(level.side, level.price);
-    const stableFill = renderCtx.stableL2FillByKey?.get(fillKey);
+    const stableFill =
+      level.isActiveLiveDom === true
+        ? undefined
+        : renderCtx.stableL2FillByKey?.get(fillKey);
 
     let vi: number;
     let pctFromMid: number;
@@ -1411,16 +1692,18 @@ function renderLiveBookProjection(
     const globalMul =
       BOOKMAP_TEXTURE_OPACITY_MUL * heatmapOpacity;
 
-    const { yTop, height } = heatmapLevelVerticalBounds(
+    const { yTop, height } = textureCellVerticalBounds(
       level.price,
       priceToY,
-      metrics.priceStep,
+      domBucketSize,
     );
     if (yTop + height < HEATMAP_PAD.top - 2) continue;
     if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
 
     const historicalAlpha =
-      renderCtx.historicalActiveAlphaByKey?.get(fillKey);
+      level.isActiveLiveDom === true
+        ? undefined
+        : renderCtx.historicalActiveAlphaByKey?.get(fillKey);
     const liveWeight =
       stableFill == null
         ? computeBookmapVisualWeight({
@@ -1442,17 +1725,224 @@ function renderLiveBookProjection(
         relevantRightEdge || isLargeWall ? "stableActiveL2Band" : undefined,
       weight: liveWeight,
     });
-    const rightBodyAlpha =
-      alphaForPassiveLiquidity(rightAlphaCtx) * globalMul;
+    let rightBodyAlpha =
+      level.isActiveLiveDom === true && level.microScalpAlpha != null
+        ? level.microScalpAlpha * globalMul
+        : alphaForPassiveLiquidity(rightAlphaCtx) * globalMul;
 
-    ctx.fillStyle = getPassiveLiquidityFill(
-      level.side,
+    const liveIsNearTick =
+      level.liveDomSource === "near-tick" || level.liveDomSource === "best";
+    const liveIsTopDom =
+      level.liveDomSource === "top-dom" ||
+      level.liveDomSource === "viewport-top";
+    const liveIsWall =
+      level.liveDomSource === "wall" || level.sizeBtc >= WALL_IMPORTANT_BTC;
+
+    const continuityRes = renderOpts?.continuityPlan
+      ? lookupLiveContinuityResolution(
+          renderOpts.continuityPlan,
+          level.side,
+          level.price,
+          bucketStep,
+        )
+      : null;
+
+    const visualScore = computeLiveDomVisualScore({
+      liveRank: level.selectionScore,
+      liveDomVisualScore: level.liveDomVisualScore,
+      sizeBtc: level.sizeBtc,
+      viewportMaxSize: renderCtx.viewportMaxSize,
+      liveIsNearTick,
+      liveIsTopDom,
+      liveIsWallCandidate: liveIsWall,
+      midPrice: renderCtx.midPrice,
+      price: level.price,
+    });
+
+    const protectedLevel = isProtectedLiveDomLevel({
+      liveIsNearTick,
+      liveIsTopDom,
+      liveIsWall,
+      continuingFromHistorical: continuityRes?.continuingFromHistorical === true,
+      historicalWasStrong:
+        renderOpts?.continuityPlan?.historicalEdgeBuckets.get(
+          getLiquidityVisualKey(
+            level.side,
+            normalizeLiquidityBucketPrice(level.price, bucketStep),
+          ),
+        )?.historicalWasStrongNearEdge ?? false,
+    });
+
+    const activeDomCoverageEstimate =
+      (rendered + (densityTrimActive ? 0 : 1)) / viewportBuckets;
+    if (
+      densityTrimActive &&
+      shouldSkipLiveDomForDensity({
+        visualScore,
+        quantiles: scoreQuantiles,
+        protectedLevel,
+        activeDomCoveragePct: activeDomCoverageEstimate,
+        verticalMode,
+      })
+    ) {
+      continue;
+    }
+
+    let blendedAlpha = rightBodyAlpha / Math.max(globalMul, 0.001);
+
+    if (continuityRes?.liveActive) {
+      const blend = resolveLiveDomContinuationVisual({
+        liveIntensity: vi,
+        liveAlpha: blendedAlpha,
+        historicalIntensityNearEdge: continuityRes.historicalIntensity,
+        historicalAlphaNearEdge: continuityRes.historicalAlpha,
+        continuingFromHistorical: continuityRes.continuingFromHistorical,
+        liveOnly: continuityRes.liveOnly,
+        verticalMode: renderCtx.regime,
+        liveIsWallCandidate: liveIsWall,
+        liveIsTopDom,
+        liveIsNearTick,
+        liveFadeAlpha: level.liveDomFadeAlpha,
+      });
+      vi = blend.intensity;
+      blendedAlpha = blend.alpha;
+
+      if (renderOpts?.continuityRenderStatsOut) {
+        renderOpts.continuityRenderStatsOut.seamBlendAppliedCount += 1;
+        if (continuityRes.continuingFromHistorical) {
+          renderOpts.continuityRenderStatsOut.continuingFromHistoricalRenderCount += 1;
+        }
+        if (blend.liveOnlyFadeApplied) {
+          renderOpts.continuityRenderStatsOut.liveOnlyFadeRenderCount += 1;
+        }
+      }
+    }
+
+    const hierarchy = applyLiveDomHierarchyVisual(vi, blendedAlpha, visualScore, {
+      liveIsWallCandidate: liveIsWall,
+      verticalMode,
+    });
+    vi = hierarchy.intensity;
+    blendedAlpha = hierarchy.alpha;
+
+    const quantileExpanded = applyQuantileVisualExpansion(
+      visualScore,
       vi,
-      rightAlphaCtx,
-      globalMul,
+      blendedAlpha,
+      scoreQuantiles,
+      { protectedLevel },
     );
-    ctx.fillRect(x0, yTop, w + 1, height);
+    vi = quantileExpanded.intensity;
+    blendedAlpha = quantileExpanded.alpha;
+
+    const alphaCap = resolveLiveDomAlphaCap(verticalMode);
+    rightBodyAlpha = Math.min(alphaCap * globalMul, blendedAlpha * globalMul);
+
+    const fadeTier = classifyRightSideFadeTier({
+      liveIsNearTick,
+      liveIsTopDom,
+      liveIsWall,
+      protectedLevel,
+      quantileTier: quantileExpanded.tier,
+    });
+    const lengthTier = classifyRightSideLengthTier({
+      liveIsNearTick,
+      liveIsTopDom,
+      liveIsWall,
+      protectedLevel,
+      quantileTier: quantileExpanded.tier,
+      sizeBtc: level.sizeBtc,
+    });
+    const lengthFrac = resolveRightSideVisualLengthFraction({
+      tier: lengthTier,
+      side: level.side,
+      price: level.price,
+    });
+    const visualW = Math.max(2, w * lengthFrac);
+
+    if (renderOpts?.rightSideDensityCaptureOut) {
+      const densityCap = renderOpts.rightSideDensityCaptureOut;
+      densityCap.renderedVisualScores.push(visualScore);
+      recordLiveDomDensityTier(densityCap, quantileExpanded.tier);
+      if (fadeTier === "protected") {
+        densityCap.protectedNoFadeCount += 1;
+      } else {
+        densityCap.lowMidFadeAppliedCount += 1;
+      }
+      densityCap.uniformLengthRenderCount += 1;
+      if (renderOpts.layerTag === "active-dom") {
+        densityCap.activeDomAlphas.push(blendedAlpha);
+        densityCap.activeDomRenderedCount += 1;
+      }
+    }
+
+    const drawRightSideBar = (alpha: number, xStart: number, width: number) => {
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = getPassiveLiquidityFill(
+        level.side,
+        vi,
+        {
+          ...rightAlphaCtx,
+          intensity: vi,
+          isRightContinuation: true,
+        },
+        globalMul,
+      );
+      ctx.fillRect(xStart, yTop, width + 1, height);
+    };
+
+    if (fadeTier !== "protected" && visualW > 6) {
+      const splitX = x0 + visualW * 0.38;
+      const leftAlpha = rightBodyAlpha;
+      const rightAlpha = applyRightSideTemporalFade(
+        rightBodyAlpha,
+        1,
+        fadeTier,
+      );
+      drawRightSideBar(leftAlpha, x0, splitX - x0);
+      drawRightSideBar(rightAlpha, splitX, x0 + visualW - splitX);
+    } else {
+      const fadedAlpha =
+        fadeTier === "protected"
+          ? applyRightSideTemporalFade(rightBodyAlpha, 0.5, fadeTier)
+          : rightBodyAlpha;
+      drawRightSideBar(fadedAlpha, x0, visualW);
+    }
+    ctx.globalAlpha = 1;
+
+    if (renderOpts?.liveDomRenderCaptureOut) {
+      renderOpts.liveDomRenderCaptureOut.renderedIntensities.push(vi);
+      renderOpts.liveDomRenderCaptureOut.renderedAlphas.push(blendedAlpha);
+      renderOpts.liveDomRenderCaptureOut.renderedVisualScores.push(visualScore);
+      if (liveIsTopDom || level.liveDomSource === "viewport-top") {
+        renderOpts.liveDomRenderCaptureOut.topDomVisualMapping.push({
+          side: level.side,
+          price: level.price,
+          bucketPrice: normalizeLiquidityBucketPrice(level.price, bucketStep),
+          size: level.sizeBtc,
+          rank: level.selectionScore ?? visualScore,
+          finalIntensity: vi,
+          finalAlpha: blendedAlpha,
+          visible: true,
+          visualOk: blendedAlpha >= 0.255 && vi >= 0.35,
+        });
+      }
+    }
+
     rendered += 1;
+    alphaSum += rightBodyAlpha;
+    if (rightBodyAlpha > alphaMax) alphaMax = rightBodyAlpha;
+    renderedPriceKeys.add(`${level.side}:${level.price}`);
+
+    if (renderOpts?.statsOut) {
+      const tag = renderOpts.layerTag ?? "live-projection";
+      if (tag === "active-dom") {
+        renderOpts.statsOut.activeDomBandRectCount += 1;
+      } else {
+        renderOpts.statsOut.liveProjectionRectCount += 1;
+      }
+      renderOpts.statsOut.rightSideTotalRectCount += 1;
+    }
 
     if (renderCtx.paletteStats) {
       recordBookmapPaletteParitySample(renderCtx.paletteStats, {
@@ -1481,6 +1971,30 @@ function renderLiveBookProjection(
   }
   ctx.restore();
 
+  if (renderOpts?.statsOut && rendered > 0) {
+    renderOpts.statsOut.avgRightSideAlpha = alphaSum / rendered;
+    renderOpts.statsOut.maxRightSideAlpha = Math.max(
+      renderOpts.statsOut.maxRightSideAlpha,
+      alphaMax,
+    );
+    const priceSpan =
+      renderOpts.maxPrice != null && renderOpts.minPrice != null
+        ? Math.max(1, renderOpts.maxPrice - renderOpts.minPrice)
+        : 1;
+    const bucketStep = renderOpts.priceBucketStep ?? metrics.priceStep;
+    const viewportBuckets = Math.max(1, Math.ceil(priceSpan / Math.max(1, bucketStep)));
+    renderOpts.statsOut.rightSideCoveragePct =
+      renderedPriceKeys.size / viewportBuckets;
+    const domCount = renderOpts.statsOut.activeDomBandRectCount;
+    const lpCount = renderOpts.statsOut.liveProjectionRectCount;
+    renderOpts.statsOut.rightSideDominantLayer =
+      domCount >= lpCount && domCount > 0
+        ? "active-dom"
+        : lpCount > 0
+          ? "live-projection"
+          : "none";
+  }
+
   return {
     rendered,
     projectionStartTime: window.startTime,
@@ -1501,6 +2015,21 @@ function renderHeatmapBands(
   visualSettings?: BookmapVisualSettings,
   mode: "primary" | "perp-overlay" = "primary",
   overlayOpacityMul = 1,
+  sideStatsOut?: {
+    leftCount: number;
+    rightCount: number;
+    structuralLeft: number;
+    structuralRight: number;
+    majorLeft: number;
+    majorRight: number;
+  },
+  wallRenderOpts?: {
+    midPrice?: number | null;
+    verticalMode?: string;
+    densityCaptureOut?: RightSideDensityRenderCapture;
+    wallBandCoveragePct?: number;
+    baseTexturePriceKeys?: Set<string>;
+  },
 ) {
   const { priceToY, timeToX, priceStep } = metrics;
 
@@ -1528,10 +2057,17 @@ function renderHeatmapBands(
     const x0 = timeToX(band.startTime);
     const x1 = timeToX(endTime);
     const w = Math.max(1.5, x1 - x0);
-    const { yTop, height } = bandVerticalBounds(band, priceToY, priceStep);
+    const { yTop, height } = textureCellVerticalBounds(
+      band.price,
+      priceToY,
+      metrics.domBucketSize,
+    );
 
     if (yTop + height < HEATMAP_PAD.top - 2) continue;
     if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
+
+    const liveSlack = BOOKMAP_ENGINE_BUCKET_MS * 2;
+    const isRightSide = endTime >= dataEndTime - liveSlack;
 
     const isLive =
       !band.stale && band.endTime >= dataEndTime - BOOKMAP_ENGINE_BUCKET_MS * 2;
@@ -1544,11 +2080,72 @@ function renderHeatmapBands(
       closedAgeMs: band.stale ? 90_000 : 0,
       stableSizeBtc: band.maxSize,
     });
+    let wallBodyAlpha = alphaForPassiveLiquidity(wallAlphaCtx) * bandAlphaMul;
+    if (mode === "primary" && isRightSide && isLargeWall) {
+      const alphaCap = resolveWallBandRightSideAlphaCap(
+        band,
+        wallRenderOpts?.midPrice ?? null,
+        wallRenderOpts?.verticalMode ?? "micro",
+        wallRenderOpts?.wallBandCoveragePct ?? 0,
+      );
+      wallBodyAlpha = Math.min(alphaCap * bandAlphaMul, wallBodyAlpha);
+    }
+    const bucketPrice = Math.round(band.price / Math.max(1, priceStep)) * priceStep;
+    const hasBaseUnder = wallRenderOpts?.baseTexturePriceKeys?.has(
+      `${band.side}:${bucketPrice}`,
+    );
+    const isStructuralOrMajor =
+      band.tier === "structural" || band.tier === "major";
+    const wallTexMod =
+      0.94 +
+      stableVisualHash(`${band.side}:${bucketPrice}`, band.startTime) * 0.1;
+    wallBodyAlpha = applyWallBandBaseIntegrationAlpha(
+      wallBodyAlpha,
+      hasBaseUnder === true,
+      isStructuralOrMajor,
+      wallTexMod,
+    );
+    if (
+      BOOKMAP_VISUAL_FORCE_BOOKMAP_LIKE &&
+      !isStructuralOrMajor &&
+      isLargeWall &&
+      (wallRenderOpts?.wallBandCoveragePct ?? 0) > 0.25
+    ) {
+      vi = Math.min(vi, 0.52);
+    }
+    ctx.globalAlpha = wallBodyAlpha;
     ctx.fillStyle =
       mode === "perp-overlay"
         ? getBookmapPerpOverlayFill(drawBand, bandAlphaMul)
         : getPassiveLiquidityFill(band.side, vi, wallAlphaCtx, bandAlphaMul);
     ctx.fillRect(x0, yTop, w, height);
+    ctx.globalAlpha = 1;
+
+    if (mode === "primary" && isRightSide && wallRenderOpts?.densityCaptureOut) {
+      const cap = wallRenderOpts.densityCaptureOut;
+      cap.wallBandAlphas.push(wallBodyAlpha / Math.max(bandAlphaMul, 0.001));
+      cap.wallBandRenderedCount += 1;
+      if (band.tier === "structural") {
+        cap.structuralWallAlphas.push(wallBodyAlpha / Math.max(bandAlphaMul, 0.001));
+        cap.structuralWallRenderedCount += 1;
+      }
+      if (band.tier === "major") {
+        cap.majorWallAlphas.push(wallBodyAlpha / Math.max(bandAlphaMul, 0.001));
+        cap.majorWallRenderedCount += 1;
+      }
+    }
+
+    if (mode === "primary" && sideStatsOut) {
+      if (isRightSide) {
+        sideStatsOut.rightCount += 1;
+        if (band.tier === "structural") sideStatsOut.structuralRight += 1;
+        if (band.tier === "major") sideStatsOut.majorRight += 1;
+      } else {
+        sideStatsOut.leftCount += 1;
+        if (band.tier === "structural") sideStatsOut.structuralLeft += 1;
+        if (band.tier === "major") sideStatsOut.majorLeft += 1;
+      }
+    }
 
     if (mode === "primary") {
       const stroke = getBookmapBandStroke(drawBand);
@@ -1723,12 +2320,20 @@ export function paintBookmapEngineHeatmapFrame(
   );
 
   let primaryTextureCells = engine.textureCells ?? [];
+  let primaryActiveDomBands = engine.activeDomBands ?? [];
   let primaryProjectionLevels = engine.liveProjectionLevels ?? [];
 
   if (filterPrimary) {
+    const combinedProjection = [
+      ...primaryActiveDomBands,
+      ...primaryProjectionLevels,
+    ];
+    const activeDomKeySet = new Set(
+      primaryActiveDomBands.map((l) => `${l.side}:${l.price}`),
+    );
     const filtered = applyPerpRenderSpanFilter({
       textureCells: primaryTextureCells,
-      projectionLevels: primaryProjectionLevels,
+      projectionLevels: combinedProjection,
       midPrice: spot,
       dataEndTime: timeViewport.dataEndTime,
       priceToY: params.priceToY,
@@ -1739,7 +2344,13 @@ export function paintBookmapEngineHeatmapFrame(
       zoomRegime,
     });
     primaryTextureCells = filtered.textureCells;
-    primaryProjectionLevels = filtered.projectionLevels;
+    const filteredProjection = filtered.projectionLevels;
+    primaryActiveDomBands = filteredProjection.filter((l) =>
+      activeDomKeySet.has(`${l.side}:${l.price}`),
+    );
+    primaryProjectionLevels = filteredProjection.filter(
+      (l) => !activeDomKeySet.has(`${l.side}:${l.price}`),
+    );
     if (params.perpFilterTruthOut) {
       Object.assign(params.perpFilterTruthOut, filtered.truth);
     }
@@ -1791,6 +2402,7 @@ export function paintBookmapEngineHeatmapFrame(
   const hasOverlayTexture =
     params.overlayEngine?.textureModeEnabled && overlayTextureCells.length > 0;
   const hasOverlayBands = (params.overlayEngine?.bands.length ?? 0) > 0;
+  const hasActiveDomBands = primaryActiveDomBands.length > 0;
   const hasLiveProjection = primaryProjectionLevels.length > 0;
 
   if (
@@ -1798,7 +2410,8 @@ export function paintBookmapEngineHeatmapFrame(
     !hasTexture &&
     !hasOverlayTexture &&
     !hasOverlayBands &&
-    !hasLiveProjection
+    !hasLiveProjection &&
+    !hasActiveDomBands
   ) {
     ctx.fillStyle = "#64748b";
     ctx.font = "11px ui-monospace, monospace";
@@ -1825,10 +2438,21 @@ export function paintBookmapEngineHeatmapFrame(
 
   let renderedTextureTotal = 0;
   let filteredByTimeTotal = 0;
+  let renderedWallBandCount = 0;
+  const renderedLayerOrder: string[] = [];
   let primaryTextureDraw: ReturnType<typeof renderHeatmapTextureCells> | null =
     null;
+  let wallSideStats: {
+    leftCount: number;
+    rightCount: number;
+    structuralLeft: number;
+    structuralRight: number;
+    majorLeft: number;
+    majorRight: number;
+  } | null = null;
 
   if (hasTexture) {
+    renderedLayerOrder.push("historicalTexture");
     const textureDraw = renderHeatmapTextureCells(
       ctx,
       metrics,
@@ -1848,64 +2472,292 @@ export function paintBookmapEngineHeatmapFrame(
     primaryTextureDraw = textureDraw;
     renderedTextureTotal += textureDraw.rendered;
     filteredByTimeTotal += textureDraw.filteredByTime;
+    if (
+      textureDraw.pulledFootprintLeftSideCount +
+        textureDraw.pulledFootprintRightSideCount >
+      0
+    ) {
+      renderedLayerOrder.push("pulledFootprint");
+    }
     if (textureDraw.drawCapHit && params.textureRenderStatsOut) {
       params.textureRenderStatsOut.textureDrawCapHit = true;
     }
   }
 
-  const liveProjectionDraw = renderLiveBookProjection(
-    ctx,
-    metrics,
-    primaryProjectionLevels,
-    timeViewport,
-    params.visualSettings,
-    {
-      ...textureVisualCtx,
-      viewportMaxSize: Math.max(
-        textureVisualCtx.viewportMaxSize,
-        computeViewportSizeStats(
-          primaryProjectionLevels.map((l) => ({
-            timeBucket: 0,
-            price: l.price,
-            side: l.side,
-            intensity: l.intensity,
-            isMajor: false,
-            maxSizeInBucket: l.sizeBtc,
-          })),
-        ).maxSize,
-      ),
-    },
+  const microScalpStats = emptyMicroScalpRenderStats();
+  const priceBucketStep =
+    engine.textureStats?.texturePriceBucketSize ??
+    BOOKMAP_TEXTURE_PRICE_BUCKET_USD;
+  const activeDomPriceKeys = new Set(
+    primaryActiveDomBands.map((l) => `${l.side}:${l.price}`),
   );
-  if (params.liveProjectionRenderStatsOut) {
-    params.liveProjectionRenderStatsOut.renderedLiveProjectionCount =
-      liveProjectionDraw.rendered;
-    params.liveProjectionRenderStatsOut.projectionStartTime =
-      liveProjectionDraw.projectionStartTime;
-    params.liveProjectionRenderStatsOut.projectionEndTime =
-      liveProjectionDraw.projectionEndTime;
-    params.liveProjectionRenderStatsOut.avgProjectionWidthPx =
-      liveProjectionDraw.avgProjectionWidthPx;
-    params.liveProjectionRenderStatsOut.minProjectionWidthPx =
-      liveProjectionDraw.minProjectionWidthPx;
-    params.liveProjectionRenderStatsOut.maxProjectionWidthPx =
-      liveProjectionDraw.maxProjectionWidthPx;
-    params.liveProjectionRenderStatsOut.projectionOverlapsHistory =
-      liveProjectionDraw.projectionOverlapsHistory;
-  }
 
-  if (hasBands && preparedPrimaryWalls) {
-    renderHeatmapBands(
+  const liveDomDedup = dedupeLiveProjectionAgainstActiveDom(
+    primaryProjectionLevels,
+    primaryActiveDomBands,
+    priceBucketStep,
+  );
+  const dedupedProjectionLevels = liveDomDedup.deduped;
+  microScalpStats.duplicatedActiveDomAndProjectionBucketsCount =
+    liveDomDedup.afterOverlapCount;
+
+  const microScalpMode = microScalpVisual.microScalpMode;
+  const skipLiveProjectionRender = microScalpMode && hasActiveDomBands;
+  const liveProjectionStrictStart = resolveLiveProjectionStrictStart(
+    hasActiveDomBands,
+    microScalpMode,
+  );
+  const phase2LiveDedupApplied = liveDomDedup.beforeOverlapCount > 0;
+  const phase2StrictLiveStartApplied =
+    hasActiveDomBands || liveProjectionStrictStart;
+
+  const liveLevelsForContinuity = [
+    ...primaryActiveDomBands,
+    ...(skipLiveProjectionRender ? [] : dedupedProjectionLevels),
+  ];
+  const continuityRenderStats = {
+    seamBlendAppliedCount: 0,
+    continuingFromHistoricalRenderCount: 0,
+    liveOnlyFadeRenderCount: 0,
+  };
+  const liveDomRenderCapture = createEmptyLiveDomRenderCapture();
+  const rightSideDensityCapture = createEmptyRightSideDensityCapture();
+  const continuityPlan =
+    liveLevelsForContinuity.length > 0
+      ? buildLiquidityContinuityPlan({
+          textureCells: primaryTextureCells,
+          liveLevels: liveLevelsForContinuity,
+          dataEndTime: timeViewport.dataEndTime,
+          verticalMode: microScalpVisual.verticalMode,
+          priceBucketUsd: priceBucketStep,
+          historicalActiveAlphaByKey: historicalActiveAlphaByKey,
+        })
+      : null;
+
+  const liveProjectionCtxBase = (
+    levels: PreparedLiveProjectionLevel[],
+  ): TextureVisualRenderContext => ({
+    ...textureVisualCtx,
+    viewportMaxSize: Math.max(
+      textureVisualCtx.viewportMaxSize,
+      computeViewportSizeStats(
+        levels.map((l) => ({
+          timeBucket: 0,
+          price: l.price,
+          side: l.side,
+          intensity: l.intensity,
+          isMajor: false,
+          maxSizeInBucket: l.sizeBtc,
+        })),
+      ).maxSize,
+    ),
+  });
+
+  const liveRenderOptsBase = {
+    statsOut: microScalpStats,
+    priceBucketStep,
+    minPrice,
+    maxPrice,
+    continuityPlan,
+    continuityRenderStatsOut: continuityRenderStats,
+    liveDomRenderCaptureOut: liveDomRenderCapture,
+    rightSideDensityCaptureOut: rightSideDensityCapture,
+    midPrice: spot,
+    verticalMode: microScalpVisual.verticalMode,
+  };
+
+  let activeDomDraw: LiveProjectionRenderResult = {
+    rendered: 0,
+    projectionStartTime: timeViewport.dataEndTime,
+    projectionEndTime: timeViewport.visibleEndTime,
+    avgProjectionWidthPx: 0,
+    minProjectionWidthPx: 0,
+    maxProjectionWidthPx: 0,
+    projectionOverlapsHistory: false,
+  };
+  let liveProjectionDraw: LiveProjectionRenderResult = activeDomDraw;
+
+  if (hasActiveDomBands) {
+    renderedLayerOrder.push("activeDomBands");
+    activeDomDraw = renderLiveBookProjection(
       ctx,
       metrics,
-      preparedPrimaryWalls.bands,
-      timeViewport.dataEndTime,
-      timeViewport.visibleEndTime,
+      primaryActiveDomBands,
+      timeViewport,
       params.visualSettings,
-      "primary",
+      liveProjectionCtxBase(primaryActiveDomBands),
+      {
+        ...liveRenderOptsBase,
+        strictDataEdgeStart: true,
+        layerTag: "active-dom",
+      },
     );
   }
 
+  if (!skipLiveProjectionRender && dedupedProjectionLevels.length > 0) {
+    renderedLayerOrder.push("liveProjection");
+    liveProjectionDraw = renderLiveBookProjection(
+      ctx,
+      metrics,
+      dedupedProjectionLevels,
+      timeViewport,
+      params.visualSettings,
+      liveProjectionCtxBase(dedupedProjectionLevels),
+      {
+        ...liveRenderOptsBase,
+        strictDataEdgeStart: liveProjectionStrictStart,
+        forceNoHistoryOverlap: hasActiveDomBands,
+        layerTag: "live-projection",
+      },
+    );
+  }
+
+  const combinedLiveDraw: LiveProjectionRenderResult = {
+    rendered: activeDomDraw.rendered + liveProjectionDraw.rendered,
+    projectionStartTime: Math.min(
+      activeDomDraw.projectionStartTime,
+      liveProjectionDraw.projectionStartTime,
+    ),
+    projectionEndTime: Math.max(
+      activeDomDraw.projectionEndTime,
+      liveProjectionDraw.projectionEndTime,
+    ),
+    avgProjectionWidthPx: Math.max(
+      activeDomDraw.avgProjectionWidthPx,
+      liveProjectionDraw.avgProjectionWidthPx,
+    ),
+    minProjectionWidthPx: Math.min(
+      activeDomDraw.minProjectionWidthPx || Infinity,
+      liveProjectionDraw.minProjectionWidthPx || Infinity,
+    ) || 0,
+    maxProjectionWidthPx: Math.max(
+      activeDomDraw.maxProjectionWidthPx,
+      liveProjectionDraw.maxProjectionWidthPx,
+    ),
+    projectionOverlapsHistory:
+      activeDomDraw.projectionOverlapsHistory ||
+      liveProjectionDraw.projectionOverlapsHistory,
+  };
+
+  const liveProjectionPriceKeys = new Set(
+    dedupedProjectionLevels.map((l) => `${l.side}:${l.price}`),
+  );
+  let filteredWallBands = preparedPrimaryWalls?.bands ?? [];
+  let beforeDuplicatedWallAndActiveDomCount = 0;
+  let beforeDuplicatedWallAndLiveCount = 0;
+  let phase2WallDedupApplied = false;
+  if (preparedPrimaryWalls) {
+    const wallFilter = filterWallBandsForLiveSeam(
+      preparedPrimaryWalls.bands,
+      activeDomPriceKeys,
+      liveProjectionPriceKeys,
+    );
+    filteredWallBands = wallFilter.filtered;
+    beforeDuplicatedWallAndActiveDomCount = wallFilter.beforeActiveDomOverlap;
+    beforeDuplicatedWallAndLiveCount = wallFilter.beforeLiveOverlap;
+    phase2WallDedupApplied =
+      beforeDuplicatedWallAndActiveDomCount + beforeDuplicatedWallAndLiveCount > 0;
+    microScalpStats.duplicatedWallAndLiveBucketsCount =
+      wallFilter.afterLiveOverlap;
+  }
+
+  const liveDomPriceKeys = new Set<string>(activeDomPriceKeys);
+  for (const level of dedupedProjectionLevels) {
+    liveDomPriceKeys.add(`${level.side}:${level.price}`);
+  }
+
+  if (params.liveProjectionRenderStatsOut) {
+    params.liveProjectionRenderStatsOut.renderedLiveProjectionCount =
+      combinedLiveDraw.rendered;
+    params.liveProjectionRenderStatsOut.projectionStartTime =
+      combinedLiveDraw.projectionStartTime;
+    params.liveProjectionRenderStatsOut.projectionEndTime =
+      combinedLiveDraw.projectionEndTime;
+    params.liveProjectionRenderStatsOut.avgProjectionWidthPx =
+      combinedLiveDraw.avgProjectionWidthPx;
+    params.liveProjectionRenderStatsOut.minProjectionWidthPx =
+      combinedLiveDraw.minProjectionWidthPx;
+    params.liveProjectionRenderStatsOut.maxProjectionWidthPx =
+      combinedLiveDraw.maxProjectionWidthPx;
+    params.liveProjectionRenderStatsOut.projectionOverlapsHistory =
+      combinedLiveDraw.projectionOverlapsHistory;
+  }
+
+  if (hasBands && preparedPrimaryWalls) {
+    renderedLayerOrder.push("wallBands");
+    const baseTexturePriceKeys = new Set<string>();
+    for (const cell of primaryTextureCells) {
+      if (resolveTextureSourceKindForPrepared(cell) === "base") {
+        baseTexturePriceKeys.add(`${cell.side}:${cell.price}`);
+      }
+    }
+    wallSideStats = {
+      leftCount: 0,
+      rightCount: 0,
+      structuralLeft: 0,
+      structuralRight: 0,
+      majorLeft: 0,
+      majorRight: 0,
+    };
+    const viewportBucketsForWalls = Math.max(
+      1,
+      rightSideDensityCapture.viewportPriceBucketCount,
+    );
+    const wallLiveSlack = BOOKMAP_ENGINE_BUCKET_MS * 2;
+    const rightEdgeWallCount = filteredWallBands.filter((band) => {
+      if (!isWallTier(band.tier)) return false;
+      const endTime = resolveBandEndTime(
+        band,
+        timeViewport.dataEndTime,
+        timeViewport.visibleEndTime,
+      );
+      return endTime >= timeViewport.dataEndTime - wallLiveSlack;
+    }).length;
+    const wallBandCoveragePct = rightEdgeWallCount / viewportBucketsForWalls;
+    renderHeatmapBands(
+      ctx,
+      metrics,
+      filteredWallBands,
+      timeViewport.dataEndTime,
+      timeViewport.dataEndTime,
+      params.visualSettings,
+      "primary",
+      1,
+      wallSideStats,
+      {
+        midPrice: spot,
+        verticalMode: microScalpVisual.verticalMode,
+        densityCaptureOut: rightSideDensityCapture,
+        wallBandCoveragePct,
+        baseTexturePriceKeys,
+      },
+    );
+    renderedWallBandCount = filteredWallBands.length;
+    for (const band of filteredWallBands) {
+      if (!isWallTier(band.tier)) continue;
+      const endTime = resolveBandEndTime(
+        band,
+        timeViewport.dataEndTime,
+        timeViewport.visibleEndTime,
+      );
+      if (endTime >= timeViewport.dataEndTime - BOOKMAP_ENGINE_BUCKET_MS) {
+        microScalpStats.wallBandRightSideRectCount += 1;
+        if (band.tier === "structural") {
+          microScalpStats.structuralWallRightSideRectCount += 1;
+        }
+        if (band.tier === "major") {
+          microScalpStats.majorWallRightSideRectCount += 1;
+        }
+      }
+    }
+  }
+
+  if (params.microScalpLayerAuditSink) {
+    params.microScalpLayerAuditSink.stats = microScalpStats;
+  }
+
   if (hasOverlayTexture && params.overlayEngine) {
+    renderedLayerOrder.push("overlayTexture");
     const overlayVisualCtx: TextureVisualRenderContext = {
       ...textureVisualCtx,
       viewportMaxSize: computeViewportSizeStats(overlayTextureCells).maxSize,
@@ -1934,6 +2786,7 @@ export function paintBookmapEngineHeatmapFrame(
   }
 
   if (hasOverlayBands && params.overlayEngine) {
+    renderedLayerOrder.push("overlayWallBands");
     const preparedOverlayWalls = prepareWallBandsForContinuousRender(
       params.overlayEngine.bands,
       timeViewport.dataEndTime,
@@ -1945,11 +2798,31 @@ export function paintBookmapEngineHeatmapFrame(
       metrics,
       preparedOverlayWalls.bands,
       timeViewport.dataEndTime,
-      timeViewport.visibleEndTime,
+      timeViewport.dataEndTime,
       params.visualSettings,
       "perp-overlay",
       params.overlayOpacity ?? 0.35,
     );
+  }
+
+  if (params.layerAuditSink) {
+    params.layerAuditSink.audit = buildBookmapLayerAudit({
+      market: activeDomMarket,
+      sourceMode,
+      verticalMode: microScalpVisual.verticalMode,
+      legacyRendererActive: false,
+      engineRendererActive: true,
+      renderData: engine,
+      renderedLayerOrder,
+      renderedHistoricalTextureCount: renderedTextureTotal,
+      renderedHistoricalFootprintCount:
+        l2BandContinuityStats.pulledRelevantBandCount,
+      renderedLiveProjectionCount: combinedLiveDraw.rendered,
+      renderedWallBandCount: filteredWallBands.length,
+      executionOverlayActive: false,
+      tradeDotsActive: Boolean(params.tradeDots?.length),
+      currentBookAnchorsInPrepare: false,
+    });
   }
 
   if (params.visualParityTruthOut) {
@@ -2147,6 +3020,7 @@ export function paintBookmapEngineHeatmapFrame(
     params.bboHistoryPoints &&
     params.bboHistoryPoints.length >= 2
   ) {
+    renderedLayerOrder.push("bboHistoryPath");
     const bounds = getBboPathPlotBounds(w, h);
     renderHistoricalBboPath(ctx, {
       points: params.bboHistoryPoints,
@@ -2186,6 +3060,7 @@ export function paintBookmapEngineHeatmapFrame(
     params.bboGuide &&
     metrics
   ) {
+    renderedLayerOrder.push("priceLines");
     renderBookmapBidAskGuideLines(
       ctx,
       params.bboGuide,
@@ -2202,6 +3077,7 @@ export function paintBookmapEngineHeatmapFrame(
   }
   if (params.tradeDots && params.tradeDots.length > 0) {
     if (params.executionRailsEnabled !== false) {
+      renderedLayerOrder.push("executionOverlay");
       renderEngineExecutionRails(
         ctx,
         params.tradeDots,
@@ -2216,6 +3092,7 @@ export function paintBookmapEngineHeatmapFrame(
         },
       );
     }
+    renderedLayerOrder.push("tradeDots");
     renderEngineTradeDots(
       ctx,
       params.tradeDots,
@@ -2240,6 +3117,82 @@ export function paintBookmapEngineHeatmapFrame(
   if (params.crosshair) {
     renderCrosshair(ctx, w, h, params.crosshair, crosshairMetrics);
   }
+
+  if (params.renderArchitectureFrameStatsOut) {
+    let afterDuplicatedWallAndActiveDomCount = 0;
+    for (const band of filteredWallBands) {
+      const key = `${band.side}:${band.price}`;
+      if (
+        activeDomPriceKeys.has(key) &&
+        band.tier !== "structural" &&
+        band.tier !== "major"
+      ) {
+        afterDuplicatedWallAndActiveDomCount += 1;
+      }
+    }
+    const textureLeft = primaryTextureDraw?.historicalTextureLeftSideCount ?? 0;
+    const textureRight =
+      primaryTextureDraw?.historicalTextureRightSideCount ?? 0;
+    const wallLeft = wallSideStats?.leftCount ?? 0;
+    const wallRight = wallSideStats?.rightCount ?? 0;
+    Object.assign(params.renderArchitectureFrameStatsOut, {
+      renderedLayerOrder: [...renderedLayerOrder],
+      historicalTextureLeftSideCount: textureLeft,
+      historicalTextureRightSideCount: textureRight,
+      pulledFootprintLeftSideCount:
+        primaryTextureDraw?.pulledFootprintLeftSideCount ?? 0,
+      pulledFootprintRightSideCount:
+        primaryTextureDraw?.pulledFootprintRightSideCount ?? 0,
+      wallBandLeftSideCount: wallLeft,
+      wallBandRightSideCount: wallRight,
+      structuralWallLeftSideCount: wallSideStats?.structuralLeft ?? 0,
+      structuralWallRightSideCount: wallSideStats?.structuralRight ?? 0,
+      majorWallLeftSideCount: wallSideStats?.majorLeft ?? 0,
+      majorWallRightSideCount: wallSideStats?.majorRight ?? 0,
+      leftSideRenderedCount: textureLeft + wallLeft,
+      rightSideRenderedCount:
+        textureRight +
+        microScalpStats.activeDomBandRectCount +
+        microScalpStats.liveProjectionRectCount +
+        wallRight,
+      duplicatedWallAndActiveDomCount: afterDuplicatedWallAndActiveDomCount,
+      duplicatedAnchorAndLiveCount: 0,
+      executionOverlayActive:
+        Boolean(params.tradeDots?.length) &&
+        params.executionRailsEnabled !== false,
+      tradeDotsActive: Boolean(params.tradeDots?.length),
+      phase2ClipApplied: primaryTextureDraw?.phase2ClipApplied ?? true,
+      phase2LiveDedupApplied,
+      phase2WallDedupApplied,
+      phase2StrictLiveStartApplied,
+      beforeHistoricalRightSideCount:
+        primaryTextureDraw?.beforeHistoricalRightSideCount ?? 0,
+      afterHistoricalRightSideCount: textureRight,
+      beforeDuplicatedLiveProjectionAndActiveDomCount:
+        liveDomDedup.beforeOverlapCount,
+      afterDuplicatedLiveProjectionAndActiveDomCount:
+        liveDomDedup.afterOverlapCount,
+      beforeDuplicatedWallAndActiveDomCount,
+      afterDuplicatedWallAndActiveDomCount,
+      phase3ContinuityIdentityApplied: continuityPlan != null,
+      phase3SeamBlendApplied:
+        continuityPlan?.stats.seamBlendApplied ??
+        continuityRenderStats.seamBlendAppliedCount > 0,
+      phase3LiveUsesHistoricalVisualBase:
+        continuityRenderStats.continuingFromHistoricalRenderCount > 0,
+      liquidityContinuityStats: continuityPlan
+        ? enrichLiquidityContinuityStatsFromRender(
+            continuityPlan.stats,
+            liveDomRenderCapture,
+            microScalpVisual.verticalMode,
+          )
+        : null,
+      rightSideDensityCapture: rightSideDensityCapture,
+    });
+  }
+
+  finalizeDotsReadabilityStats();
+  finalizeColorHierarchyStats();
 }
 
 export type { BookmapHeatmapRenderParams };

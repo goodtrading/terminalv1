@@ -88,6 +88,41 @@ import {
 import type { BookmapState } from "@/types/bookmapState";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
 import { PERP_OVERLAY_OPACITY_OPTIONS } from "@shared/bookmapSourceMode";
+import {
+  buildLiveDomPriorityDiag,
+  liquiditySnapshotToLiveDomLevels,
+  resolveLiveDomBookLevels,
+  resolveLiveDomPriorityConfig,
+} from "./bookmapLiveDomPriority";
+import {
+  applyLiveDomVisualCache,
+  buildLiveDomStabilityAudit,
+  type LiveDomVisualCacheFrameStats,
+  type LiveDomVisualCacheSession,
+} from "./bookmapLiveDomVisualCache";
+import { buildBookmapLayerAudit, type BookmapLayerAudit } from "./bookmapLayerAudit";
+import {
+  buildBookmapMicroScalpLayerAudit,
+  type MicroScalpLayerRenderStats,
+} from "./bookmapMicroScalpLayerAudit";
+import {
+  buildBookmapLeftRightContinuityAudit,
+  buildBookmapRenderArchitectureAudit,
+  type BookmapRenderArchitectureFrameStats,
+} from "./bookmapRenderArchitectureAudit";
+import { buildBookmapRightSideDensityAudit } from "./bookmapRightSideDensity";
+import { buildBookmapLiquidityLifecycleAudit } from "./bookmapLiquidityLifecycle";
+import { buildBookmapLifecycleTextureIntegrationAudit } from "./bookmapLifecycleTextureIntegration";
+import {
+  buildBookmapPassiveBaseTextureAudit,
+  getPassiveBaseTexturePrepareStats,
+  getPassiveBaseTextureSelectStats,
+} from "./bookmapPassiveBaseTexture";
+import { getLiquidityLifecycleCache } from "./bookmapLiquidityLifecycle";
+import {
+  buildBookmapRestingLiquidityLifecycleAudit,
+  resolveRestingLiquidityWriteConfig,
+} from "./bookmapRestingLiquidity";
 import { paintBookmapHeatmapFrame } from "./bookmapHeatmapRenderer";
 import { BookmapDomPanel } from "./BookmapDomPanel";
 import { bookLevelsToDomWallEntries } from "./domLadderUtils";
@@ -220,6 +255,7 @@ function createEmptyEngineRenderData(
     },
     textureModeEnabled: BOOKMAP_TEXTURE_MODE_ENABLED,
     liveProjectionLevels: [],
+    activeDomBands: [],
     liveProjectionStats: {
       liveProjectionEnabled: false,
       currentBidLevelCount: 0,
@@ -500,6 +536,27 @@ export function LiquidityHeatmapPanel({
   const historicalTextureVisualCacheRef = useRef(
     new Map<string, HistoricalTextureVisualLock>(),
   );
+  const liveDomVisualCacheRef = useRef<LiveDomVisualCacheSession>(new Map());
+  const liveDomVisualFrameStatsRef = useRef<LiveDomVisualCacheFrameStats>({
+    newLevelsThisFrame: 0,
+    removedLevelsThisFrame: 0,
+    updatedLevelsThisFrame: 0,
+    retainedGhostLevels: 0,
+    fadedOutLevels: 0,
+    rawRankChanges: 0,
+    smoothedRankChanges: 0,
+    avgRawSizeChangePct: 0,
+    avgSmoothedSizeChangePct: 0,
+    flickerRate: 0,
+    churnRate: 0,
+    unstableBucketCount: 0,
+    possiblePullingLevelCount: 0,
+    possibleSpoofingLevelCount: 0,
+    avgLevelLifetimeMs: 0,
+    medianLevelLifetimeMs: 0,
+    avgVisibleLifetimeMs: 0,
+    medianVisibleLifetimeMs: 0,
+  });
   const historicalTextureSpanPeakCacheRef = useRef(
     new Map<string, HistoricalTextureSpanPeakLock>(),
   );
@@ -600,6 +657,52 @@ export function LiquidityHeatmapPanel({
   const hasUserAdjustedPriceViewportRef = useRef(false);
   const lastPriceCenterContextRef = useRef<string | null>(null);
 
+  const layerAuditSinkRef = useRef<{ audit: BookmapLayerAudit | null }>({
+    audit: null,
+  });
+  const microScalpLayerAuditSinkRef = useRef<{
+    stats: MicroScalpLayerRenderStats | null;
+  }>({ stats: null });
+  const renderArchitectureFrameStatsRef =
+    useRef<BookmapRenderArchitectureFrameStats>({
+      renderedLayerOrder: [],
+      historicalTextureLeftSideCount: 0,
+      historicalTextureRightSideCount: 0,
+      pulledFootprintLeftSideCount: 0,
+      pulledFootprintRightSideCount: 0,
+      wallBandLeftSideCount: 0,
+      wallBandRightSideCount: 0,
+      structuralWallLeftSideCount: 0,
+      structuralWallRightSideCount: 0,
+      majorWallLeftSideCount: 0,
+      majorWallRightSideCount: 0,
+      leftSideRenderedCount: 0,
+      rightSideRenderedCount: 0,
+      duplicatedWallAndActiveDomCount: 0,
+      duplicatedAnchorAndLiveCount: 0,
+      executionOverlayActive: false,
+      tradeDotsActive: false,
+      phase2ClipApplied: true,
+      phase2LiveDedupApplied: false,
+      phase2WallDedupApplied: false,
+      phase2StrictLiveStartApplied: false,
+      beforeHistoricalRightSideCount: 0,
+      afterHistoricalRightSideCount: 0,
+      beforeDuplicatedLiveProjectionAndActiveDomCount: 0,
+      afterDuplicatedLiveProjectionAndActiveDomCount: 0,
+      beforeDuplicatedWallAndActiveDomCount: 0,
+      afterDuplicatedWallAndActiveDomCount: 0,
+      phase3ContinuityIdentityApplied: false,
+      phase3SeamBlendApplied: false,
+      phase3LiveUsesHistoricalVisualBase: false,
+      liquidityContinuityStats: null,
+      rightSideDensityCapture: null,
+    });
+  const lastLayerAuditAtRef = useRef(0);
+  const lastMicroScalpLayerAuditAtRef = useRef(0);
+  const lastRenderArchitectureAuditAtRef = useRef(0);
+  const lastRestingLiquidityAuditAtRef = useRef(0);
+
   const forensicDrawRef = useRef({
     legacyRendered: false,
     renderedLayerNames: [] as string[],
@@ -689,6 +792,7 @@ export function LiquidityHeatmapPanel({
     market: tradeFeedMarket,
     orderbookMarket: orderbookFeedMarket,
     orderbookAgeMs,
+    orderbookReceivedAt,
   } = useLiquidityHeatmapFeed(symbol, true, {
     tradeMarket: activeTradeMarket,
     orderbookMarket: activeDomMarket,
@@ -1054,9 +1158,25 @@ export function LiquidityHeatmapPanel({
     });
   }, [visualSettings, updatePrefs]);
 
+  const liveDomOverlay = useMemo(() => {
+    if (orderbookFeedMarket !== activeDomMarket || !latestLegacy) return null;
+    if (latestLegacy.bids.length === 0 && latestLegacy.asks.length === 0) return null;
+    return {
+      levels: liquiditySnapshotToLiveDomLevels(latestLegacy),
+      timestamp: latestLegacy.ts,
+    };
+  }, [orderbookFeedMarket, activeDomMarket, latestLegacy, orderbookReceivedAt]);
+
   const prepareBands = useCallback(
     (state: BookmapState | null) => {
-      if (!state || !state.heatmapCells.length) return null;
+      if (!state) return null;
+      if (
+        !state.heatmapCells.length &&
+        state.bids.length === 0 &&
+        state.asks.length === 0
+      ) {
+        return null;
+      }
       return prepareEngineRenderData(
         state,
         priceRange.minPrice,
@@ -1068,6 +1188,10 @@ export function LiquidityHeatmapPanel({
         priceScale.domBucketSize,
         priceReference ?? tickerSpot,
         priceScale.verticalMode,
+        {
+          liveDomBook: liveDomOverlay?.levels,
+          liveDomTimestamp: liveDomOverlay?.timestamp,
+        },
       );
     },
     [
@@ -1079,13 +1203,14 @@ export function LiquidityHeatmapPanel({
       priceScale.verticalMode,
       priceReference,
       tickerSpot,
+      liveDomOverlay,
     ],
   );
 
   const engineRenderBase = useMemo(() => {
     if (!useEngineRenderer || !primaryHeatmapState) return null;
     return prepareBands(primaryHeatmapState);
-  }, [useEngineRenderer, primaryHeatmapState, prepareBands]);
+  }, [useEngineRenderer, primaryHeatmapState, prepareBands, liveDomOverlay]);
 
   const engineOverlayBase = useMemo(() => {
     if (!useEngineRenderer || sourceMode !== "both" || !overlayHeatmapState) return null;
@@ -1427,12 +1552,23 @@ export function LiquidityHeatmapPanel({
         visibleStartTime: timeScale.viewport.visibleStartTime,
         visibleEndTime: timeScale.viewport.visibleEndTime,
       });
-      return applyHistoricalTextureVisualLock(calibrated, {
+      const locked = applyHistoricalTextureVisualLock(calibrated, {
         cache: historicalTextureVisualCacheRef.current,
         microScalpMode: calibrated.microScalpVisual?.microScalpMode,
         microVisualHierarchyActive:
           calibrated.microScalpVisual?.microVisualHierarchyActive,
         dataEndTime: timeScale.viewport.dataEndTime,
+      });
+      const domConfig = resolveLiveDomPriorityConfig(
+        priceScale.verticalMode,
+        visiblePriceRange,
+      );
+      return applyLiveDomVisualCache(locked, {
+        cache: liveDomVisualCacheRef.current,
+        config: domConfig,
+        midPrice: priceReference ?? tickerSpot ?? null,
+        spotPrice: priceReference ?? tickerSpot ?? null,
+        frameStats: liveDomVisualFrameStatsRef.current,
       });
     },
     [
@@ -1776,6 +1912,369 @@ export function LiquidityHeatmapPanel({
     snapshotCount,
     tradeBufferCount,
     receivedTradeCount,
+  ]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const now = Date.now();
+    if (now - lastLayerAuditAtRef.current < 2_000) return;
+    lastLayerAuditAtRef.current = now;
+
+    const engineAudit = layerAuditSinkRef.current.audit;
+    const audit = buildBookmapLayerAudit({
+      market: activeDomMarket,
+      sourceMode,
+      verticalMode: priceScale.verticalMode,
+      legacyRendererActive: forensicDrawRef.current.legacyRendered,
+      engineRendererActive: Boolean(useEngineRenderer && engineRenderData),
+      renderData: engineRenderData ?? undefined,
+      renderedLayerOrder:
+        engineAudit?.renderedLayerOrder ??
+        forensicDrawRef.current.renderedLayerNames,
+      renderedHistoricalTextureCount:
+        engineAudit?.renderedHistoricalTextureCount ??
+        textureRenderStatsRef.current.renderedTextureCellCount,
+      renderedHistoricalFootprintCount:
+        engineAudit?.renderedHistoricalFootprintCount ?? 0,
+      renderedLiveProjectionCount:
+        engineAudit?.renderedLiveProjectionCount ??
+        liveProjectionRenderStatsRef.current.renderedLiveProjectionCount,
+      renderedWallBandCount:
+        engineAudit?.renderedWallBandCount ?? engineRenderData?.bands.length ?? 0,
+      executionOverlayActive: executionOrderLines.length > 0,
+      tradeDotsActive: tradeDotsEnabled && engineTradeDots.stats.dotCount > 0,
+      currentBookAnchorsInPrepare: false,
+    });
+    console.debug("[BOOKMAP_LAYER_AUDIT]", audit);
+  }, [
+    activeDomMarket,
+    sourceMode,
+    priceScale.verticalMode,
+    useEngineRenderer,
+    engineRenderData,
+    executionOrderLines.length,
+    tradeDotsEnabled,
+    engineTradeDots.stats.dotCount,
+    bookmapAgeMs,
+  ]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !useEngineRenderer) return;
+    const now = Date.now();
+    if (now - lastMicroScalpLayerAuditAtRef.current < 2_000) return;
+    lastMicroScalpLayerAuditAtRef.current = now;
+
+    const tv = timeScale.viewport;
+    const plotW = heatmapPlotWidth - HEATMAP_PAD.left - HEATMAP_PAD.right;
+    const rightSideWidthPx = Math.max(0, plotW * (tv.rightSpacePct / 100));
+
+    const audit = buildBookmapMicroScalpLayerAudit({
+      market: activeDomMarket,
+      sourceMode,
+      domSource,
+      tradeSource,
+      verticalMode: priceScale.verticalMode,
+      spotPrice: priceCenterMid.midPrice,
+      selection: engineRenderData?.liveDomSelection ?? null,
+      renderData: engineRenderData ?? null,
+      timeViewport: tv,
+      rightSideWidthPx,
+      renderStats: microScalpLayerAuditSinkRef.current.stats,
+      historicalTextureRendered:
+        textureRenderStatsRef.current.renderedTextureCellCount,
+      wallBandsRendered: engineRenderData?.bands.length ?? 0,
+    });
+    console.debug("[BOOKMAP_MICRO_SCALP_LAYER_AUDIT]", audit);
+  }, [
+    useEngineRenderer,
+    activeDomMarket,
+    sourceMode,
+    domSource,
+    tradeSource,
+    priceScale.verticalMode,
+    priceCenterMid.midPrice,
+    engineRenderData,
+    timeScale.viewport,
+    heatmapPlotWidth,
+    bookmapAgeMs,
+  ]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !useEngineRenderer) return;
+    const now = Date.now();
+    if (now - lastRenderArchitectureAuditAtRef.current < 2_000) return;
+    lastRenderArchitectureAuditAtRef.current = now;
+
+    const tv = timeScale.viewport;
+    const plotW = heatmapPlotWidth - HEATMAP_PAD.left - HEATMAP_PAD.right;
+    const rightSideWidthPx = Math.max(0, plotW * (tv.rightSpacePct / 100));
+    const selection = engineRenderData?.liveDomSelection ?? null;
+
+    const architectureAudit = buildBookmapRenderArchitectureAudit({
+      market: activeDomMarket,
+      sourceMode,
+      domSource,
+      tradeSource,
+      verticalMode: priceScale.verticalMode,
+      spotPrice: priceCenterMid.midPrice,
+      bestBid: selection?.bestBid ?? null,
+      bestAsk: selection?.bestAsk ?? null,
+      timeViewport: tv,
+      rightSideWidthPx,
+      renderData: engineRenderData ?? null,
+      frameStats: renderArchitectureFrameStatsRef.current,
+      microStats: microScalpLayerAuditSinkRef.current.stats,
+      l2Continuity: l2BandContinuityTruthRef.current,
+      currentBookAnchorsInPrepare: false,
+    });
+    console.debug("[BOOKMAP_RENDER_ARCHITECTURE_AUDIT]", architectureAudit);
+
+    const continuityAudit = buildBookmapLeftRightContinuityAudit({
+      market: activeDomMarket,
+      sourceMode,
+      verticalMode: priceScale.verticalMode,
+      timeViewport: tv,
+      renderData: engineRenderData ?? null,
+      microStats: microScalpLayerAuditSinkRef.current.stats,
+      frameStats: renderArchitectureFrameStatsRef.current,
+    });
+    console.debug("[BOOKMAP_LEFT_RIGHT_CONTINUITY_AUDIT]", continuityAudit);
+
+    const densityAudit = buildBookmapRightSideDensityAudit({
+      market: activeDomMarket,
+      sourceMode,
+      verticalMode: priceScale.verticalMode,
+      rightSideWidthPx,
+      capture: renderArchitectureFrameStatsRef.current.rightSideDensityCapture,
+      microStats: microScalpLayerAuditSinkRef.current.stats,
+      frameStats: renderArchitectureFrameStatsRef.current,
+      passiveBaseStats: getPassiveBaseTexturePrepareStats(),
+    });
+    console.debug("[BOOKMAP_RIGHT_SIDE_DENSITY_AUDIT]", densityAudit);
+  }, [
+    useEngineRenderer,
+    activeDomMarket,
+    sourceMode,
+    domSource,
+    tradeSource,
+    priceScale.verticalMode,
+    priceCenterMid.midPrice,
+    engineRenderData,
+    timeScale.viewport,
+    heatmapPlotWidth,
+    bookmapAgeMs,
+  ]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !useEngineRenderer || !engineRenderData) return;
+    const now = Date.now();
+    if (now - lastRestingLiquidityAuditAtRef.current < 2_000) return;
+    lastRestingLiquidityAuditAtRef.current = now;
+
+    const tv = timeScale.viewport;
+    const priceSpan = priceRange.maxPrice - priceRange.minPrice;
+    const restingConfig = resolveRestingLiquidityWriteConfig(
+      priceScale.verticalMode,
+      priceSpan,
+    );
+    const domState = effectiveDomState ?? primaryHeatmapState;
+    const bookLevels = domState
+      ? resolveLiveDomBookLevels(
+          domState,
+          liveDomOverlay?.levels,
+          liveDomOverlay?.timestamp,
+        )
+      : [];
+
+    const lifecycleAudit = buildBookmapLiquidityLifecycleAudit({
+      market: activeDomMarket,
+      sourceMode,
+      domSource,
+      verticalMode: priceScale.verticalMode,
+      spotPrice: priceCenterMid.midPrice,
+      bestBid: engineRenderData.liveDomSelection?.bestBid ?? null,
+      bestAsk: engineRenderData.liveDomSelection?.bestAsk ?? null,
+      renderData: engineRenderData,
+      bookLevels,
+      config: restingConfig,
+    });
+    console.debug("[BOOKMAP_LIQUIDITY_LIFECYCLE_AUDIT]", lifecycleAudit);
+
+    const passiveBaseStats = getPassiveBaseTexturePrepareStats();
+    const textureIntegrationAudit = buildBookmapLifecycleTextureIntegrationAudit({
+      market: activeDomMarket,
+      sourceMode,
+      verticalMode: priceScale.verticalMode,
+      spotPrice: priceCenterMid.midPrice,
+      dataEndTime: tv.dataEndTime,
+      lifecycleCacheSize: getLiquidityLifecycleCache().size,
+      historicalTextureCellCount: engineRenderData.textureCells.length,
+      lifecycleHistoricalWriteOk: lifecycleAudit.lifecycleHistoricalWriteOk,
+      lifecycleFootprintOk: lifecycleAudit.lifecycleFootprintOk,
+      passiveBaseStats,
+    });
+    console.debug(
+      "[BOOKMAP_LIFECYCLE_TEXTURE_INTEGRATION_AUDIT]",
+      textureIntegrationAudit,
+    );
+
+    const plotW = heatmapPlotWidth - HEATMAP_PAD.left - HEATMAP_PAD.right;
+    const rightSideWidthPx = Math.max(0, plotW * (tv.rightSpacePct / 100));
+    const densityAudit = buildBookmapRightSideDensityAudit({
+      market: activeDomMarket,
+      sourceMode,
+      verticalMode: priceScale.verticalMode,
+      rightSideWidthPx,
+      capture: renderArchitectureFrameStatsRef.current.rightSideDensityCapture,
+      microStats: microScalpLayerAuditSinkRef.current.stats,
+      frameStats: renderArchitectureFrameStatsRef.current,
+      passiveBaseStats,
+    });
+
+    const passiveBaseAudit = buildBookmapPassiveBaseTextureAudit({
+      market: activeDomMarket,
+      sourceMode,
+      verticalMode: priceScale.verticalMode,
+      spotPrice: priceCenterMid.midPrice,
+      dataEndTime: tv.dataEndTime,
+      rawHeatmapCellCount:
+        engineRenderData.restingLiquidityRawCells?.length ??
+        domState?.heatmapCells?.length ??
+        0,
+      selectStats: getPassiveBaseTextureSelectStats(),
+      prepareStats: passiveBaseStats,
+      lifecycleBookmapLikeOk: textureIntegrationAudit.lifecycleBookmapLikeOk,
+      rightSideBookmapProjectionOk: densityAudit.rightSideBookmapProjectionOk,
+      lifecycleArtificialBandScore:
+        textureIntegrationAudit.lifecycleArtificialBandScore,
+      lifecycleLongFlatSpanCount:
+        textureIntegrationAudit.lifecycleLongFlatSpanCount,
+      rightSideUniformLengthScore: densityAudit.rightSideUniformLengthScore,
+      liveProjectionMechanicalScore: densityAudit.liveProjectionMechanicalScore,
+    });
+    console.debug("[BOOKMAP_PASSIVE_BASE_TEXTURE_AUDIT]", passiveBaseAudit);
+
+    const audit = buildBookmapRestingLiquidityLifecycleAudit({
+      market: activeDomMarket,
+      sourceMode,
+      domSource,
+      spotPrice: priceCenterMid.midPrice,
+      dataEndTime: tv.dataEndTime,
+      visibleEndTime: tv.visibleEndTime,
+      rawHeatmapCells:
+        engineRenderData.restingLiquidityRawCells ??
+        domState?.heatmapCells ??
+        [],
+      renderData: engineRenderData,
+      bookLevels,
+      config: restingConfig,
+    });
+    console.debug("[BOOKMAP_RESTING_LIQUIDITY_LIFECYCLE_AUDIT]", audit);
+  }, [
+    useEngineRenderer,
+    engineRenderData,
+    activeDomMarket,
+    sourceMode,
+    domSource,
+    priceCenterMid.midPrice,
+    priceScale.verticalMode,
+    priceRange.maxPrice,
+    priceRange.minPrice,
+    timeScale.viewport,
+    effectiveDomState,
+    primaryHeatmapState,
+    liveDomOverlay,
+    bookmapAgeMs,
+  ]);
+
+  const lastLiveDomStabilityAuditAtRef = useRef(0);
+  useEffect(() => {
+    if (!import.meta.env.DEV || !engineRenderData?.liveDomSelection) return;
+    const now = Date.now();
+    if (now - lastLiveDomStabilityAuditAtRef.current < 2_000) return;
+    lastLiveDomStabilityAuditAtRef.current = now;
+
+    const selection = engineRenderData.liveDomSelection;
+    const renderedCount =
+      engineRenderData.activeDomBands.length +
+      engineRenderData.liveProjectionLevels.length;
+    console.debug(
+      "[BOOKMAP_LIVE_DOM_STABILITY_AUDIT]",
+      buildLiveDomStabilityAudit({
+        market: activeDomMarket,
+        sourceMode,
+        verticalMode: priceScale.verticalMode,
+        spotPrice: priceReference ?? tickerSpot ?? null,
+        bestBid: selection.bestBid,
+        bestAsk: selection.bestAsk,
+        currentDomLevelCount: selection.currentBookVisibleLevelsCount,
+        selectedLiveDomLevelCount:
+          selection.selectedActiveDomBandCount +
+          selection.selectedLiveProjectionCount,
+        renderedLiveDomLevelCount: renderedCount,
+        frameStats: liveDomVisualFrameStatsRef.current,
+        nearTickSelectedCount: selection.nearTickCount,
+        topSizeSelectedCount: selection.topDomCount,
+        wallSelectedCount: selection.wallCount,
+        estimatedCoveragePct: selection.estimatedCoveragePct,
+      }),
+    );
+  }, [
+    engineRenderData,
+    activeDomMarket,
+    sourceMode,
+    priceScale.verticalMode,
+    priceReference,
+    tickerSpot,
+  ]);
+
+  const lastLiveDomDiagAtRef = useRef(0);
+  useEffect(() => {
+    if (!import.meta.env.DEV || !engineRenderData?.liveDomSelection) return;
+    const now = Date.now();
+    if (now - lastLiveDomDiagAtRef.current < 2_000) return;
+    lastLiveDomDiagAtRef.current = now;
+
+    const selection = engineRenderData.liveDomSelection;
+    const domTs = liveDomOverlay?.timestamp ?? effectiveDomState?.timestamp ?? null;
+    console.debug(
+      "[BOOKMAP_LIVE_DOM_PRIORITY_DIAG]",
+      buildLiveDomPriorityDiag({
+        market: activeDomMarket,
+        sourceMode,
+        domSource: domSource,
+        tradeSource: tradeSource,
+        spotPrice: priceReference ?? tickerSpot,
+        visiblePriceMin: priceRange.minPrice,
+        visiblePriceMax: priceRange.maxPrice,
+        heatmapBucketSize: priceScale.heatmapBucketSize,
+        selection,
+        liveProjectionRenderedCount:
+          liveProjectionRenderStatsRef.current.renderedLiveProjectionCount,
+        wallBandCandidateCount: engineRenderData.stats.bandCount,
+        wallBandRenderedCount: engineRenderData.stats.renderedBandCount,
+        lastDomUpdateAgeMs:
+          domTs != null ? Math.max(0, now - domTs) : orderbookAgeMs ?? null,
+        lastRenderAgeMs: bookmapAgeMs,
+        currentBookBidCount: selection ? engineRenderData.liveProjectionStats.currentBidLevelCount : 0,
+        currentBookAskCount: selection ? engineRenderData.liveProjectionStats.currentAskLevelCount : 0,
+      }),
+    );
+  }, [
+    engineRenderData,
+    activeDomMarket,
+    sourceMode,
+    domSource,
+    tradeSource,
+    priceReference,
+    tickerSpot,
+    priceRange.minPrice,
+    priceRange.maxPrice,
+    priceScale.heatmapBucketSize,
+    liveDomOverlay,
+    effectiveDomState?.timestamp,
+    orderbookAgeMs,
+    bookmapAgeMs,
   ]);
 
   useEffect(() => {
@@ -2483,9 +2982,14 @@ export function LiquidityHeatmapPanel({
       const engineFrame = engineRenderData;
       const renderedLayerNames: string[] = [];
       if (engineFrame.textureModeEnabled && engineFrame.textureCells.length > 0) {
-        renderedLayerNames.push("engine-primary-texture");
+        renderedLayerNames.push("historical-texture");
       }
-      renderedLayerNames.push("engine-primary-bands");
+      if (engineFrame.liveProjectionLevels.length > 0) {
+        renderedLayerNames.push("live-projection");
+      }
+      if (engineFrame.bands.length > 0) {
+        renderedLayerNames.push("wall-bands");
+      }
       if (sourceMode === "both" && engineOverlayRenderData) {
         if (
           engineOverlayRenderData.textureModeEnabled &&
@@ -2580,6 +3084,9 @@ export function LiquidityHeatmapPanel({
         spanPeakCache: historicalTextureSpanPeakCacheRef.current,
         textureRenderStatsOut: textureRenderStats,
         liveProjectionRenderStatsOut: liveProjectionRenderStats,
+        layerAuditSink: layerAuditSinkRef.current,
+        microScalpLayerAuditSink: microScalpLayerAuditSinkRef.current,
+        renderArchitectureFrameStatsOut: renderArchitectureFrameStatsRef.current,
       });
       if (executionOrderLines.length > 0) {
         const plotW = w - HEATMAP_PAD.left - HEATMAP_PAD.right;
@@ -2594,6 +3101,12 @@ export function LiquidityHeatmapPanel({
         if (drawnOrders > 0) {
           renderedLayerNames.push("execution-orders");
         }
+      }
+      if (executionOrderLines.length > 0) {
+        renderedLayerNames.push("execution-overlay");
+      }
+      if (tradeDotsEnabled && engineTradeDots.dots.length > 0) {
+        renderedLayerNames.push("trade-dots");
       }
       textureRenderStatsRef.current = textureRenderStats;
       liveProjectionRenderStatsRef.current = liveProjectionRenderStats;
@@ -2618,11 +3131,21 @@ export function LiquidityHeatmapPanel({
       return;
     }
 
+    if (!legacyDebugEnabled) {
+      forensicDrawRef.current = {
+        legacyRendered: false,
+        renderedLayerNames: [],
+        rendererReceivedDotsCount: 0,
+        rendererDrawnDotsCount: 0,
+        rendererClippedTimeCount: 0,
+        rendererClippedPriceCount: 0,
+      };
+      return;
+    }
+
     forensicDrawRef.current = {
       legacyRendered: true,
-      renderedLayerNames: legacyDebugEnabled
-        ? ["legacy-snapshot-cells-debug"]
-        : ["legacy-snapshot-cells"],
+      renderedLayerNames: ["legacy-snapshot-cells-debug"],
       rendererReceivedDotsCount: 0,
       rendererDrawnDotsCount: 0,
       rendererClippedTimeCount: 0,
