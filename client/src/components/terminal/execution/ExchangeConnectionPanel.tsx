@@ -18,9 +18,12 @@ import { BingXSavedConnectionCard } from "./BingXSavedConnectionCard";
 import { isBingXReadOnlySession, isBingXSecureApiSession } from "./bingxSession";
 import { useBrokerSession } from "./useBrokerSession";
 import { EXCHANGE_PANEL_SLOT_ORDER } from "./exchangeVisualOrder";
+import { openExternalUrl } from "@/lib/openExternalUrl";
 
 function openReferral(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer");
+  void openExternalUrl(url, { source: "bingx_register" }).catch((error) => {
+    console.warn("[BingX Register]", error);
+  });
 }
 
 function bingxStatusLabel(

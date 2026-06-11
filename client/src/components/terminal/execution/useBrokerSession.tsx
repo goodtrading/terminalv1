@@ -27,6 +27,7 @@ import {
   isBingXStaleClientAuthMessage,
 } from "./bingxReadOnlyMessages";
 import { getAuthToken } from "@/lib/authToken";
+import { openExternalUrl } from "@/lib/openExternalUrl";
 import { logBingXLoadingState } from "./bingxLoadingDebug";
 import {
   clearBrokerSession,
@@ -526,7 +527,7 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
         }),
       );
 
-      window.open(data.brokerLoginUrl, "_blank", "noopener,noreferrer");
+      await openExternalUrl(data.brokerLoginUrl, { source: "bingx_broker_login" });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Connection failed";
       setSession((prev) =>

@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
+import { openExternalUrl } from "@/lib/openExternalUrl";
 
 const PLAN_PRICE = "$25 USD / mes";
 const PAYPAL_LINK = "https://www.paypal.com/ncp/payment/4VPWL3R9MPVHS";
@@ -11,7 +12,9 @@ export function SubscriptionPage() {
   const [copied, setCopied] = useState(false);
 
   const handlePayPalClick = useCallback(() => {
-    window.open(PAYPAL_LINK, "_blank");
+    void openExternalUrl(PAYPAL_LINK, { source: "paypal_subscription" }).catch((error) => {
+      console.warn("[Subscription PayPal]", error);
+    });
   }, []);
 
   const handleCopyAddress = useCallback(async () => {

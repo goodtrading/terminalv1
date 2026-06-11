@@ -17,6 +17,7 @@ import {
   bingxReadOnlyErrorMessage,
   isBingXStaleClientAuthMessage,
 } from "./bingxReadOnlyMessages";
+import { openExternalUrl } from "@/lib/openExternalUrl";
 import { bingxApiFetch } from "./bingxApiClient";
 import { isBingXReadOnlySession } from "./bingxSession";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
@@ -35,7 +36,9 @@ export interface BingXConnectionModalProps {
 }
 
 function openReferral(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer");
+  void openExternalUrl(url, { source: "bingx_register" }).catch((error) => {
+    console.warn("[BingX Register]", error);
+  });
 }
 
 function SecureApiPermissionsWarning() {

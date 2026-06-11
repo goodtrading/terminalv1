@@ -2,6 +2,7 @@ import { apiUrl } from "@/lib/apiBase";
 import { appVersion } from "@/lib/appVersion";
 import { isDesktopApp } from "@/lib/desktopRuntime";
 import { writeDesktopLog } from "@/lib/desktopStorage";
+import { openExternalUrl } from "@/lib/openExternalUrl";
 
 const DEFAULT_DESKTOP_API_BASE = "https://goodtrading.up.railway.app";
 const DESKTOP_UPDATE_PATH = "/api/desktop/update";
@@ -233,44 +234,16 @@ export async function openDesktopUpdateDownload(
     throw new Error("No hay URL de descarga configurada.");
   }
 
-  if (isDesktopApp()) {
-    try {
-      const { open } = await import("@tauri-apps/plugin-shell");
-      await open(url);
-      await writeDesktopLog("desktop_update_download_opened", {
-        currentVersion: appVersion,
-        latestVersion,
-        downloadUrl: url,
-        method: "shell",
-      });
-      return;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await writeDesktopLog("desktop_update_download_error", {
-        currentVersion: appVersion,
-        latestVersion,
-        downloadUrl: url,
-        error: message,
-        stage: "shell",
-      });
-    }
-  }
-
   try {
-    const popup = window.open(url, "_blank", "noopener,noreferrer");
-    if (!popup) {
-      throw new Error("No se pudo abrir el navegador. Comprueba bloqueadores de ventanas emergentes.");
-    }
-    await writeDesktopLog("desktop_update_download_fallback", {
+    await openExternalUrl(url, {
+      source: "desktop_update",
       currentVersion: appVersion,
-      latestVersion,
-      downloadUrl: url,
+      latestVersion: latestVersion ?? undefined,
     });
     await writeDesktopLog("desktop_update_download_opened", {
       currentVersion: appVersion,
       latestVersion,
       downloadUrl: url,
-      method: "window.open",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -279,7 +252,6 @@ export async function openDesktopUpdateDownload(
       latestVersion,
       downloadUrl: url,
       error: message,
-      stage: "fallback",
     });
     throw error instanceof Error ? error : new Error(message);
   }
