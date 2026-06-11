@@ -7,10 +7,14 @@ import { useDesktopUpdateCheck } from "@/hooks/useDesktopUpdateCheck";
 import { CompactStatusPill } from "./CompactStatusPill";
 import { TopNavUserMenu } from "./TopNavUserMenu";
 import type { HealthTone } from "./health/healthUi";
+import { DesktopAssetSelector } from "@/components/desktop/DesktopAssetSelector";
+import { DesktopPanelVisibilityToggle } from "@/components/desktop/DesktopPanelVisibilityToggle";
 
 interface TopNavProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
+  panelsVisible?: boolean;
+  onTogglePanels?: () => void;
 }
 
 function ContextChip({ label, value, testId }: { label: string; value: string; testId?: string }) {
@@ -24,7 +28,7 @@ function ContextChip({ label, value, testId }: { label: string; value: string; t
   );
 }
 
-export function TopNav({ activeTab, onTabChange }: TopNavProps) {
+export function TopNav({ activeTab, onTabChange, panelsVisible = true, onTogglePanels }: TopNavProps) {
   const { data: terminalState } = useTerminalState();
   const desktopFeed = useDesktopFeedDiagnostics();
   const desktopUpdate = useDesktopUpdateCheck();
@@ -100,10 +104,20 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
 
       <div className="flex h-8 items-center justify-between px-4 border-t border-terminal-border/60 bg-terminal-panel/20 text-xs font-mono">
         <div className="flex items-center gap-2 min-w-0 overflow-x-auto">
-          <ContextChip label="Asset" value="BTC" />
+          {isDesktopBuild ? (
+            <DesktopAssetSelector />
+          ) : (
+            <ContextChip label="Asset" value="BTC" />
+          )}
           <ContextChip label="Expiry" value={expiryLabel} testId="text-dominant-expiry" />
           <ContextChip label="TF" value="15M" />
           <ContextChip label="Feed" value="DERIBIT" />
+          {isDesktopBuild && onTogglePanels ? (
+            <DesktopPanelVisibilityToggle
+              panelsVisible={panelsVisible}
+              onToggle={onTogglePanels}
+            />
+          ) : null}
         </div>
 
         <div className="flex items-center gap-2 shrink-0 ml-3">
