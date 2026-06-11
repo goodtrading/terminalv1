@@ -16,6 +16,7 @@ import {
   BOOKMAP_PERSISTENT_WALL_ANCHORING_V1,
   BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1,
   BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1,
+  BOOKMAP_SURFACE_RENDERER_V1,
   ANCHORED_WALL_BASE_ALPHA_MUL,
   ANCHORED_WALL_CORE_ALPHA_MUL,
   ANCHORED_WALL_GLOW_ALPHA_MUL,
@@ -209,6 +210,10 @@ import {
   type EngineTradeDotRenderStats,
   type TradeDotVisualContext,
 } from "./bookmapEngineTradeDots";
+import {
+  drawSurfaceRendererWatermark,
+  paintBookmapSurfaceRendererFrame,
+} from "./bookmapSurfaceRenderer";
 import type { ExecutionRailLength } from "@/components/terminal/bookmap/bookmapSettings";
 import type { PassiveConfluenceLevel } from "./bookmapConfluence";
 import type { BookmapLayerAudit } from "./bookmapLayerAudit";
@@ -1613,6 +1618,7 @@ function emitRenderPathProofDiag(
 }
 
 function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
+  if (BOOKMAP_SURFACE_RENDERER_V1) return;
   if (!import.meta.env.DEV || !BOOKMAP_RENDER_PATH_PROOF_DIAG) return;
   ctx.save();
   ctx.font = "bold 11px ui-monospace, monospace";
@@ -4189,6 +4195,128 @@ export function paintBookmapEngineHeatmapFrame(
   }
 
   const crosshairMetrics = metricsForCrosshair(metrics);
+
+  if (BOOKMAP_SURFACE_RENDERER_V1) {
+    paintBookmapSurfaceRendererFrame(
+      ctx,
+      {
+        width: w,
+        height: h,
+        minPrice,
+        maxPrice,
+        spot,
+        engine,
+        timeViewport,
+        visualSettings: params.visualSettings,
+        domBucketSize: Math.max(1, params.domBucketSize ?? params.heatmapBucketSize),
+      },
+      {
+        plotW: metrics.plotW,
+        plotH: metrics.plotH,
+        priceToY: params.priceToY,
+        timeToX: metrics.timeToX,
+        domBucketSize: metrics.domBucketSize,
+      },
+    );
+
+    if (
+      params.showHistoricalBboPath === true &&
+      params.bboHistoryPoints &&
+      params.bboHistoryPoints.length >= 2
+    ) {
+      const bounds = getBboPathPlotBounds(w, h);
+      renderHistoricalBboPath(ctx, {
+        points: params.bboHistoryPoints,
+        plotW: bounds.plotW,
+        plotH: bounds.plotH,
+        plotLeft: bounds.plotLeft,
+        plotTop: bounds.plotTop,
+        plotBottom: bounds.plotBottom,
+        minPrice,
+        maxPrice,
+        timeToX: metrics.timeToX,
+        priceToY: params.priceToY,
+        timeViewport,
+        verticalMode: params.tradeDotVerticalMode ?? "intraday",
+        opacity: params.bboPathOpacity ?? "normal",
+      });
+    }
+
+    if (
+      params.showDivergenceMarkers !== false &&
+      params.divergenceMarkers &&
+      params.divergenceMarkers.length > 0
+    ) {
+      renderDivergenceMarkers(ctx, params.divergenceMarkers, {
+        plotW: metrics.plotW,
+        plotH: metrics.plotH,
+        priceToY: params.priceToY,
+        timeToX: metrics.timeToX,
+        timeViewport,
+        minPrice,
+        maxPrice,
+      });
+    }
+
+    if (params.showBidAskLines !== false && params.bboGuide) {
+      renderBookmapBidAskGuideLines(
+        ctx,
+        params.bboGuide,
+        metrics,
+        timeViewport,
+        params.tradeDotVerticalMode ?? "intraday",
+        params.bidAskLineOpacity ?? "normal",
+        Math.max(1, params.domBucketSize ?? params.heatmapBucketSize),
+      );
+    }
+
+    if (params.tradeDotRenderStatsOut) {
+      Object.assign(params.tradeDotRenderStatsOut, EMPTY_TRADE_DOT_RENDER_STATS);
+    }
+    if (params.tradeDots && params.tradeDots.length > 0) {
+      if (params.executionRailsEnabled !== false) {
+        renderEngineExecutionRails(
+          ctx,
+          params.tradeDots,
+          metrics.timeToX,
+          metrics.priceToY,
+          metrics.plotW,
+          metrics.plotH,
+          {
+            verticalMode: params.tradeDotVerticalMode ?? "intraday",
+            railLength: params.executionRailLength ?? "normal",
+            visual: params.tradeDotVisual,
+          },
+        );
+      }
+      renderEngineTradeDots(
+        ctx,
+        params.tradeDots,
+        metrics.timeToX,
+        metrics.priceToY,
+        metrics.plotW,
+        metrics.plotH,
+        params.tradeDotVerticalMode ?? "intraday",
+        params.tradeDotVisual,
+        params.tradeDotRenderStatsOut,
+      );
+    }
+
+    if (spot != null) {
+      renderSpotLine(ctx, w, crosshairMetrics, spot, minPrice, maxPrice);
+    }
+
+    if (params.showFarWallMarkers !== false) {
+      renderEngineFarWallMarkers(ctx, params, metrics);
+    }
+
+    if (params.crosshair) {
+      renderCrosshair(ctx, w, h, params.crosshair, crosshairMetrics);
+    }
+
+    drawSurfaceRendererWatermark(ctx);
+    return;
+  }
 
   const visiblePriceRangePct = computeVisiblePriceRangePct(
     minPrice,

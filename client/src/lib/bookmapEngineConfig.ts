@@ -297,3 +297,17 @@ export const MATRIX_V1_SPAN_MIN_SIZE_BTC = 20;
 export const MATRIX_V1_SPAN_MIN_INTENSITY = 0.36;
 /** Skip horizontal time merge for granular matrix cells. */
 export const MATRIX_V1_GRANULAR_SINGLE_BUCKET = true;
+
+/**
+ * B.5 — Clean surface renderer bypassing experimental visual pipeline.
+ */
+export const BOOKMAP_SURFACE_RENDERER_V1 = true;
+
+/** DEV-only surface renderer diagnostics (throttled 2s). */
+export const BOOKMAP_SURFACE_RENDERER_DIAG = true;
+
+export const SURFACE_HISTORICAL_MAX_DRAW = 12_000;
+export const SURFACE_LIVE_MAX_PER_SIDE = 180;
+export const SURFACE_MACRO_MIN_SIZE_BTC = 1;
+export const SURFACE_MICRO_MIN_SIZE_BTC = 0.5;
+export const SURFACE_FAR_DISTANCE_ALPHA_MUL = 0.82;

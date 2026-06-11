@@ -563,6 +563,106 @@ export function resolveOrganicWallBodyAlpha(
   return Math.max(0.1, alpha);
 }
 
+export type SurfaceThermalTier =
+  | "very_weak"
+  | "weak"
+  | "medium"
+  | "strong"
+  | "extreme";
+
+/** B.5 — aggressive Bookmap-like thermal ramp from size (BTC). */
+export function resolveSurfaceThermalFromSize(sizeBtc: number): {
+  tier: SurfaceThermalTier;
+  intensity: number;
+  rgb: [number, number, number];
+  alpha: number;
+} {
+  let tier: SurfaceThermalTier;
+  let intensity: number;
+  if (sizeBtc >= 100) {
+    tier = "extreme";
+    intensity = 0.92;
+  } else if (sizeBtc >= 50) {
+    tier = "extreme";
+    intensity = 0.82;
+  } else if (sizeBtc >= 20) {
+    tier = "strong";
+    intensity = 0.68;
+  } else if (sizeBtc >= 8) {
+    tier = "medium";
+    intensity = 0.48;
+  } else if (sizeBtc >= 3) {
+    tier = "weak";
+    intensity = 0.32;
+  } else if (sizeBtc >= 1) {
+    tier = "very_weak";
+    intensity = 0.22;
+  } else {
+    tier = "very_weak";
+    intensity = Math.max(0.12, sizeBtc * 0.14);
+  }
+
+  let alpha: number;
+  switch (tier) {
+    case "extreme":
+      alpha = 0.75 + Math.min(0.13, (sizeBtc - 50) / 200);
+      break;
+    case "strong":
+      alpha = 0.52 + Math.min(0.2, (sizeBtc - 20) / 100);
+      break;
+    case "medium":
+      alpha = 0.3 + Math.min(0.18, (sizeBtc - 8) / 40);
+      break;
+    case "weak":
+      alpha = 0.22 + Math.min(0.1, (sizeBtc - 3) / 20);
+      break;
+    default:
+      alpha = 0.18 + Math.min(0.1, sizeBtc / 10);
+  }
+
+  const rgb = intensityToPassiveLiquidityRgb(intensity);
+  return { tier, intensity, rgb, alpha: Math.min(0.88, alpha) };
+}
+
+/** B.5 — historical cell thermal from prepared intensity + size hint. */
+export function resolveSurfaceHistoricalThermal(
+  intensity: number,
+  sizeBtc: number,
+): { rgb: [number, number, number]; alpha: number; tier: SurfaceThermalTier } {
+  const sizeHint = resolveSurfaceThermalFromSize(Math.max(sizeBtc, 0.5));
+  const vi = clamp01(Math.max(intensity, sizeHint.intensity * 0.85));
+  let tier = sizeHint.tier;
+  if (vi >= 0.72) tier = "extreme";
+  else if (vi >= 0.52) tier = "strong";
+  else if (vi >= 0.32) tier = "medium";
+  else if (vi >= 0.18) tier = "weak";
+  else tier = "very_weak";
+
+  let alpha: number;
+  switch (tier) {
+    case "extreme":
+      alpha = 0.75 + vi * 0.12;
+      break;
+    case "strong":
+      alpha = 0.52 + vi * 0.18;
+      break;
+    case "medium":
+      alpha = 0.3 + vi * 0.16;
+      break;
+    case "weak":
+      alpha = 0.22 + vi * 0.12;
+      break;
+    default:
+      alpha = 0.18 + vi * 0.1;
+  }
+
+  return {
+    rgb: intensityToPassiveLiquidityRgb(vi),
+    alpha: Math.min(0.86, alpha),
+    tier,
+  };
+}
+
 /** B.2.1 — inner heat-core intensity bump for dominant walls. */
 export function resolveOrganicWallCoreIntensity(intensity: number): number {
   const t = clamp01(intensity);
