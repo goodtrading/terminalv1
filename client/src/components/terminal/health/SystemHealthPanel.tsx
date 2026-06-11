@@ -7,6 +7,7 @@ import { LiveTradingReadinessBlock } from "./LiveTradingReadinessBlock";
 import { formatAuditTime } from "./terminalAuditLog";
 import type { TerminalAuditEntry } from "./auditTypes";
 import { registerTerminalAuditBridge } from "./terminalAuditBridge";
+import { DesktopDiagnosticsPanel } from "./DesktopDiagnosticsPanel";
 
 function auditLevelTone(level: TerminalAuditEntry["level"]): HealthTone {
   if (level === "error") return "error";
@@ -51,6 +52,8 @@ export function SystemHealthPanel() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1.5">
+        <DesktopDiagnosticsPanel />
+
         <HealthSection title="1 · BingX read-only">
           <div className="flex items-center gap-1.5 py-0.5">
             <StatusDot tone={h.bingx.connectionTone} />
@@ -218,18 +221,18 @@ export function SystemHealthPanel() {
                 ? "ok"
                 : h.liveTradingSummary?.status === "ready_for_live"
                   ? "error"
-                  : h.security.liveTradingTone
+                  : h.security.liveTradingTone as HealthTone
             }
           />
           <HealthRow
             label="API trading"
             value={h.security.apiTradingLabel}
-            tone={h.security.apiTradingTone}
+            tone={h.security.apiTradingTone as HealthTone}
           />
           <HealthRow
             label="Real order endpoints"
             value={h.security.endpointsLabel}
-            tone={h.security.endpointsTone}
+            tone={h.security.endpointsTone as HealthTone}
           />
           <HealthRow
             label="Max notional (guard)"

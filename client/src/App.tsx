@@ -29,9 +29,8 @@ function Router() {
 }
 
 function App() {
-  console.log("GT_MOBILE_DEBUG: APP COMPONENT MOUNTED - MAIN WINDOW LOG", new Date().toISOString());
-
   useEffect(() => {
+    document.title = "GoodTrading Terminal";
     if (!isDesktopBuild) return;
     void initDesktopStorage();
     const handleShutdown = () => {

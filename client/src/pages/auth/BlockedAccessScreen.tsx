@@ -5,9 +5,14 @@ import PendingApprovalScreen from "@/pages/auth/PendingApprovalScreen";
 import AccountInactiveScreen from "@/pages/auth/AccountInactiveScreen";
 import ExpiredSubscriptionScreen from "@/pages/auth/ExpiredSubscriptionScreen";
 import { cn } from "@/lib/utils";
+import { isDesktopBuild } from "@/lib/desktopStorage";
+import {
+  DesktopConnectionErrorScreen,
+  DesktopLoadingScreen,
+} from "@/pages/auth/DesktopBootScreens";
 
 export default function BlockedAccessScreen({ children }: { children: ReactNode }) {
-  const { saasDisabled, authReady, authenticated, user, access, login, register } =
+  const { saasDisabled, authReady, authenticated, user, access, authError, login, register, refreshSession } =
     useTerminalAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
@@ -20,10 +25,24 @@ export default function BlockedAccessScreen({ children }: { children: ReactNode 
   const [renewingExpired, setRenewingExpired] = useState(false);
 
   if (!authReady) {
+    if (isDesktopBuild) {
+      return <DesktopLoadingScreen />;
+    }
     return (
       <div className="h-screen w-full flex items-center justify-center bg-terminal-bg text-terminal-muted text-sm font-mono">
         Loading session…
       </div>
+    );
+  }
+
+  if (isDesktopBuild && authError && !authenticated) {
+    return (
+      <DesktopConnectionErrorScreen
+        detail={authError}
+        onRetry={() => {
+          void refreshSession();
+        }}
+      />
     );
   }
 

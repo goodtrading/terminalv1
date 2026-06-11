@@ -12,6 +12,7 @@ export const DESKTOP_STORAGE_BUCKETS = [
 
 export type DesktopStorageBucket = (typeof DESKTOP_STORAGE_BUCKETS)[number];
 export type DesktopStorageMode = "tauri" | "browser-fallback";
+export type DesktopStorageOpenTarget = "appData" | "logs" | "sessions" | "heatmap";
 
 export type DesktopStoragePaths = {
   mode: DesktopStorageMode;
@@ -206,6 +207,26 @@ export async function writeDesktopLog(
   } catch {
     appendFallbackLog(event, payload);
   }
+}
+
+export async function readDesktopLogTail(lines = 300): Promise<string> {
+  if (!isDesktopBuild) {
+    const entries = readFallbackJson<unknown[]>("logs:desktop", []);
+    return entries.slice(-lines).map((entry) => JSON.stringify(entry)).join("\n");
+  }
+  try {
+    return await invokeDesktop<string>("read_desktop_log_tail", { input: { lines } });
+  } catch {
+    const entries = readFallbackJson<unknown[]>("logs:desktop", []);
+    return entries.slice(-lines).map((entry) => JSON.stringify(entry)).join("\n");
+  }
+}
+
+export async function openDesktopStoragePath(
+  target: DesktopStorageOpenTarget,
+): Promise<void> {
+  if (!isDesktopBuild) return;
+  await invokeDesktop<void>("open_desktop_storage_path", { input: { target } });
 }
 
 export async function readDesktopConfig(): Promise<Partial<DesktopSettings>> {

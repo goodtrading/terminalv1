@@ -3674,16 +3674,11 @@ export function LiquidityHeatmapPanel({
                 className="text-[10px] font-mono text-sky-300/85 shrink-0"
                 title={desktopStoragePaths?.baseDir ?? "Desktop storage initializing"}
               >
-                Desktop storage: {desktopStoragePaths?.mode === "tauri" ? "OK" : "fallback"} · feed{" "}
-                {tradesStreamConnected ? "connected" : feedStatus} · bids{" "}
-                {effectiveDomState?.bids.length ?? 0} · asks {effectiveDomState?.asks.length ?? 0} ·
-                trades {tradeBufferCount} · age{" "}
-                {orderbookAgeMs != null ? `${Math.round(orderbookAgeMs)}ms` : "—"} · reconnects{" "}
-                {reconnectCount}
+                Desktop feed {tradesStreamConnected ? "live" : feedStatus}
               </span>
             )}
             <span className="text-[10px] font-mono text-cyan-400/80 shrink-0">
-              {useEngineRenderer ? "Live Bookmap" : statusLabel}
+              {useEngineRenderer ? "Bookmap active" : statusLabel}
             </span>
             <span className="text-[10px] font-mono text-emerald-400/90 shrink-0">
               {spotDisplay != null ? formatHeatmapPrice(spotDisplay) : "—"}

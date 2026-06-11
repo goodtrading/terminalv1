@@ -21,6 +21,7 @@ import {
   type DesktopBookmapHeatmapStats,
   type DesktopBookmapInputLevel,
 } from "@/lib/desktopBookmapHeatmapEngine";
+import { publishDesktopFeedDiagnostics } from "@/lib/desktopDiagnostics";
 
 const DESKTOP_BOOKMAP_BUCKET_MS = 1_000;
 const DESKTOP_BOOKMAP_DEPTH_LIMIT = 1_000;
@@ -321,6 +322,21 @@ export function useDesktopBookmapFeed(
     });
     heatmapStatsRef.current = heatmapResult.stats;
     setBookmapState(heatmapResult.state);
+    publishDesktopFeedDiagnostics({
+      provider: currentModeRef.current === "fallback-depth20" ? "Binance Spot depth20" : "Binance Spot local book",
+      symbol: cleanSymbol,
+      connected: connectedRef.current,
+      feedStatus: feedStatusRef.current,
+      lastUpdateAgeMs: 0,
+      reconnectCount: reconnectCountRef.current,
+      resyncCount: resyncCountRef.current,
+      rawBidsCount: rawBidsCountRef.current,
+      rawAsksCount: rawAsksCountRef.current,
+      visibleBidsCount: bidsCountRef.current,
+      visibleAsksCount: asksCountRef.current,
+      heatmapCellCount: heatmapResult.stats.cellCount,
+      lastError: error?.message ?? null,
+    });
 
     if (Date.now() - lastHeatmapCacheAtRef.current >= DESKTOP_HEATMAP_CACHE_INTERVAL_MS) {
       lastHeatmapCacheAtRef.current = Date.now();
@@ -936,6 +952,21 @@ export function useDesktopBookmapFeed(
       }
       void writeDesktopLog("desktop_feed_heartbeat", payload);
       const heatmapStats = heatmapStatsRef.current;
+      publishDesktopFeedDiagnostics({
+        provider: currentModeRef.current === "fallback-depth20" ? "Binance Spot depth20" : "Binance Spot local book",
+        symbol: cleanSymbol,
+        connected: connectedRef.current,
+        feedStatus: feedStatusRef.current,
+        lastUpdateAgeMs: lastUpdateRef.current != null ? now - lastUpdateRef.current : null,
+        reconnectCount: reconnectCountRef.current,
+        resyncCount: resyncCountRef.current,
+        rawBidsCount: rawBidsCountRef.current,
+        rawAsksCount: rawAsksCountRef.current,
+        visibleBidsCount: bidsCountRef.current,
+        visibleAsksCount: asksCountRef.current,
+        heatmapCellCount: heatmapStats.cellCount,
+        lastError: error?.message ?? null,
+      });
       void writeDesktopLog("desktop_heatmap_heartbeat", {
         symbol: cleanSymbol,
         cellCount: heatmapStats.cellCount,
@@ -952,7 +983,7 @@ export function useDesktopBookmapFeed(
       });
     }, 30_000);
     return () => window.clearInterval(id);
-  }, [canUseSpotFeed, cleanSymbol]);
+  }, [canUseSpotFeed, cleanSymbol, error]);
 
   const getSnapshots = useCallback(() => snapshotsRef.current, []);
   const getRecentTrades = useCallback(() => tradesRef.current, []);

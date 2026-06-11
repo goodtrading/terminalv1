@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 import { useLearnMode } from "@/hooks/useLearnMode";
 import { useTerminalState } from "@/hooks/useTerminalState";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
+import { getDesktopStoragePaths, isDesktopBuild } from "@/lib/desktopStorage";
+import { useDesktopFeedDiagnostics } from "@/lib/desktopDiagnostics";
 
 interface TopNavProps {
   activeTab: string;
@@ -13,12 +15,30 @@ interface TopNavProps {
 export function TopNav({ activeTab, onTabChange }: TopNavProps) {
   const { learnMode, toggleLearnMode } = useLearnMode();
   const { data: terminalState } = useTerminalState();
-  const { saasDisabled, user, logout } = useTerminalAuth();
+  const { saasDisabled, user, access, authenticated, logout } = useTerminalAuth();
+  const desktopFeed = useDesktopFeedDiagnostics();
+  const [desktopStorageOk, setDesktopStorageOk] = useState(false);
 
   const tabs = ["TERMINAL", "OPTIONS", "FLOWS", "VOLATILITY", "REPORTS"];
 
   const dominantExpiry = (terminalState?.positioning as any)?.dominantExpiry || null;
   const expiryLabel = dominantExpiry || "N/A";
+  const planLabel = access?.subscription?.planName ?? (authenticated ? "ACTIVE" : "SIGNED OUT");
+
+  useEffect(() => {
+    if (!isDesktopBuild) return;
+    let cancelled = false;
+    getDesktopStoragePaths()
+      .then((paths) => {
+        if (!cancelled) setDesktopStorageOk(paths.mode === "tauri");
+      })
+      .catch(() => {
+        if (!cancelled) setDesktopStorageOk(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="flex h-12 items-center justify-between bg-terminal-bg border-b border-terminal-border px-4 shrink-0 w-full z-10 relative">
@@ -29,7 +49,7 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
             alt="GoodTrading logo"
             className="h-6 w-auto object-contain mr-2 opacity-95 hover:opacity-100 transition-opacity"
           />
-          <span className="font-bold text-white tracking-widest text-sm">GOODTRADING <span className="text-terminal-muted font-normal text-xs ml-1">v1.0</span></span>
+          <span className="font-bold text-white tracking-widest text-sm">GOODTRADING <span className="text-terminal-muted font-normal text-xs ml-1">v0.1.0</span></span>
         </div>
         
         <div className="flex space-x-1 h-full pt-1">
@@ -94,6 +114,21 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
           <div className="w-2 h-2 rounded-full bg-terminal-positive animate-pulse"></div>
           <span className="text-terminal-positive font-bold tracking-widest">LIVE</span>
         </div>
+
+        {isDesktopBuild && (
+          <div className="hidden xl:flex items-center gap-2 border border-terminal-border bg-terminal-panel px-2 py-1 rounded-sm">
+            <span className="text-terminal-muted">DESKTOP:</span>
+            <span className={desktopStorageOk ? "text-terminal-positive" : "text-amber-400"}>
+              {desktopStorageOk ? "STORAGE OK" : "STORAGE CHECK"}
+            </span>
+            <span className={desktopFeed.connected ? "text-terminal-positive" : "text-amber-400"}>
+              {desktopFeed.connected ? "FEED LIVE" : "FEED WAIT"}
+            </span>
+            <span className="text-slate-400 max-w-[90px] truncate" title={planLabel}>
+              {planLabel}
+            </span>
+          </div>
+        )}
 
         {!saasDisabled && user && (
           <div className="flex items-center gap-3 ml-2 pl-3 border-l border-terminal-border">

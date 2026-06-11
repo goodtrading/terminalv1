@@ -3,6 +3,7 @@ use serde_json::{json, Map, Value};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Serialize)]
@@ -56,6 +57,18 @@ struct HeatmapSessionMetadataInput {
   ended_at: Option<String>,
   bucket_ms: Option<u64>,
   depth: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LogTailInput {
+  lines: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenDesktopPathInput {
+  target: String,
 }
 
 fn app_base_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -190,6 +203,40 @@ fn write_desktop_log(app: AppHandle, entry: DesktopLogEvent) -> Result<(), Strin
 }
 
 #[tauri::command]
+fn read_desktop_log_tail(app: AppHandle, input: LogTailInput) -> Result<String, String> {
+  let (base, _) = storage_paths(&app)?;
+  ensure_storage_dirs(&base)?;
+  let log_path = base.join("Logs").join("desktop.log");
+  if !log_path.exists() {
+    return Ok(String::new());
+  }
+  let raw = fs::read_to_string(log_path).map_err(|err| format!("read log tail: {err}"))?;
+  let limit = input.lines.unwrap_or(300).clamp(20, 2_000);
+  let mut lines = raw.lines().rev().take(limit).collect::<Vec<_>>();
+  lines.reverse();
+  Ok(lines.join("\n"))
+}
+
+#[tauri::command]
+fn open_desktop_storage_path(app: AppHandle, input: OpenDesktopPathInput) -> Result<(), String> {
+  let (base, _) = storage_paths(&app)?;
+  ensure_storage_dirs(&base)?;
+  let target = match input.target.as_str() {
+    "appData" => base,
+    "logs" => base.join("Logs"),
+    "sessions" => base.join("Sessions"),
+    "heatmap" => base.join("Heatmap"),
+    _ => return Err("unsupported storage target".to_string()),
+  };
+  fs::create_dir_all(&target).map_err(|err| format!("create open target: {err}"))?;
+  Command::new("explorer")
+    .arg(&target)
+    .spawn()
+    .map_err(|err| format!("open folder: {err}"))?;
+  Ok(())
+}
+
+#[tauri::command]
 fn read_desktop_config(app: AppHandle) -> Result<Value, String> {
   let (base, _) = storage_paths(&app)?;
   ensure_storage_dirs(&base)?;
@@ -271,6 +318,8 @@ pub fn run() {
       init_desktop_storage,
       get_desktop_storage_paths,
       write_desktop_log,
+      read_desktop_log_tail,
+      open_desktop_storage_path,
       read_desktop_config,
       write_desktop_config,
       write_market_data_cache,

@@ -46,6 +46,7 @@ interface TerminalAuthContextValue {
   user: AuthUser | null;
   access: AccessSnapshot | null;
   token: string | null;
+  authError: string | null;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
   logout: () => void;
@@ -95,6 +96,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
   const [access, setAccess] = useState<AccessSnapshot | null>(null);
   const [saasDisabled, setSaasDisabled] = useState(false);
   const [token, setTokenState] = useState<string | null>(() => getAuthToken());
+  const [authError, setAuthError] = useState<string | null>(null);
   /** Bumps on login/register/logout so late /api/auth/me responses cannot overwrite a newer session. */
   const sessionGenerationRef = useRef(0);
 
@@ -113,6 +115,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const applyMeResponse = useCallback((me: MeResponse) => {
+    setAuthError(null);
     reconcileTokenWithServerResponse(me);
     setTokenState(getAuthToken());
     if (me.saasDisabled) {
@@ -141,6 +144,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
 
   const refreshSession = useCallback(async () => {
     const genAtStart = sessionGenerationRef.current;
+    setAuthError(null);
     try {
       const me = await fetchMe();
       if (genAtStart !== sessionGenerationRef.current) return;
@@ -152,6 +156,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
         invalidateSession();
         return;
       }
+      setAuthError(msg || "AUTH_CONNECTION_FAILED");
       setTokenState(getAuthToken());
     }
   }, [applyMeResponse, invalidateSession]);
@@ -160,6 +165,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const genAtStart = sessionGenerationRef.current;
     (async () => {
+      setAuthError(null);
       try {
         const me = await fetchMe();
         if (cancelled || genAtStart !== sessionGenerationRef.current) return;
@@ -170,6 +176,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
         if (msg === "me:401") {
           invalidateSession();
         } else {
+          setAuthError(msg || "AUTH_CONNECTION_FAILED");
           setTokenState(getAuthToken());
         }
       } finally {
@@ -281,6 +288,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
       user,
       access,
       token,
+      authError,
       login,
       register,
       logout,
@@ -293,6 +301,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
       user,
       access,
       token,
+      authError,
       login,
       register,
       logout,
