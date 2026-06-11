@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useDesktopUpdateCheck } from "@/hooks/useDesktopUpdateCheck";
-import { isDesktopBuild } from "@/lib/desktopStorage";
+import { isDesktopApp } from "@/lib/desktopRuntime";
 import { cn } from "@/lib/utils";
 
 function formatPublishedAt(value: string | null): string | null {
@@ -27,7 +27,7 @@ export function DesktopUpdateModal() {
   const isOptional = shouldShowOptionalModal;
   const publishedAt = useMemo(() => formatPublishedAt(update.publishedAt), [update.publishedAt]);
 
-  if (!isDesktopBuild || (!isRequired && !isOptional)) return null;
+  if (!isDesktopApp() || (!isRequired && !isOptional)) return null;
 
   return (
     <div

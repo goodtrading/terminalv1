@@ -1,6 +1,7 @@
 import { apiUrl } from "@/lib/apiBase";
 import { appVersion } from "@/lib/appVersion";
-import { isDesktopBuild, writeDesktopLog } from "@/lib/desktopStorage";
+import { isDesktopApp } from "@/lib/desktopRuntime";
+import { writeDesktopLog } from "@/lib/desktopStorage";
 
 const DEFAULT_DESKTOP_API_BASE = "https://goodtrading.up.railway.app";
 const DESKTOP_UPDATE_PATH = "/api/desktop/update";
@@ -58,7 +59,7 @@ export const defaultDesktopUpdateState: DesktopUpdateState = {
   downloadUrl: null,
   releaseNotes: [],
   publishedAt: null,
-  updateStatus: isDesktopBuild ? "idle" : "up_to_date",
+  updateStatus: isDesktopApp() ? "idle" : "up_to_date",
   lastUpdateCheck: null,
   lastUpdateError: null,
 };

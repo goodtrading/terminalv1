@@ -2,7 +2,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -20,7 +19,7 @@ import {
   readDismissedOptionalVersion,
   writeDismissedOptionalVersion,
 } from "@/lib/desktopUpdateDismiss";
-import { isDesktopBuild } from "@/lib/desktopStorage";
+import { isDesktopApp } from "@/lib/desktopRuntime";
 
 type DesktopUpdateContextValue = {
   update: DesktopUpdateState;
@@ -72,7 +71,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const checkNow = useCallback(async () => {
-    if (!isDesktopBuild || checkingRef.current) return;
+    if (!isDesktopApp() || checkingRef.current) return;
 
     checkingRef.current = true;
     setUpdate((current) => ({
@@ -88,28 +87,6 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
       checkingRef.current = false;
     }
   }, [applyUpdateResult]);
-
-  useEffect(() => {
-    if (!isDesktopBuild) return;
-
-    void checkNow();
-
-    const retryTimer = window.setTimeout(() => {
-      void checkNow();
-    }, 5_000);
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void checkNow();
-      }
-    };
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      window.clearTimeout(retryTimer);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [checkNow]);
 
   const dismissOptional = useCallback(() => {
     const latestVersion = update.latestVersion?.trim();

@@ -13,6 +13,7 @@ import LoginRoute from "@/pages/auth/LoginRoute";
 import AdminPage from "@/pages/admin/AdminPage";
 import { initDesktopStorage, isDesktopBuild, writeDesktopLog } from "@/lib/desktopStorage";
 import { DesktopUpdateModal } from "@/components/desktop/DesktopUpdateModal";
+import { DesktopUpdateStartup } from "@/components/desktop/DesktopUpdateStartup";
 import { DesktopUpdateProvider } from "@/hooks/useDesktopUpdateCheck";
 
 function Router() {
@@ -47,8 +48,9 @@ function App() {
   
   return (
     <QueryClientProvider client={queryClient}>
-      <TerminalAuthProvider>
-        <DesktopUpdateProvider>
+      <DesktopUpdateProvider>
+        <DesktopUpdateStartup />
+        <TerminalAuthProvider>
           <TooltipProvider>
             <LearnModeProvider>
               <Toaster />
@@ -56,8 +58,8 @@ function App() {
               <DesktopUpdateModal />
             </LearnModeProvider>
           </TooltipProvider>
-        </DesktopUpdateProvider>
-      </TerminalAuthProvider>
+        </TerminalAuthProvider>
+      </DesktopUpdateProvider>
     </QueryClientProvider>
   );
 }
