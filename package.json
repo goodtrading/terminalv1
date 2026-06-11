@@ -26,6 +26,7 @@
     "build:desktop:web": "cross-env VITE_PLATFORM=desktop VITE_HEATMAP_ENABLED=true VITE_API_BASE_URL=https://goodtrading.up.railway.app npm run build",
     "build:desktop": "cross-env VITE_PLATFORM=desktop VITE_HEATMAP_ENABLED=true npm run tauri build",
     "prepare:desktop-release": "node scripts/prepare-desktop-release.mjs",
+    "print:desktop-release-command": "node scripts/print-github-release-command.mjs",
     "release:desktop": "npm run build:desktop && node scripts/prepare-desktop-release.mjs"
 },
   "dependencies": {

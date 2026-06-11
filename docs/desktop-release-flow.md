@@ -96,7 +96,105 @@ Ejemplo local:
 releases/desktop/GoodTrading-Terminal-0.1.1-x64-setup.exe
 ```
 
-URL pública de ejemplo:
+### Publicar instalador en GitHub Releases (recomendado)
+
+Hosting público recomendado: **GitHub Releases** en `goodtrading/terminalv1`.
+
+**Reglas:**
+
+- Tag del release: `v<version>` (ej. `v0.1.0` para versión `0.1.0`).
+- El **filename del asset** debe coincidir con el generado por `npm run release:desktop` (sin espacios).
+- Tras publicar, copiar la URL pública del asset y usarla como `downloadUrl` en `client/public/desktop-update.json`.
+
+#### Flujo manual (GitHub UI)
+
+1. Correr `npm run release:desktop`.
+2. Ir a GitHub → **Releases** → **Draft a new release**.
+3. **Choose a tag:** `v0.1.0` (o `v<version>` según `tauri.conf.json`).
+4. **Release title:** `GoodTrading Terminal v0.1.0`.
+5. Subir asset:
+   ```
+   releases/desktop/GoodTrading-Terminal-0.1.0-x64-setup.exe
+   ```
+6. (Opcional) Subir MSI:
+   ```
+   releases/desktop/GoodTrading-Terminal-0.1.0-x64.msi
+   ```
+7. **Publish release**.
+8. Copiar URL pública del asset `.exe` (clic derecho → Copy link address).
+9. Pegar en `client/public/desktop-update.json` como `downloadUrl`.
+10. Actualizar `latestVersion`, `minSupportedVersion`, `mandatory`, `releaseNotes`, `publishedAt`.
+11. Deploy Railway branch `fix/railway-bookmap-data` con el manifest actualizado.
+
+**URL de ejemplo (GitHub Releases):**
+
+```
+https://github.com/goodtrading/terminalv1/releases/download/v0.1.0/GoodTrading-Terminal-0.1.0-x64-setup.exe
+```
+
+Patrón:
+
+```
+https://github.com/goodtrading/terminalv1/releases/download/v<version>/GoodTrading-Terminal-<version>-x64-setup.exe
+```
+
+#### GitHub CLI (opcional)
+
+Imprimir comando listo para copiar (no ejecuta `gh`):
+
+```bash
+npm run print:desktop-release-command
+```
+
+Si `gh` está instalado y autenticado, crear release manualmente:
+
+**PowerShell:**
+
+```powershell
+gh release create v0.1.0 `
+  releases/desktop/GoodTrading-Terminal-0.1.0-x64-setup.exe `
+  --repo goodtrading/terminalv1 `
+  --title "GoodTrading Terminal v0.1.0" `
+  --notes "Initial desktop release"
+```
+
+**Bash:**
+
+```bash
+gh release create v0.1.0 \
+  releases/desktop/GoodTrading-Terminal-0.1.0-x64-setup.exe \
+  --repo goodtrading/terminalv1 \
+  --title "GoodTrading Terminal v0.1.0" \
+  --notes "Initial desktop release"
+```
+
+**Subir MSI a un release existente:**
+
+```bash
+gh release upload v0.1.0 releases/desktop/GoodTrading-Terminal-0.1.0-x64.msi --repo goodtrading/terminalv1
+```
+
+O incluir ambos assets al crear:
+
+```bash
+gh release create v0.1.0 \
+  releases/desktop/GoodTrading-Terminal-0.1.0-x64-setup.exe \
+  releases/desktop/GoodTrading-Terminal-0.1.0-x64.msi \
+  --repo goodtrading/terminalv1 \
+  --title "GoodTrading Terminal v0.1.0" \
+  --notes "Initial desktop release"
+```
+
+#### Update obligatorio vs opcional
+
+| Tipo | `mandatory` | `minSupportedVersion` |
+|------|-------------|------------------------|
+| **Opcional** | `false` | Versión anterior (ej. `0.1.0` mientras publicás `0.1.1`) |
+| **Obligatorio** | `true` | Igual a `latestVersion` |
+
+Para forzar update en todas las instalaciones: `minSupportedVersion = latestVersion` y `mandatory = true`.
+
+### Otras URLs (alternativa)
 
 ```
 https://goodtrading.app/downloads/GoodTrading-Terminal-0.1.1-x64-setup.exe
