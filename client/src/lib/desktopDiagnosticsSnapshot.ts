@@ -14,9 +14,21 @@ export type DesktopDiagnosticsSnapshot = {
   storageStatus: string;
   feedStatus: string;
   feedLastHeartbeat: string | null;
+  lastHeartbeatAt: string | null;
+  reconnectCount: number;
+  lastFeedError: string | null;
   lastUpdateCheck: string | null;
   timestamp: string;
 };
+
+function formatHeartbeatTimestamp(value: number | null): string | null {
+  if (value == null) return null;
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return null;
+  }
+}
 
 export function buildDesktopDiagnosticsSnapshot(params: {
   update: DesktopUpdateState;
@@ -24,6 +36,12 @@ export function buildDesktopDiagnosticsSnapshot(params: {
   feed: DesktopFeedDiagnostics;
 }): DesktopDiagnosticsSnapshot {
   const apiMode = import.meta.env.VITE_API_BASE_URL?.trim() ? "remote" : "same-origin";
+  const heartbeatAge =
+    params.feed.lastUpdateAgeMs != null
+      ? `${Math.round(params.feed.lastUpdateAgeMs)}ms ago`
+      : params.feed.lastHeartbeatAt != null
+        ? `${Math.max(0, Math.round((Date.now() - params.feed.lastHeartbeatAt) / 1000))}s ago`
+        : null;
 
   return {
     appVersion: params.update.currentVersion || appVersion,
@@ -35,10 +53,10 @@ export function buildDesktopDiagnosticsSnapshot(params: {
     storageStatus:
       params.storageOk == null ? "checking" : params.storageOk ? "ok" : "error",
     feedStatus: params.feed.connected ? "connected" : params.feed.feedStatus,
-    feedLastHeartbeat:
-      params.feed.lastUpdateAgeMs != null
-        ? `${Math.round(params.feed.lastUpdateAgeMs)}ms ago`
-        : null,
+    feedLastHeartbeat: heartbeatAge,
+    lastHeartbeatAt: formatHeartbeatTimestamp(params.feed.lastHeartbeatAt),
+    reconnectCount: params.feed.reconnectCount,
+    lastFeedError: params.feed.lastError,
     lastUpdateCheck: params.update.lastUpdateCheck,
     timestamp: new Date().toISOString(),
   };

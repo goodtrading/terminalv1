@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Copy, FolderOpen, RefreshCw } from "lucide-react";
+import { Copy, FolderOpen, RefreshCw, RotateCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDesktopUpdateCheck, type ManualCheckFeedback } from "@/hooks/useDesktopUpdateCheck";
 import { useDesktopFeedDiagnostics } from "@/lib/desktopDiagnostics";
@@ -7,6 +7,7 @@ import {
   buildDesktopDiagnosticsSnapshot,
   formatDesktopDiagnosticsSnapshot,
 } from "@/lib/desktopDiagnosticsSnapshot";
+import { requestDesktopFeedReconnect } from "@/lib/desktopFeedControl";
 import {
   getDesktopStoragePaths,
   isDesktopBuild,
@@ -68,6 +69,7 @@ export function DesktopSystemDiagnosticsModal({
   const { update, manualCheckFeedback } = desktopUpdate;
   const [storageOk, setStorageOk] = useState<boolean | null>(null);
   const [actionStatus, setActionStatus] = useState<string | null>(null);
+  const [feedReconnectBusy, setFeedReconnectBusy] = useState(false);
 
   useEffect(() => {
     if (!open || !isDesktopBuild) return;
@@ -110,6 +112,16 @@ export function DesktopSystemDiagnosticsModal({
     }
   }, []);
 
+  const reconnectFeed = useCallback(async () => {
+    setFeedReconnectBusy(true);
+    try {
+      const ok = await requestDesktopFeedReconnect("system_diagnostics");
+      setActionStatus(ok ? "Feed reconnect requested" : "Feed reconnect unavailable");
+    } finally {
+      window.setTimeout(() => setFeedReconnectBusy(false), 800);
+    }
+  }, []);
+
   const manualFeedback = feedbackLabel(manualCheckFeedback);
 
   return (
@@ -142,6 +154,9 @@ export function DesktopSystemDiagnosticsModal({
           <Row label="Storage status" value={snapshot.storageStatus} />
           <Row label="Feed status" value={snapshot.feedStatus} />
           <Row label="Feed heartbeat" value={snapshot.feedLastHeartbeat ?? "unknown"} />
+          <Row label="Last heartbeat at" value={snapshot.lastHeartbeatAt ?? "unknown"} />
+          <Row label="Reconnect count" value={String(snapshot.reconnectCount)} />
+          <Row label="Last feed error" value={snapshot.lastFeedError ?? "none"} />
           <Row label="Last update check" value={snapshot.lastUpdateCheck ?? "never"} />
         </div>
 
@@ -168,6 +183,15 @@ export function DesktopSystemDiagnosticsModal({
           >
             <Copy className="h-3 w-3" />
             Copy diagnostics
+          </button>
+          <button
+            type="button"
+            onClick={() => void reconnectFeed()}
+            disabled={feedReconnectBusy || !isDesktopBuild}
+            className="inline-flex items-center gap-1.5 rounded border border-terminal-border px-2.5 py-1.5 text-[10px] uppercase tracking-wide text-slate-300 hover:text-white hover:border-terminal-accent/40 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <RotateCw className={cn("h-3 w-3", feedReconnectBusy && "animate-spin")} />
+            Reconnect feed
           </button>
           <button
             type="button"

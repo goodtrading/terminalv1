@@ -1,4 +1,5 @@
 import { TopNav } from "@/components/terminal/TopNav";
+import { DesktopFeedStatusBanner } from "@/components/desktop/DesktopFeedStatusBanner";
 import { LeftSidebar } from "@/components/terminal/LeftSidebar";
 import RightSidebar from "@/components/terminal/RightSidebar";
 import { MainChart } from "@/components/terminal/MainChart";
@@ -48,6 +49,7 @@ const viewMode: "PRO" = "PRO";
   return (
     <div className="h-screen w-full flex flex-col bg-terminal-bg text-terminal-text overflow-hidden font-sans">
       <TopNav activeTab={activeTab} onTabChange={setActiveTab} />
+      <DesktopFeedStatusBanner />
       
       <div className="flex-1 flex overflow-hidden min-h-0">
         {activeTab === "TERMINAL" && (

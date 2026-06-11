@@ -2,10 +2,10 @@ import { useState } from "react";
 import { isDesktopBuild } from "@/lib/desktopStorage";
 import { appVersion } from "@/lib/appVersion";
 
-const BOOT_STEPS = [
-  "Verificando sesión",
-  "Conectando con servidores",
-  "Inicializando storage local",
+const BOOT_TASKS = [
+  { label: "Initializing storage", detail: "Preparing local desktop storage" },
+  { label: "Connecting API", detail: "Verifying session with GoodTrading servers" },
+  { label: "Starting market feed", detail: "Loading market data pipeline" },
 ];
 
 export function DesktopLoadingScreen() {
@@ -13,26 +13,29 @@ export function DesktopLoadingScreen() {
     <div className="h-screen w-full flex items-center justify-center bg-terminal-bg text-terminal-text px-6">
       <div className="w-full max-w-sm border border-terminal-border bg-terminal-panel/95 rounded-sm p-7 shadow-[0_24px_80px_rgba(0,0,0,0.42)]">
         <div className="flex flex-col items-center text-center gap-5">
-          <img src="/logo.png" alt="GoodTrading" className="h-32 w-auto object-contain" />
+          <img src="/logo.png" alt="GoodTrading" className="h-28 w-auto object-contain" />
           <div className="space-y-1">
-            <h1 className="text-sm font-bold tracking-widest text-white">
-              Inicializando GoodTrading Terminal...
+            <h1 className="text-sm font-bold tracking-wide text-white">
+              Starting GoodTrading Desktop…
             </h1>
             <p className="text-[10px] font-mono uppercase tracking-wider text-terminal-muted">
-              Desktop v{appVersion}
+              Loading market data · v{appVersion}
             </p>
           </div>
-          <div className="w-full space-y-2">
-            {BOOT_STEPS.map((step, index) => (
+          <div className="w-full space-y-2 text-left">
+            {BOOT_TASKS.map((task, index) => (
               <div
-                key={step}
-                className="flex items-center justify-between border border-terminal-border/70 bg-terminal-bg/70 px-3 py-2 rounded-sm"
+                key={task.label}
+                className="flex items-start justify-between gap-3 border border-terminal-border/70 bg-terminal-bg/70 px-3 py-2 rounded-sm"
               >
-                <span className="text-[11px] font-mono text-slate-300">{step}</span>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-mono text-slate-200">{task.label}</p>
+                  <p className="text-[10px] text-slate-500 truncate">{task.detail}</p>
+                </div>
                 <span
                   className={[
-                    "h-1.5 w-1.5 rounded-full",
-                    index === 0 ? "bg-terminal-positive animate-pulse" : "bg-slate-600",
+                    "mt-1 h-1.5 w-1.5 rounded-full shrink-0",
+                    index === 0 ? "bg-terminal-positive animate-pulse" : "bg-slate-600 animate-pulse",
                   ].join(" ")}
                 />
               </div>

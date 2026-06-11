@@ -6,6 +6,7 @@ export type DesktopFeedDiagnostics = {
   connected: boolean;
   feedStatus: string;
   lastUpdateAgeMs: number | null;
+  lastHeartbeatAt: number | null;
   reconnectCount: number;
   resyncCount: number;
   rawBidsCount: number;
@@ -23,6 +24,7 @@ const DEFAULT_FEED_DIAGNOSTICS: DesktopFeedDiagnostics = {
   connected: false,
   feedStatus: "unknown",
   lastUpdateAgeMs: null,
+  lastHeartbeatAt: null,
   reconnectCount: 0,
   resyncCount: 0,
   rawBidsCount: 0,

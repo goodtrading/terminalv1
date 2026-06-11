@@ -55,7 +55,11 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
 
   const storageTone: HealthTone =
     desktopStorageOk == null ? "warn" : desktopStorageOk ? "ok" : "error";
-  const feedTone: HealthTone = desktopFeed.connected ? "ok" : "warn";
+  const feedTone: HealthTone = desktopFeed.lastError
+    ? "error"
+    : desktopFeed.connected && desktopFeed.feedStatus === "live"
+      ? "ok"
+      : "warn";
   const updateTone: HealthTone = updateAvailable ? "warn" : "ok";
 
   return (
@@ -124,7 +128,15 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
               <CompactStatusPill
                 label="Feed"
                 tone={feedTone}
-                title={desktopFeed.connected ? "Feed connected" : "Waiting for feed"}
+                title={
+                  desktopFeed.lastError
+                    ? `Feed error: ${desktopFeed.lastError}`
+                    : desktopFeed.connected && desktopFeed.feedStatus === "live"
+                      ? "Feed connected"
+                      : desktopFeed.feedStatus === "loading"
+                        ? "Connecting feed..."
+                        : "Feed waiting"
+                }
               />
               {updateAvailable ? (
                 <button

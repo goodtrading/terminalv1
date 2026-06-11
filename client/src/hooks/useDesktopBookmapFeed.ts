@@ -22,6 +22,7 @@ import {
   type DesktopBookmapInputLevel,
 } from "@/lib/desktopBookmapHeatmapEngine";
 import { publishDesktopFeedDiagnostics } from "@/lib/desktopDiagnostics";
+import { registerDesktopFeedReconnectHandler } from "@/lib/desktopFeedControl";
 
 const DESKTOP_BOOKMAP_BUCKET_MS = 1_000;
 const DESKTOP_BOOKMAP_DEPTH_LIMIT = 1_000;
@@ -328,6 +329,7 @@ export function useDesktopBookmapFeed(
       connected: connectedRef.current,
       feedStatus: feedStatusRef.current,
       lastUpdateAgeMs: 0,
+      lastHeartbeatAt: Date.now(),
       reconnectCount: reconnectCountRef.current,
       resyncCount: resyncCountRef.current,
       rawBidsCount: rawBidsCountRef.current,
@@ -506,6 +508,24 @@ export function useDesktopBookmapFeed(
       updateTradesStreamConnected(false);
       return;
     }
+
+    updateFeedStatus("loading");
+    publishDesktopFeedDiagnostics({
+      provider: "Binance Spot local book",
+      symbol: cleanSymbol,
+      connected: false,
+      feedStatus: "loading",
+      lastUpdateAgeMs: null,
+      lastHeartbeatAt: null,
+      reconnectCount: 0,
+      resyncCount: 0,
+      rawBidsCount: 0,
+      rawAsksCount: 0,
+      visibleBidsCount: 0,
+      visibleAsksCount: 0,
+      heatmapCellCount: 0,
+      lastError: null,
+    });
 
     let cancelled = false;
     let reconnectAttempt = 0;
@@ -888,7 +908,12 @@ export function useDesktopBookmapFeed(
 
     connectReconstructed();
 
+    registerDesktopFeedReconnectHandler(() => {
+      resyncOrderbook("manual_reconnect");
+    });
+
     return () => {
+      registerDesktopFeedReconnectHandler(null);
       cancelled = true;
       window.clearTimeout(noDataTimeoutId);
       if (visualUpdateTimerRef.current != null) {
@@ -958,6 +983,7 @@ export function useDesktopBookmapFeed(
         connected: connectedRef.current,
         feedStatus: feedStatusRef.current,
         lastUpdateAgeMs: lastUpdateRef.current != null ? now - lastUpdateRef.current : null,
+        lastHeartbeatAt: now,
         reconnectCount: reconnectCountRef.current,
         resyncCount: resyncCountRef.current,
         rawBidsCount: rawBidsCountRef.current,
