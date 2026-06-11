@@ -17,14 +17,14 @@ function formatPublishedAt(value: string | null): string | null {
 export function DesktopUpdateModal() {
   const {
     update,
-    dismissedOptional,
+    shouldShowOptionalModal,
     dismissOptional,
     downloadUpdate,
     downloadError,
   } = useDesktopUpdateCheck();
 
   const isRequired = update.updateStatus === "required_update";
-  const isOptional = update.updateStatus === "optional_update" && !dismissedOptional;
+  const isOptional = shouldShowOptionalModal;
   const publishedAt = useMemo(() => formatPublishedAt(update.publishedAt), [update.publishedAt]);
 
   if (!isDesktopBuild || (!isRequired && !isOptional)) return null;

@@ -11,6 +11,7 @@ import {
 import { useDesktopFeedDiagnostics } from "@/lib/desktopDiagnostics";
 import { HealthRow, HealthSection } from "./healthUi";
 import { useDesktopUpdateCheck } from "@/hooks/useDesktopUpdateCheck";
+import { desktopUpdateEndpoint } from "@/lib/desktopUpdateCheck";
 
 function shortAge(ms: number | null): string {
   if (ms == null) return "unknown";
@@ -116,7 +117,25 @@ export function DesktopDiagnosticsPanel() {
           <HealthRow label="Latest version" value={update.latestVersion ?? "unknown"} />
           <HealthRow label="Min supported" value={update.minSupportedVersion ?? "unknown"} />
           <HealthRow label="Mandatory" value={String(update.mandatory ?? false)} tone={update.mandatory ? "error" : "neutral"} />
+          <HealthRow label="Update endpoint" value={desktopUpdateEndpoint()} />
           <HealthRow label="Update status" value={update.updateStatus} tone={updateStatusTone(update.updateStatus)} />
+          <HealthRow
+            label="Optional modal"
+            value={
+              update.updateStatus === "optional_update"
+                ? desktopUpdate.shouldShowOptionalModal
+                  ? "visible"
+                  : "dismissed"
+                : update.updateStatus === "required_update"
+                  ? "required"
+                  : "hidden"
+            }
+            tone={
+              update.updateStatus === "optional_update" && !desktopUpdate.shouldShowOptionalModal
+                ? "warn"
+                : updateStatusTone(update.updateStatus)
+            }
+          />
           <HealthRow label="Last check" value={update.lastUpdateCheck ?? "never"} />
           <HealthRow label="Download URL" value={update.downloadUrl || "not configured"} />
           <HealthRow label="Last error" value={update.lastUpdateError ?? "none"} tone={update.lastUpdateError ? "error" : "neutral"} />
@@ -129,6 +148,15 @@ export function DesktopDiagnosticsPanel() {
           >
             Re-chequear update
           </button>
+          {update.updateStatus === "optional_update" && !desktopUpdate.shouldShowOptionalModal ? (
+            <button
+              type="button"
+              onClick={desktopUpdate.showOptionalModal}
+              className="text-[9px] px-2 py-1 rounded border border-terminal-accent/40 text-terminal-accent hover:text-white"
+            >
+              Mostrar aviso de update
+            </button>
+          ) : null}
         </div>
       </div>
 

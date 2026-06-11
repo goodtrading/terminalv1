@@ -2,6 +2,24 @@ import { apiUrl } from "@/lib/apiBase";
 import { appVersion } from "@/lib/appVersion";
 import { isDesktopBuild, writeDesktopLog } from "@/lib/desktopStorage";
 
+const DEFAULT_DESKTOP_API_BASE = "https://goodtrading.up.railway.app";
+const DESKTOP_UPDATE_PATH = "/api/desktop/update";
+const DESKTOP_UPDATE_FETCH_TIMEOUT_MS = 15_000;
+const DESKTOP_UPDATE_MAX_ATTEMPTS = 3;
+const DESKTOP_UPDATE_RETRY_DELAY_MS = 2_000;
+
+export function desktopUpdateEndpoint(): string {
+  const resolved = apiUrl(DESKTOP_UPDATE_PATH);
+  if (/^https?:\/\//i.test(resolved)) return resolved;
+  return `${DEFAULT_DESKTOP_API_BASE}${DESKTOP_UPDATE_PATH}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 export type DesktopUpdateStatus =
   | "idle"
   | "checking"
@@ -91,22 +109,56 @@ export function resolveDesktopUpdateStatus(
   return "up_to_date";
 }
 
+async function fetchDesktopUpdatePayload(): Promise<DesktopUpdateResponse> {
+  const endpoint = desktopUpdateEndpoint();
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= DESKTOP_UPDATE_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(
+      () => controller.abort(),
+      DESKTOP_UPDATE_FETCH_TIMEOUT_MS,
+    );
+
+    try {
+      const res = await fetch(endpoint, {
+        method: "GET",
+        credentials: "omit",
+        cache: "no-store",
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error(`desktop_update:${res.status}`);
+      }
+
+      return normalizeUpdateResponse((await res.json()) as DesktopUpdateResponse);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < DESKTOP_UPDATE_MAX_ATTEMPTS) {
+        await sleep(DESKTOP_UPDATE_RETRY_DELAY_MS * attempt);
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  throw lastError ?? new Error("desktop_update:fetch_failed");
+}
+
 export async function checkDesktopUpdate(): Promise<DesktopUpdateState> {
   const checkedAt = new Date().toISOString();
-  await writeDesktopLog("desktop_update_check_start", { currentVersion: appVersion });
+  const endpoint = desktopUpdateEndpoint();
+  await writeDesktopLog("desktop_update_check_start", {
+    currentVersion: appVersion,
+    endpoint,
+  });
 
   try {
-    const res = await fetch(apiUrl("/api/desktop/update"), {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    });
-
-    if (!res.ok) {
-      throw new Error(`desktop_update:${res.status}`);
-    }
-
-    const update = normalizeUpdateResponse((await res.json()) as DesktopUpdateResponse);
+    const update = await fetchDesktopUpdatePayload();
     const updateStatus = resolveDesktopUpdateStatus(update, appVersion);
 
     await writeDesktopLog("desktop_update_check_success", {
