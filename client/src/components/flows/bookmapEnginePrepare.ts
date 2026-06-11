@@ -395,6 +395,8 @@ export type PreparedEngineRenderData = {
   anchoredWalls?: AnchoredWallEntity[];
   wallAnchoringDiag?: WallAnchoringDiagStats;
   macroDomCoverageDiag?: MacroDomCoverageDiagStats;
+  /** B.6 — full current DOM book levels used in prepare (same source as lateral panel). */
+  currentDomBookLevels?: LiveDomBookLevel[];
 };
 
 export type MicroScalpVisualContext = {
@@ -2470,6 +2472,7 @@ export function prepareEngineRenderData(
     anchoredWalls: wallAnchorLayer.walls,
     wallAnchoringDiag: wallAnchorLayer.wallAnchoringDiag,
     macroDomCoverageDiag: wallAnchorLayer.macroDomCoverageDiag,
+    currentDomBookLevels: bookLevels,
   };
 }
 

@@ -311,3 +311,24 @@ export const SURFACE_LIVE_MAX_PER_SIDE = 180;
 export const SURFACE_MACRO_MIN_SIZE_BTC = 1;
 export const SURFACE_MICRO_MIN_SIZE_BTC = 0.5;
 export const SURFACE_FAR_DISTANCE_ALPHA_MUL = 0.82;
+
+/**
+ * B.6 — Limit order lifecycle engine (client-side entity tracking).
+ */
+export const BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1 = true;
+
+/** DEV-only lifecycle diagnostics (throttled 2s). */
+export const BOOKMAP_LIMIT_ORDER_LIFECYCLE_DIAG = true;
+
+export const LIMIT_ORDER_PRICE_BUCKET_USD = 10;
+export const LIMIT_ORDER_FADE_MS = 90_000;
+export const LIMIT_ORDER_STALE_MS = 180_000;
+export const LIMIT_ORDER_PULL_THRESHOLD = 0.18;
+export const LIMIT_ORDER_REFILL_THRESHOLD = 0.12;
+export const LIMIT_ORDER_MIN_SIZE_BTC_MACRO = 1;
+export const LIMIT_ORDER_MIN_SIZE_BTC_MICRO = 0.5;
+export const LIMIT_ORDER_WALL_SIZE_BTC = 20;
+export const LIMIT_ORDER_DOMINANT_SIZE_BTC = 100;
+export const LIMIT_ORDER_MAX_TRACKED_LEVELS = 2_000;
+export const LIMIT_ORDER_PERSISTENT_MS = 8_000;
+export const LIMIT_ORDER_TOUCH_PCT = 0.08;

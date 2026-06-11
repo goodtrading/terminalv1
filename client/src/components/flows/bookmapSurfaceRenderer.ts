@@ -4,8 +4,10 @@
 
 import {
   BOOKMAP_ENGINE_BUCKET_MS,
+  BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1,
   BOOKMAP_SURFACE_RENDERER_DIAG,
   BOOKMAP_SURFACE_RENDERER_V1,
+  LIMIT_ORDER_DOMINANT_SIZE_BTC,
   SURFACE_FAR_DISTANCE_ALPHA_MUL,
   SURFACE_HISTORICAL_MAX_DRAW,
   SURFACE_LIVE_MAX_PER_SIDE,
@@ -32,6 +34,13 @@ import {
   type PreparedEngineWall,
 } from "./bookmapEnginePrepare";
 import { isWallTier, type HeatmapBand } from "./bookmapBandTypes";
+import {
+  resolveLifecycleThermalSize,
+  resolveLifecycleVisualAlpha,
+  setLimitOrderLifecycleVisibleDrawn,
+  updateLimitOrderLifecycleEngine,
+  type LimitOrderLifecycleLevel,
+} from "./bookmapLimitOrderLifecycle";
 
 export type SurfaceRendererDiagStats = {
   surfaceRendererActive: boolean;
@@ -50,6 +59,11 @@ export type SurfaceRendererDiagStats = {
   zoomRegime: BookmapZoomRegime;
   drawMode: string;
   liveDomSource: string;
+  lifecycleLevelsInput: number;
+  lifecycleLevelsDrawn: number;
+  lifecycleLiveDrawn: number;
+  lifecycleHistoricalDrawn: number;
+  lifecycleFadingDrawn: number;
   timestamp: number;
 };
 
@@ -97,6 +111,11 @@ let lastSurfaceRendererDiag: SurfaceRendererDiagStats = {
   zoomRegime: "macro",
   drawMode: "surface_v1",
   liveDomSource: "none",
+  lifecycleLevelsInput: 0,
+  lifecycleLevelsDrawn: 0,
+  lifecycleLiveDrawn: 0,
+  lifecycleHistoricalDrawn: 0,
+  lifecycleFadingDrawn: 0,
   timestamp: 0,
 };
 
@@ -120,13 +139,19 @@ export function drawSurfaceRendererWatermark(ctx: CanvasRenderingContext2D): voi
   if (!import.meta.env.DEV || !BOOKMAP_SURFACE_RENDERER_DIAG) return;
   ctx.save();
   ctx.font = "bold 11px ui-monospace, monospace";
-  ctx.fillStyle = "rgba(34, 211, 238, 0.96)";
   ctx.strokeStyle = "rgba(0, 0, 0, 0.65)";
   ctx.lineWidth = 3;
   const x = HEATMAP_PAD.left + 6;
-  const y = HEATMAP_PAD.top + 14;
+  let y = HEATMAP_PAD.top + 14;
+  ctx.fillStyle = "rgba(34, 211, 238, 0.96)";
   ctx.strokeText("SURFACE RENDERER V1 ACTIVE", x, y);
   ctx.fillText("SURFACE RENDERER V1 ACTIVE", x, y);
+  if (BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1) {
+    y += 14;
+    ctx.fillStyle = "rgba(52, 211, 153, 0.96)";
+    ctx.strokeText("LIMIT ORDER LIFECYCLE V1 ACTIVE", x, y);
+    ctx.fillText("LIMIT ORDER LIFECYCLE V1 ACTIVE", x, y);
+  }
   ctx.restore();
 }
 
@@ -546,6 +571,308 @@ function drawImportantWalls(
   return drawn;
 }
 
+function shouldDrawLifecycleLevel(
+  level: LimitOrderLifecycleLevel,
+  regime: BookmapZoomRegime,
+  spot: number | null,
+): boolean {
+  if (level.state === "stale" && level.fadeAlpha < 0.06) return false;
+  if (regime === "macro") return true;
+  const pct = pctFromMid(level.price, spot);
+  if (level.isDominant || level.isWall) return true;
+  if (level.isLive && pct <= 6) return true;
+  if (level.isNearPrice) return true;
+  if (!level.isLive && level.peakSizeBtc >= LIMIT_ORDER_DOMINANT_SIZE_BTC) return true;
+  return pct <= 4 && level.peakSizeBtc >= SURFACE_MICRO_MIN_SIZE_BTC;
+}
+
+function drawLifecycleHistoricalTrail(
+  ctx: CanvasRenderingContext2D,
+  levels: LimitOrderLifecycleLevel[],
+  metrics: SurfacePlotMetrics,
+  params: BookmapSurfaceFrameParams,
+  regime: BookmapZoomRegime,
+  dataEndTime: number,
+  heatmapOpacity: number,
+  tierDiag: { weak: number; medium: number; strong: number; extreme: number },
+): { drawn: number; historical: number; fading: number } {
+  const visibleStart = params.timeViewport.visibleStartTime;
+  const dataEdgeX = metrics.timeToX(dataEndTime);
+  let drawn = 0;
+  let historical = 0;
+  let fading = 0;
+
+  for (const level of levels) {
+    if (!shouldDrawLifecycleLevel(level, regime, params.spot)) continue;
+    if (level.state === "new" && !level.isHistorical) continue;
+
+    const thermalSize = resolveLifecycleThermalSize(level);
+    const thermal = resolveSurfaceThermalFromSize(thermalSize);
+    recordTier(thermal.tier, tierDiag);
+    const lifeAlpha = resolveLifecycleVisualAlpha(level);
+    const distMul = distanceAlphaMul(pctFromMid(level.price, params.spot), regime);
+    const alpha = thermal.alpha * lifeAlpha * distMul * heatmapOpacity;
+
+    const { yTop, height } = priceBandBounds(
+      level.price,
+      metrics.priceToY,
+      metrics.domBucketSize,
+    );
+    if (yTop + height < HEATMAP_PAD.top - 2) continue;
+    if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
+
+    const trailStart = Math.max(visibleStart, level.firstSeenTime);
+    const trailEnd = level.isLive
+      ? dataEndTime
+      : Math.min(
+          dataEndTime,
+          level.disappearedAt ?? level.lastActiveTime,
+        );
+    if (trailEnd <= trailStart) continue;
+
+    const x0 = metrics.timeToX(trailStart);
+    const x1 = Math.min(dataEdgeX, metrics.timeToX(trailEnd));
+    const w = Math.max(1, x1 - x0);
+    if (w <= 0 || x0 >= dataEdgeX) continue;
+
+    if (level.state === "pulling") {
+      const seg = Math.max(2, w / 5);
+      for (let i = 0; i < 5; i += 1) {
+        if (i % 2 === 1) continue;
+        fillRgba(
+          ctx,
+          x0 + i * seg,
+          Math.max(1, seg * 0.85),
+          yTop,
+          height,
+          thermal.rgb,
+          alpha * 0.55,
+        );
+      }
+    } else if (level.state === "reinforced" || level.isWall) {
+      fillRgba(ctx, x0, w, yTop, height, thermal.rgb, alpha * 0.48);
+      const coreRgb = resolveSurfaceThermalFromSize(thermalSize * 1.06).rgb;
+      fillRgba(
+        ctx,
+        x0 + w * 0.15,
+        w * 0.55,
+        yTop + height * 0.28,
+        height * 0.44,
+        coreRgb,
+        alpha * 0.72,
+      );
+    } else {
+      fillRgba(ctx, x0, w, yTop, height, thermal.rgb, alpha * 0.68);
+    }
+
+    drawn += 1;
+    if (level.isLive) historical += 1;
+    else if (level.state === "fading" || level.state === "stale") fading += 1;
+    else historical += 1;
+  }
+
+  return { drawn, historical, fading };
+}
+
+function drawLifecycleLiveSurface(
+  ctx: CanvasRenderingContext2D,
+  levels: LimitOrderLifecycleLevel[],
+  metrics: SurfacePlotMetrics,
+  params: BookmapSurfaceFrameParams,
+  regime: BookmapZoomRegime,
+  dataEndTime: number,
+  heatmapOpacity: number,
+  tierDiag: { weak: number; medium: number; strong: number; extreme: number },
+): { drawn: number; live: number; bid: number; ask: number } {
+  const x0 = metrics.timeToX(
+    Math.max(
+      params.timeViewport.visibleStartTime,
+      dataEndTime - BOOKMAP_TEXTURE_SAMPLER_MS * 2,
+    ),
+  );
+  const x1 = metrics.timeToX(dataEndTime);
+  const colW = Math.max(1, x1 - x0);
+  let drawn = 0;
+  let live = 0;
+  let bid = 0;
+  let ask = 0;
+
+  for (const level of levels) {
+    if (!level.isLive) continue;
+    if (level.state === "fading" || level.state === "stale") continue;
+    if (!shouldDrawLifecycleLevel(level, regime, params.spot)) continue;
+
+    const thermalSize = resolveLifecycleThermalSize(level);
+    const thermal = resolveSurfaceThermalFromSize(thermalSize);
+    recordTier(thermal.tier, tierDiag);
+    const lifeAlpha = resolveLifecycleVisualAlpha(level);
+    const distMul = distanceAlphaMul(pctFromMid(level.price, params.spot), regime);
+    const alpha = thermal.alpha * lifeAlpha * distMul * heatmapOpacity * 0.9;
+
+    const { yTop, height } = priceBandBounds(
+      level.price,
+      metrics.priceToY,
+      metrics.domBucketSize,
+    );
+    if (yTop + height < HEATMAP_PAD.top - 2) continue;
+    if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
+
+    if (level.state === "new") {
+      fillRgba(ctx, x0, colW, yTop, height, thermal.rgb, alpha * 0.55);
+    } else if (level.state === "pulling") {
+      fillRgba(ctx, x0, colW * 0.45, yTop, height, thermal.rgb, alpha * 0.42);
+      fillRgba(
+        ctx,
+        x0 + colW * 0.55,
+        colW * 0.45,
+        yTop,
+        height,
+        thermal.rgb,
+        alpha * 0.38,
+      );
+    } else {
+      fillRgba(ctx, x0, colW, yTop, height, thermal.rgb, alpha * 0.78);
+    }
+
+    drawn += 1;
+    live += 1;
+    if (level.side === "bid") bid += 1;
+    else ask += 1;
+  }
+
+  return { drawn, live, bid, ask };
+}
+
+function drawLifecycleLiveProjection(
+  ctx: CanvasRenderingContext2D,
+  levels: LimitOrderLifecycleLevel[],
+  metrics: SurfacePlotMetrics,
+  params: BookmapSurfaceFrameParams,
+  regime: BookmapZoomRegime,
+  dataEndTime: number,
+  heatmapOpacity: number,
+): number {
+  const projEnd = params.timeViewport.visibleEndTime;
+  if (projEnd <= dataEndTime + BOOKMAP_LIVE_PROJECTION_MIN_GAP_MS) return 0;
+
+  const x0 = metrics.timeToX(dataEndTime);
+  const x1 = metrics.timeToX(projEnd);
+  const spanW = x1 - x0;
+  if (spanW < 2) return 0;
+
+  let drawn = 0;
+  for (const level of levels) {
+    if (!level.isLive) continue;
+    if (level.state === "fading" || level.state === "stale" || level.state === "pulling") {
+      continue;
+    }
+    if (!shouldDrawLifecycleLevel(level, regime, params.spot)) continue;
+
+    const thermalSize = resolveLifecycleThermalSize(level);
+    const thermal = resolveSurfaceThermalFromSize(thermalSize);
+    const lifeAlpha = resolveLifecycleVisualAlpha(level);
+    const distMul = distanceAlphaMul(pctFromMid(level.price, params.spot), regime);
+    const alpha = thermal.alpha * lifeAlpha * distMul * heatmapOpacity * 0.88;
+
+    const { yTop, height } = priceBandBounds(
+      level.price,
+      metrics.priceToY,
+      metrics.domBucketSize,
+    );
+    if (yTop + height < HEATMAP_PAD.top - 2) continue;
+    if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
+
+    const edgeW = Math.max(1, spanW * 0.14);
+    fillRgba(ctx, x0, edgeW, yTop, height, thermal.rgb, alpha * 0.52);
+    fillRgba(
+      ctx,
+      x0 + edgeW,
+      Math.max(1, spanW - edgeW),
+      yTop,
+      height,
+      thermal.rgb,
+      alpha * 0.84,
+    );
+    drawn += 1;
+  }
+  return drawn;
+}
+
+function drawLifecycleWalls(
+  ctx: CanvasRenderingContext2D,
+  levels: LimitOrderLifecycleLevel[],
+  metrics: SurfacePlotMetrics,
+  params: BookmapSurfaceFrameParams,
+  dataEndTime: number,
+  heatmapOpacity: number,
+): number {
+  const visibleStart = params.timeViewport.visibleStartTime;
+  const visibleEnd = params.timeViewport.visibleEndTime;
+  const xHistEnd = metrics.timeToX(dataEndTime);
+  const xProjEnd = metrics.timeToX(visibleEnd);
+  let drawn = 0;
+
+  const walls = levels
+    .filter((l) => l.isWall && l.state !== "stale")
+    .sort((a, b) => a.peakSizeBtc - b.peakSizeBtc);
+
+  for (const wall of walls) {
+    const thermalSize = Math.max(wall.peakSizeBtc, wall.currentSizeBtc);
+    const thermal = resolveSurfaceThermalFromSize(thermalSize);
+    const lifeAlpha = resolveLifecycleVisualAlpha(wall);
+    const { yTop, height } = priceBandBounds(
+      wall.price,
+      metrics.priceToY,
+      metrics.domBucketSize,
+    );
+    if (yTop + height < HEATMAP_PAD.top - 2) continue;
+
+    const histStart = metrics.timeToX(
+      wall.isHistorical ? Math.max(visibleStart, wall.firstSeenTime) : visibleStart,
+    );
+    const histW = Math.max(1, xHistEnd - histStart);
+    const bodyAlpha = thermal.alpha * lifeAlpha * heatmapOpacity * 0.64;
+
+    fillRgba(
+      ctx,
+      histStart,
+      histW,
+      yTop - height * 0.1,
+      height * 1.2,
+      thermal.rgb,
+      bodyAlpha * 0.32,
+    );
+    fillRgba(ctx, histStart, histW, yTop, height, thermal.rgb, bodyAlpha * 0.72);
+
+    if (wall.isDominant || wall.state === "reinforced") {
+      const coreRgb = resolveSurfaceThermalFromSize(thermalSize * 1.1).rgb;
+      fillRgba(
+        ctx,
+        histStart + histW * 0.1,
+        histW * 0.5,
+        yTop + height * 0.28,
+        height * 0.44,
+        coreRgb,
+        bodyAlpha * 0.88,
+      );
+    }
+
+    if (wall.isLive && xProjEnd > xHistEnd + 2) {
+      fillRgba(
+        ctx,
+        xHistEnd,
+        xProjEnd - xHistEnd,
+        yTop,
+        height,
+        thermal.rgb,
+        bodyAlpha * 0.76,
+      );
+    }
+    drawn += 1;
+  }
+  return drawn;
+}
+
 export function paintBookmapSurfaceRendererFrame(
   ctx: CanvasRenderingContext2D,
   params: BookmapSurfaceFrameParams,
@@ -592,32 +919,92 @@ export function paintBookmapSurfaceRendererFrame(
     minSize,
   );
 
-  const domDraw = drawLiveDepthSurface(
-    ctx,
-    liveLevels,
-    metrics,
-    params,
-    regime,
-    dataEndTime,
-    tierDiag,
-  );
-  drawLiveProjectionSurface(
-    ctx,
-    liveLevels,
-    metrics,
-    params,
-    regime,
-    dataEndTime,
-  );
-  drawImportantWalls(
-    ctx,
-    engine.walls ?? [],
-    engine.bands ?? [],
-    metrics,
-    params,
-    dataEndTime,
-    heatmapOpacity,
-  );
+  let lifecycleLevels: LimitOrderLifecycleLevel[] = [];
+  let lifecycleLevelsDrawn = 0;
+  let lifecycleLiveDrawn = 0;
+  let lifecycleHistoricalDrawn = 0;
+  let lifecycleFadingDrawn = 0;
+  let domDraw = { drawn: 0, bid: 0, ask: 0 };
+
+  if (BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1) {
+    lifecycleLevels = updateLimitOrderLifecycleEngine({
+      engine,
+      minPrice,
+      maxPrice,
+      spot: params.spot,
+      bestBid: engine.liveDomSelection?.bestBid ?? null,
+      bestAsk: engine.liveDomSelection?.bestAsk ?? null,
+      dataEndTime,
+      now: Date.now(),
+      regime,
+      priceBucketUsd: params.domBucketSize,
+    });
+
+    const trail = drawLifecycleHistoricalTrail(
+      ctx,
+      lifecycleLevels,
+      metrics,
+      params,
+      regime,
+      dataEndTime,
+      heatmapOpacity,
+      tierDiag,
+    );
+    const liveSurf = drawLifecycleLiveSurface(
+      ctx,
+      lifecycleLevels,
+      metrics,
+      params,
+      regime,
+      dataEndTime,
+      heatmapOpacity,
+      tierDiag,
+    );
+    drawLifecycleLiveProjection(
+      ctx,
+      lifecycleLevels,
+      metrics,
+      params,
+      regime,
+      dataEndTime,
+      heatmapOpacity,
+    );
+    drawLifecycleWalls(ctx, lifecycleLevels, metrics, params, dataEndTime, heatmapOpacity);
+
+    lifecycleLevelsDrawn = trail.drawn + liveSurf.drawn;
+    lifecycleLiveDrawn = liveSurf.live;
+    lifecycleHistoricalDrawn = trail.historical;
+    lifecycleFadingDrawn = trail.fading;
+    domDraw = { drawn: liveSurf.drawn, bid: liveSurf.bid, ask: liveSurf.ask };
+    setLimitOrderLifecycleVisibleDrawn(lifecycleLevelsDrawn);
+  } else {
+    domDraw = drawLiveDepthSurface(
+      ctx,
+      liveLevels,
+      metrics,
+      params,
+      regime,
+      dataEndTime,
+      tierDiag,
+    );
+    drawLiveProjectionSurface(
+      ctx,
+      liveLevels,
+      metrics,
+      params,
+      regime,
+      dataEndTime,
+    );
+    drawImportantWalls(
+      ctx,
+      engine.walls ?? [],
+      engine.bands ?? [],
+      metrics,
+      params,
+      dataEndTime,
+      heatmapOpacity,
+    );
+  }
 
   lastSurfaceRendererDiag = {
     surfaceRendererActive: true,
@@ -634,8 +1021,13 @@ export function paintBookmapSurfaceRendererFrame(
     visiblePriceMin: minPrice,
     visiblePriceMax: maxPrice,
     zoomRegime: regime,
-    drawMode: "surface_v1",
+    drawMode: BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1 ? "surface_v1+lifecycle" : "surface_v1",
     liveDomSource,
+    lifecycleLevelsInput: lifecycleLevels.length,
+    lifecycleLevelsDrawn,
+    lifecycleLiveDrawn,
+    lifecycleHistoricalDrawn,
+    lifecycleFadingDrawn,
     timestamp: Date.now(),
   };
   emitSurfaceRendererDiag();
