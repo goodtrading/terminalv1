@@ -61,6 +61,7 @@ const BINANCE_CONNECTIVITY_TIMEOUT_MS = 6_000;
 const OPTIONS_TOP_OF_BOOK_SSE_MIN_INTERVAL_MS = 500;
 const OPTIONS_TOP_OF_BOOK_SSE_MAX_INSTRUMENTS = DERIBIT_OPTIONS_WS_MAX_INSTRUMENTS;
 const OPTIONS_TOP_OF_BOOK_SSE_HEARTBEAT_MS = 15000;
+const DEFAULT_DESKTOP_VERSION = "0.1.0";
 
 function isValidRawOrderbookSnapshot(value: unknown): boolean {
   const payload = value as { bids?: unknown; asks?: unknown } | null | undefined;
@@ -158,6 +159,43 @@ function buildDisabledHeatmapPayload() {
       source: "disabled",
       timestamp: Date.now(),
     },
+  };
+}
+
+function parseDesktopUpdateMandatory(value: string | undefined): boolean {
+  return value?.trim().toLowerCase() === "true";
+}
+
+function parseDesktopReleaseNotes(value: string | undefined): string[] {
+  const raw = value?.trim();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => String(item).trim()).filter(Boolean);
+    }
+  } catch {
+    // Supports simple newline/comma/pipe env vars without requiring JSON.
+  }
+  return raw
+    .split(/\r?\n|\||,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function buildDesktopUpdatePayload() {
+  const latestVersion = process.env.DESKTOP_LATEST_VERSION?.trim() || DEFAULT_DESKTOP_VERSION;
+  const minSupportedVersion = process.env.DESKTOP_MIN_SUPPORTED_VERSION?.trim() || "0.1.0";
+  const downloadUrl = process.env.DESKTOP_UPDATE_DOWNLOAD_URL?.trim() || "";
+  const releaseNotes = parseDesktopReleaseNotes(process.env.DESKTOP_UPDATE_RELEASE_NOTES);
+
+  return {
+    latestVersion,
+    minSupportedVersion,
+    mandatory: parseDesktopUpdateMandatory(process.env.DESKTOP_UPDATE_MANDATORY),
+    downloadUrl,
+    releaseNotes,
+    publishedAt: process.env.DESKTOP_UPDATE_PUBLISHED_AT?.trim() || null,
   };
 }
 
@@ -291,6 +329,10 @@ export async function registerRoutes(
     res.json({
       heatmapEnabled: HEATMAP_ENABLED,
     });
+  });
+
+  app.get("/api/desktop/update", (_req: Request, res: Response) => {
+    res.json(buildDesktopUpdatePayload());
   });
 
   app.get("/api/system/performance", requireSaasAdmin, (_req: Request, res: Response) => {

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { isDesktopBuild } from "@/lib/desktopStorage";
+import { appVersion } from "@/lib/appVersion";
 
 const BOOT_STEPS = [
   "Verificando sesión",
@@ -18,7 +19,7 @@ export function DesktopLoadingScreen() {
               Inicializando GoodTrading Terminal...
             </h1>
             <p className="text-[10px] font-mono uppercase tracking-wider text-terminal-muted">
-              Desktop v0.1.0
+              Desktop v{appVersion}
             </p>
           </div>
           <div className="w-full space-y-2">

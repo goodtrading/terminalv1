@@ -6,6 +6,7 @@ import { useTerminalState } from "@/hooks/useTerminalState";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 import { getDesktopStoragePaths, isDesktopBuild } from "@/lib/desktopStorage";
 import { useDesktopFeedDiagnostics } from "@/lib/desktopDiagnostics";
+import { appVersion } from "@/lib/appVersion";
 
 interface TopNavProps {
   activeTab: string;
@@ -49,7 +50,7 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
             alt="GoodTrading logo"
             className="h-6 w-auto object-contain mr-2 opacity-95 hover:opacity-100 transition-opacity"
           />
-          <span className="font-bold text-white tracking-widest text-sm">GOODTRADING <span className="text-terminal-muted font-normal text-xs ml-1">v0.1.0</span></span>
+          <span className="font-bold text-white tracking-widest text-sm">GOODTRADING <span className="text-terminal-muted font-normal text-xs ml-1">v{appVersion}</span></span>
         </div>
         
         <div className="flex space-x-1 h-full pt-1">

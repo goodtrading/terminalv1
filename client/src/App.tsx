@@ -12,6 +12,8 @@ import BlockedAccessScreen from "@/pages/auth/BlockedAccessScreen";
 import LoginRoute from "@/pages/auth/LoginRoute";
 import AdminPage from "@/pages/admin/AdminPage";
 import { initDesktopStorage, isDesktopBuild, writeDesktopLog } from "@/lib/desktopStorage";
+import { DesktopUpdateModal } from "@/components/desktop/DesktopUpdateModal";
+import { DesktopUpdateProvider } from "@/hooks/useDesktopUpdateCheck";
 
 function Router() {
   return (
@@ -46,12 +48,15 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TerminalAuthProvider>
-        <TooltipProvider>
-          <LearnModeProvider>
-            <Toaster />
-            <Router />
-          </LearnModeProvider>
-        </TooltipProvider>
+        <DesktopUpdateProvider>
+          <TooltipProvider>
+            <LearnModeProvider>
+              <Toaster />
+              <Router />
+              <DesktopUpdateModal />
+            </LearnModeProvider>
+          </TooltipProvider>
+        </DesktopUpdateProvider>
       </TerminalAuthProvider>
     </QueryClientProvider>
   );

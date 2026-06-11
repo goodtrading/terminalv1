@@ -1,3 +1,5 @@
+import { appVersion } from "@/lib/appVersion";
+
 export const isDesktopBuild = import.meta.env.VITE_PLATFORM === "desktop";
 
 export const DESKTOP_STORAGE_BUCKETS = [
@@ -61,7 +63,6 @@ export type HeatmapSessionMetadata = {
   depth?: number;
 };
 
-const APP_VERSION = "0.1.0";
 const LOCAL_STORAGE_PREFIX = "goodtrading.desktop";
 const FALLBACK_BASE = "browser-fallback://GoodTrading Terminal";
 
@@ -75,7 +76,7 @@ function nowIso(): string {
 function defaultSettings(existing?: Partial<DesktopSettings>): DesktopSettings {
   const createdAt = existing?.createdAt ?? nowIso();
   return {
-    appVersion: existing?.appVersion ?? APP_VERSION,
+    appVersion: existing?.appVersion ?? appVersion,
     createdAt,
     lastLaunchAt: nowIso(),
     selectedAsset: existing?.selectedAsset ?? "BTCUSDT",

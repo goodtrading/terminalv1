@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import os from "os";
+import fs from "fs";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 import { metaImagesPlugin } from "./vite-plugin-meta-images";
@@ -9,6 +10,9 @@ import { metaImagesPlugin } from "./vite-plugin-meta-images";
 const projectRoot = import.meta.dirname;
 const clientRoot = path.resolve(projectRoot, "client");
 const onOneDrive = /OneDrive/i.test(projectRoot);
+const tauriConfig = JSON.parse(
+  fs.readFileSync(path.resolve(projectRoot, "src-tauri/tauri.conf.json"), "utf8"),
+) as { version?: string };
 
 /** Keep Vite cache outside synced folders (OneDrive breaks dep pre-bundling). */
 const viteCacheDir =
@@ -23,6 +27,9 @@ if (onOneDrive) {
 
 export default defineConfig({
   cacheDir: viteCacheDir,
+  define: {
+    __GOODTRADING_APP_VERSION__: JSON.stringify(tauriConfig.version ?? "0.1.0"),
+  },
   plugins: [
     react(),
     runtimeErrorOverlay(),
