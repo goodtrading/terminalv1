@@ -1,6 +1,13 @@
 import {
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_ENGINE_MAX_RENDER_CELLS,
+  BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
+  H_PERSIST_V2_MACRO_NOISE_SIZE_BTC,
+  H_PERSIST_V2_MAX_CONTINUITY_BOOST,
+  H_PERSIST_V2_MERGE_GAP_MS,
+  H_PERSIST_V2_MIN_RUN_FOR_BOOST,
+  H_PERSIST_V2_PRICE_BRIDGE_USD,
+  H_PERSIST_V2_CHUNK_OVERLAY_ALPHA,
   type BookmapZoomRegime,
   computeVisiblePriceRangePct,
   L2_MATERIAL_SIZE_CHANGE_BTC,
@@ -609,7 +616,12 @@ function textureCellPriorityScore(
     sizeScore * 0.34 +
     retentionAge * 0.22 +
     nearScore * 0.28 +
-    viewportScore * 0.42
+    viewportScore * 0.42 +
+    (BOOKMAP_HORIZONTAL_PERSISTENCE_V2 &&
+    cell.continuityRunLength != null &&
+    cell.continuityRunLength >= H_PERSIST_V2_MIN_RUN_FOR_BOOST
+      ? Math.min(1.4, (cell.continuityRunLength - 1) * 0.12)
+      : 0)
   );
 }
 
@@ -669,6 +681,8 @@ function prepareTextureCells(
   timeMax: number,
   maxCells: number,
   viewportMaxSize?: number,
+  minPrice?: number,
+  maxPrice?: number,
 ): {
   cells: PreparedEngineTextureCell[];
   filteredByIntensity: number;
@@ -763,14 +777,47 @@ function prepareTextureCells(
 
   const visible = scored.filter((c) => c.intensity >= minRender);
   const filteredByIntensity = scored.length - visible.length;
+  const mergeGapMs = resolveEffectiveTextureMergeGapMs();
   const merged = mergeTextureCellsToTimeSpans(
     visible,
-    BOOKMAP_TEXTURE_TIME_MERGE_GAP_MS,
+    mergeGapMs,
     BOOKMAP_TEXTURE_SAMPLER_MS,
     timeMax,
   );
+  let mergedCells = merged.cells;
+  if (
+    BOOKMAP_HORIZONTAL_PERSISTENCE_V2 &&
+    minPrice != null &&
+    maxPrice != null &&
+    maxPrice > minPrice
+  ) {
+    lastHorizontalPersistenceV2Stats = {
+      enabled: true,
+      inputCellCount: visible.length,
+      afterTimeMergeCount: merged.cells.length,
+      afterPriceBridgeCount: 0,
+      boostedCellCount: 0,
+      avgContinuityRunLength: 0,
+      maxContinuityRunLength: 0,
+      mergeGapMs,
+    };
+    mergedCells = mergeAdjacentPriceTextureSpansV2(
+      mergedCells,
+      H_PERSIST_V2_PRICE_BRIDGE_USD,
+      mergeGapMs,
+    );
+    lastHorizontalPersistenceV2Stats.afterPriceBridgeCount = mergedCells.length;
+    mergedCells = applyHorizontalPersistenceV2PreparePass(
+      mergedCells,
+      midPrice,
+      minPrice,
+      maxPrice,
+    );
+  } else {
+    lastHorizontalPersistenceV2Stats.enabled = false;
+  }
   const capped = prioritizeAndCapTextureCells(
-    merged.cells,
+    mergedCells,
     midPrice,
     timeMax,
     maxCells,
@@ -900,6 +947,222 @@ function mergeTextureCellsToTimeSpans(
   }
 
   return { cells: merged, cellsWithEndTime, cellsUsingSyntheticEndTime };
+}
+
+export type HorizontalPersistenceV2PrepareStats = {
+  enabled: boolean;
+  inputCellCount: number;
+  afterTimeMergeCount: number;
+  afterPriceBridgeCount: number;
+  boostedCellCount: number;
+  avgContinuityRunLength: number;
+  maxContinuityRunLength: number;
+  mergeGapMs: number;
+};
+
+let lastHorizontalPersistenceV2Stats: HorizontalPersistenceV2PrepareStats = {
+  enabled: false,
+  inputCellCount: 0,
+  afterTimeMergeCount: 0,
+  afterPriceBridgeCount: 0,
+  boostedCellCount: 0,
+  avgContinuityRunLength: 0,
+  maxContinuityRunLength: 0,
+  mergeGapMs: BOOKMAP_TEXTURE_TIME_MERGE_GAP_MS,
+};
+
+export function getHorizontalPersistenceV2PrepareStats(): HorizontalPersistenceV2PrepareStats {
+  return lastHorizontalPersistenceV2Stats;
+}
+
+export function resolveEffectiveTextureMergeGapMs(): number {
+  return BOOKMAP_HORIZONTAL_PERSISTENCE_V2
+    ? H_PERSIST_V2_MERGE_GAP_MS
+    : BOOKMAP_TEXTURE_TIME_MERGE_GAP_MS;
+}
+
+export function resolveEffectiveChunkOverlayAlpha(): number {
+  return BOOKMAP_HORIZONTAL_PERSISTENCE_V2
+    ? H_PERSIST_V2_CHUNK_OVERLAY_ALPHA
+    : BOOKMAP_TEXTURE_INTERNAL_CHUNK_OVERLAY_ALPHA;
+}
+
+function applyHorizontalPersistenceV2IntensityBoost(
+  cell: PreparedEngineTextureCell,
+  midPrice: number | null | undefined,
+  zoomRegime: BookmapZoomRegime,
+): PreparedEngineTextureCell {
+  const runLen = Math.max(1, cell.continuityRunLength ?? 1);
+  const persistenceMs = Math.max(
+    0,
+    (cell.endTimeBucket ?? cell.timeBucket + BOOKMAP_TEXTURE_SAMPLER_MS) -
+      cell.timeBucket,
+  );
+  let intensity = cell.intensity ?? 0;
+
+  if (runLen >= H_PERSIST_V2_MIN_RUN_FOR_BOOST) {
+    const runBoost = Math.min(
+      H_PERSIST_V2_MAX_CONTINUITY_BOOST,
+      (runLen - H_PERSIST_V2_MIN_RUN_FOR_BOOST + 1) * 0.045,
+    );
+    intensity = Math.min(0.98, intensity + runBoost);
+  }
+
+  if (persistenceMs >= BOOKMAP_TEXTURE_SAMPLER_MS * 3) {
+    intensity = Math.min(
+      0.98,
+      intensity +
+        0.05 *
+          Math.min(1, persistenceMs / (BOOKMAP_TEXTURE_SAMPLER_MS * 24)),
+    );
+  }
+
+  if (
+    midPrice != null &&
+    midPrice > 0 &&
+    cell.maxSizeInBucket >= WALL_IMPORTANT_BTC
+  ) {
+    const pct = (Math.abs(cell.price - midPrice) / midPrice) * 100;
+    if (pct <= 1.25) intensity = Math.min(0.98, intensity + 0.07);
+    else if (pct <= 2.5) intensity = Math.min(0.96, intensity + 0.04);
+  }
+
+  if (
+    zoomRegime === "macro" &&
+    cell.maxSizeInBucket < H_PERSIST_V2_MACRO_NOISE_SIZE_BTC &&
+    runLen < 2
+  ) {
+    intensity *= 0.82;
+  }
+
+  const boosted = Math.max(intensity, cell.historicalRenderIntensity ?? 0);
+  return {
+    ...cell,
+    intensity: boosted,
+    persistenceMs,
+    historicalRenderIntensity: boosted,
+    historicalRenderAlphaFloor: Math.max(
+      cell.historicalRenderAlphaFloor ?? 0,
+      boosted * 0.42,
+    ),
+  };
+}
+
+/** Bridge adjacent price levels into longer horizontal resting runs. */
+function mergeAdjacentPriceTextureSpansV2(
+  cells: PreparedEngineTextureCell[],
+  maxPriceGapUsd: number,
+  maxTimeGapMs: number,
+): PreparedEngineTextureCell[] {
+  if (!cells.length) return cells;
+
+  const bySide = new Map<"bid" | "ask", PreparedEngineTextureCell[]>();
+  for (const cell of cells) {
+    const list = bySide.get(cell.side) ?? [];
+    list.push(cell);
+    bySide.set(cell.side, list);
+  }
+
+  const merged: PreparedEngineTextureCell[] = [];
+
+  for (const group of Array.from(bySide.values())) {
+    group.sort(
+      (a, b) => a.price - b.price || a.timeBucket - b.timeBucket,
+    );
+
+    let run = { ...group[0]! };
+    let runEnd =
+      group[0]!.endTimeBucket ??
+      group[0]!.timeBucket + BOOKMAP_TEXTURE_SAMPLER_MS;
+    let runSamples = group[0]!.continuityRunLength ?? 1;
+
+    const flush = () => {
+      merged.push({
+        ...run,
+        endTimeBucket: runEnd,
+        continuityRunLength: runSamples,
+      });
+    };
+
+    for (let i = 1; i < group.length; i += 1) {
+      const next = group[i]!;
+      const nextEnd =
+        next.endTimeBucket ?? next.timeBucket + BOOKMAP_TEXTURE_SAMPLER_MS;
+      const priceGap = Math.abs(next.price - run.price);
+      const timeGap = next.timeBucket - runEnd;
+      const minIntensity = Math.min(run.intensity ?? 0, next.intensity ?? 0);
+      const minSize = Math.min(run.maxSizeInBucket, next.maxSizeInBucket);
+      const canBridge =
+        priceGap <= maxPriceGapUsd &&
+        timeGap <= maxTimeGapMs &&
+        minIntensity >= 0.015 &&
+        minSize >= 1.2;
+
+      if (canBridge) {
+        const dominant =
+          next.maxSizeInBucket > run.maxSizeInBucket ? next : run;
+        runEnd = Math.max(runEnd, nextEnd);
+        run = {
+          ...run,
+          price: dominant.price,
+          side: run.side,
+          maxSizeInBucket: Math.max(run.maxSizeInBucket, next.maxSizeInBucket),
+          intensity: Math.max(run.intensity ?? 0, next.intensity ?? 0),
+          historicalRenderIntensity: Math.max(
+            run.historicalRenderIntensity ?? 0,
+            next.historicalRenderIntensity ?? 0,
+          ),
+          endTimeBucket: runEnd,
+          continuityRunLength:
+            runSamples + (next.continuityRunLength ?? 1),
+        };
+        runSamples += next.continuityRunLength ?? 1;
+      } else {
+        flush();
+        run = { ...next };
+        runEnd = nextEnd;
+        runSamples = next.continuityRunLength ?? 1;
+      }
+    }
+    flush();
+  }
+
+  return merged;
+}
+
+function applyHorizontalPersistenceV2PreparePass(
+  cells: PreparedEngineTextureCell[],
+  midPrice: number | null | undefined,
+  minPrice: number,
+  maxPrice: number,
+): PreparedEngineTextureCell[] {
+  const zoomRegime = resolveZoomRegime(
+    computeVisiblePriceRangePct(minPrice, maxPrice),
+  );
+  let boostedCount = 0;
+  const boosted = cells.map((cell) => {
+    const next = applyHorizontalPersistenceV2IntensityBoost(
+      cell,
+      midPrice,
+      zoomRegime,
+    );
+    if ((next.intensity ?? 0) > (cell.intensity ?? 0) + 0.001) {
+      boostedCount += 1;
+    }
+    return next;
+  });
+  const runLengths = boosted.map((c) => c.continuityRunLength ?? 1);
+  const avgRun =
+    runLengths.length > 0
+      ? runLengths.reduce((a, b) => a + b, 0) / runLengths.length
+      : 0;
+  lastHorizontalPersistenceV2Stats = {
+    ...lastHorizontalPersistenceV2Stats,
+    boostedCellCount: boostedCount,
+    avgContinuityRunLength: Number(avgRun.toFixed(2)),
+    maxContinuityRunLength: runLengths.length ? Math.max(...runLengths) : 0,
+  };
+  return boosted;
 }
 
 function textureSizeBounds(cells: PreparedEngineTextureCell[]): {
@@ -1107,6 +1370,8 @@ export function prepareEngineRenderData(
         timeMax,
         BOOKMAP_TEXTURE_MAX_PREPARE_CELLS,
         viewportMaxSize,
+        minPrice,
+        maxPrice,
       )
     : {
         cells: [] as PreparedEngineTextureCell[],
@@ -2538,7 +2803,7 @@ export function prepareWallBandsForContinuousRender(
     for (let i = 1; i < group.length; i += 1) {
       const next = group[i]!;
       const gap = next.startTime - current.endTime;
-      if (gap <= BOOKMAP_TEXTURE_TIME_MERGE_GAP_MS) {
+      if (gap <= resolveEffectiveTextureMergeGapMs()) {
         current.endTime = Math.max(current.endTime, next.endTime);
         current.maxSize = Math.max(current.maxSize, next.maxSize);
         current.size = Math.max(current.size, next.size);

@@ -6,6 +6,8 @@ import {
   PALETTE_ALPHA_ACTIVE_WEAK_MIN,
   PALETTE_ALPHA_CLOSED_OLD_MUL,
   PALETTE_ALPHA_CLOSED_RECENT_MUL,
+  BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
+  H_PERSIST_V2_WEAK_HISTORICAL_ALPHA_MUL,
 } from "@/lib/bookmapEngineConfig";
 
 /**
@@ -51,12 +53,38 @@ const PASSIVE_PALETTE_STOPS: readonly (readonly [number, number, number])[] = [
   [255, 240, 208],
 ];
 
+/** B.2 — darker weak end, sharper warm transition for dominant walls. */
+const PASSIVE_PALETTE_STOPS_V2: readonly (readonly [number, number, number])[] = [
+  [8, 18, 32],
+  [12, 34, 58],
+  [18, 62, 92],
+  [24, 98, 138],
+  [52, 156, 210],
+  [198, 208, 58],
+  [238, 152, 28],
+  [224, 82, 36],
+  [208, 34, 34],
+  [255, 228, 188],
+];
+
+function activePassivePaletteStops(): readonly (readonly [number, number, number])[] {
+  return BOOKMAP_HORIZONTAL_PERSISTENCE_V2
+    ? PASSIVE_PALETTE_STOPS_V2
+    : PASSIVE_PALETTE_STOPS;
+}
+
 export type PassiveIntensityBucket = "weak" | "medium" | "strong" | "extreme";
 
 export function classifyPassiveIntensityBucket(
   intensity: number,
 ): PassiveIntensityBucket {
   const t = clamp01(intensity);
+  if (BOOKMAP_HORIZONTAL_PERSISTENCE_V2) {
+    if (t < 0.18) return "weak";
+    if (t < 0.48) return "medium";
+    if (t < 0.72) return "strong";
+    return "extreme";
+  }
   if (t < 0.22) return "weak";
   if (t < 0.52) return "medium";
   if (t < 0.78) return "strong";
@@ -68,14 +96,12 @@ export function intensityToPassiveLiquidityRgb(
   intensity: number,
 ): [number, number, number] {
   const t = clamp01(intensity);
-  const scaled = t * (PASSIVE_PALETTE_STOPS.length - 1);
+  const stops = activePassivePaletteStops();
+  const scaled = t * (stops.length - 1);
   const idx = Math.floor(scaled);
   const frac = scaled - idx;
-  const a = PASSIVE_PALETTE_STOPS[Math.min(idx, PASSIVE_PALETTE_STOPS.length - 1)]!;
-  const b =
-    PASSIVE_PALETTE_STOPS[
-      Math.min(idx + 1, PASSIVE_PALETTE_STOPS.length - 1)
-    ]!;
+  const a = stops[Math.min(idx, stops.length - 1)]!;
+  const b = stops[Math.min(idx + 1, stops.length - 1)]!;
   return lerpRgb(a, b, frac);
 }
 
@@ -207,6 +233,9 @@ export function alphaForPassiveLiquidity(
   if (t < 0.22) {
     body =
       PALETTE_ALPHA_ACTIVE_WEAK_MIN + (t / 0.22) * (0.36 - PALETTE_ALPHA_ACTIVE_WEAK_MIN);
+    if (BOOKMAP_HORIZONTAL_PERSISTENCE_V2) {
+      body *= H_PERSIST_V2_WEAK_HISTORICAL_ALPHA_MUL;
+    }
   } else if (t < 0.52) {
     body = 0.45 + ((t - 0.22) / 0.3) * 0.17;
   } else if (t < 0.78) {
@@ -218,6 +247,9 @@ export function alphaForPassiveLiquidity(
       0.2 +
       ((t - 0.78) / 0.22) *
         (PALETTE_ALPHA_ACTIVE_EXTREME_MAX - PALETTE_ALPHA_ACTIVE_STRONG_MIN - 0.2);
+    if (BOOKMAP_HORIZONTAL_PERSISTENCE_V2 && ctx.isActive) {
+      body = Math.min(PALETTE_ALPHA_ACTIVE_EXTREME_MAX, body * 1.06);
+    }
   }
 
   if (ctx.isRelevantL2 && ctx.isActive) {

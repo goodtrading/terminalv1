@@ -85,3 +85,28 @@ export const PALETTE_ALPHA_CLOSED_OLD_MUL = 0.22;
 /** Strong band alpha floor for parity diagnostics. */
 export const PALETTE_STRONG_BAND_ALPHA_FLOOR = 0.68;
 export const PALETTE_RELEVANT_L2_ALPHA_FLOOR = 0.55;
+
+/**
+ * B.2 — Horizontal Persistence V2: stronger resting runs, clearer wall hierarchy,
+ * Bookmap-like palette. Toggle off to revert to pre-B.2 visual prepare/render.
+ */
+export const BOOKMAP_HORIZONTAL_PERSISTENCE_V2 = true;
+
+/** Wider time gap merge for resting run continuity (ms). */
+export const H_PERSIST_V2_MERGE_GAP_MS = 24_000;
+/** Bridge adjacent price levels within this USD distance. */
+export const H_PERSIST_V2_PRICE_BRIDGE_USD = 10;
+/** Minimum merged samples before continuity intensity boost applies. */
+export const H_PERSIST_V2_MIN_RUN_FOR_BOOST = 3;
+/** Max additive intensity from long horizontal runs. */
+export const H_PERSIST_V2_MAX_CONTINUITY_BOOST = 0.2;
+/** Solid horizontal base rect minimum intensity. */
+export const H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY = 0.36;
+/** Alpha multiplier for reinforced solid base spans. */
+export const H_PERSIST_V2_SOLID_BASE_ALPHA_MUL = 1.18;
+/** Historical weak texture alpha scale — keeps grain secondary. */
+export const H_PERSIST_V2_WEAK_HISTORICAL_ALPHA_MUL = 0.68;
+/** Internal chunk overlay alpha when V2 (less granular noise). */
+export const H_PERSIST_V2_CHUNK_OVERLAY_ALPHA = 0.08;
+/** Suppress sub-threshold noise in macro zoom. */
+export const H_PERSIST_V2_MACRO_NOISE_SIZE_BTC = 4;

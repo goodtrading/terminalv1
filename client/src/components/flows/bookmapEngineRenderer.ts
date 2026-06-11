@@ -1,6 +1,9 @@
 import {
   BOOKMAP_ENGINE_BUCKET_MS,
+  BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
   computeVisiblePriceRangePct,
+  H_PERSIST_V2_SOLID_BASE_ALPHA_MUL,
+  H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY,
   PALETTE_ALPHA_CLOSED_OLD_MUL,
   PALETTE_ALPHA_CLOSED_RECENT_MUL,
   PERP_RENDER_ACTIVE_CAP,
@@ -48,6 +51,7 @@ import {
   buildBookmapPaletteParityTruth,
   buildBookmapVisualParityTruth,
   buildPassiveLiquidityAlphaContext,
+  resolveEffectiveChunkOverlayAlpha,
   computeBookmapVisualWeight,
   computeViewportSizeStats,
   createEmptyBookmapL2BandContinuityStats,
@@ -971,8 +975,8 @@ function renderHeatmapTextureCells(
   );
   const microVisualMode = renderCtx.microVisualHierarchyActive === true;
   const spanBaseEnabled = BOOKMAP_TEXTURE_SPAN_BASE_RENDER_ENABLED;
-  const overlayEnabled =
-    spanBaseEnabled && BOOKMAP_TEXTURE_INTERNAL_CHUNK_OVERLAY_ALPHA > 0;
+  const effectiveChunkOverlayAlpha = resolveEffectiveChunkOverlayAlpha();
+  const overlayEnabled = spanBaseEnabled && effectiveChunkOverlayAlpha > 0;
   const overlayRatioBounds = resolveInternalOverlayRatioBounds(
     microVisualMode,
     renderCtx.regime,
@@ -1148,6 +1152,19 @@ function renderHeatmapTextureCells(
           })
         : getPassiveLiquidityFill(cell.side, vi, alphaCtx, globalMul);
       ctx.fillRect(x0, yTop, spanW, height);
+
+      if (
+        BOOKMAP_HORIZONTAL_PERSISTENCE_V2 &&
+        vi >= H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY &&
+        (rep.stableSizeBtc >= WALL_IMPORTANT_BTC ||
+          (cell.continuityRunLength ?? 0) >= 3)
+      ) {
+        const prevAlpha = ctx.globalAlpha;
+        ctx.globalAlpha = Math.min(1, prevAlpha * H_PERSIST_V2_SOLID_BASE_ALPHA_MUL);
+        ctx.fillRect(x0, yTop, spanW, height);
+        ctx.globalAlpha = prevAlpha;
+      }
+
       rendered += 1;
       widthSum += spanW;
       spanWidthSum += spanW;
@@ -1236,12 +1253,18 @@ function renderHeatmapTextureCells(
     }
 
     if (overlayEnabled && chunkCount > 1) {
-      const overlayOps = buildInternalOverlayDrawOps(
-        group,
-        vi,
-        spanPeakSizeBtc,
-        timeToX,
-      );
+      const skipWeakOverlay =
+        BOOKMAP_HORIZONTAL_PERSISTENCE_V2 &&
+        vi >= H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY &&
+        chunkCount <= 3;
+      const overlayOps = skipWeakOverlay
+        ? []
+        : buildInternalOverlayDrawOps(
+            group,
+            vi,
+            spanPeakSizeBtc,
+            timeToX,
+          );
       if (overlayOps.length > 0) {
         spansWithOverlay += 1;
         let spanOverlayAlphaSum = 0;
@@ -1258,13 +1281,18 @@ function renderHeatmapTextureCells(
             vi * 0.92,
             Math.min(op.overlayIntensity, vi * 1.04),
           );
-          const overlayAlpha = computeInternalOverlayAlpha(
-            bodyAlpha,
-            op.chunkRelativeStrength,
-            overlayRatioBounds,
-            microVisualMode,
-            overlayRatioScale,
-          );
+          const overlayAlpha =
+            computeInternalOverlayAlpha(
+              bodyAlpha,
+              op.chunkRelativeStrength,
+              overlayRatioBounds,
+              microVisualMode,
+              overlayRatioScale,
+            ) *
+            (BOOKMAP_HORIZONTAL_PERSISTENCE_V2
+              ? effectiveChunkOverlayAlpha /
+                  BOOKMAP_TEXTURE_INTERNAL_CHUNK_OVERLAY_ALPHA
+              : 1);
           spanOverlayAlphaSum += overlayAlpha;
           if (overlayAlpha > spanOverlayAlphaMax) {
             spanOverlayAlphaMax = overlayAlpha;

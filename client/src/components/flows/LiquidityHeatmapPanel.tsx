@@ -71,6 +71,7 @@ import {
   buildBookmapLiveProjectionGeometryDiag,
   classifyBookmapTextureDiag,
   prepareEngineRenderData,
+  getHorizontalPersistenceV2PrepareStats,
   type BookmapMicroVisualHierarchyTruth,
   type BookmapPerpFilterTruth,
   type BookmapTextureDiag,
@@ -2554,6 +2555,26 @@ export function LiquidityHeatmapPanel({
     };
     logSpanRenderContinuityAudit();
     const id = window.setInterval(logSpanRenderContinuityAudit, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logHorizontalPersistenceV2 = () => {
+      const stats = getHorizontalPersistenceV2PrepareStats();
+      if (!stats.enabled) return;
+      console.debug("[BOOKMAP_HORIZONTAL_PERSISTENCE_V2_DIAG]", {
+        mergeGapMs: stats.mergeGapMs,
+        inputCellCount: stats.inputCellCount,
+        afterTimeMergeCount: stats.afterTimeMergeCount,
+        afterPriceBridgeCount: stats.afterPriceBridgeCount,
+        boostedCellCount: stats.boostedCellCount,
+        avgContinuityRunLength: stats.avgContinuityRunLength,
+        maxContinuityRunLength: stats.maxContinuityRunLength,
+      });
+    };
+    logHorizontalPersistenceV2();
+    const id = window.setInterval(logHorizontalPersistenceV2, 2_000);
     return () => window.clearInterval(id);
   }, [sourceMode, activeDomMarket]);
 
