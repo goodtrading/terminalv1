@@ -31,26 +31,72 @@ Env vars soportadas:
 2. Opcional: alinear `package.json` si aplica.
 3. El build web embebe la versión vía `vite.config.ts` → `__GOODTRADING_APP_VERSION__`.
 
-## 2. Build desktop
+## 2. Build + package (recomendado)
+
+Un solo comando build + copia del instalador renombrado:
+
+```bash
+npm run release:desktop
+```
+
+Equivale a:
+
+```bash
+npm run build:desktop
+npm run prepare:desktop-release
+```
+
+### Salida del instalador
+
+Tauri genera el setup en:
+
+```
+src-tauri/target/release/bundle/nsis/GoodTrading Terminal_<version>_x64-setup.exe
+```
+
+El script `scripts/prepare-desktop-release.mjs` lo copia a:
+
+```
+releases/desktop/GoodTrading-Terminal-<version>-x64-setup.exe
+```
+
+Si existe MSI, también copia:
+
+```
+releases/desktop/GoodTrading-Terminal-<version>-x64.msi
+```
+
+**Nota:** `releases/desktop/*.exe` y `*.msi` están en `.gitignore`. Subir el instalador a hosting externo (S3, GitHub Releases, CDN), no al repo.
+
+### Solo empaquetar (sin rebuild)
+
+Si ya corriste `npm run build:desktop`:
+
+```bash
+npm run prepare:desktop-release
+```
+
+Si falta el setup, el script falla con un mensaje claro indicando la ruta esperada.
+
+## 2b. Build desktop (manual)
 
 ```bash
 npm run build:desktop
 ```
 
 - `build:desktop:web` corre antes (Tauri `beforeBuildCommand`): Vite + server bundle con `VITE_PLATFORM=desktop`.
-- Instalador NSIS típico:
-
-```
-src-tauri\target\release\bundle\nsis\GoodTrading Terminal_0.1.0_x64-setup.exe
-```
-
-(Ajustar `0.1.0` al número de versión actual.)
 
 ## 3. Subir instalador
 
-Subir el `.exe` a una URL pública HTTPS (S3, GitHub Releases, CDN, etc.).
+Tomar el archivo de `releases/desktop/` (nombre sin espacios) y subirlo a URL pública HTTPS.
 
-Ejemplo:
+Ejemplo local:
+
+```
+releases/desktop/GoodTrading-Terminal-0.1.1-x64-setup.exe
+```
+
+URL pública de ejemplo:
 
 ```
 https://goodtrading.app/downloads/GoodTrading-Terminal-0.1.1-x64-setup.exe
@@ -85,7 +131,7 @@ Campos:
 | `releaseNotes` | Array de strings (o un string con `\n` / `\|`) |
 | `publishedAt` | ISO 8601 o `null` |
 
-Deploy a Railway (o copiar JSON a `dist/public/` en el servidor).
+Deploy a Railway branch `fix/railway-bookmap-data` con el manifest actualizado (o merge/cherry-pick del JSON).
 
 URL pública esperada:
 

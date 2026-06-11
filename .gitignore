@@ -13,3 +13,8 @@ vite.config.ts.*
 *.tar.gz
 server/storage/
 server/storage/*.json
+
+# Desktop release installers (upload to external hosting, not git)
+releases/desktop/*.exe
+releases/desktop/*.msi
+!releases/desktop/.gitkeep
