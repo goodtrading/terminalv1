@@ -18,7 +18,11 @@ import {
 
 const DESKTOP_BOOKMAP_BUCKET_MS = 1_000;
 const DESKTOP_BOOKMAP_MAX_CELLS = 2_400;
+const DESKTOP_BOOKMAP_DEPTH_LIMIT = 1_000;
+const DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT = 100;
+const DESKTOP_BOOKMAP_VISUAL_THROTTLE_MS = 150;
 const DESKTOP_BOOKMAP_WS_BASE = "wss://stream.binance.com:9443/stream";
+const DESKTOP_BOOKMAP_REST_BASE = "https://api.binance.com/api/v3/depth";
 
 const EMPTY_STATS: HeatmapPipelineStats = {
   rawBids: 0,
@@ -46,12 +50,27 @@ type BinanceDepthWire = {
   E?: number;
 };
 
+type BinanceDiffDepthWire = {
+  U?: number;
+  u?: number;
+  b?: unknown[];
+  a?: unknown[];
+  E?: number;
+};
+
+type BinanceDepthSnapshotWire = {
+  lastUpdateId?: number;
+  bids?: unknown[];
+  asks?: unknown[];
+};
+
 type BinanceCombinedMessage = {
   stream?: string;
   data?: unknown;
 };
 
 type DesktopFeedStatus = "loading" | "live" | "error" | "empty" | "offline";
+type DesktopOrderbookMode = "reconstructed" | "fallback-depth20";
 
 export const desktopBookmapFeedEnabled =
   import.meta.env.VITE_PLATFORM === "desktop" &&
@@ -70,12 +89,53 @@ function parseLevel(raw: unknown, side: "bid" | "ask"): OrderbookLevel | null {
   return { price, sizeBtc, side };
 }
 
+function parseBookEntry(raw: unknown): { price: number; sizeBtc: number } | null {
+  if (!Array.isArray(raw) || raw.length < 2) return null;
+  const price = Number(raw[0]);
+  const sizeBtc = Number(raw[1]);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  if (!Number.isFinite(sizeBtc) || sizeBtc < 0) return null;
+  return { price, sizeBtc };
+}
+
 function parseLevels(rows: unknown[] | undefined, side: "bid" | "ask"): OrderbookLevel[] {
   const levels = (rows ?? [])
     .map((row) => parseLevel(row, side))
     .filter((level): level is OrderbookLevel => level != null);
   levels.sort((a, b) => (side === "bid" ? b.price - a.price : a.price - b.price));
   return levels;
+}
+
+function replaceBookSideFromRows(book: Map<number, number>, rows: unknown[] | undefined): void {
+  book.clear();
+  for (const row of rows ?? []) {
+    const entry = parseBookEntry(row);
+    if (!entry || entry.sizeBtc <= 0) continue;
+    book.set(entry.price, entry.sizeBtc);
+  }
+}
+
+function applyBookSideUpdates(book: Map<number, number>, rows: unknown[] | undefined): void {
+  for (const row of rows ?? []) {
+    const entry = parseBookEntry(row);
+    if (!entry) continue;
+    if (entry.sizeBtc === 0) {
+      book.delete(entry.price);
+    } else {
+      book.set(entry.price, entry.sizeBtc);
+    }
+  }
+}
+
+function visibleBookSide(
+  book: Map<number, number>,
+  side: "bid" | "ask",
+  limit: number,
+): OrderbookLevel[] {
+  return Array.from(book.entries())
+    .sort(([priceA], [priceB]) => (side === "bid" ? priceB - priceA : priceA - priceB))
+    .slice(0, limit)
+    .map(([price, sizeBtc]) => ({ price, sizeBtc, side }));
 }
 
 function levelToBookLevel(level: OrderbookLevel, now: number): BookLevel {
@@ -160,10 +220,22 @@ export function useDesktopBookmapFeed(
   const tradesRef = useRef<HeatmapTrade[]>([]);
   const seenTradeKeysRef = useRef<Set<string>>(new Set());
   const reconnectTimerRef = useRef<number | null>(null);
+  const visualUpdateTimerRef = useRef<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastUpdateRef = useRef<number | null>(null);
+  const rawBidsRef = useRef<Map<number, number>>(new Map());
+  const rawAsksRef = useRef<Map<number, number>>(new Map());
+  const rawBidsCountRef = useRef(0);
+  const rawAsksCountRef = useRef(0);
   const bidsCountRef = useRef(0);
   const asksCountRef = useRef(0);
+  const lastUpdateIdRef = useRef<number | null>(null);
+  const snapshotReadyRef = useRef(false);
+  const pendingDiffsRef = useRef<BinanceDiffDepthWire[]>([]);
+  const messagesReceivedRef = useRef(0);
+  const diffMessagesReceivedRef = useRef(0);
+  const resyncCountRef = useRef(0);
+  const currentModeRef = useRef<DesktopOrderbookMode>("reconstructed");
   const feedStatusRef = useRef<DesktopFeedStatus>(canUseSpotFeed ? "loading" : "offline");
   const connectedRef = useRef(false);
   const firstSnapshotLoggedRef = useRef(false);
@@ -201,32 +273,54 @@ export function useDesktopBookmapFeed(
     const nextStatus = updater(feedStatusRef.current);
     feedStatusRef.current = nextStatus;
     setFeedStatus(nextStatus);
-  }, [cleanSymbol]);
+  }, []);
 
   const updateTradesStreamConnected = useCallback((connected: boolean) => {
     connectedRef.current = connected;
     setTradesStreamConnected(connected);
-  }, []);
+  }, [cleanSymbol]);
 
-  const wsUrl = useMemo(() => {
+  const diffWsUrl = useMemo(() => {
+    const streamSymbol = cleanSymbol.toLowerCase();
+    const streams = `${streamSymbol}@depth@100ms/${streamSymbol}@aggTrade`;
+    return `${DESKTOP_BOOKMAP_WS_BASE}?streams=${streams}`;
+  }, [cleanSymbol]);
+
+  const fallbackWsUrl = useMemo(() => {
     const streamSymbol = cleanSymbol.toLowerCase();
     const streams = `${streamSymbol}@depth20@100ms/${streamSymbol}@aggTrade`;
     return `${DESKTOP_BOOKMAP_WS_BASE}?streams=${streams}`;
   }, [cleanSymbol]);
 
-  const pushSnapshot = useCallback((snapshot: LiquiditySnapshot) => {
+  const snapshotUrl = useMemo(() => {
+    const params = new URLSearchParams({
+      symbol: cleanSymbol,
+      limit: String(DESKTOP_BOOKMAP_DEPTH_LIMIT),
+    });
+    return `${DESKTOP_BOOKMAP_REST_BASE}?${params.toString()}`;
+  }, [cleanSymbol]);
+
+  const pushSnapshot = useCallback((
+    snapshot: LiquiditySnapshot,
+    rawCounts: { bids: number; asks: number } = {
+      bids: snapshot.bids.length,
+      asks: snapshot.asks.length,
+    },
+  ) => {
     snapshotsRef.current = [...snapshotsRef.current, snapshot].slice(-MAX_LIQUIDITY_SNAPSHOTS);
     setSnapshotCount(snapshotsRef.current.length);
     setOrderbookReceivedAt(snapshot.ts);
     lastUpdateRef.current = Date.now();
+    rawBidsCountRef.current = rawCounts.bids;
+    rawAsksCountRef.current = rawCounts.asks;
     bidsCountRef.current = snapshot.bids.length;
     asksCountRef.current = snapshot.asks.length;
     setDataUpdatedAt(Date.now());
     updateFeedStatus("live");
 
     const nextStats: HeatmapPipelineStats = {
-      rawBids: snapshot.bids.length,
-      rawAsks: snapshot.asks.length,
+      rawBids: rawCounts.bids,
+      rawAsks: rawCounts.asks,
       normalizedBids: snapshot.bids.length,
       normalizedAsks: snapshot.asks.length,
       visibleBids: snapshot.bids.length,
@@ -260,6 +354,37 @@ export function useDesktopBookmapFeed(
       });
     }
   }, [cleanSymbol, updateFeedStatus]);
+
+  const pushVisibleBookSnapshot = useCallback((ts: number) => {
+    const bids = visibleBookSide(
+      rawBidsRef.current,
+      "bid",
+      DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT,
+    );
+    const asks = visibleBookSide(
+      rawAsksRef.current,
+      "ask",
+      DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT,
+    );
+    rawBidsCountRef.current = rawBidsRef.current.size;
+    rawAsksCountRef.current = rawAsksRef.current.size;
+    if (!bids.length || !asks.length) {
+      updateFeedStatusFromCurrent((status) => (status === "live" ? "live" : "empty"));
+      return;
+    }
+    pushSnapshot(
+      { ts, bids, asks },
+      { bids: rawBidsRef.current.size, asks: rawAsksRef.current.size },
+    );
+  }, [pushSnapshot, updateFeedStatusFromCurrent]);
+
+  const scheduleVisibleBookSnapshot = useCallback((ts: number) => {
+    if (visualUpdateTimerRef.current != null) return;
+    visualUpdateTimerRef.current = window.setTimeout(() => {
+      visualUpdateTimerRef.current = null;
+      pushVisibleBookSnapshot(ts);
+    }, DESKTOP_BOOKMAP_VISUAL_THROTTLE_MS);
+  }, [pushVisibleBookSnapshot]);
 
   const ingestTrade = useCallback((raw: unknown) => {
     const parsed = parseRawTradeEvent(raw, "spot");
@@ -320,8 +445,19 @@ export function useDesktopBookmapFeed(
     snapshotsRef.current = [];
     tradesRef.current = [];
     seenTradeKeysRef.current = new Set();
+    rawBidsRef.current = new Map();
+    rawAsksRef.current = new Map();
+    rawBidsCountRef.current = 0;
+    rawAsksCountRef.current = 0;
     bidsCountRef.current = 0;
     asksCountRef.current = 0;
+    lastUpdateIdRef.current = null;
+    snapshotReadyRef.current = false;
+    pendingDiffsRef.current = [];
+    messagesReceivedRef.current = 0;
+    diffMessagesReceivedRef.current = 0;
+    resyncCountRef.current = 0;
+    currentModeRef.current = "reconstructed";
     connectedRef.current = false;
     setBookmapState(null);
     setSnapshotCount(0);
@@ -351,6 +487,7 @@ export function useDesktopBookmapFeed(
 
     let cancelled = false;
     let reconnectAttempt = 0;
+    let suppressNextReconnect = false;
     const noDataTimeoutId = window.setTimeout(() => {
       if (cancelled || noDataTimeoutLoggedRef.current || snapshotsRef.current.length > 0) return;
       noDataTimeoutLoggedRef.current = true;
@@ -366,14 +503,151 @@ export function useDesktopBookmapFeed(
       source: "spot",
       startedAt,
       bucketMs: DESKTOP_BOOKMAP_BUCKET_MS,
-      depth: 20,
+      depth: DESKTOP_BOOKMAP_DEPTH_LIMIT,
     });
 
-    const connect = () => {
+    const resetLocalBook = () => {
+      rawBidsRef.current = new Map();
+      rawAsksRef.current = new Map();
+      rawBidsCountRef.current = 0;
+      rawAsksCountRef.current = 0;
+      bidsCountRef.current = 0;
+      asksCountRef.current = 0;
+      lastUpdateIdRef.current = null;
+      snapshotReadyRef.current = false;
+      pendingDiffsRef.current = [];
+      if (visualUpdateTimerRef.current != null) {
+        window.clearTimeout(visualUpdateTimerRef.current);
+        visualUpdateTimerRef.current = null;
+      }
+    };
+
+    const applyDiff = (diff: BinanceDiffDepthWire): boolean => {
+      const firstUpdateId = Number(diff.U);
+      const finalUpdateId = Number(diff.u);
+      if (!Number.isFinite(firstUpdateId) || !Number.isFinite(finalUpdateId)) {
+        void writeDesktopLog("desktop_orderbook_apply_error", {
+          symbol: cleanSymbol,
+          reason: "invalid_update_id",
+          firstUpdateId: diff.U,
+          finalUpdateId: diff.u,
+        });
+        return false;
+      }
+
+      const previousUpdateId = lastUpdateIdRef.current;
+      if (previousUpdateId == null) return false;
+      if (finalUpdateId <= previousUpdateId) return true;
+      if (!(firstUpdateId <= previousUpdateId + 1 && previousUpdateId + 1 <= finalUpdateId)) {
+        void writeDesktopLog("desktop_orderbook_gap_detected", {
+          symbol: cleanSymbol,
+          expectedNextUpdateId: previousUpdateId + 1,
+          firstUpdateId,
+          finalUpdateId,
+          mode: currentModeRef.current,
+        });
+        return false;
+      }
+
+      try {
+        applyBookSideUpdates(rawBidsRef.current, diff.b);
+        applyBookSideUpdates(rawAsksRef.current, diff.a);
+        lastUpdateIdRef.current = finalUpdateId;
+        scheduleVisibleBookSnapshot(Number.isFinite(diff.E) ? Number(diff.E) : Date.now());
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void writeDesktopLog("desktop_orderbook_apply_error", {
+          symbol: cleanSymbol,
+          message,
+          firstUpdateId,
+          finalUpdateId,
+        });
+        return false;
+      }
+    };
+
+    const applyBufferedDiffs = (): boolean => {
+      const lastUpdateId = lastUpdateIdRef.current;
+      if (lastUpdateId == null) return false;
+      const buffered = pendingDiffsRef.current
+        .filter((diff) => Number(diff.u) > lastUpdateId)
+        .sort((a, b) => Number(a.U) - Number(b.U));
+      pendingDiffsRef.current = [];
+      if (!buffered.length) return true;
+      const firstValid = buffered[0];
+      if (!(Number(firstValid.U) <= lastUpdateId + 1 && lastUpdateId + 1 <= Number(firstValid.u))) {
+        void writeDesktopLog("desktop_orderbook_gap_detected", {
+          symbol: cleanSymbol,
+          reason: "buffer_does_not_bridge_snapshot",
+          snapshotLastUpdateId: lastUpdateId,
+          firstBufferedUpdateId: firstValid.U,
+          firstBufferedFinalUpdateId: firstValid.u,
+        });
+        return false;
+      }
+      for (const diff of buffered) {
+        if (!applyDiff(diff)) return false;
+      }
+      return true;
+    };
+
+    const loadSnapshot = async (): Promise<boolean> => {
+      void writeDesktopLog("desktop_orderbook_snapshot_start", {
+        symbol: cleanSymbol,
+        bookDepthLimit: DESKTOP_BOOKMAP_DEPTH_LIMIT,
+        url: snapshotUrl,
+      });
+      try {
+        const response = await fetch(snapshotUrl, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`snapshot_http_${response.status}`);
+        }
+        const snapshot = (await response.json()) as BinanceDepthSnapshotWire;
+        const lastUpdateId = Number(snapshot.lastUpdateId);
+        if (!Number.isFinite(lastUpdateId)) {
+          throw new Error("snapshot_missing_lastUpdateId");
+        }
+        replaceBookSideFromRows(rawBidsRef.current, snapshot.bids);
+        replaceBookSideFromRows(rawAsksRef.current, snapshot.asks);
+        rawBidsCountRef.current = rawBidsRef.current.size;
+        rawAsksCountRef.current = rawAsksRef.current.size;
+        lastUpdateIdRef.current = lastUpdateId;
+        snapshotReadyRef.current = true;
+        void writeDesktopLog("desktop_orderbook_snapshot_loaded", {
+          symbol: cleanSymbol,
+          lastUpdateId,
+          rawBidsCount: rawBidsRef.current.size,
+          rawAsksCount: rawAsksRef.current.size,
+          bufferedDiffs: pendingDiffsRef.current.length,
+        });
+        if (!applyBufferedDiffs()) return false;
+        pushVisibleBookSnapshot(Date.now());
+        return true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(err instanceof Error ? err : new Error(message));
+        void writeDesktopLog("desktop_orderbook_apply_error", {
+          symbol: cleanSymbol,
+          phase: "snapshot",
+          message,
+        });
+        return false;
+      }
+    };
+
+    const connectFallbackDepth20 = () => {
       if (cancelled) return;
+      resetLocalBook();
+      currentModeRef.current = "fallback-depth20";
       updateFeedStatusFromCurrent((status) => (status === "live" ? "live" : "loading"));
 
-      const ws = new WebSocket(wsUrl);
+      void writeDesktopLog("desktop_orderbook_fallback_depth20", {
+        symbol: cleanSymbol,
+        url: fallbackWsUrl,
+      });
+
+      const ws = new WebSocket(fallbackWsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -381,10 +655,15 @@ export function useDesktopBookmapFeed(
         reconnectAttempt = 0;
         setError(null);
         updateTradesStreamConnected(true);
-        console.debug("[DESKTOP_BOOKMAP_FEED] ws connected", { symbol: cleanSymbol, url: wsUrl });
+        console.debug("[DESKTOP_BOOKMAP_FEED] ws connected", {
+          symbol: cleanSymbol,
+          url: fallbackWsUrl,
+          mode: currentModeRef.current,
+        });
         void writeDesktopLog("desktop_feed_connected", {
           symbol: cleanSymbol,
-          url: wsUrl,
+          url: fallbackWsUrl,
+          mode: currentModeRef.current,
           reconnectCount: reconnectCountRef.current,
         });
       };
@@ -395,6 +674,7 @@ export function useDesktopBookmapFeed(
           const msg = JSON.parse(String(event.data)) as BinanceCombinedMessage;
           const stream = msg.stream ?? "";
           const data = msg.data;
+          messagesReceivedRef.current += 1;
           if (stream.includes("@depth") && data && typeof data === "object") {
             handleDepthRef.current(data as BinanceDepthWire);
           } else if (stream.includes("@aggTrade")) {
@@ -429,6 +709,10 @@ export function useDesktopBookmapFeed(
         if (cancelled) return;
         updateTradesStreamConnected(false);
         updateFeedStatusFromCurrent((status) => (status === "live" ? "offline" : status));
+        if (suppressNextReconnect) {
+          suppressNextReconnect = false;
+          return;
+        }
         const delayMs = Math.min(10_000, 1_000 + reconnectAttempt * 1_000);
         reconnectAttempt += 1;
         reconnectCountRef.current += 1;
@@ -441,16 +725,154 @@ export function useDesktopBookmapFeed(
           symbol: cleanSymbol,
           delayMs,
           reconnectCount: reconnectCountRef.current,
+          mode: currentModeRef.current,
         });
-        reconnectTimerRef.current = window.setTimeout(connect, delayMs);
+        reconnectTimerRef.current = window.setTimeout(connectFallbackDepth20, delayMs);
       };
     };
 
-    connect();
+    const resyncOrderbook = (reason: string) => {
+      if (cancelled) return;
+      resyncCountRef.current += 1;
+      void writeDesktopLog("desktop_orderbook_resync", {
+        symbol: cleanSymbol,
+        reason,
+        resyncCount: resyncCountRef.current,
+        reconnectCount: reconnectCountRef.current,
+      });
+      resetLocalBook();
+      suppressNextReconnect = true;
+      wsRef.current?.close();
+      reconnectTimerRef.current = window.setTimeout(connectReconstructed, 1_000);
+    };
+
+    function connectReconstructed() {
+      if (cancelled) return;
+      resetLocalBook();
+      currentModeRef.current = "reconstructed";
+      updateFeedStatusFromCurrent((status) => (status === "live" ? "live" : "loading"));
+
+      const ws = new WebSocket(diffWsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (cancelled) return;
+        reconnectAttempt = 0;
+        setError(null);
+        updateTradesStreamConnected(true);
+        console.debug("[DESKTOP_BOOKMAP_FEED] ws connected", {
+          symbol: cleanSymbol,
+          url: diffWsUrl,
+          mode: currentModeRef.current,
+        });
+        void writeDesktopLog("desktop_orderbook_diff_connected", {
+          symbol: cleanSymbol,
+          url: diffWsUrl,
+          bookDepthLimit: DESKTOP_BOOKMAP_DEPTH_LIMIT,
+        });
+        void writeDesktopLog("desktop_feed_connected", {
+          symbol: cleanSymbol,
+          url: diffWsUrl,
+          mode: currentModeRef.current,
+          reconnectCount: reconnectCountRef.current,
+        });
+        void loadSnapshot().then((ok) => {
+          if (cancelled || ok) return;
+          suppressNextReconnect = true;
+          ws.close();
+          connectFallbackDepth20();
+        });
+      };
+
+      ws.onmessage = (event) => {
+        if (cancelled) return;
+        try {
+          const msg = JSON.parse(String(event.data)) as BinanceCombinedMessage;
+          const stream = msg.stream ?? "";
+          const data = msg.data;
+          messagesReceivedRef.current += 1;
+          if (stream.includes("@depth") && data && typeof data === "object") {
+            const diff = data as BinanceDiffDepthWire;
+            diffMessagesReceivedRef.current += 1;
+            if (!snapshotReadyRef.current) {
+              pendingDiffsRef.current.push(diff);
+              if (pendingDiffsRef.current.length > 2_000) {
+                pendingDiffsRef.current = pendingDiffsRef.current.slice(-1_000);
+              }
+              return;
+            }
+            if (!applyDiff(diff)) {
+              resyncOrderbook("sequence_gap_or_apply_error");
+            }
+          } else if (stream.includes("@aggTrade")) {
+            ingestTradeRef.current(data);
+          }
+        } catch (err) {
+          const nextError = err instanceof Error ? err : new Error("Desktop feed parse error");
+          setError(nextError);
+          console.debug("[DESKTOP_BOOKMAP_FEED] error", { message: nextError.message });
+          void writeDesktopLog("desktop_feed_error", {
+            symbol: cleanSymbol,
+            message: nextError.message,
+            phase: "parse",
+            mode: currentModeRef.current,
+          });
+        }
+      };
+
+      ws.onerror = () => {
+        if (cancelled) return;
+        const nextError = new Error("Desktop Binance WebSocket error");
+        setError(nextError);
+        updateFeedStatusFromCurrent((status) => (status === "live" ? "live" : "error"));
+        console.debug("[DESKTOP_BOOKMAP_FEED] error/reconnect", {
+          symbol: cleanSymbol,
+          mode: currentModeRef.current,
+        });
+        void writeDesktopLog("desktop_feed_error", {
+          symbol: cleanSymbol,
+          message: nextError.message,
+          phase: "websocket",
+          mode: currentModeRef.current,
+        });
+      };
+
+      ws.onclose = () => {
+        if (cancelled) return;
+        updateTradesStreamConnected(false);
+        updateFeedStatusFromCurrent((status) => (status === "live" ? "offline" : status));
+        if (suppressNextReconnect) {
+          suppressNextReconnect = false;
+          return;
+        }
+        const delayMs = Math.min(10_000, 1_000 + reconnectAttempt * 1_000);
+        reconnectAttempt += 1;
+        reconnectCountRef.current += 1;
+        setReconnectCount(reconnectCountRef.current);
+        console.debug("[DESKTOP_BOOKMAP_FEED] error/reconnect", {
+          symbol: cleanSymbol,
+          delayMs,
+          mode: currentModeRef.current,
+        });
+        void writeDesktopLog("desktop_feed_reconnect", {
+          symbol: cleanSymbol,
+          delayMs,
+          reconnectCount: reconnectCountRef.current,
+          mode: currentModeRef.current,
+        });
+        reconnectTimerRef.current = window.setTimeout(connectReconstructed, delayMs);
+      };
+    }
+
+    connectReconstructed();
 
     return () => {
       cancelled = true;
       window.clearTimeout(noDataTimeoutId);
+      if (visualUpdateTimerRef.current != null) {
+        window.clearTimeout(visualUpdateTimerRef.current);
+        visualUpdateTimerRef.current = null;
+      }
       if (reconnectTimerRef.current != null) {
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
@@ -465,7 +887,7 @@ export function useDesktopBookmapFeed(
           startedAt: sessionStartedAtRef.current,
           endedAt: nowIso(),
           bucketMs: DESKTOP_BOOKMAP_BUCKET_MS,
-          depth: 20,
+          depth: DESKTOP_BOOKMAP_DEPTH_LIMIT,
         });
       }
     };
@@ -475,7 +897,11 @@ export function useDesktopBookmapFeed(
     updateFeedStatus,
     updateFeedStatusFromCurrent,
     updateTradesStreamConnected,
-    wsUrl,
+    diffWsUrl,
+    fallbackWsUrl,
+    pushVisibleBookSnapshot,
+    scheduleVisibleBookSnapshot,
+    snapshotUrl,
   ]);
 
   useEffect(() => {
@@ -484,11 +910,19 @@ export function useDesktopBookmapFeed(
       const now = Date.now();
       const payload = {
         symbol: cleanSymbol,
-        bidsCount: bidsCountRef.current,
-        asksCount: asksCountRef.current,
+        bookDepthLimit: DESKTOP_BOOKMAP_DEPTH_LIMIT,
+        visibleDepthLimit: DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT,
+        rawBidsCount: rawBidsCountRef.current,
+        rawAsksCount: rawAsksCountRef.current,
+        visibleBidsCount: bidsCountRef.current,
+        visibleAsksCount: asksCountRef.current,
+        lastUpdateId: lastUpdateIdRef.current,
+        messagesReceived: messagesReceivedRef.current,
+        diffMessagesReceived: diffMessagesReceivedRef.current,
         tradesCount: tradesRef.current.length,
-        lastUpdateAgeMs: lastUpdateRef.current != null ? now - lastUpdateRef.current : null,
         reconnectCount: reconnectCountRef.current,
+        resyncCount: resyncCountRef.current,
+        lastUpdateAgeMs: lastUpdateRef.current != null ? now - lastUpdateRef.current : null,
         connected: connectedRef.current,
       };
       if (import.meta.env.DEV) {
@@ -541,7 +975,7 @@ export function useDesktopBookmapFeed(
     orderbookMarket: "spot" as BookmapMarketSource,
     latestTradeTs,
     lastMessageTs,
-    sseUrl: wsUrl,
+    sseUrl: diffWsUrl,
     bufferKey: `desktop:${cleanSymbol}:spot`,
     orderbookReceivedAt,
     orderbookAgeMs:
