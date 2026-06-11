@@ -10,6 +10,7 @@ import {
   type TerminalStateOptionsGammaExtras,
 } from "@shared/schema";
 import { cn } from "@/lib/utils";
+import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
 
 interface Alert {
   id: number;
@@ -363,9 +364,12 @@ export function LeftSidebar() {
             const { status, nearest, pockets, summary } = opts.shortGammaPockets;
             if (status === "NONE" || !nearest || pockets.length === 0) {
               return (
-                <div className="text-[10px] text-white/40 leading-tight">
-                  No active short gamma pockets detected near spot.
-                </div>
+                <DesktopEmptyState
+                  compact
+                  status="waiting"
+                  title="No short gamma pockets"
+                  description="No active short gamma pockets detected near spot. Options gamma data may still be loading."
+                />
               );
             }
             const spot = market?.gammaFlip || 0;
@@ -404,9 +408,12 @@ export function LeftSidebar() {
             );
           })()
         ) : (
-          <div className="text-[10px] text-white/40 leading-tight">
-            No active short gamma pockets detected near spot.
-          </div>
+          <DesktopEmptyState
+            compact
+            status="waiting"
+            title="No short gamma pockets"
+            description="Options gamma data is not available yet. Pockets will appear when Deribit positioning loads."
+          />
         )}
       </TerminalPanel>
 

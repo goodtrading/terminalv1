@@ -19,6 +19,7 @@ import { isBingXReadOnlySession, isBingXSecureApiSession } from "./bingxSession"
 import { useBrokerSession } from "./useBrokerSession";
 import { EXCHANGE_PANEL_SLOT_ORDER } from "./exchangeVisualOrder";
 import { openExternalUrl } from "@/lib/openExternalUrl";
+import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
 
 function openReferral(url: string) {
   void openExternalUrl(url, { source: "bingx_register" }).catch((error) => {
@@ -123,7 +124,7 @@ function ExchangeCard({
     if (connecting) return "Connecting";
     if (bingxConnected) return "Manage";
     if (phase === "error") return "Retry";
-    return "Connect";
+    return "Connect API";
   })();
 
   return (
@@ -285,7 +286,7 @@ function ExchangeCard({
                   : "border-terminal-border text-slate-400 hover:text-white hover:border-white/25",
               )}
             >
-              Register
+              {isBingx && !disabled ? "Register with BingX" : "Register"}
               {!disabled ? <ExternalLink className="h-2.5 w-2.5" /> : null}
             </button>
           ) : null}
@@ -294,6 +295,16 @@ function ExchangeCard({
           <p className="mt-1.5 text-[8px] text-slate-600 leading-snug">
             Practice execution with zero real risk. Uses internal paper engine.
           </p>
+        ) : null}
+        {disabled && exchange.id === "binance" ? (
+          <div className="mt-2">
+            <DesktopEmptyState
+              compact
+              status="coming-soon"
+              title="Binance integration coming soon"
+              description="Market data and broker connection for Binance will be available in a future release."
+            />
+          </div>
         ) : null}
       </div>
     </div>

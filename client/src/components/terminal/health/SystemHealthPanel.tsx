@@ -8,6 +8,7 @@ import { formatAuditTime } from "./terminalAuditLog";
 import type { TerminalAuditEntry } from "./auditTypes";
 import { registerTerminalAuditBridge } from "./terminalAuditBridge";
 import { DesktopDiagnosticsPanel } from "./DesktopDiagnosticsPanel";
+import { DesktopProductStatusCard } from "@/components/desktop/DesktopProductStatusCard";
 
 function auditLevelTone(level: TerminalAuditEntry["level"]): HealthTone {
   if (level === "error") return "error";
@@ -52,6 +53,7 @@ export function SystemHealthPanel() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1.5">
+        <DesktopProductStatusCard />
         <DesktopDiagnosticsPanel />
 
         <HealthSection title="1 · BingX read-only">

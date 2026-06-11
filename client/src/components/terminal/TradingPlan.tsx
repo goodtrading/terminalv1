@@ -12,6 +12,7 @@ import {
   type PlaybookStateMachineDebug,
 } from "@/lib/playbookStateMachine";
 import { buildTradingPlanPanelModel } from "@/lib/buildTradingPlanPanelModel";
+import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
 
 function fmtK(n: number) {
   if (!Number.isFinite(n)) return "--";
@@ -105,7 +106,12 @@ export function TradingPlan({ collapsed = false }: { collapsed?: boolean }) {
         collapsed={collapsed}
         className="flex-[0.65] min-w-[260px] min-h-0 max-[1200px]:min-w-[220px] max-[1000px]:min-w-0 max-[1000px]:flex-1"
       >
-        <div className="text-[10px] text-white/55 font-mono">Loading...</div>
+        <DesktopEmptyState
+          compact
+          status="loading"
+          title="Loading trading plan"
+          description="Playbook and session context are syncing with market data."
+        />
       </TerminalPanel>
     );
 

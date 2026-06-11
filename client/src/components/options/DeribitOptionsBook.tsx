@@ -16,6 +16,8 @@ import {
   type OptionZoneTag,
   type OptionsZoneSummaryInput,
 } from "./optionsZoneUtils";
+import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
+import { openSystemHealthPanel } from "@/lib/openSystemHealthPanel";
 
 type OptionsViewMode = "PRO" | "GT" | "BASIC";
 
@@ -2219,14 +2221,16 @@ const viewMode: OptionsViewMode = "PRO";
 
   if (error) {
     return (
-      <div className="p-4 text-center">
-        <div className="text-red-400 text-sm mb-2">Failed to load options data</div>
-        <button 
-          onClick={() => refetch()}
-          className="px-3 py-1 border border-terminal-border bg-terminal-panel text-xs text-white hover:border-terminal-accent transition-colors"
-        >
-          Retry
-        </button>
+      <div className="p-4">
+        <DesktopEmptyState
+          status="error"
+          title="Options data unavailable"
+          description="Gamma and options positioning could not be loaded. Market data may still be connecting."
+          actionLabel="Retry"
+          onAction={() => void refetch()}
+          secondaryActionLabel="System diagnostics"
+          onSecondaryAction={() => openSystemHealthPanel()}
+        />
       </div>
     );
   }
@@ -2542,8 +2546,12 @@ const viewMode: OptionsViewMode = "PRO";
 
       {/* Loading State */}
       {isLoading && (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-terminal-muted text-sm">Loading options data...</div>
+        <div className="flex-1 flex items-center justify-center p-4">
+          <DesktopEmptyState
+            status="loading"
+            title="Loading options data"
+            description="Fetching Deribit book, gamma positioning, and institutional levels."
+          />
         </div>
       )}
 

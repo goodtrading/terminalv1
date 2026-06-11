@@ -20,6 +20,8 @@ import type {
 import { matchTradeAgainstDrilldown } from "../execution/matchExecutionDrilldownFilter";
 import type { ExecutionDrilldownFilter } from "../useReportsDrilldown";
 import { useReportsDrilldown } from "../useReportsDrilldown";
+import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
+import { openSystemHealthPanel } from "@/lib/openSystemHealthPanel";
 
 const SOURCE_TABS: { id: ExecutionReportSource; label: string }[] = [
   { id: "paper", label: "Paper" },
@@ -39,7 +41,7 @@ function downloadCsv(url: string, filename: string): void {
 
 export function ExecutionTab({ drilldownFilter }: { drilldownFilter?: ExecutionDrilldownFilter }) {
   const [source, setSource] = useState<ExecutionReportSource>("paper");
-  const { data, isLoading, isError } = useExecutionReportData(source, true);
+  const { data, isLoading, isError, refetch } = useExecutionReportData(source, true);
   const [editTrade, setEditTrade] = useState<ExecutionTradeReviewRow | null>(null);
   const { clearDrilldownFilter } = useReportsDrilldown();
 
@@ -68,20 +70,28 @@ export function ExecutionTab({ drilldownFilter }: { drilldownFilter?: ExecutionD
 
   if (isLoading && !data) {
     return (
-      <section className="flex flex-col gap-5">
-        <p className="text-[11px] text-slate-500 font-mono uppercase tracking-wider py-8 text-center">
-          Loading execution report…
-        </p>
+      <section className="flex flex-col gap-5 py-4">
+        <DesktopEmptyState
+          status="loading"
+          title="Loading execution report"
+          description="Pulling trade history and performance metrics from your selected source."
+        />
       </section>
     );
   }
 
   if (isError || !data) {
     return (
-      <section className="flex flex-col gap-5">
-        <p className="text-[11px] text-red-400/80 font-mono uppercase tracking-wider py-8 text-center">
-          Execution report unavailable. Ensure the server is running.
-        </p>
+      <section className="flex flex-col gap-5 py-4">
+        <DesktopEmptyState
+          status="error"
+          title="Execution report unavailable"
+          description="Trade history could not be loaded. Check that storage and the report API are reachable."
+          actionLabel="Retry"
+          onAction={() => void refetch()}
+          secondaryActionLabel="System diagnostics"
+          onSecondaryAction={() => openSystemHealthPanel()}
+        />
       </section>
     );
   }

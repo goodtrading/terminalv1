@@ -13,6 +13,7 @@ import { EdgeTab } from "./tabs/EdgeTab";
 import { PlaybookTab } from "./tabs/PlaybookTab";
 import { IntelligenceTab } from "./tabs/IntelligenceTab";
 import { useReportsDrilldown } from "./useReportsDrilldown";
+import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
 
 const PANEL_MAX_WIDTH = "max-w-[1280px]";
 
@@ -32,9 +33,11 @@ function ReportsTabContent({
   if (tab === "session") {
     if (sessionLoading && sessionReport.dataMode === "mock") {
       return (
-        <p className="text-[11px] text-slate-500 font-mono uppercase tracking-wider py-8 text-center">
-          Loading session report…
-        </p>
+        <DesktopEmptyState
+          status="loading"
+          title="Loading session report"
+          description="Building session narrative and level hierarchy from terminal state."
+        />
       );
     }
     return <SessionTab report={sessionReport} onDrilldown={onDrilldown} />;

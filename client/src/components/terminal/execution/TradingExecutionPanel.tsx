@@ -27,6 +27,8 @@ import { bingXConnectionDisplay } from "./bingxConnectionUi";
 import { useBrokerSession } from "./useBrokerSession";
 import { PaperClosePositionModal } from "./PaperClosePositionModal";
 import { PaperRiskManagementSection } from "./PaperRiskManagementSection";
+import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
+import { openSystemHealthPanel } from "@/lib/openSystemHealthPanel";
 
 const inputClass =
   "w-full rounded border border-terminal-border bg-terminal-bg px-2 py-1 text-[10px] font-mono text-white focus:border-cyan-500/40 focus:outline-none disabled:opacity-50";
@@ -675,10 +677,20 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
             onSwitchToPaper={() => connectPaperTrading()}
           />
         ) : (
-          <ExecutionVenueStrip
-            chartSymbol={DEFAULT_CHART_SYMBOL}
-            liveTradingEnabled={risk.liveTradingEnabled}
-          />
+          <>
+            <DesktopEmptyState
+              compact
+              status="locked"
+              title="Trading is currently locked"
+              description="Connect a broker or enable permissions to place orders. Use Paper Trading to simulate execution with no real funds."
+              secondaryActionLabel="Try Paper Trading"
+              onSecondaryAction={() => void connectPaperTrading()}
+            />
+            <ExecutionVenueStrip
+              chartSymbol={DEFAULT_CHART_SYMBOL}
+              liveTradingEnabled={risk.liveTradingEnabled}
+            />
+          </>
         )}
 
         {/* Account — non-paper, non–BingX read-only */}
@@ -963,10 +975,14 @@ export function TradingExecutionPanel({ collapsed = false }: { collapsed?: boole
 
         {/* Risk guard — compact while live trading is off */}
         {!isPaper && !isBingXReadOnly && !risk.liveTradingEnabled ? (
-          <p className="text-[8px] text-slate-500 px-0.5">
-            Risk guard: Live trading locked
-            {isPaper ? " · Paper simulation" : " · Read-only mode"}
-          </p>
+          <DesktopEmptyState
+            compact
+            status="readonly"
+            title="Live trading locked"
+            description="GoodTrading Desktop runs in read-only mode by default. Connect BingX or use Paper Trading for simulated orders."
+            secondaryActionLabel="System diagnostics"
+            onSecondaryAction={() => openSystemHealthPanel()}
+          />
         ) : !isPaper && !isBingXReadOnly && risk.liveTradingEnabled ? (
           <section className="rounded border border-amber-500/25 bg-amber-950/20 p-2 space-y-0.5 text-[9px] text-amber-200/80">
             <div className="font-bold uppercase tracking-widest text-[8px] mb-1">Risk guard</div>

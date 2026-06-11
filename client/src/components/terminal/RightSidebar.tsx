@@ -17,6 +17,7 @@ import {
   horizonShort,
   prioritizeLevelsForPlaybook,
 } from "@/lib/levelTiming";
+import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
 
 // Import vacuum engine types
 interface VacuumAnalysisResult {
@@ -742,7 +743,12 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
             <div className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Active Levels</div>
             <div className="mt-1 flex flex-col gap-1">
               {timingGroups.activeTactical.length === 0 ? (
-                <div className="text-[10px] text-white/30 italic">No active tactical levels</div>
+                <DesktopEmptyState
+                  compact
+                  status="waiting"
+                  title="No active tactical levels"
+                  description="Levels appear when the playbook identifies actionable price zones near spot."
+                />
               ) : (
                 timingGroups.activeTactical.map((l, i) => (
                   <div key={`act-${i}-${l.price}`} className="text-[10px] font-mono text-white/70 flex items-center justify-between">
