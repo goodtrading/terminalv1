@@ -294,6 +294,7 @@ export async function registerRoutes(
     });
   });
 
+  // Desktop update manifest deploy touch: v0.1.6
   app.get("/api/desktop/update", (_req: Request, res: Response) => {
     res.json(buildDesktopUpdatePayload());
   });
