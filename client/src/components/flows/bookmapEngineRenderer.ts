@@ -1,6 +1,13 @@
 import {
   BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3,
   BOOKMAP_ENGINE_BUCKET_MS,
+  BOOKMAP_GRANULAR_ALPHA_MOD_MIN,
+  BOOKMAP_GRANULAR_ALPHA_MOD_RANGE,
+  BOOKMAP_GRANULAR_LIVE_PROJECTION_ALPHA_MUL,
+  BOOKMAP_GRANULAR_MATRIX_RENDERER_V1,
+  BOOKMAP_GRANULAR_MAX_WIDTH_MACRO_PX,
+  BOOKMAP_GRANULAR_MAX_WIDTH_SCALP_PX,
+  BOOKMAP_GRANULAR_MAX_WIDTH_STD_PX,
   BOOKMAP_HEATMAP_DEPTH_PASS_V2,
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
   BOOKMAP_MATRIX_AUDIT_DIAG,
@@ -732,6 +739,48 @@ export function getLiveVsHistoricalDiagStats(): LiveVsHistoricalDiagStats {
   return lastLiveVsHistoricalDiag;
 }
 
+export type GranularMatrixRendererDiagStats = {
+  granularCellsInput: number;
+  granularCellsDrawn: number;
+  avgGranularWidthPx: number;
+  maxGranularWidthPx: number;
+  granularCellsOverSpanWidthCount: number;
+  weakGranularDrawn: number;
+  mediumGranularDrawn: number;
+  strongSpanDrawn: number;
+  liveProjectionDrawn: number;
+  timestamp: number;
+};
+
+let lastGranularMatrixRendererDiag: GranularMatrixRendererDiagStats = {
+  granularCellsInput: 0,
+  granularCellsDrawn: 0,
+  avgGranularWidthPx: 0,
+  maxGranularWidthPx: 0,
+  granularCellsOverSpanWidthCount: 0,
+  weakGranularDrawn: 0,
+  mediumGranularDrawn: 0,
+  strongSpanDrawn: 0,
+  liveProjectionDrawn: 0,
+  timestamp: 0,
+};
+
+let lastGranularMatrixRendererDiagLogMs = 0;
+
+export function getGranularMatrixRendererDiagStats(): GranularMatrixRendererDiagStats {
+  return lastGranularMatrixRendererDiag;
+}
+
+function emitGranularMatrixRendererDiag(): void {
+  if (!import.meta.env.DEV || !BOOKMAP_GRANULAR_MATRIX_RENDERER_V1) return;
+  const now = Date.now();
+  if (now - lastGranularMatrixRendererDiagLogMs < 2_000) return;
+  lastGranularMatrixRendererDiagLogMs = now;
+  console.debug("[BOOKMAP_GRANULAR_MATRIX_RENDERER_V1_DIAG]", {
+    ...lastGranularMatrixRendererDiag,
+  });
+}
+
 function emitRenderMatrixDiag(): void {
   if (!import.meta.env.DEV || !BOOKMAP_MATRIX_AUDIT_DIAG) return;
   const now = Date.now();
@@ -833,6 +882,15 @@ function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
     const matrixY = y + (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 28 : 14);
     ctx.strokeText("MATRIX AUDIT ACTIVE", x, matrixY);
     ctx.fillText("MATRIX AUDIT ACTIVE", x, matrixY);
+  }
+  if (BOOKMAP_GRANULAR_MATRIX_RENDERER_V1) {
+    ctx.fillStyle = "rgba(52, 211, 153, 0.95)";
+    const granularY =
+      y +
+      (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 42 : 28) +
+      (BOOKMAP_MATRIX_AUDIT_DIAG ? 14 : 0);
+    ctx.strokeText("GRANULAR MATRIX V1 ACTIVE", x, granularY);
+    ctx.fillText("GRANULAR MATRIX V1 ACTIVE", x, granularY);
   }
   ctx.font = "9px ui-monospace, monospace";
   ctx.fillStyle = "rgba(148, 163, 184, 0.85)";
@@ -1277,6 +1335,215 @@ function resolveTextureSegmentBodyAlpha(
   return bodyAlpha;
 }
 
+function granularCellDeterministicHash(
+  price: number,
+  timeBucket: number,
+): number {
+  const x = Math.sin(price * 0.013 + timeBucket * 0.0007) * 43_758.5453;
+  return x - Math.floor(x);
+}
+
+function resolveGranularMaxWidthPx(regime: BookmapZoomRegime): number {
+  if (regime === "macro") return BOOKMAP_GRANULAR_MAX_WIDTH_MACRO_PX;
+  if (regime.includes("scalp") || regime === "ultra_micro") {
+    return BOOKMAP_GRANULAR_MAX_WIDTH_SCALP_PX;
+  }
+  return BOOKMAP_GRANULAR_MAX_WIDTH_STD_PX;
+}
+
+function resolveGranularCellWidthPx(
+  timeToX: (t: number) => number,
+  timeBucket: number,
+  regime: BookmapZoomRegime,
+): number {
+  const x0 = timeToX(timeBucket);
+  const x1 = timeToX(timeBucket + BOOKMAP_ENGINE_BUCKET_MS);
+  let w = Math.max(1, x1 - x0);
+  const minW = regime === "macro" ? 1 : 2;
+  w = Math.max(minW, w);
+  w = Math.min(w, resolveGranularMaxWidthPx(regime));
+  w += BOOKMAP_TEXTURE_CELL_OVERLAP_PX * 0.35;
+  return w;
+}
+
+type GranularMatrixDrawPassResult = {
+  drawn: number;
+  widthSum: number;
+  widthMin: number;
+  widthMax: number;
+  overSpanWidthCount: number;
+  weakDrawn: number;
+  mediumDrawn: number;
+};
+
+function drawGranularMatrixCellsPass(
+  ctx: CanvasRenderingContext2D,
+  cells: PreparedEngineTextureCell[],
+  metrics: EnginePlotMetrics,
+  renderCtx: TextureVisualRenderContext,
+  textureOpacityMul: number,
+  mode: "primary" | "perp-overlay",
+  historyEnd: number,
+  microVisualMode: boolean,
+): GranularMatrixDrawPassResult {
+  const empty: GranularMatrixDrawPassResult = {
+    drawn: 0,
+    widthSum: 0,
+    widthMin: 0,
+    widthMax: 0,
+    overSpanWidthCount: 0,
+    weakDrawn: 0,
+    mediumDrawn: 0,
+  };
+  if (!cells.length) return empty;
+
+  const { priceToY, timeToX } = metrics;
+  const dataEdgeX = timeToX(historyEnd);
+  const maxGranularW = resolveGranularMaxWidthPx(renderCtx.regime);
+  const overSpanThreshold = maxGranularW * 1.35;
+  const globalMul =
+    textureOpacityMul * (mode === "perp-overlay" ? 0.88 : 1);
+  const weakMinI = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+    ? V3_WEAK_TEXTURE_MIN_INTENSITY
+    : TEX_CALIB_V2_WEAK_TEXTURE_MIN_INTENSITY;
+  const weakDepthMul = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+    ? V3_WEAK_DEPTH_ALPHA_MUL
+    : TEX_CALIB_V2_WEAK_DEPTH_ALPHA_MUL;
+  const weakDepthMaxVi = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 0.45 : 0.3;
+
+  const sorted = [...cells].sort(
+    (a, b) => (a.intensity ?? 0) - (b.intensity ?? 0),
+  );
+
+  let drawn = 0;
+  let widthSum = 0;
+  let widthMin = Infinity;
+  let widthMax = 0;
+  let overSpanWidthCount = 0;
+  let weakDrawn = 0;
+  let mediumDrawn = 0;
+
+  for (const cell of sorted) {
+    const viRaw = cell.intensity ?? 0;
+    const minRenderI =
+      resolveTextureSourceKindForPrepared(cell) === "base"
+        ? BOOKMAP_BASE_TEXTURE_MIN_RENDER_INTENSITY
+        : BOOKMAP_TEXTURE_MIN_RENDER_INTENSITY;
+    if (viRaw < minRenderI) continue;
+
+    const sourceKind = resolveTextureSourceKindForPrepared(cell);
+    const maxSize = renderCtx.viewportMaxSize ?? cell.maxSizeInBucket;
+    const localRank = Math.min(1, cell.maxSizeInBucket / Math.max(1, maxSize));
+    const vi = BOOKMAP_VISUAL_FORCE_BOOKMAP_LIKE
+      ? clampBookmapLikeRenderIntensity({
+          intensity: viRaw,
+          sourceKind,
+          lifecycleTier: cell.lifecycleTextureTier,
+          tier:
+            sourceKind === "base"
+              ? cell.maxSizeInBucket >= 8
+                ? "strong"
+                : cell.maxSizeInBucket >= 2
+                  ? "medium"
+                  : "low"
+              : undefined,
+          localRankScore: localRank,
+          absoluteSizeScore: localRank,
+          isStructuralWall: cell.maxSizeInBucket >= WALL_STRUCTURAL_BTC,
+          isMajorWall: cell.maxSizeInBucket >= WALL_MAJOR_BTC || cell.isMajor,
+        })
+      : viRaw;
+
+    const weight = computeBookmapVisualWeight({
+      sizeBtc: cell.maxSizeInBucket,
+      price: cell.price,
+      midPrice: renderCtx.midPrice,
+      regime: renderCtx.regime,
+      baseIntensity: vi,
+      isActive: false,
+      viewportMaxSize: renderCtx.viewportMaxSize,
+    });
+    const alphaCtx = buildPassiveLiquidityAlphaContext({
+      intensity: vi,
+      isActive: false,
+      weight,
+      stableSizeBtc: cell.maxSizeInBucket,
+    });
+    let bodyAlpha = alphaForPassiveLiquidity(alphaCtx) * globalMul;
+    const alphaFloor =
+      cell.historicalRenderAlphaFloor ?? cell.historicalRenderAlpha;
+    if (alphaFloor != null && alphaFloor > 0) {
+      bodyAlpha = Math.max(bodyAlpha, alphaFloor * globalMul);
+    }
+    const depthAlphaBoost = resolveDepthPassNearPriceAlphaBoost(
+      weight.pctFromMid,
+      renderCtx.regime,
+      cell.maxSizeInBucket,
+      vi,
+      1,
+    );
+    const bodyAlphaCap = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 0.82 : 0.72;
+    if (depthAlphaBoost > 0) {
+      bodyAlpha = Math.min(bodyAlphaCap, bodyAlpha * (1 + depthAlphaBoost));
+    }
+
+    const hash = granularCellDeterministicHash(cell.price, cell.timeBucket);
+    bodyAlpha *=
+      BOOKMAP_GRANULAR_ALPHA_MOD_MIN + hash * BOOKMAP_GRANULAR_ALPHA_MOD_RANGE;
+
+    const { yTop, height } = textureCellVerticalBounds(
+      cell.price,
+      priceToY,
+      metrics.domBucketSize,
+    );
+    if (yTop + height < HEATMAP_PAD.top - 2) continue;
+    if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
+
+    const x0 = timeToX(cell.timeBucket);
+    if (x0 >= dataEdgeX) continue;
+    let cellW = resolveGranularCellWidthPx(
+      timeToX,
+      cell.timeBucket,
+      renderCtx.regime,
+    );
+    if (x0 + cellW > dataEdgeX) {
+      cellW = Math.max(1, dataEdgeX - x0);
+    }
+    if (cellW > overSpanThreshold) overSpanWidthCount += 1;
+
+    const rgb: [number, number, number] = microVisualMode
+      ? intensityToMicroHistoricalTextureRgb(vi)
+      : intensityToPassiveLiquidityRgb(vi);
+
+    if (
+      BOOKMAP_HEATMAP_DEPTH_PASS_V2 &&
+      vi < weakDepthMaxVi &&
+      vi >= weakMinI
+    ) {
+      fillSpanRgba(ctx, x0, cellW, yTop, height, rgb, bodyAlpha * weakDepthMul);
+    } else {
+      fillSpanRgba(ctx, x0, cellW, yTop, height, rgb, bodyAlpha);
+    }
+
+    drawn += 1;
+    widthSum += cellW;
+    if (cellW < widthMin) widthMin = cellW;
+    if (cellW > widthMax) widthMax = cellW;
+    if (vi < 0.22) weakDrawn += 1;
+    else if (vi < 0.52) mediumDrawn += 1;
+  }
+
+  return {
+    drawn,
+    widthSum,
+    widthMin: drawn > 0 ? widthMin : 0,
+    widthMax,
+    overSpanWidthCount,
+    weakDrawn,
+    mediumDrawn,
+  };
+}
+
 function renderHeatmapTextureCells(
   ctx: CanvasRenderingContext2D,
   metrics: EnginePlotMetrics,
@@ -1404,6 +1671,15 @@ function renderHeatmapTextureCells(
         .slice(0, BOOKMAP_TEXTURE_MAX_DRAW_CELLS)
     : eligible;
 
+  const granularPool =
+    BOOKMAP_GRANULAR_MATRIX_RENDERER_V1
+      ? drawPool.filter((c) => c.isGranularMatrixCell === true)
+      : [];
+  const spanPool =
+    BOOKMAP_GRANULAR_MATRIX_RENDERER_V1
+      ? drawPool.filter((c) => c.isGranularMatrixCell !== true)
+      : drawPool;
+
   const renderCtx: TextureVisualRenderContext =
     visualCtx ??
     ({
@@ -1415,7 +1691,7 @@ function renderHeatmapTextureCells(
     } satisfies TextureVisualRenderContext);
 
   const { segments, stableFillByKey, spanColorAudit } = prepareL2BandDrawQueue({
-    cells: drawPool,
+    cells: spanPool,
     regime: renderCtx.regime,
     midPrice: renderCtx.midPrice,
     dataEndTime: renderCtx.dataEndTime,
@@ -1565,6 +1841,22 @@ function renderHeatmapTextureCells(
   let beforeHistoricalRightSideCount = 0;
   const dataEdgeMs = historyEnd;
   const dataEdgeX = timeToX(dataEdgeMs);
+
+  const microVisualModeForGranular =
+    renderCtx.microVisualHierarchyActive === true;
+  const granularDrawResult =
+    BOOKMAP_GRANULAR_MATRIX_RENDERER_V1 && granularPool.length > 0
+      ? drawGranularMatrixCellsPass(
+          ctx,
+          granularPool,
+          metrics,
+          renderCtx,
+          textureOpacityMul,
+          mode,
+          historyEnd,
+          microVisualModeForGranular,
+        )
+      : null;
 
   for (const group of sortedGroups) {
     const rep = group.representative;
@@ -1911,6 +2203,30 @@ function renderHeatmapTextureCells(
     liveProjectionSpans: lastRenderMatrixDiag.liveProjectionSpans,
     timestamp: Date.now(),
   };
+
+  if (BOOKMAP_GRANULAR_MATRIX_RENDERER_V1) {
+    lastGranularMatrixRendererDiag = {
+      granularCellsInput: granularPool.length,
+      granularCellsDrawn: granularDrawResult?.drawn ?? 0,
+      avgGranularWidthPx:
+        granularDrawResult != null && granularDrawResult.drawn > 0
+          ? Number(
+              (granularDrawResult.widthSum / granularDrawResult.drawn).toFixed(
+                2,
+              ),
+            )
+          : 0,
+      maxGranularWidthPx: granularDrawResult?.widthMax ?? 0,
+      granularCellsOverSpanWidthCount:
+        granularDrawResult?.overSpanWidthCount ?? 0,
+      weakGranularDrawn: granularDrawResult?.weakDrawn ?? 0,
+      mediumGranularDrawn: granularDrawResult?.mediumDrawn ?? 0,
+      strongSpanDrawn: matrixDiagAcc.strongDrawn,
+      liveProjectionDrawn: lastGranularMatrixRendererDiag.liveProjectionDrawn,
+      timestamp: Date.now(),
+    };
+    emitGranularMatrixRendererDiag();
+  }
 
   ctx.restore();
 
@@ -2450,6 +2766,9 @@ function renderLiveBookProjection(
 
     const alphaCap = resolveLiveDomAlphaCap(verticalMode);
     rightBodyAlpha = Math.min(alphaCap * globalMul, blendedAlpha * globalMul);
+    if (BOOKMAP_GRANULAR_MATRIX_RENDERER_V1) {
+      rightBodyAlpha *= BOOKMAP_GRANULAR_LIVE_PROJECTION_ALPHA_MUL;
+    }
 
     const fadeTier = classifyRightSideFadeTier({
       liveIsNearTick,
@@ -3300,6 +3619,13 @@ export function paintBookmapEngineHeatmapFrame(
     ...lastRenderMatrixDiag,
     liveProjectionSpans: combinedLiveDraw.rendered,
   };
+  if (BOOKMAP_GRANULAR_MATRIX_RENDERER_V1) {
+    lastGranularMatrixRendererDiag = {
+      ...lastGranularMatrixRendererDiag,
+      liveProjectionDrawn: combinedLiveDraw.rendered,
+      timestamp: Date.now(),
+    };
+  }
   const historicalAlphaAvg =
     lastWallOrganicRenderDiagStats.solidBaseAlphaCount > 0
       ? lastWallOrganicRenderDiagStats.solidBaseAlphaSum /

@@ -205,6 +205,24 @@ export const BOOKMAP_MATRIX_TEXTURE_MODE_V1 = true;
 /** DEV-only matrix density audit logs (throttled 2s). */
 export const BOOKMAP_MATRIX_AUDIT_DIAG = true;
 
+/**
+ * B.3.1 — Draw weak/medium historical matrix as short time-bucket mosaic cells
+ * (not stretched horizontal spans). Strong walls remain span-rendered.
+ */
+export const BOOKMAP_GRANULAR_MATRIX_RENDERER_V1 = true;
+
+/** Live projection alpha scale when granular matrix renderer is active. */
+export const BOOKMAP_GRANULAR_LIVE_PROJECTION_ALPHA_MUL = 0.85;
+
+/** Max pixel width for granular matrix cells by zoom regime. */
+export const BOOKMAP_GRANULAR_MAX_WIDTH_MACRO_PX = 3;
+export const BOOKMAP_GRANULAR_MAX_WIDTH_STD_PX = 7;
+export const BOOKMAP_GRANULAR_MAX_WIDTH_SCALP_PX = 10;
+
+/** Deterministic alpha modulation for granular cells (no per-frame random). */
+export const BOOKMAP_GRANULAR_ALPHA_MOD_MIN = 0.92;
+export const BOOKMAP_GRANULAR_ALPHA_MOD_RANGE = 0.14;
+
 /** Fraction of texture prepare cap reserved for granular matrix cells. */
 export const MATRIX_V1_GRANULAR_CAP_PCT = 0.48;
 /** Minimum size (BTC) for horizontal span merge path. */

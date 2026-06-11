@@ -242,6 +242,8 @@ export type PreparedEngineCell = {
   lifecycleKey?: string;
   /** P5 — passive base vs lifecycle vs wall */
   textureSourceKind?: TextureSourceKind;
+  /** B.3.1 — short time-bucket mosaic cell (not horizontal span). */
+  isGranularMatrixCell?: boolean;
 };
 
 export type PreparedEngineTextureCell = PreparedEngineCell;
@@ -839,8 +841,9 @@ function toGranularMatrixCell(
 ): PreparedEngineTextureCell {
   return {
     ...cell,
-    endTimeBucket: cell.timeBucket + BOOKMAP_TEXTURE_SAMPLER_MS,
+    endTimeBucket: cell.timeBucket + BOOKMAP_ENGINE_BUCKET_MS,
     continuityRunLength: 1,
+    isGranularMatrixCell: true,
   };
 }
 
@@ -1273,10 +1276,10 @@ function prepareTextureCells(
     recordPrepareMatrixDiag(visible, preCapCombined, capped.cells, {
       mergedSpanCount: merged.cells.length,
       bridgeMergedSpanCount: Math.max(0, bridgeBefore - spanCells.length),
-      granularCount: capped.cells.filter((c) => (c.continuityRunLength ?? 1) <= 1)
+      granularCount: capped.cells.filter((c) => c.isGranularMatrixCell === true)
         .length,
       horizontalSpanCount: capped.cells.filter(
-        (c) => (c.continuityRunLength ?? 1) > 1,
+        (c) => c.isGranularMatrixCell !== true,
       ).length,
       capHit: capped.capHit,
       capLimit: maxCells,
