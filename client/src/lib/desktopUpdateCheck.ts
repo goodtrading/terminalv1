@@ -215,16 +215,72 @@ export async function checkDesktopUpdate(): Promise<DesktopUpdateState> {
   }
 }
 
-export async function openDesktopUpdateDownload(downloadUrl: string | null | undefined): Promise<void> {
+export async function openDesktopUpdateDownload(
+  downloadUrl: string | null | undefined,
+  meta?: { latestVersion?: string | null },
+): Promise<void> {
   const url = downloadUrl?.trim();
+  const latestVersion = meta?.latestVersion?.trim() ?? null;
+
+  await writeDesktopLog("desktop_update_download_click", {
+    currentVersion: appVersion,
+    latestVersion,
+    downloadUrl: url ?? "",
+  });
+
   if (!url) {
     await writeDesktopLog("desktop_update_download_missing_url", { currentVersion: appVersion });
     throw new Error("No hay URL de descarga configurada.");
   }
 
-  window.open(url, "_blank", "noopener,noreferrer");
-  await writeDesktopLog("desktop_update_download_opened", {
-    currentVersion: appVersion,
-    downloadUrl: url,
-  });
+  if (isDesktopApp()) {
+    try {
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(url);
+      await writeDesktopLog("desktop_update_download_opened", {
+        currentVersion: appVersion,
+        latestVersion,
+        downloadUrl: url,
+        method: "shell",
+      });
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await writeDesktopLog("desktop_update_download_error", {
+        currentVersion: appVersion,
+        latestVersion,
+        downloadUrl: url,
+        error: message,
+        stage: "shell",
+      });
+    }
+  }
+
+  try {
+    const popup = window.open(url, "_blank", "noopener,noreferrer");
+    if (!popup) {
+      throw new Error("No se pudo abrir el navegador. Comprueba bloqueadores de ventanas emergentes.");
+    }
+    await writeDesktopLog("desktop_update_download_fallback", {
+      currentVersion: appVersion,
+      latestVersion,
+      downloadUrl: url,
+    });
+    await writeDesktopLog("desktop_update_download_opened", {
+      currentVersion: appVersion,
+      latestVersion,
+      downloadUrl: url,
+      method: "window.open",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await writeDesktopLog("desktop_update_download_error", {
+      currentVersion: appVersion,
+      latestVersion,
+      downloadUrl: url,
+      error: message,
+      stage: "fallback",
+    });
+    throw error instanceof Error ? error : new Error(message);
+  }
 }

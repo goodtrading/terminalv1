@@ -21,6 +21,7 @@ export function DesktopUpdateModal() {
     dismissOptional,
     downloadUpdate,
     downloadError,
+    downloadOpening,
   } = useDesktopUpdateCheck();
 
   const isRequired = update.updateStatus === "required_update";
@@ -94,6 +95,12 @@ export function DesktopUpdateModal() {
           </div>
         ) : null}
 
+        {downloadOpening ? (
+          <div className="mt-4 rounded border border-terminal-accent/30 bg-terminal-accent/10 px-3 py-2 text-xs text-terminal-accent font-mono">
+            Abriendo descarga...
+          </div>
+        ) : null}
+
         {downloadError ? (
           <div className="mt-4 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300 font-mono">
             {downloadError}
@@ -113,9 +120,10 @@ export function DesktopUpdateModal() {
           <button
             type="button"
             onClick={() => void downloadUpdate()}
-            className="px-3 py-2 text-xs font-bold rounded bg-terminal-accent text-black hover:opacity-90"
+            disabled={downloadOpening}
+            className="px-3 py-2 text-xs font-bold rounded bg-terminal-accent text-black hover:opacity-90 disabled:opacity-60"
           >
-            Descargar actualización
+            {downloadOpening ? "Abriendo descarga..." : "Descargar actualización"}
           </button>
         </div>
       </div>

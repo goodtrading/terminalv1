@@ -314,6 +314,7 @@ fn write_heatmap_session_metadata(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .plugin(tauri_plugin_shell::init())
     .invoke_handler(tauri::generate_handler![
       init_desktop_storage,
       get_desktop_storage_paths,

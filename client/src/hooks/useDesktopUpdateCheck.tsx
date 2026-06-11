@@ -30,6 +30,7 @@ type DesktopUpdateContextValue = {
   showOptionalModal: () => void;
   downloadUpdate: () => Promise<void>;
   downloadError: string | null;
+  downloadOpening: boolean;
 };
 
 const DesktopUpdateContext = createContext<DesktopUpdateContextValue | null>(null);
@@ -48,6 +49,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
     readDismissedOptionalVersion(),
   );
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadOpening, setDownloadOpening] = useState(false);
   const checkingRef = useRef(false);
 
   const dismissedOptional = syncDismissedForLatest(update, dismissedVersion);
@@ -104,12 +106,17 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
 
   const downloadUpdate = useCallback(async () => {
     setDownloadError(null);
+    setDownloadOpening(true);
     try {
-      await openDesktopUpdateDownload(update.downloadUrl);
+      await openDesktopUpdateDownload(update.downloadUrl, {
+        latestVersion: update.latestVersion,
+      });
     } catch (error) {
       setDownloadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDownloadOpening(false);
     }
-  }, [update.downloadUrl]);
+  }, [update.downloadUrl, update.latestVersion]);
 
   const value = useMemo(
     () => ({
@@ -121,12 +128,14 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
       showOptionalModal,
       downloadUpdate,
       downloadError,
+      downloadOpening,
     }),
     [
       checkNow,
       dismissOptional,
       dismissedOptional,
       downloadError,
+      downloadOpening,
       downloadUpdate,
       shouldShowOptionalModal,
       showOptionalModal,
@@ -149,6 +158,7 @@ export function useDesktopUpdateCheck(): DesktopUpdateContextValue {
       showOptionalModal: () => {},
       downloadUpdate: async () => {},
       downloadError: null,
+      downloadOpening: false,
     };
   }
   return ctx;
