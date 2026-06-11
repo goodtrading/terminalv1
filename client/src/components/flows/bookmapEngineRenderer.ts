@@ -2,6 +2,7 @@ import {
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_HEATMAP_DEPTH_PASS_V2,
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
+  BOOKMAP_RENDER_PATH_PROOF_DIAG,
   BOOKMAP_TEXTURE_CALIBRATION_V2,
   computeVisiblePriceRangePct,
   H_PERSIST_V2_SOLID_BASE_ALPHA_MUL,
@@ -626,6 +627,79 @@ let lastWallOrganicRenderDiagStats: WallOrganicRenderDiagStats = {
 
 export function getWallOrganicRenderDiagStats(): WallOrganicRenderDiagStats {
   return lastWallOrganicRenderDiagStats;
+}
+
+const RENDERER_FILE_PATH =
+  "client/src/components/flows/bookmapEngineRenderer.ts";
+
+type RenderPathProofDiagStats = {
+  rendererFile: string;
+  textureCalibration: boolean;
+  horizontalPersistence: boolean;
+  depthPass: boolean;
+  visibleSpans: number;
+  strongSpans: number;
+  weakTextureSpans: number;
+  timestamp: number;
+};
+
+let lastRenderPathProofDiagStats: RenderPathProofDiagStats = {
+  rendererFile: RENDERER_FILE_PATH,
+  textureCalibration: BOOKMAP_TEXTURE_CALIBRATION_V2,
+  horizontalPersistence: BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
+  depthPass: BOOKMAP_HEATMAP_DEPTH_PASS_V2,
+  visibleSpans: 0,
+  strongSpans: 0,
+  weakTextureSpans: 0,
+  timestamp: 0,
+};
+
+let lastRenderPathProofLogMs = 0;
+
+export function getRenderPathProofDiagStats(): RenderPathProofDiagStats {
+  return lastRenderPathProofDiagStats;
+}
+
+function emitRenderPathProofDiag(
+  spanAudit: SpanRenderContinuityAudit | undefined,
+  organicDiag: WallOrganicRenderDiagStats,
+): void {
+  lastRenderPathProofDiagStats = {
+    rendererFile: RENDERER_FILE_PATH,
+    textureCalibration: BOOKMAP_TEXTURE_CALIBRATION_V2,
+    horizontalPersistence: BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
+    depthPass: BOOKMAP_HEATMAP_DEPTH_PASS_V2,
+    visibleSpans: spanAudit?.renderedSpanCount ?? organicDiag.organicSpanCount,
+    strongSpans: organicDiag.innerCoreCount + organicDiag.edgeFadeCount,
+    weakTextureSpans: organicDiag.weakDepthCount,
+    timestamp: Date.now(),
+  };
+
+  if (!import.meta.env.DEV || !BOOKMAP_RENDER_PATH_PROOF_DIAG) return;
+  const now = Date.now();
+  if (now - lastRenderPathProofLogMs < 2_000) return;
+  lastRenderPathProofLogMs = now;
+  console.debug("[BOOKMAP_RENDER_PATH_PROOF_DIAG]", {
+    ...lastRenderPathProofDiagStats,
+  });
+}
+
+function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
+  if (!import.meta.env.DEV || !BOOKMAP_RENDER_PATH_PROOF_DIAG) return;
+  ctx.save();
+  ctx.font = "bold 11px ui-monospace, monospace";
+  ctx.fillStyle = "rgba(250, 204, 21, 0.92)";
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.65)";
+  ctx.lineWidth = 3;
+  const label = "V2.1 RENDER ACTIVE";
+  const x = HEATMAP_PAD.left + 6;
+  const y = HEATMAP_PAD.top + 14;
+  ctx.strokeText(label, x, y);
+  ctx.fillText(label, x, y);
+  ctx.font = "9px ui-monospace, monospace";
+  ctx.fillStyle = "rgba(148, 163, 184, 0.85)";
+  ctx.fillText(RENDERER_FILE_PATH, x, y + 12);
+  ctx.restore();
 }
 
 function fillSpanRgba(
@@ -3433,6 +3507,12 @@ export function paintBookmapEngineHeatmapFrame(
 
   finalizeDotsReadabilityStats();
   finalizeColorHierarchyStats();
+
+  emitRenderPathProofDiag(
+    primaryTextureDraw?.spanRenderContinuityAudit,
+    lastWallOrganicRenderDiagStats,
+  );
+  drawRenderPathProofWatermark(ctx);
 }
 
 export type { BookmapHeatmapRenderParams };

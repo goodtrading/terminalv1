@@ -147,3 +147,9 @@ export const DEPTH_V2_NEAR_PRICE_ALPHA_BOOST = 0.2;
 export const DEPTH_V2_WEAK_INTENSITY_FLOOR_MACRO = 0.009;
 /** Micro/scalp weak-cell intensity floor after depth pass. */
 export const DEPTH_V2_WEAK_INTENSITY_FLOOR_MICRO = 0.006;
+
+/**
+ * B.2.2 — DEV-only render path proof: canvas watermark + throttled console.
+ * Confirms FLOWS uses the active engine renderer (not stale/duplicate files).
+ */
+export const BOOKMAP_RENDER_PATH_PROOF_DIAG = true;
