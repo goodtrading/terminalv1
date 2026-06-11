@@ -56,7 +56,10 @@ import {
   prepareEngineTradeDots,
   resolveDotVisibleEndTime,
 } from "./bookmapEngineTradeDots";
-import { paintBookmapEngineHeatmapFrame } from "./bookmapEngineRenderer";
+import {
+  getWallOrganicRenderDiagStats,
+  paintBookmapEngineHeatmapFrame,
+} from "./bookmapEngineRenderer";
 import {
   bookLevelsToDomSnapshot,
   applyEngineViewportBandNormalization,
@@ -72,6 +75,7 @@ import {
   classifyBookmapTextureDiag,
   prepareEngineRenderData,
   getHorizontalPersistenceV2PrepareStats,
+  getTextureCalibrationV2PrepareStats,
   type BookmapMicroVisualHierarchyTruth,
   type BookmapPerpFilterTruth,
   type BookmapTextureDiag,
@@ -2575,6 +2579,64 @@ export function LiquidityHeatmapPanel({
     };
     logHorizontalPersistenceV2();
     const id = window.setInterval(logHorizontalPersistenceV2, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logTextureCalibrationV2 = () => {
+      const stats = getTextureCalibrationV2PrepareStats();
+      if (!stats.enabled && !stats.depthPassEnabled) return;
+      console.debug("[BOOKMAP_TEXTURE_CALIBRATION_V2_DIAG]", {
+        depthPassEnabled: stats.depthPassEnabled,
+        inputCellCount: stats.inputCellCount,
+        depthBoostedCount: stats.depthBoostedCount,
+        nearPriceCount: stats.nearPriceCount,
+        weakTextureCount: stats.weakTextureCount,
+        avgIntensityBoost: stats.avgIntensityBoost,
+      });
+    };
+    logTextureCalibrationV2();
+    const id = window.setInterval(logTextureCalibrationV2, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logDepthLayerV2 = () => {
+      const prepare = getTextureCalibrationV2PrepareStats();
+      if (!prepare.depthPassEnabled) return;
+      console.debug("[BOOKMAP_DEPTH_LAYER_V2_DIAG]", {
+        nearPriceCount: prepare.nearPriceCount,
+        weakTextureCount: prepare.weakTextureCount,
+        depthBoostedCount: prepare.depthBoostedCount,
+        avgIntensityBoost: prepare.avgIntensityBoost,
+      });
+    };
+    logDepthLayerV2();
+    const id = window.setInterval(logDepthLayerV2, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logWallOrganicRender = () => {
+      const stats = getWallOrganicRenderDiagStats();
+      if (stats.organicSpanCount === 0) return;
+      console.debug("[BOOKMAP_WALL_ORGANIC_RENDER_DIAG]", {
+        organicSpanCount: stats.organicSpanCount,
+        innerCoreCount: stats.innerCoreCount,
+        edgeFadeCount: stats.edgeFadeCount,
+        weakDepthCount: stats.weakDepthCount,
+        nearPriceBoostCount: stats.nearPriceBoostCount,
+        overlaySpanCount: stats.overlaySpanCount,
+        skippedOverlayCount: stats.skippedOverlayCount,
+        baseAlphaMin: Number(stats.baseAlphaMin.toFixed(3)),
+        baseAlphaMax: Number(stats.baseAlphaMax.toFixed(3)),
+      });
+    };
+    logWallOrganicRender();
+    const id = window.setInterval(logWallOrganicRender, 2_000);
     return () => window.clearInterval(id);
   }, [sourceMode, activeDomMarket]);
 

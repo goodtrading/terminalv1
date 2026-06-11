@@ -1,13 +1,21 @@
 import {
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_ENGINE_MAX_RENDER_CELLS,
+  BOOKMAP_HEATMAP_DEPTH_PASS_V2,
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
+  BOOKMAP_TEXTURE_CALIBRATION_V2,
+  DEPTH_V2_MAX_VISIBILITY_INTENSITY,
+  DEPTH_V2_NEAR_PRICE_PCT,
+  DEPTH_V2_NEAR_PRICE_VISIBILITY_BOOST,
+  DEPTH_V2_WEAK_INTENSITY_FLOOR_MACRO,
+  DEPTH_V2_WEAK_INTENSITY_FLOOR_MICRO,
   H_PERSIST_V2_MACRO_NOISE_SIZE_BTC,
   H_PERSIST_V2_MAX_CONTINUITY_BOOST,
   H_PERSIST_V2_MERGE_GAP_MS,
   H_PERSIST_V2_MIN_RUN_FOR_BOOST,
   H_PERSIST_V2_PRICE_BRIDGE_USD,
   H_PERSIST_V2_CHUNK_OVERLAY_ALPHA,
+  TEX_CALIB_V2_CHUNK_OVERLAY_ALPHA,
   type BookmapZoomRegime,
   computeVisiblePriceRangePct,
   L2_MATERIAL_SIZE_CHANGE_BTC,
@@ -813,6 +821,14 @@ function prepareTextureCells(
       minPrice,
       maxPrice,
     );
+    if (BOOKMAP_HEATMAP_DEPTH_PASS_V2) {
+      mergedCells = applyHeatmapDepthPassV2(
+        mergedCells,
+        midPrice,
+        minPrice,
+        maxPrice,
+      );
+    }
   } else {
     lastHorizontalPersistenceV2Stats.enabled = false;
   }
@@ -982,9 +998,122 @@ export function resolveEffectiveTextureMergeGapMs(): number {
 }
 
 export function resolveEffectiveChunkOverlayAlpha(): number {
+  if (BOOKMAP_TEXTURE_CALIBRATION_V2) {
+    return TEX_CALIB_V2_CHUNK_OVERLAY_ALPHA;
+  }
   return BOOKMAP_HORIZONTAL_PERSISTENCE_V2
     ? H_PERSIST_V2_CHUNK_OVERLAY_ALPHA
     : BOOKMAP_TEXTURE_INTERNAL_CHUNK_OVERLAY_ALPHA;
+}
+
+export type TextureCalibrationV2PrepareStats = {
+  enabled: boolean;
+  depthPassEnabled: boolean;
+  inputCellCount: number;
+  depthBoostedCount: number;
+  nearPriceCount: number;
+  weakTextureCount: number;
+  avgIntensityBoost: number;
+};
+
+let lastTextureCalibrationV2Stats: TextureCalibrationV2PrepareStats = {
+  enabled: false,
+  depthPassEnabled: false,
+  inputCellCount: 0,
+  depthBoostedCount: 0,
+  nearPriceCount: 0,
+  weakTextureCount: 0,
+  avgIntensityBoost: 0,
+};
+
+export function getTextureCalibrationV2PrepareStats(): TextureCalibrationV2PrepareStats {
+  return lastTextureCalibrationV2Stats;
+}
+
+function applyHeatmapDepthPassV2(
+  cells: PreparedEngineTextureCell[],
+  midPrice: number | null | undefined,
+  minPrice: number,
+  maxPrice: number,
+): PreparedEngineTextureCell[] {
+  const zoomRegime = resolveZoomRegime(
+    computeVisiblePriceRangePct(minPrice, maxPrice),
+  );
+  const isMacro = zoomRegime === "macro";
+  const nearPriceBand = DEPTH_V2_NEAR_PRICE_PCT / 100;
+  let depthBoostedCount = 0;
+  let nearPriceCount = 0;
+  let weakTextureCount = 0;
+  let intensityBoostSum = 0;
+
+  const result = cells.map((cell) => {
+    let intensity = cell.intensity ?? 0;
+    const prevIntensity = intensity;
+    let alphaFloor = cell.historicalRenderAlphaFloor ?? 0;
+
+    if (intensity < 0.28) weakTextureCount += 1;
+
+    if (midPrice != null && midPrice > 0) {
+      const pctFromMid = Math.abs(cell.price - midPrice) / midPrice;
+      const nearPrice = pctFromMid <= nearPriceBand;
+      if (nearPrice) {
+        nearPriceCount += 1;
+        if (cell.maxSizeInBucket < WALL_IMPORTANT_BTC) {
+          const proximity = 1 - pctFromMid / nearPriceBand;
+          const boost = DEPTH_V2_NEAR_PRICE_VISIBILITY_BOOST * proximity;
+          intensity = Math.min(
+            DEPTH_V2_MAX_VISIBILITY_INTENSITY,
+            intensity + boost,
+          );
+          alphaFloor = Math.max(
+            alphaFloor,
+            Math.min(0.32, intensity * 0.38 + 0.05 * proximity),
+          );
+        }
+      } else if (
+        isMacro &&
+        cell.maxSizeInBucket < H_PERSIST_V2_MACRO_NOISE_SIZE_BTC &&
+        (cell.continuityRunLength ?? 1) < 2
+      ) {
+        intensity *= 0.78;
+      }
+    }
+
+    if (!isMacro && intensity < DEPTH_V2_WEAK_INTENSITY_FLOOR_MICRO) {
+      intensity = Math.max(intensity, DEPTH_V2_WEAK_INTENSITY_FLOOR_MICRO);
+    } else if (isMacro && intensity < DEPTH_V2_WEAK_INTENSITY_FLOOR_MACRO) {
+      intensity = Math.max(intensity, DEPTH_V2_WEAK_INTENSITY_FLOOR_MACRO);
+    }
+
+    const boosted = intensity > prevIntensity + 0.001;
+    if (boosted) {
+      depthBoostedCount += 1;
+      intensityBoostSum += intensity - prevIntensity;
+    }
+
+    const finalIntensity = Math.max(intensity, cell.historicalRenderIntensity ?? 0);
+    return {
+      ...cell,
+      intensity: finalIntensity,
+      historicalRenderIntensity: finalIntensity,
+      historicalRenderAlphaFloor: Math.max(alphaFloor, cell.historicalRenderAlphaFloor ?? 0),
+    };
+  });
+
+  lastTextureCalibrationV2Stats = {
+    enabled: BOOKMAP_TEXTURE_CALIBRATION_V2,
+    depthPassEnabled: BOOKMAP_HEATMAP_DEPTH_PASS_V2,
+    inputCellCount: cells.length,
+    depthBoostedCount,
+    nearPriceCount,
+    weakTextureCount,
+    avgIntensityBoost:
+      depthBoostedCount > 0
+        ? Number((intensityBoostSum / depthBoostedCount).toFixed(4))
+        : 0,
+  };
+
+  return result;
 }
 
 function applyHorizontalPersistenceV2IntensityBoost(

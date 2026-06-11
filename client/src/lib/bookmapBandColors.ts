@@ -6,8 +6,16 @@ import {
   PALETTE_ALPHA_ACTIVE_WEAK_MIN,
   PALETTE_ALPHA_CLOSED_OLD_MUL,
   PALETTE_ALPHA_CLOSED_RECENT_MUL,
+  BOOKMAP_HEATMAP_DEPTH_PASS_V2,
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
+  BOOKMAP_TEXTURE_CALIBRATION_V2,
+  DEPTH_V2_NEAR_PRICE_ALPHA_BOOST,
+  DEPTH_V2_NEAR_PRICE_PCT,
   H_PERSIST_V2_WEAK_HISTORICAL_ALPHA_MUL,
+  TEX_CALIB_V2_LONG_WEAK_BASE_ALPHA_MUL,
+  TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP,
+  WALL_IMPORTANT_BTC,
+  type BookmapZoomRegime,
 } from "@/lib/bookmapEngineConfig";
 
 /**
@@ -67,7 +75,24 @@ const PASSIVE_PALETTE_STOPS_V2: readonly (readonly [number, number, number])[] =
   [255, 228, 188],
 ];
 
+/** B.2.1 — thermal ramp: darker navy weak end, smoother blue→cyan→yellow→orange. */
+const PASSIVE_PALETTE_STOPS_CALIB_V2: readonly (readonly [number, number, number])[] = [
+  [6, 14, 28],
+  [10, 30, 52],
+  [16, 56, 86],
+  [22, 94, 132],
+  [46, 148, 196],
+  [172, 192, 48],
+  [234, 146, 26],
+  [216, 76, 34],
+  [198, 30, 30],
+  [255, 218, 172],
+];
+
 function activePassivePaletteStops(): readonly (readonly [number, number, number])[] {
+  if (BOOKMAP_TEXTURE_CALIBRATION_V2) {
+    return PASSIVE_PALETTE_STOPS_CALIB_V2;
+  }
   return BOOKMAP_HORIZONTAL_PERSISTENCE_V2
     ? PASSIVE_PALETTE_STOPS_V2
     : PASSIVE_PALETTE_STOPS;
@@ -233,7 +258,9 @@ export function alphaForPassiveLiquidity(
   if (t < 0.22) {
     body =
       PALETTE_ALPHA_ACTIVE_WEAK_MIN + (t / 0.22) * (0.36 - PALETTE_ALPHA_ACTIVE_WEAK_MIN);
-    if (BOOKMAP_HORIZONTAL_PERSISTENCE_V2) {
+    if (BOOKMAP_TEXTURE_CALIBRATION_V2) {
+      body *= 0.78;
+    } else if (BOOKMAP_HORIZONTAL_PERSISTENCE_V2) {
       body *= H_PERSIST_V2_WEAK_HISTORICAL_ALPHA_MUL;
     }
   } else if (t < 0.52) {
@@ -415,4 +442,48 @@ export function getWallLabelColor(band: HeatmapBand): string {
   if (intensity >= 0.88) return "rgba(255, 200, 120, 0.95)";
   if (intensity >= 0.72) return "rgba(253, 224, 71, 0.95)";
   return "rgba(180, 220, 255, 0.9)";
+}
+
+/** B.2.1 — near-price alpha boost for weak/medium historical depth (no wall inflation). */
+export function resolveDepthPassNearPriceAlphaBoost(
+  pctFromMid: number,
+  regime: BookmapZoomRegime,
+  sizeBtc: number,
+): number {
+  if (!BOOKMAP_HEATMAP_DEPTH_PASS_V2) return 0;
+  if (sizeBtc >= WALL_IMPORTANT_BTC) return 0;
+  const nearPct = DEPTH_V2_NEAR_PRICE_PCT;
+  if (pctFromMid > nearPct) return 0;
+  const proximity = 1 - pctFromMid / nearPct;
+  let boost = DEPTH_V2_NEAR_PRICE_ALPHA_BOOST * proximity;
+  if (regime === "macro") boost *= 0.55;
+  else if (regime === "scalp" || regime === "ultra_micro") boost *= 1.12;
+  return Math.max(0, Math.min(0.28, boost));
+}
+
+/** B.2.1 — cap and modulate strong-wall body alpha for organic rendering. */
+export function resolveOrganicWallBodyAlpha(
+  bodyAlpha: number,
+  intensity: number,
+  runLength: number,
+  sizeBtc: number,
+): number {
+  if (!BOOKMAP_TEXTURE_CALIBRATION_V2) return bodyAlpha;
+  const t = clamp01(intensity);
+  let alpha = bodyAlpha;
+  if (
+    t >= 0.62 &&
+    (sizeBtc >= WALL_IMPORTANT_BTC || runLength >= 4)
+  ) {
+    alpha = Math.min(TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP, alpha);
+  } else if (runLength >= 5 && t < 0.48) {
+    alpha *= TEX_CALIB_V2_LONG_WEAK_BASE_ALPHA_MUL;
+  }
+  return Math.max(0.1, alpha);
+}
+
+/** B.2.1 — inner heat-core intensity bump for dominant walls. */
+export function resolveOrganicWallCoreIntensity(intensity: number): number {
+  const t = clamp01(intensity);
+  return Math.min(0.98, t + 0.06 + t * 0.04);
 }

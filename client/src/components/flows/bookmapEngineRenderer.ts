@@ -1,6 +1,8 @@
 import {
   BOOKMAP_ENGINE_BUCKET_MS,
+  BOOKMAP_HEATMAP_DEPTH_PASS_V2,
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
+  BOOKMAP_TEXTURE_CALIBRATION_V2,
   computeVisiblePriceRangePct,
   H_PERSIST_V2_SOLID_BASE_ALPHA_MUL,
   H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY,
@@ -9,6 +11,12 @@ import {
   PERP_RENDER_ACTIVE_CAP,
   PERP_RENDER_CLOSED_CAP,
   resolveZoomRegime,
+  TEX_CALIB_V2_INNER_CORE_ALPHA_MUL,
+  TEX_CALIB_V2_INNER_CORE_WIDTH_PCT,
+  TEX_CALIB_V2_ORGANIC_EDGE_FADE_PCT,
+  TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP,
+  TEX_CALIB_V2_WEAK_DEPTH_ALPHA_MUL,
+  TEX_CALIB_V2_WEAK_TEXTURE_MIN_INTENSITY,
   WALL_IMPORTANT_BTC,
   WALL_MAJOR_BTC,
   WALL_STRUCTURAL_BTC,
@@ -111,12 +119,16 @@ import {
   getBookmapBandStroke,
   getHistoricalTextureFill,
   getPassiveLiquidityFill,
+  intensityToMicroHistoricalTextureRgb,
   intensityToPassiveLiquidityRgb,
   getWallLabelColor,
   getWallLabelText,
   microAlphaFromRenderIntensity,
   MICRO_TEXTURE_ALPHA_MAX,
   MICRO_TEXTURE_ALPHA_MUL,
+  resolveDepthPassNearPriceAlphaBoost,
+  resolveOrganicWallBodyAlpha,
+  resolveOrganicWallCoreIntensity,
 } from "@/lib/bookmapBandColors";
 import { getBookmapPerpOverlayFill } from "@/lib/bookmapPerpOverlayColors";
 import {
@@ -575,9 +587,171 @@ function resolveInternalOverlayRatioBounds(
   microVisualMode: boolean,
   regime: BookmapZoomRegime,
 ): { min: number; max: number } {
+  if (BOOKMAP_TEXTURE_CALIBRATION_V2) {
+    if (microVisualMode) return { min: 0.2, max: 0.28 };
+    if (regime === "ultra_micro" || regime === "scalp") {
+      return { min: 0.14, max: 0.22 };
+    }
+    if (regime === "micro") return { min: 0.12, max: 0.18 };
+    return { min: 0.06, max: 0.11 };
+  }
   if (microVisualMode) return { min: 0.18, max: 0.26 };
   if (regime === "scalp" || regime === "micro") return { min: 0.12, max: 0.2 };
   return { min: 0.08, max: 0.14 };
+}
+
+type WallOrganicRenderDiagStats = {
+  organicSpanCount: number;
+  innerCoreCount: number;
+  edgeFadeCount: number;
+  weakDepthCount: number;
+  nearPriceBoostCount: number;
+  skippedOverlayCount: number;
+  overlaySpanCount: number;
+  baseAlphaMin: number;
+  baseAlphaMax: number;
+};
+
+let lastWallOrganicRenderDiagStats: WallOrganicRenderDiagStats = {
+  organicSpanCount: 0,
+  innerCoreCount: 0,
+  edgeFadeCount: 0,
+  weakDepthCount: 0,
+  nearPriceBoostCount: 0,
+  skippedOverlayCount: 0,
+  overlaySpanCount: 0,
+  baseAlphaMin: 0,
+  baseAlphaMax: 0,
+};
+
+export function getWallOrganicRenderDiagStats(): WallOrganicRenderDiagStats {
+  return lastWallOrganicRenderDiagStats;
+}
+
+function fillSpanRgba(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  w: number,
+  y: number,
+  h: number,
+  rgb: [number, number, number],
+  alpha: number,
+): void {
+  if (alpha <= 0.005 || w < 0.5) return;
+  ctx.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${Math.min(1, alpha)})`;
+  ctx.fillRect(x, y, w, h);
+}
+
+type OrganicSpanDrawParams = {
+  rgb: [number, number, number];
+  bodyAlpha: number;
+  vi: number;
+  runLength: number;
+  sizeBtc: number;
+  reinforcedBase: boolean;
+};
+
+function drawOrganicSpanBody(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  spanW: number,
+  yTop: number,
+  height: number,
+  params: OrganicSpanDrawParams,
+  diag: WallOrganicRenderDiagStats,
+): void {
+  const { rgb, bodyAlpha, vi, runLength, sizeBtc, reinforcedBase } = params;
+  const isStrongWall =
+    vi >= H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY &&
+    (sizeBtc >= WALL_IMPORTANT_BTC || runLength >= 3);
+
+  if (!BOOKMAP_TEXTURE_CALIBRATION_V2) {
+    fillSpanRgba(ctx, x0, spanW, yTop, height, rgb, bodyAlpha);
+    if (reinforcedBase) {
+      fillSpanRgba(
+        ctx,
+        x0,
+        spanW,
+        yTop,
+        height,
+        rgb,
+        bodyAlpha * H_PERSIST_V2_SOLID_BASE_ALPHA_MUL,
+      );
+    }
+    return;
+  }
+
+  diag.organicSpanCount += 1;
+  const modAlpha = resolveOrganicWallBodyAlpha(bodyAlpha, vi, runLength, sizeBtc);
+  if (modAlpha < diag.baseAlphaMin || diag.baseAlphaMin === 0) {
+    diag.baseAlphaMin = modAlpha;
+  }
+  if (modAlpha > diag.baseAlphaMax) {
+    diag.baseAlphaMax = modAlpha;
+  }
+
+  if (
+    BOOKMAP_HEATMAP_DEPTH_PASS_V2 &&
+    vi < 0.3 &&
+    vi >= TEX_CALIB_V2_WEAK_TEXTURE_MIN_INTENSITY
+  ) {
+    fillSpanRgba(
+      ctx,
+      x0,
+      spanW,
+      yTop,
+      height,
+      rgb,
+      modAlpha * TEX_CALIB_V2_WEAK_DEPTH_ALPHA_MUL,
+    );
+    diag.weakDepthCount += 1;
+  }
+
+  const edgePct = TEX_CALIB_V2_ORGANIC_EDGE_FADE_PCT;
+  const edgeW = Math.min(spanW * 0.45, Math.max(1, spanW * edgePct));
+  const centerW = Math.max(1, spanW - edgeW * 2);
+  const centerAlpha =
+    reinforcedBase && isStrongWall
+      ? Math.min(
+          modAlpha * H_PERSIST_V2_SOLID_BASE_ALPHA_MUL * 0.92,
+          TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP,
+        )
+      : modAlpha;
+
+  if (isStrongWall && spanW >= 6) {
+    diag.edgeFadeCount += 1;
+    fillSpanRgba(ctx, x0, edgeW, yTop, height, rgb, centerAlpha * 0.38);
+    fillSpanRgba(ctx, x0 + edgeW, centerW, yTop, height, rgb, centerAlpha);
+    fillSpanRgba(
+      ctx,
+      x0 + edgeW + centerW,
+      edgeW,
+      yTop,
+      height,
+      rgb,
+      centerAlpha * 0.38,
+    );
+  } else {
+    fillSpanRgba(ctx, x0, spanW, yTop, height, rgb, centerAlpha);
+  }
+
+  if (isStrongWall && vi >= 0.58 && spanW >= 8) {
+    const coreW = Math.max(2, spanW * TEX_CALIB_V2_INNER_CORE_WIDTH_PCT);
+    const coreX = x0 + (spanW - coreW) / 2;
+    const coreRgb = intensityToPassiveLiquidityRgb(
+      resolveOrganicWallCoreIntensity(vi),
+    );
+    fillSpanRgba(
+      ctx,
+      coreX,
+      coreW,
+      yTop,
+      height,
+      coreRgb,
+      Math.min(1, centerAlpha * TEX_CALIB_V2_INNER_CORE_ALPHA_MUL),
+    );
+    diag.innerCoreCount += 1;
+  }
 }
 
 function chunkIntensityFromSizeVariance(
@@ -1013,6 +1187,18 @@ function renderHeatmapTextureCells(
   textureBalanceAudit.internalTextureOverlayEnabled = overlayEnabled;
 
   ctx.save();
+  lastWallOrganicRenderDiagStats = {
+    organicSpanCount: 0,
+    innerCoreCount: 0,
+    edgeFadeCount: 0,
+    weakDepthCount: 0,
+    nearPriceBoostCount: 0,
+    skippedOverlayCount: 0,
+    overlaySpanCount: 0,
+    baseAlphaMin: 0,
+    baseAlphaMax: 0,
+  };
+  const organicDiag = lastWallOrganicRenderDiagStats;
 
   let rendered = 0;
   let widthSum = 0;
@@ -1088,6 +1274,16 @@ function renderHeatmapTextureCells(
       textureOpacityMul,
       mode,
     );
+    const depthAlphaBoost = resolveDepthPassNearPriceAlphaBoost(
+      weight.pctFromMid,
+      renderCtx.regime,
+      rep.stableSizeBtc,
+    );
+    const adjustedBodyAlpha =
+      depthAlphaBoost > 0
+        ? Math.min(0.72, bodyAlpha * (1 + depthAlphaBoost))
+        : bodyAlpha;
+    if (depthAlphaBoost > 0) organicDiag.nearPriceBoostCount += 1;
     const globalMul =
       textureOpacityMul * (mode === "perp-overlay" ? 0.88 : 1);
     const alphaCtx = buildPassiveLiquidityAlphaContext({
@@ -1146,24 +1342,32 @@ function renderHeatmapTextureCells(
         spanW = Math.max(0, dataEdgeX - x0) + BOOKMAP_TEXTURE_CELL_OVERLAP_PX;
         x1 = dataEdgeX;
       }
-      ctx.fillStyle = microVisualMode
-        ? getHistoricalTextureFill(cell.side, vi, alphaCtx, globalMul, {
-            microScalpMode: true,
-          })
-        : getPassiveLiquidityFill(cell.side, vi, alphaCtx, globalMul);
-      ctx.fillRect(x0, yTop, spanW, height);
 
-      if (
+      const runLength = cell.continuityRunLength ?? 1;
+      const reinforcedBase =
         BOOKMAP_HORIZONTAL_PERSISTENCE_V2 &&
         vi >= H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY &&
-        (rep.stableSizeBtc >= WALL_IMPORTANT_BTC ||
-          (cell.continuityRunLength ?? 0) >= 3)
-      ) {
-        const prevAlpha = ctx.globalAlpha;
-        ctx.globalAlpha = Math.min(1, prevAlpha * H_PERSIST_V2_SOLID_BASE_ALPHA_MUL);
-        ctx.fillRect(x0, yTop, spanW, height);
-        ctx.globalAlpha = prevAlpha;
-      }
+        (rep.stableSizeBtc >= WALL_IMPORTANT_BTC || runLength >= 3);
+      const spanRgb: [number, number, number] = microVisualMode
+        ? intensityToMicroHistoricalTextureRgb(vi)
+        : intensityToPassiveLiquidityRgb(vi);
+
+      drawOrganicSpanBody(
+        ctx,
+        x0,
+        spanW,
+        yTop,
+        height,
+        {
+          rgb: spanRgb,
+          bodyAlpha: adjustedBodyAlpha,
+          vi,
+          runLength,
+          sizeBtc: rep.stableSizeBtc,
+          reinforcedBase,
+        },
+        organicDiag,
+      );
 
       rendered += 1;
       widthSum += spanW;
@@ -1254,9 +1458,11 @@ function renderHeatmapTextureCells(
 
     if (overlayEnabled && chunkCount > 1) {
       const skipWeakOverlay =
+        !BOOKMAP_TEXTURE_CALIBRATION_V2 &&
         BOOKMAP_HORIZONTAL_PERSISTENCE_V2 &&
         vi >= H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY &&
         chunkCount <= 3;
+      if (skipWeakOverlay) organicDiag.skippedOverlayCount += 1;
       const overlayOps = skipWeakOverlay
         ? []
         : buildInternalOverlayDrawOps(
@@ -1266,6 +1472,7 @@ function renderHeatmapTextureCells(
             timeToX,
           );
       if (overlayOps.length > 0) {
+        organicDiag.overlaySpanCount += 1;
         spansWithOverlay += 1;
         let spanOverlayAlphaSum = 0;
         let spanOverlayAlphaMax = 0;
@@ -1283,7 +1490,7 @@ function renderHeatmapTextureCells(
           );
           const overlayAlpha =
             computeInternalOverlayAlpha(
-              bodyAlpha,
+              adjustedBodyAlpha,
               op.chunkRelativeStrength,
               overlayRatioBounds,
               microVisualMode,
@@ -1293,6 +1500,11 @@ function renderHeatmapTextureCells(
               ? effectiveChunkOverlayAlpha /
                   BOOKMAP_TEXTURE_INTERNAL_CHUNK_OVERLAY_ALPHA
               : 1);
+          const strongWallOverlayScale =
+            BOOKMAP_TEXTURE_CALIBRATION_V2 &&
+            vi >= H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY
+              ? 0.72
+              : 1;
           spanOverlayAlphaSum += overlayAlpha;
           if (overlayAlpha > spanOverlayAlphaMax) {
             spanOverlayAlphaMax = overlayAlpha;
@@ -1308,7 +1520,7 @@ function renderHeatmapTextureCells(
           overlayAlphaCount += 1;
 
           const [r, g, b] = intensityToPassiveLiquidityRgb(overlayVi);
-          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${overlayAlpha})`;
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${overlayAlpha * strongWallOverlayScale})`;
           ctx.fillRect(op.x0, yTop, opW, height);
         }
 

@@ -110,3 +110,40 @@ export const H_PERSIST_V2_WEAK_HISTORICAL_ALPHA_MUL = 0.68;
 export const H_PERSIST_V2_CHUNK_OVERLAY_ALPHA = 0.08;
 /** Suppress sub-threshold noise in macro zoom. */
 export const H_PERSIST_V2_MACRO_NOISE_SIZE_BTC = 4;
+
+/**
+ * B.2.1 — Texture Calibration + Heatmap Depth Pass: organic walls, historical
+ * texture, thermal palette. Builds on HORIZONTAL_PERSISTENCE_V2.
+ */
+export const BOOKMAP_TEXTURE_CALIBRATION_V2 = true;
+export const BOOKMAP_HEATMAP_DEPTH_PASS_V2 = true;
+
+/** Internal chunk overlay alpha when texture calibration V2 is on. */
+export const TEX_CALIB_V2_CHUNK_OVERLAY_ALPHA = 0.11;
+/** Weak historical depth layer alpha scale (secondary texture). */
+export const TEX_CALIB_V2_WEAK_DEPTH_ALPHA_MUL = 0.54;
+/** Temporal edge fade width as fraction of span width. */
+export const TEX_CALIB_V2_ORGANIC_EDGE_FADE_PCT = 0.11;
+/** Inner heat-core width for dominant walls. */
+export const TEX_CALIB_V2_INNER_CORE_WIDTH_PCT = 0.44;
+/** Inner heat-core alpha multiplier vs body. */
+export const TEX_CALIB_V2_INNER_CORE_ALPHA_MUL = 1.22;
+/** Cap flat strong-wall body alpha to avoid UI-rectangle look. */
+export const TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP = 0.84;
+/** Reduce opacity for long low-intensity horizontal runs. */
+export const TEX_CALIB_V2_LONG_WEAK_BASE_ALPHA_MUL = 0.9;
+/** Minimum intensity for weak historical texture pass. */
+export const TEX_CALIB_V2_WEAK_TEXTURE_MIN_INTENSITY = 0.1;
+
+/** Near-price band (% from mid) for depth visibility boost. */
+export const DEPTH_V2_NEAR_PRICE_PCT = 0.35;
+/** Additive intensity boost for weak cells near price (capped). */
+export const DEPTH_V2_NEAR_PRICE_VISIBILITY_BOOST = 0.09;
+/** Max intensity after near-price visibility boost (prevents wall inflation). */
+export const DEPTH_V2_MAX_VISIBILITY_INTENSITY = 0.38;
+/** Renderer alpha boost multiplier near price for weak/medium spans. */
+export const DEPTH_V2_NEAR_PRICE_ALPHA_BOOST = 0.2;
+/** Macro zoom weak-cell intensity floor after depth pass. */
+export const DEPTH_V2_WEAK_INTENSITY_FLOOR_MACRO = 0.009;
+/** Micro/scalp weak-cell intensity floor after depth pass. */
+export const DEPTH_V2_WEAK_INTENSITY_FLOOR_MICRO = 0.006;
