@@ -38,6 +38,7 @@ import { startBookmapRailwayDataDiag } from "./services/bookmapRailwayDataDiag";
 import { getRecentSlowEndpoints } from "./lib/performanceMonitor";
 import { requireSaasAdmin } from "./middleware/saasAuth";
 import { isHeatmapEnabled } from "./lib/runtimeEnv";
+import { buildDesktopUpdatePayload } from "./lib/desktopUpdateManifest";
 
 // Debug flags to prevent event-loop blocking from log spam.
 // Keep these false by default; enable locally when diagnosing.
@@ -291,6 +292,10 @@ export async function registerRoutes(
     res.json({
       heatmapEnabled: HEATMAP_ENABLED,
     });
+  });
+
+  app.get("/api/desktop/update", (_req: Request, res: Response) => {
+    res.json(buildDesktopUpdatePayload());
   });
 
   app.get("/api/system/performance", requireSaasAdmin, (_req: Request, res: Response) => {
