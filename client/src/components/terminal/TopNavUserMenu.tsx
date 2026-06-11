@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { ChevronDown, Download, LogOut, Settings2, Stethoscope } from "lucide-react";
+import { ChevronDown, Download, LogOut, Settings2, Stethoscope, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLearnMode } from "@/hooks/useLearnMode";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
@@ -16,18 +16,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-
-function userInitials(email: string | undefined): string {
-  if (!email) return "GT";
-  const local = email.split("@")[0]?.trim() ?? "";
-  if (!local) return "GT";
-  const parts = local.split(/[._-]+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`.toUpperCase();
-  }
-  return local.slice(0, 2).toUpperCase();
-}
 
 export function TopNavUserMenu() {
   const { learnMode, toggleLearnMode } = useLearnMode();
@@ -40,9 +28,15 @@ export function TopNavUserMenu() {
 
   if (saasDisabled || !user) {
     return (
-      <span className="text-[10px] font-mono text-terminal-muted uppercase tracking-wider">
-        {authenticated ? planLabel : "Guest"}
-      </span>
+      <button
+        type="button"
+        disabled
+        className="inline-flex items-center gap-1 rounded-md border border-terminal-border/60 bg-terminal-panel/40 px-2.5 py-1 text-[11px] font-medium tracking-wide text-terminal-muted cursor-not-allowed"
+        title="Account unavailable"
+      >
+        My Account
+        <ChevronDown className="h-3 w-3 opacity-50" />
+      </button>
     );
   }
 
@@ -51,14 +45,10 @@ export function TopNavUserMenu() {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-terminal-border bg-terminal-panel/70 px-1.5 py-1 text-left hover:border-terminal-accent/40 hover:bg-terminal-panel transition-colors"
+          className="inline-flex items-center gap-1 rounded-md border border-terminal-border bg-terminal-panel/70 px-2.5 py-1 text-[11px] font-medium tracking-wide text-white/90 hover:border-terminal-accent/40 hover:bg-terminal-panel hover:text-white transition-colors"
           data-testid="button-user-menu"
         >
-          <Avatar className="h-6 w-6 border border-terminal-border/60">
-            <AvatarFallback className="bg-terminal-bg text-[10px] font-bold text-terminal-accent">
-              {userInitials(user.email)}
-            </AvatarFallback>
-          </Avatar>
+          My Account
           <ChevronDown className="h-3 w-3 text-terminal-muted" />
         </button>
       </DropdownMenuTrigger>
@@ -83,15 +73,21 @@ export function TopNavUserMenu() {
 
         <DropdownMenuSeparator className="bg-terminal-border" />
 
+        <DropdownMenuItem
+          disabled
+          className="cursor-not-allowed opacity-60 focus:bg-terminal-bg"
+          title="Próximamente"
+        >
+          <UserRound className="mr-2 h-3.5 w-3.5" />
+          Mi cuenta
+        </DropdownMenuItem>
+
         {user.role === "admin" && (
-          <>
-            <DropdownMenuItem asChild className="cursor-pointer focus:bg-terminal-bg focus:text-white">
-              <Link href="/admin" className="w-full">
-                Admin panel
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator className="bg-terminal-border" />
-          </>
+          <DropdownMenuItem asChild className="cursor-pointer focus:bg-terminal-bg focus:text-white">
+            <Link href="/admin" className="w-full">
+              Admin panel
+            </Link>
+          </DropdownMenuItem>
         )}
 
         <DropdownMenuCheckboxItem
@@ -108,7 +104,7 @@ export function TopNavUserMenu() {
           onSelect={() => openSystemHealthPanel()}
         >
           <Stethoscope className="mr-2 h-3.5 w-3.5" />
-          System / Diagnóstico
+          Diagnóstico
         </DropdownMenuItem>
 
         {isDesktopApp() && (
