@@ -1,12 +1,12 @@
 {
-  "latestVersion": "0.1.1",
-  "minSupportedVersion": "0.1.0",
+  "latestVersion": "0.1.2",
+  "minSupportedVersion": "0.1.1",
   "mandatory": false,
-  "downloadUrl": "https://github.com/goodtrading/terminalv1/releases/download/v0.1.1/GoodTrading-Terminal-0.1.1-x64-setup.exe",
+  "downloadUrl": "https://github.com/goodtrading/terminalv1/releases/download/v0.1.2/GoodTrading-Terminal-0.1.2-x64-setup.exe",
   "releaseNotes": [
-    "Prueba de actualización opcional",
-    "Mejoras menores de packaging desktop",
-    "Validación del flujo GitHub Releases + Railway"
+    "Validación del sistema de actualizaciones desktop",
+    "El update check ahora corre al iniciar la app",
+    "Mejoras en diagnóstico de updates"
   ],
-  "publishedAt": "2026-06-11T03:00:00.000Z"
+  "publishedAt": "2026-06-11T04:00:00.000Z"
 }
