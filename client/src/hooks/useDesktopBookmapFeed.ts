@@ -51,6 +51,8 @@ type BinanceCombinedMessage = {
   data?: unknown;
 };
 
+type DesktopFeedStatus = "loading" | "live" | "error" | "empty" | "offline";
+
 export const desktopBookmapFeedEnabled =
   import.meta.env.VITE_PLATFORM === "desktop" &&
   import.meta.env.VITE_HEATMAP_ENABLED === "true";
@@ -160,6 +162,10 @@ export function useDesktopBookmapFeed(
   const reconnectTimerRef = useRef<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastUpdateRef = useRef<number | null>(null);
+  const bidsCountRef = useRef(0);
+  const asksCountRef = useRef(0);
+  const feedStatusRef = useRef<DesktopFeedStatus>(canUseSpotFeed ? "loading" : "offline");
+  const connectedRef = useRef(false);
   const firstSnapshotLoggedRef = useRef(false);
   const firstTradeLoggedRef = useRef(false);
   const noDataTimeoutLoggedRef = useRef(false);
@@ -168,7 +174,7 @@ export function useDesktopBookmapFeed(
 
   const [bookmapState, setBookmapState] = useState<BookmapState | null>(null);
   const [snapshotCount, setSnapshotCount] = useState(0);
-  const [feedStatus, setFeedStatus] = useState<"loading" | "live" | "error" | "empty" | "offline">(
+  const [feedStatus, setFeedStatus] = useState<DesktopFeedStatus>(
     canUseSpotFeed ? "loading" : "offline",
   );
   const [pipelineStats, setPipelineStats] = useState<HeatmapPipelineStats>(EMPTY_STATS);
@@ -184,6 +190,24 @@ export function useDesktopBookmapFeed(
   const [error, setError] = useState<Error | null>(null);
   const [reconnectCount, setReconnectCount] = useState(0);
 
+  const updateFeedStatus = useCallback((nextStatus: DesktopFeedStatus) => {
+    feedStatusRef.current = nextStatus;
+    setFeedStatus(nextStatus);
+  }, []);
+
+  const updateFeedStatusFromCurrent = useCallback((
+    updater: (status: DesktopFeedStatus) => DesktopFeedStatus,
+  ) => {
+    const nextStatus = updater(feedStatusRef.current);
+    feedStatusRef.current = nextStatus;
+    setFeedStatus(nextStatus);
+  }, [cleanSymbol]);
+
+  const updateTradesStreamConnected = useCallback((connected: boolean) => {
+    connectedRef.current = connected;
+    setTradesStreamConnected(connected);
+  }, []);
+
   const wsUrl = useMemo(() => {
     const streamSymbol = cleanSymbol.toLowerCase();
     const streams = `${streamSymbol}@depth20@100ms/${streamSymbol}@aggTrade`;
@@ -195,8 +219,10 @@ export function useDesktopBookmapFeed(
     setSnapshotCount(snapshotsRef.current.length);
     setOrderbookReceivedAt(snapshot.ts);
     lastUpdateRef.current = Date.now();
+    bidsCountRef.current = snapshot.bids.length;
+    asksCountRef.current = snapshot.asks.length;
     setDataUpdatedAt(Date.now());
-    setFeedStatus("live");
+    updateFeedStatus("live");
 
     const nextStats: HeatmapPipelineStats = {
       rawBids: snapshot.bids.length,
@@ -233,7 +259,7 @@ export function useDesktopBookmapFeed(
         ts: snapshot.ts,
       });
     }
-  }, [cleanSymbol]);
+  }, [cleanSymbol, updateFeedStatus]);
 
   const ingestTrade = useCallback((raw: unknown) => {
     const parsed = parseRawTradeEvent(raw, "spot");
@@ -269,7 +295,7 @@ export function useDesktopBookmapFeed(
     const bids = parseLevels(raw.bids ?? raw.b, "bid");
     const asks = parseLevels(raw.asks ?? raw.a, "ask");
     if (!bids.length || !asks.length) {
-      setFeedStatus((status) => (status === "live" ? "live" : "empty"));
+      updateFeedStatusFromCurrent((status) => (status === "live" ? "live" : "empty"));
       return;
     }
     pushSnapshot({
@@ -277,12 +303,26 @@ export function useDesktopBookmapFeed(
       bids,
       asks,
     });
-  }, [pushSnapshot]);
+  }, [pushSnapshot, updateFeedStatusFromCurrent]);
+
+  const handleDepthRef = useRef(handleDepth);
+  const ingestTradeRef = useRef(ingestTrade);
+
+  useEffect(() => {
+    handleDepthRef.current = handleDepth;
+  }, [handleDepth]);
+
+  useEffect(() => {
+    ingestTradeRef.current = ingestTrade;
+  }, [ingestTrade]);
 
   useEffect(() => {
     snapshotsRef.current = [];
     tradesRef.current = [];
     seenTradeKeysRef.current = new Set();
+    bidsCountRef.current = 0;
+    asksCountRef.current = 0;
+    connectedRef.current = false;
     setBookmapState(null);
     setSnapshotCount(0);
     setPipelineStats(EMPTY_STATS);
@@ -304,8 +344,8 @@ export function useDesktopBookmapFeed(
     sessionStartedAtRef.current = startedAt;
 
     if (!canUseSpotFeed) {
-      setFeedStatus("offline");
-      setTradesStreamConnected(false);
+      updateFeedStatus("offline");
+      updateTradesStreamConnected(false);
       return;
     }
 
@@ -331,7 +371,7 @@ export function useDesktopBookmapFeed(
 
     const connect = () => {
       if (cancelled) return;
-      setFeedStatus((status) => (status === "live" ? "live" : "loading"));
+      updateFeedStatusFromCurrent((status) => (status === "live" ? "live" : "loading"));
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -340,7 +380,7 @@ export function useDesktopBookmapFeed(
         if (cancelled) return;
         reconnectAttempt = 0;
         setError(null);
-        setTradesStreamConnected(true);
+        updateTradesStreamConnected(true);
         console.debug("[DESKTOP_BOOKMAP_FEED] ws connected", { symbol: cleanSymbol, url: wsUrl });
         void writeDesktopLog("desktop_feed_connected", {
           symbol: cleanSymbol,
@@ -356,9 +396,9 @@ export function useDesktopBookmapFeed(
           const stream = msg.stream ?? "";
           const data = msg.data;
           if (stream.includes("@depth") && data && typeof data === "object") {
-            handleDepth(data as BinanceDepthWire);
+            handleDepthRef.current(data as BinanceDepthWire);
           } else if (stream.includes("@aggTrade")) {
-            ingestTrade(data);
+            ingestTradeRef.current(data);
           }
         } catch (err) {
           const nextError = err instanceof Error ? err : new Error("Desktop feed parse error");
@@ -376,7 +416,7 @@ export function useDesktopBookmapFeed(
         if (cancelled) return;
         const nextError = new Error("Desktop Binance WebSocket error");
         setError(nextError);
-        setFeedStatus((status) => (status === "live" ? "live" : "error"));
+        updateFeedStatusFromCurrent((status) => (status === "live" ? "live" : "error"));
         console.debug("[DESKTOP_BOOKMAP_FEED] error/reconnect", { symbol: cleanSymbol });
         void writeDesktopLog("desktop_feed_error", {
           symbol: cleanSymbol,
@@ -387,8 +427,8 @@ export function useDesktopBookmapFeed(
 
       ws.onclose = () => {
         if (cancelled) return;
-        setTradesStreamConnected(false);
-        setFeedStatus((status) => (status === "live" ? "offline" : status));
+        updateTradesStreamConnected(false);
+        updateFeedStatusFromCurrent((status) => (status === "live" ? "offline" : status));
         const delayMs = Math.min(10_000, 1_000 + reconnectAttempt * 1_000);
         reconnectAttempt += 1;
         reconnectCountRef.current += 1;
@@ -417,6 +457,7 @@ export function useDesktopBookmapFeed(
       }
       wsRef.current?.close();
       wsRef.current = null;
+      connectedRef.current = false;
       if (sessionStartedAtRef.current) {
         void writeHeatmapSessionMetadata({
           symbol: cleanSymbol,
@@ -428,28 +469,35 @@ export function useDesktopBookmapFeed(
         });
       }
     };
-  }, [canUseSpotFeed, cleanSymbol, handleDepth, ingestTrade, wsUrl]);
+  }, [
+    canUseSpotFeed,
+    cleanSymbol,
+    updateFeedStatus,
+    updateFeedStatusFromCurrent,
+    updateTradesStreamConnected,
+    wsUrl,
+  ]);
 
   useEffect(() => {
     if (!canUseSpotFeed) return;
     const id = window.setInterval(() => {
       const now = Date.now();
       const payload = {
-        connected: tradesStreamConnected,
-        bidsCount: bookmapState?.bids.length ?? 0,
-        asksCount: bookmapState?.asks.length ?? 0,
+        symbol: cleanSymbol,
+        bidsCount: bidsCountRef.current,
+        asksCount: asksCountRef.current,
         tradesCount: tradesRef.current.length,
         lastUpdateAgeMs: lastUpdateRef.current != null ? now - lastUpdateRef.current : null,
         reconnectCount: reconnectCountRef.current,
-        status: feedStatus,
+        connected: connectedRef.current,
       };
       if (import.meta.env.DEV) {
         console.debug("[DESKTOP_BOOKMAP_FEED]", payload);
       }
-      void writeDesktopLog("desktop_bookmap_heartbeat", payload);
+      void writeDesktopLog("desktop_feed_heartbeat", payload);
     }, 30_000);
     return () => window.clearInterval(id);
-  }, [canUseSpotFeed, tradesStreamConnected, bookmapState, feedStatus]);
+  }, [canUseSpotFeed, cleanSymbol]);
 
   const getSnapshots = useCallback(() => snapshotsRef.current, []);
   const getRecentTrades = useCallback(() => tradesRef.current, []);
