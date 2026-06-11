@@ -254,6 +254,23 @@ export async function writeMarketDataCache(
   }
 }
 
+export async function writeHeatmapCache(
+  key: string,
+  day: string,
+  payload: Record<string, unknown>,
+): Promise<string | null> {
+  if (!isDesktopBuild) {
+    writeFallbackJson(`heatmap:${day}:${key}`, payload);
+    return null;
+  }
+  try {
+    return await invokeDesktop<string>("write_heatmap_cache", { input: { key, day, payload } });
+  } catch {
+    writeFallbackJson(`heatmap:${day}:${key}`, payload);
+    return null;
+  }
+}
+
 export async function clearTempCache(): Promise<void> {
   if (!isDesktopBuild) {
     writeFallbackJson("temp", {});

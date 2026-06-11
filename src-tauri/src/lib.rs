@@ -40,6 +40,15 @@ struct MarketDataCacheInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct HeatmapCacheInput {
+  key: String,
+  day: Option<String>,
+  #[serde(default)]
+  payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct HeatmapSessionMetadataInput {
   symbol: String,
   source: String,
@@ -210,6 +219,18 @@ fn write_market_data_cache(app: AppHandle, input: MarketDataCacheInput) -> Resul
 }
 
 #[tauri::command]
+fn write_heatmap_cache(app: AppHandle, input: HeatmapCacheInput) -> Result<String, String> {
+  let (base, _) = storage_paths(&app)?;
+  ensure_storage_dirs(&base)?;
+  let day = input.day.unwrap_or_else(|| "unknown-day".to_string());
+  let dir = base.join("Heatmap").join(safe_file_stem(&day));
+  fs::create_dir_all(&dir).map_err(|err| format!("create heatmap dir: {err}"))?;
+  let path = dir.join(format!("{}.json", safe_file_stem(&input.key)));
+  write_json_file(&path, &input.payload)?;
+  Ok(path_string(&path))
+}
+
+#[tauri::command]
 fn clear_temp_cache(app: AppHandle) -> Result<(), String> {
   let (base, _) = storage_paths(&app)?;
   let temp = base.join("Temp");
@@ -253,6 +274,7 @@ pub fn run() {
       read_desktop_config,
       write_desktop_config,
       write_market_data_cache,
+      write_heatmap_cache,
       clear_temp_cache,
       write_heatmap_session_metadata,
     ])

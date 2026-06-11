@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BookmapState, BookLevel, HeatmapCell } from "@/types/bookmapState";
+import type { BookmapState } from "@/types/bookmapState";
 import {
   HEATMAP_MAJOR_WALL_BTC,
   MAX_LIQUIDITY_SNAPSHOTS,
@@ -12,15 +12,21 @@ import { parseRawTradeEvent } from "@/components/flows/tradeFeedParse";
 import { appendTradeToBuffer } from "@/components/flows/tradeBubbleUtils";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
 import {
+  writeHeatmapCache,
   writeDesktopLog,
   writeHeatmapSessionMetadata,
 } from "@/lib/desktopStorage";
+import {
+  DesktopBookmapHeatmapEngine,
+  type DesktopBookmapHeatmapStats,
+  type DesktopBookmapInputLevel,
+} from "@/lib/desktopBookmapHeatmapEngine";
 
 const DESKTOP_BOOKMAP_BUCKET_MS = 1_000;
-const DESKTOP_BOOKMAP_MAX_CELLS = 2_400;
 const DESKTOP_BOOKMAP_DEPTH_LIMIT = 1_000;
 const DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT = 100;
 const DESKTOP_BOOKMAP_VISUAL_THROTTLE_MS = 150;
+const DESKTOP_HEATMAP_CACHE_INTERVAL_MS = 60_000;
 const DESKTOP_BOOKMAP_WS_BASE = "wss://stream.binance.com:9443/stream";
 const DESKTOP_BOOKMAP_REST_BASE = "https://api.binance.com/api/v3/depth";
 
@@ -138,63 +144,6 @@ function visibleBookSide(
     .map(([price, sizeBtc]) => ({ price, sizeBtc, side }));
 }
 
-function levelToBookLevel(level: OrderbookLevel, now: number): BookLevel {
-  const isMajor = level.sizeBtc >= HEATMAP_MAJOR_WALL_BTC;
-  const isStructural = isMajor || level.sizeBtc >= 25;
-  const isImportant = isStructural || level.sizeBtc >= 10;
-  return {
-    price: level.price,
-    size: level.sizeBtc,
-    side: level.side,
-    firstSeenTs: now,
-    lastUpdateTs: now,
-    maxSeenSize: level.sizeBtc,
-    isImportant,
-    isStructural,
-    isMajor,
-    stale: false,
-  };
-}
-
-function levelToHeatmapCell(level: OrderbookLevel, now: number): HeatmapCell {
-  return {
-    timeBucket: Math.floor(now / DESKTOP_BOOKMAP_BUCKET_MS) * DESKTOP_BOOKMAP_BUCKET_MS,
-    price: level.price,
-    side: level.side,
-    size: level.sizeBtc,
-    maxSizeInBucket: level.sizeBtc,
-    lastSizeInBucket: level.sizeBtc,
-    lastUpdateTs: now,
-  };
-}
-
-function buildBookmapState(
-  symbol: string,
-  snapshot: LiquiditySnapshot,
-  previousCells: HeatmapCell[],
-): BookmapState {
-  const now = snapshot.ts;
-  const levels = [...snapshot.bids, ...snapshot.asks];
-  const bids = snapshot.bids.map((level) => levelToBookLevel(level, now));
-  const asks = snapshot.asks.map((level) => levelToBookLevel(level, now));
-  const heatmapCells = [...previousCells, ...levels.map((level) => levelToHeatmapCell(level, now))]
-    .slice(-DESKTOP_BOOKMAP_MAX_CELLS);
-  const allBookLevels = [...bids, ...asks];
-
-  return {
-    symbol,
-    exchange: "Binance Desktop",
-    market: "spot",
-    bids,
-    asks,
-    heatmapCells,
-    importantWalls: allBookLevels.filter((level) => level.isImportant),
-    structuralWalls: allBookLevels.filter((level) => level.isStructural),
-    majorWalls: allBookLevels.filter((level) => level.isMajor),
-    timestamp: now,
-  };
-}
-
 function tradeDedupeKey(trade: HeatmapTrade): string {
   if (trade.id) return `spot:id:${trade.id}`;
   return `spot:${trade.ts}:${trade.price}:${trade.side}:${trade.sizeBtc}`;
@@ -221,7 +170,15 @@ export function useDesktopBookmapFeed(
   const seenTradeKeysRef = useRef<Set<string>>(new Set());
   const reconnectTimerRef = useRef<number | null>(null);
   const visualUpdateTimerRef = useRef<number | null>(null);
+  const lastHeatmapCacheAtRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
+  const heatmapEngineRef = useRef(new DesktopBookmapHeatmapEngine({
+    timeBucketMs: DESKTOP_BOOKMAP_BUCKET_MS,
+    priceBucketSize: 10,
+  }));
+  const heatmapStatsRef = useRef<DesktopBookmapHeatmapStats>(
+    heatmapEngineRef.current.getStats(),
+  );
   const lastUpdateRef = useRef<number | null>(null);
   const rawBidsRef = useRef<Map<number, number>>(new Map());
   const rawAsksRef = useRef<Map<number, number>>(new Map());
@@ -300,12 +257,13 @@ export function useDesktopBookmapFeed(
     return `${DESKTOP_BOOKMAP_REST_BASE}?${params.toString()}`;
   }, [cleanSymbol]);
 
-  const pushSnapshot = useCallback((
+  const publishBookmapSnapshot = useCallback((
     snapshot: LiquiditySnapshot,
     rawCounts: { bids: number; asks: number } = {
       bids: snapshot.bids.length,
       asks: snapshot.asks.length,
     },
+    heatmapDepth?: { bids: OrderbookLevel[]; asks: OrderbookLevel[] },
   ) => {
     snapshotsRef.current = [...snapshotsRef.current, snapshot].slice(-MAX_LIQUIDITY_SNAPSHOTS);
     setSnapshotCount(snapshotsRef.current.length);
@@ -343,40 +301,85 @@ export function useDesktopBookmapFeed(
     };
     setPipelineStats(nextStats);
 
-    setBookmapState((prev) => buildBookmapState(cleanSymbol, snapshot, prev?.heatmapCells ?? []));
+    const midPrice =
+      snapshot.bids[0]?.price != null && snapshot.asks[0]?.price != null
+        ? (snapshot.bids[0].price + snapshot.asks[0].price) / 2
+        : null;
+    const toInputLevel = (level: OrderbookLevel): DesktopBookmapInputLevel => ({
+      price: level.price,
+      sizeBtc: level.sizeBtc,
+      side: level.side,
+    });
+    const heatmapResult = heatmapEngineRef.current.ingest({
+      symbol: cleanSymbol,
+      ts: snapshot.ts,
+      midPrice,
+      bids: (heatmapDepth?.bids ?? snapshot.bids).map(toInputLevel),
+      asks: (heatmapDepth?.asks ?? snapshot.asks).map(toInputLevel),
+      visibleBids: snapshot.bids.map(toInputLevel),
+      visibleAsks: snapshot.asks.map(toInputLevel),
+    });
+    heatmapStatsRef.current = heatmapResult.stats;
+    setBookmapState(heatmapResult.state);
+
+    if (Date.now() - lastHeatmapCacheAtRef.current >= DESKTOP_HEATMAP_CACHE_INTERVAL_MS) {
+      lastHeatmapCacheAtRef.current = Date.now();
+      const day = new Date(snapshot.ts).toISOString().slice(0, 10);
+      void writeHeatmapCache(`heatmap-${cleanSymbol}-summary`, day, {
+        symbol: cleanSymbol,
+        startedAt: sessionStartedAtRef.current,
+        lastTs: snapshot.ts,
+        bucketMs: DESKTOP_BOOKMAP_BUCKET_MS,
+        priceBucketSize: heatmapResult.stats.priceBucketSize,
+        cellCount: heatmapResult.stats.cellCount,
+        strongestLevels: heatmapResult.stats.strongestLevels,
+      });
+      void writeHeatmapSessionMetadata({
+        symbol: cleanSymbol,
+        source: "spot",
+        startedAt: sessionStartedAtRef.current ?? nowIso(),
+        bucketMs: DESKTOP_BOOKMAP_BUCKET_MS,
+        depth: DESKTOP_BOOKMAP_DEPTH_LIMIT,
+      });
+    }
+
     if (!firstSnapshotLoggedRef.current) {
       firstSnapshotLoggedRef.current = true;
       void writeDesktopLog("desktop_bookmap_first_data", {
         symbol: cleanSymbol,
         bidsCount: snapshot.bids.length,
         asksCount: snapshot.asks.length,
+        heatmapCellCount: heatmapResult.stats.cellCount,
         ts: snapshot.ts,
       });
     }
   }, [cleanSymbol, updateFeedStatus]);
 
   const pushVisibleBookSnapshot = useCallback((ts: number) => {
-    const bids = visibleBookSide(
+    const depthBids = visibleBookSide(
       rawBidsRef.current,
       "bid",
-      DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT,
+      DESKTOP_BOOKMAP_DEPTH_LIMIT,
     );
-    const asks = visibleBookSide(
+    const depthAsks = visibleBookSide(
       rawAsksRef.current,
       "ask",
-      DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT,
+      DESKTOP_BOOKMAP_DEPTH_LIMIT,
     );
+    const bids = depthBids.slice(0, DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT);
+    const asks = depthAsks.slice(0, DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT);
     rawBidsCountRef.current = rawBidsRef.current.size;
     rawAsksCountRef.current = rawAsksRef.current.size;
     if (!bids.length || !asks.length) {
       updateFeedStatusFromCurrent((status) => (status === "live" ? "live" : "empty"));
       return;
     }
-    pushSnapshot(
+    publishBookmapSnapshot(
       { ts, bids, asks },
       { bids: rawBidsRef.current.size, asks: rawAsksRef.current.size },
+      { bids: depthBids, asks: depthAsks },
     );
-  }, [pushSnapshot, updateFeedStatusFromCurrent]);
+  }, [publishBookmapSnapshot, updateFeedStatusFromCurrent]);
 
   const scheduleVisibleBookSnapshot = useCallback((ts: number) => {
     if (visualUpdateTimerRef.current != null) return;
@@ -423,12 +426,12 @@ export function useDesktopBookmapFeed(
       updateFeedStatusFromCurrent((status) => (status === "live" ? "live" : "empty"));
       return;
     }
-    pushSnapshot({
+    publishBookmapSnapshot({
       ts: Number.isFinite(raw.E) ? Number(raw.E) : Date.now(),
       bids,
       asks,
     });
-  }, [pushSnapshot, updateFeedStatusFromCurrent]);
+  }, [publishBookmapSnapshot, updateFeedStatusFromCurrent]);
 
   const handleDepthRef = useRef(handleDepth);
   const ingestTradeRef = useRef(ingestTrade);
@@ -447,6 +450,9 @@ export function useDesktopBookmapFeed(
     seenTradeKeysRef.current = new Set();
     rawBidsRef.current = new Map();
     rawAsksRef.current = new Map();
+    heatmapEngineRef.current.reset();
+    heatmapStatsRef.current = heatmapEngineRef.current.getStats();
+    lastHeatmapCacheAtRef.current = 0;
     rawBidsCountRef.current = 0;
     rawAsksCountRef.current = 0;
     bidsCountRef.current = 0;
@@ -929,6 +935,21 @@ export function useDesktopBookmapFeed(
         console.debug("[DESKTOP_BOOKMAP_FEED]", payload);
       }
       void writeDesktopLog("desktop_feed_heartbeat", payload);
+      const heatmapStats = heatmapStatsRef.current;
+      void writeDesktopLog("desktop_heatmap_heartbeat", {
+        symbol: cleanSymbol,
+        cellCount: heatmapStats.cellCount,
+        activeLevels: heatmapStats.activeLevels,
+        staleLevels: heatmapStats.staleLevels,
+        pulledCount: heatmapStats.pulledCount,
+        stackedCount: heatmapStats.stackedCount,
+        wallCount: heatmapStats.wallCount,
+        maxIntensity: heatmapStats.maxIntensity,
+        pruneCount: heatmapStats.pruneCount,
+        memoryWindowMs: heatmapStats.memoryWindowMs,
+        priceBucketSize: heatmapStats.priceBucketSize,
+        timeBucketMs: heatmapStats.timeBucketMs,
+      });
     }, 30_000);
     return () => window.clearInterval(id);
   }, [canUseSpotFeed, cleanSymbol]);
