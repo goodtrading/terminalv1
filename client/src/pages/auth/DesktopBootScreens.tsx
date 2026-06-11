@@ -12,7 +12,7 @@ export function DesktopLoadingScreen() {
     <div className="h-screen w-full flex items-center justify-center bg-terminal-bg text-terminal-text px-6">
       <div className="w-full max-w-sm border border-terminal-border bg-terminal-panel/95 rounded-sm p-7 shadow-[0_24px_80px_rgba(0,0,0,0.42)]">
         <div className="flex flex-col items-center text-center gap-5">
-          <img src="/logo.png" alt="GoodTrading" className="h-12 w-auto object-contain" />
+          <img src="/logo.png" alt="GoodTrading" className="h-32 w-auto object-contain" />
           <div className="space-y-1">
             <h1 className="text-sm font-bold tracking-widest text-white">
               Inicializando GoodTrading Terminal...
@@ -56,7 +56,7 @@ export function DesktopConnectionErrorScreen({
     <div className="min-h-screen w-full flex items-center justify-center bg-terminal-bg text-terminal-text px-6">
       <div className="w-full max-w-lg border border-red-500/35 bg-terminal-panel rounded-sm p-6 space-y-4">
         <div className="flex items-center gap-3">
-          <img src="/logo.png" alt="GoodTrading" className="h-9 w-auto object-contain" />
+          <img src="/logo.png" alt="GoodTrading" className="h-20 w-auto object-contain" />
           <div>
             <h1 className="text-base font-bold tracking-wide text-white">
               No se pudo conectar con GoodTrading
@@ -102,4 +102,3 @@ export function DesktopConnectionErrorScreen({
     </div>
   );
 }
-
