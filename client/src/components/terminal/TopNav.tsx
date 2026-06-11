@@ -1,30 +1,43 @@
 import { useEffect, useState } from "react";
-import { Link } from "wouter";
 import { cn } from "@/lib/utils";
-import { useLearnMode } from "@/hooks/useLearnMode";
 import { useTerminalState } from "@/hooks/useTerminalState";
-import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 import { getDesktopStoragePaths, isDesktopBuild } from "@/lib/desktopStorage";
 import { useDesktopFeedDiagnostics } from "@/lib/desktopDiagnostics";
-import { appVersion } from "@/lib/appVersion";
+import { useDesktopUpdateCheck } from "@/hooks/useDesktopUpdateCheck";
+import { isDesktopApp } from "@/lib/desktopRuntime";
+import { CompactStatusPill } from "./CompactStatusPill";
+import { TopNavUserMenu } from "./TopNavUserMenu";
+import type { HealthTone } from "./health/healthUi";
 
 interface TopNavProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
 }
 
+function ContextChip({ label, value, testId }: { label: string; value: string; testId?: string }) {
+  return (
+    <div className="inline-flex items-center gap-1.5 rounded-sm border border-terminal-border/70 bg-terminal-panel/50 px-2 py-0.5 text-[10px] font-mono">
+      <span className="text-terminal-muted uppercase tracking-wide">{label}</span>
+      <span className="text-white font-semibold" data-testid={testId}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
 export function TopNav({ activeTab, onTabChange }: TopNavProps) {
-  const { learnMode, toggleLearnMode } = useLearnMode();
   const { data: terminalState } = useTerminalState();
-  const { saasDisabled, user, access, authenticated, logout } = useTerminalAuth();
   const desktopFeed = useDesktopFeedDiagnostics();
-  const [desktopStorageOk, setDesktopStorageOk] = useState(false);
+  const desktopUpdate = useDesktopUpdateCheck();
+  const [desktopStorageOk, setDesktopStorageOk] = useState<boolean | null>(null);
 
   const tabs = ["TERMINAL", "OPTIONS", "FLOWS", "VOLATILITY", "REPORTS"];
-
   const dominantExpiry = (terminalState?.positioning as any)?.dominantExpiry || null;
   const expiryLabel = dominantExpiry || "N/A";
-  const planLabel = access?.subscription?.planName ?? (authenticated ? "ACTIVE" : "SIGNED OUT");
+
+  const updateAvailable =
+    desktopUpdate.update.updateStatus === "optional_update" ||
+    desktopUpdate.update.updateStatus === "required_update";
 
   useEffect(() => {
     if (!isDesktopBuild) return;
@@ -41,119 +54,110 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
     };
   }, []);
 
+  const desktopTone: HealthTone =
+    desktopStorageOk == null ? "warn" : desktopStorageOk ? "ok" : "error";
+  const storageTone: HealthTone =
+    desktopStorageOk == null ? "warn" : desktopStorageOk ? "ok" : "error";
+  const feedTone: HealthTone = desktopFeed.connected ? "ok" : "warn";
+
   return (
-    <div className="flex h-12 items-center justify-between bg-terminal-bg border-b border-terminal-border px-4 shrink-0 w-full z-10 relative">
-      <div className="flex items-center h-full">
-        <div className="flex items-center mr-8">
-          <img
-            src="/logo.png"
-            alt="GoodTrading logo"
-            className="h-6 w-auto object-contain mr-2 opacity-95 hover:opacity-100 transition-opacity"
-          />
-          <span className="font-bold text-white tracking-widest text-sm">GOODTRADING <span className="text-terminal-muted font-normal text-xs ml-1">v{appVersion}</span></span>
-        </div>
-        
-        <div className="flex space-x-1 h-full pt-1">
-          {tabs.map(tab => (
-            <button
-              key={tab}
-              onClick={() => onTabChange(tab)}
-              className={cn(
-                "px-4 text-xs font-medium tracking-wide h-full border-b-2 transition-colors",
-                activeTab === tab 
-                  ? "border-terminal-accent text-white" 
-                  : "border-transparent text-terminal-muted hover:text-white"
-              )}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex items-center space-x-4 text-xs font-mono">
-        <button
-          onClick={toggleLearnMode}
-          className={cn(
-            "flex items-center space-x-2 border px-2 py-1 rounded-sm transition-all",
-            learnMode
-              ? "border-terminal-accent bg-terminal-accent/15 text-terminal-accent"
-              : "border-terminal-border bg-terminal-panel text-terminal-muted hover:text-white"
-          )}
-          data-testid="button-learn-mode"
-        >
-          <span className="text-[10px] font-bold tracking-wider">LEARN</span>
-          <span className={cn(
-            "text-[9px] font-bold px-1 rounded-sm",
-            learnMode ? "bg-terminal-accent/30 text-white" : "bg-terminal-border text-white/40"
-          )}>
-            {learnMode ? "ON" : "OFF"}
-          </span>
-        </button>
-
-        <div className="flex items-center space-x-2 border border-terminal-border bg-terminal-panel px-2 py-1 rounded-sm">
-          <span className="text-terminal-muted">ASSET:</span>
-          <span className="text-white font-bold">BTC</span>
-        </div>
-        
-        <div className="flex items-center space-x-2 border border-terminal-border bg-terminal-panel px-2 py-1 rounded-sm">
-          <span className="text-terminal-muted">EXPIRY:</span>
-          <span className="text-white" data-testid="text-dominant-expiry">{expiryLabel}</span>
-        </div>
-        
-        <div className="flex items-center space-x-2 border border-terminal-border bg-terminal-panel px-2 py-1 rounded-sm">
-          <span className="text-terminal-muted">TF:</span>
-          <span className="text-white">15M</span>
-        </div>
-        
-        <div className="flex items-center space-x-2 border border-terminal-border bg-terminal-panel px-2 py-1 rounded-sm">
-          <span className="text-terminal-muted">FEED:</span>
-          <span className="text-white">DERIBIT</span>
-        </div>
-        
-        <div className="flex items-center space-x-2 ml-4">
-          <div className="w-2 h-2 rounded-full bg-terminal-positive animate-pulse"></div>
-          <span className="text-terminal-positive font-bold tracking-widest">LIVE</span>
-        </div>
-
-        {isDesktopBuild && (
-          <div className="hidden xl:flex items-center gap-2 border border-terminal-border bg-terminal-panel px-2 py-1 rounded-sm">
-            <span className="text-terminal-muted">DESKTOP:</span>
-            <span className={desktopStorageOk ? "text-terminal-positive" : "text-amber-400"}>
-              {desktopStorageOk ? "STORAGE OK" : "STORAGE CHECK"}
-            </span>
-            <span className={desktopFeed.connected ? "text-terminal-positive" : "text-amber-400"}>
-              {desktopFeed.connected ? "FEED LIVE" : "FEED WAIT"}
-            </span>
-            <span className="text-slate-400 max-w-[90px] truncate" title={planLabel}>
-              {planLabel}
-            </span>
+    <header className="shrink-0 w-full z-10 relative bg-terminal-bg border-b border-terminal-border">
+      <div className="flex h-10 items-center justify-between px-4">
+        <div className="flex items-center min-w-0">
+          <div className="flex items-center mr-6 shrink-0">
+            <img
+              src="/logo.png"
+              alt="GoodTrading logo"
+              className="h-5 w-auto object-contain mr-2 opacity-95"
+            />
+            <span className="font-bold text-white tracking-widest text-sm">GOODTRADING</span>
           </div>
-        )}
 
-        {!saasDisabled && user && (
-          <div className="flex items-center gap-3 ml-2 pl-3 border-l border-terminal-border">
-            <span className="text-terminal-muted max-w-[140px] truncate" title={user.email}>
-              {user.email}
-            </span>
-            {user.role === "admin" && (
-              <Link
-                href="/admin"
-                className="text-[10px] font-mono text-terminal-accent hover:underline"
+          <nav className="flex items-center gap-0.5 min-w-0 overflow-x-auto">
+            {tabs.map((tab) => (
+              <button
+                key={tab}
+                onClick={() => onTabChange(tab)}
+                className={cn(
+                  "px-3 py-2 text-[11px] font-medium tracking-wide border-b-2 transition-colors whitespace-nowrap",
+                  activeTab === tab
+                    ? "border-terminal-accent text-white"
+                    : "border-transparent text-terminal-muted hover:text-white",
+                )}
               >
-                ADMIN
-              </Link>
-            )}
+                {tab}
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {isDesktopApp() && updateAvailable && (
             <button
               type="button"
-              onClick={() => logout()}
-              className="text-[10px] font-mono border border-terminal-border px-2 py-0.5 rounded-sm text-terminal-muted hover:text-white"
+              onClick={() => desktopUpdate.showOptionalModal()}
+              className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wide text-amber-300 hover:bg-amber-500/20 transition-colors"
+              title={
+                desktopUpdate.update.latestVersion
+                  ? `Update v${desktopUpdate.update.latestVersion} available`
+                  : "Update available"
+              }
             >
-              LOG OUT
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+              Update
             </button>
-          </div>
-        )}
+          )}
+          <TopNavUserMenu />
+        </div>
       </div>
-    </div>
+
+      <div className="flex h-8 items-center justify-between px-4 border-t border-terminal-border/60 bg-terminal-panel/20 text-xs font-mono">
+        <div className="flex items-center gap-2 min-w-0 overflow-x-auto">
+          <ContextChip label="Asset" value="BTC" />
+          <ContextChip label="Expiry" value={expiryLabel} testId="text-dominant-expiry" />
+          <ContextChip label="TF" value="15M" />
+          <ContextChip label="Feed" value="DERIBIT" />
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 ml-3">
+          <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-terminal-positive">
+            <span className="h-1.5 w-1.5 rounded-full bg-terminal-positive animate-pulse" />
+            Live
+          </div>
+
+          {isDesktopBuild && (
+            <div className="hidden sm:flex items-center gap-1.5 pl-2 border-l border-terminal-border/60">
+              <CompactStatusPill
+                label="Desktop"
+                tone={desktopTone}
+                title={
+                  desktopStorageOk == null
+                    ? "Checking desktop runtime"
+                    : desktopStorageOk
+                      ? "Desktop runtime ready"
+                      : "Desktop runtime issue"
+                }
+              />
+              <CompactStatusPill
+                label="Storage"
+                tone={storageTone}
+                title={
+                  desktopStorageOk == null
+                    ? "Checking storage paths"
+                    : desktopStorageOk
+                      ? "Tauri storage OK"
+                      : "Storage check failed"
+                }
+              />
+              <CompactStatusPill
+                label="Feed"
+                tone={feedTone}
+                title={desktopFeed.connected ? "Feed connected" : "Waiting for feed"}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </header>
   );
 }

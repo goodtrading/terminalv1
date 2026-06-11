@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AIChatPanel } from "./AIChatPanel";
 import { SystemHealthPanel } from "./health/SystemHealthPanel";
 import { TerminalErrorBoundary } from "@/components/common/TerminalErrorBoundary";
+import { SYSTEM_HEALTH_PANEL_EVENT } from "@/lib/openSystemHealthPanel";
 
 type BottomTabId = "ai" | "logs" | "notes";
 
@@ -76,6 +77,17 @@ export function BottomPanel() {
     } catch {
       // Ignore storage errors (private mode etc.)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const openSystemPanel = () => {
+      setActiveTab("logs");
+      setCollapsed(false);
+      triggerChartResize();
+    };
+    window.addEventListener(SYSTEM_HEALTH_PANEL_EVENT, openSystemPanel);
+    return () => window.removeEventListener(SYSTEM_HEALTH_PANEL_EVENT, openSystemPanel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
