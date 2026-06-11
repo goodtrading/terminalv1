@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useTerminalState } from "@/hooks/useTerminalState";
-import { getDesktopStoragePaths, isDesktopBuild } from "@/lib/desktopStorage";
+import { getDesktopStoragePaths, isDesktopBuild, writeDesktopLog } from "@/lib/desktopStorage";
 import { useDesktopFeedDiagnostics } from "@/lib/desktopDiagnostics";
 import { useDesktopUpdateCheck } from "@/hooks/useDesktopUpdateCheck";
+import { isDesktopApp } from "@/lib/desktopRuntime";
 import { CompactStatusPill } from "./CompactStatusPill";
 import { TopNavUserMenu } from "./TopNavUserMenu";
 import type { HealthTone } from "./health/healthUi";
@@ -33,6 +34,8 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
   const desktopFeed = useDesktopFeedDiagnostics();
   const desktopUpdate = useDesktopUpdateCheck();
   const [desktopStorageOk, setDesktopStorageOk] = useState<boolean | null>(null);
+  const showDesktopLayoutControls = isDesktopApp();
+  const layoutControlsLoggedRef = useRef(false);
 
   const tabs = ["TERMINAL", "OPTIONS", "FLOWS", "VOLATILITY", "REPORTS"];
   const dominantExpiry = (terminalState?.positioning as any)?.dominantExpiry || null;
@@ -43,7 +46,7 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
     desktopUpdate.update.updateStatus === "required_update";
 
   useEffect(() => {
-    if (!isDesktopBuild) return;
+    if (!showDesktopLayoutControls) return;
     let cancelled = false;
     getDesktopStoragePaths()
       .then((paths) => {
@@ -55,7 +58,16 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showDesktopLayoutControls]);
+
+  useEffect(() => {
+    if (!showDesktopLayoutControls || layoutControlsLoggedRef.current) return;
+    layoutControlsLoggedRef.current = true;
+    void writeDesktopLog("desktop_layout_controls_rendered", {
+      isDesktopBuild,
+      panelsVisible,
+    });
+  }, [showDesktopLayoutControls, panelsVisible]);
 
   const storageTone: HealthTone =
     desktopStorageOk == null ? "warn" : desktopStorageOk ? "ok" : "error";
@@ -104,7 +116,7 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
 
       <div className="flex h-8 items-center justify-between px-4 border-t border-terminal-border/60 bg-terminal-panel/20 text-xs font-mono">
         <div className="flex items-center gap-2 min-w-0 overflow-x-auto">
-          {isDesktopBuild ? (
+          {showDesktopLayoutControls ? (
             <DesktopAssetSelector />
           ) : (
             <ContextChip label="Asset" value="BTC" />
@@ -112,7 +124,7 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
           <ContextChip label="Expiry" value={expiryLabel} testId="text-dominant-expiry" />
           <ContextChip label="TF" value="15M" />
           <ContextChip label="Feed" value="DERIBIT" />
-          {isDesktopBuild && onTogglePanels ? (
+          {showDesktopLayoutControls && onTogglePanels ? (
             <DesktopPanelVisibilityToggle
               panelsVisible={panelsVisible}
               onToggle={onTogglePanels}
@@ -126,7 +138,7 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
             Live
           </div>
 
-          {isDesktopBuild && (
+          {showDesktopLayoutControls && (
             <div className="hidden sm:flex items-center gap-1.5 pl-2 border-l border-terminal-border/60">
               <CompactStatusPill
                 label="Storage"

@@ -43,7 +43,7 @@ export function DesktopAssetSelector() {
           className="inline-flex items-center gap-1 rounded-sm border border-terminal-border/70 bg-terminal-panel/50 px-2 py-0.5 text-[10px] font-mono hover:border-terminal-accent/35 hover:bg-terminal-panel/80 transition-colors"
           data-testid="desktop-asset-selector"
         >
-          <span className="text-terminal-muted uppercase tracking-wide">Asset</span>
+          <span className="text-terminal-muted uppercase tracking-wide">Asset:</span>
           <span className="text-white font-semibold">{activeAsset.label}</span>
           <ChevronDown className="h-3 w-3 text-terminal-muted" />
         </button>
