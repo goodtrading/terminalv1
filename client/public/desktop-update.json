@@ -1,12 +1,13 @@
 {
-  "latestVersion": "0.1.6",
-  "minSupportedVersion": "0.1.5",
+  "latestVersion": "0.1.7",
+  "minSupportedVersion": "0.1.6",
   "mandatory": false,
-  "downloadUrl": "https://github.com/goodtrading/terminalv1/releases/download/v0.1.6/GoodTrading-Terminal-0.1.6-x64-setup.exe",
+  "downloadUrl": "https://github.com/goodtrading/terminalv1/releases/download/v0.1.7/GoodTrading-Terminal-0.1.7-x64-setup.exe",
   "releaseNotes": [
-    "Validación real del sistema de actualización desktop",
-    "La descarga de actualización abre GitHub desde la app v0.1.5",
-    "Confirmación final del updater desktop con Tauri Shell"
+    "Polish visual completo de la app desktop",
+    "Nuevo selector de activos preparado para próximos mercados",
+    "Nuevo modo Focus para ocultar paneles laterales e inferiores",
+    "Mejoras en My Account, diagnósticos y estados del feed"
   ],
-  "publishedAt": "2026-06-11T08:00:00.000Z"
+  "publishedAt": "2026-06-11T09:00:00.000Z"
 }
