@@ -2,7 +2,12 @@
   "latestVersion": "0.1.0",
   "minSupportedVersion": "0.1.0",
   "mandatory": false,
-  "downloadUrl": "",
-  "releaseNotes": [],
+  "downloadUrl": "https://github.com/goodtrading/terminalv1/releases/download/v0.1.0/GoodTrading-Terminal-0.1.0-x64-setup.exe",
+  "releaseNotes": [
+    "Primera versión desktop de GoodTrading Terminal",
+    "Login remoto contra Railway",
+    "Bookmap/Flows local con feed Binance",
+    "Storage, logs y diagnóstico local"
+  ],
   "publishedAt": "2026-06-11T00:00:00.000Z"
 }
