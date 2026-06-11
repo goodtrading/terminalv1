@@ -1,10 +1,12 @@
 import {
+  BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3,
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_HEATMAP_DEPTH_PASS_V2,
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
   BOOKMAP_RENDER_PATH_PROOF_DIAG,
   BOOKMAP_TEXTURE_CALIBRATION_V2,
   computeVisiblePriceRangePct,
+  DEPTH_V2_NEAR_PRICE_PCT,
   H_PERSIST_V2_SOLID_BASE_ALPHA_MUL,
   H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY,
   PALETTE_ALPHA_CLOSED_OLD_MUL,
@@ -18,6 +20,13 @@ import {
   TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP,
   TEX_CALIB_V2_WEAK_DEPTH_ALPHA_MUL,
   TEX_CALIB_V2_WEAK_TEXTURE_MIN_INTENSITY,
+  V3_INNER_CORE_MIN_INTENSITY,
+  V3_ORGANIC_EDGE_FADE_PCT,
+  V3_ORGANIC_MIN_INTENSITY,
+  V3_SOLID_BASE_REINFORCE_MUL,
+  V3_STRONG_BASE_ALPHA_CAP,
+  V3_WEAK_DEPTH_ALPHA_MUL,
+  V3_WEAK_TEXTURE_MIN_INTENSITY,
   WALL_IMPORTANT_BTC,
   WALL_MAJOR_BTC,
   WALL_STRUCTURAL_BTC,
@@ -61,6 +70,7 @@ import {
   buildBookmapVisualParityTruth,
   buildPassiveLiquidityAlphaContext,
   resolveEffectiveChunkOverlayAlpha,
+  getAggressiveHeatmapCalibrationV3PrepareStats,
   computeBookmapVisualWeight,
   computeViewportSizeStats,
   createEmptyBookmapL2BandContinuityStats,
@@ -130,6 +140,8 @@ import {
   resolveDepthPassNearPriceAlphaBoost,
   resolveOrganicWallBodyAlpha,
   resolveOrganicWallCoreIntensity,
+  resolveAggressiveOverlayScale,
+  qualifiesOrganicInnerCore,
 } from "@/lib/bookmapBandColors";
 import { getBookmapPerpOverlayFill } from "@/lib/bookmapPerpOverlayColors";
 import {
@@ -588,6 +600,14 @@ function resolveInternalOverlayRatioBounds(
   microVisualMode: boolean,
   regime: BookmapZoomRegime,
 ): { min: number; max: number } {
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+    if (microVisualMode) return { min: 0.24, max: 0.34 };
+    if (regime === "ultra_micro" || regime === "scalp") {
+      return { min: 0.18, max: 0.28 };
+    }
+    if (regime === "micro") return { min: 0.14, max: 0.24 };
+    return { min: 0.1, max: 0.16 };
+  }
   if (BOOKMAP_TEXTURE_CALIBRATION_V2) {
     if (microVisualMode) return { min: 0.2, max: 0.28 };
     if (regime === "ultra_micro" || regime === "scalp") {
@@ -611,6 +631,13 @@ type WallOrganicRenderDiagStats = {
   overlaySpanCount: number;
   baseAlphaMin: number;
   baseAlphaMax: number;
+  weakSpansDrawn: number;
+  mediumSpansDrawn: number;
+  strongSpansDrawn: number;
+  solidBaseAlphaSum: number;
+  solidBaseAlphaCount: number;
+  textureOverlayAlphaSum: number;
+  textureOverlayAlphaCount: number;
 };
 
 let lastWallOrganicRenderDiagStats: WallOrganicRenderDiagStats = {
@@ -623,7 +650,18 @@ let lastWallOrganicRenderDiagStats: WallOrganicRenderDiagStats = {
   overlaySpanCount: 0,
   baseAlphaMin: 0,
   baseAlphaMax: 0,
+  weakSpansDrawn: 0,
+  mediumSpansDrawn: 0,
+  strongSpansDrawn: 0,
+  solidBaseAlphaSum: 0,
+  solidBaseAlphaCount: 0,
+  textureOverlayAlphaSum: 0,
+  textureOverlayAlphaCount: 0,
 };
+
+export function getAggressiveHeatmapCalibrationV3RenderStats(): WallOrganicRenderDiagStats {
+  return lastWallOrganicRenderDiagStats;
+}
 
 export function getWallOrganicRenderDiagStats(): WallOrganicRenderDiagStats {
   return lastWallOrganicRenderDiagStats;
@@ -696,10 +734,50 @@ function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
   const y = HEATMAP_PAD.top + 14;
   ctx.strokeText(label, x, y);
   ctx.fillText(label, x, y);
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+    ctx.fillStyle = "rgba(251, 146, 60, 0.95)";
+    ctx.strokeText("V3 AGGRESSIVE ACTIVE", x, y + 14);
+    ctx.fillText("V3 AGGRESSIVE ACTIVE", x, y + 14);
+  }
   ctx.font = "9px ui-monospace, monospace";
   ctx.fillStyle = "rgba(148, 163, 184, 0.85)";
-  ctx.fillText(RENDERER_FILE_PATH, x, y + 12);
+  ctx.fillText(RENDERER_FILE_PATH, x, y + (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 28 : 12));
   ctx.restore();
+}
+
+let lastAggressiveV3DiagLogMs = 0;
+
+function emitAggressiveHeatmapCalibrationV3Diag(
+  spanAudit: SpanRenderContinuityAudit | undefined,
+  organicDiag: WallOrganicRenderDiagStats,
+  drawCapHit: boolean,
+  skippedWeakFar: number,
+): void {
+  if (!import.meta.env.DEV || !BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) return;
+  const now = Date.now();
+  if (now - lastAggressiveV3DiagLogMs < 2_000) return;
+  lastAggressiveV3DiagLogMs = now;
+  const solidBaseAlphaAvg =
+    organicDiag.solidBaseAlphaCount > 0
+      ? organicDiag.solidBaseAlphaSum / organicDiag.solidBaseAlphaCount
+      : 0;
+  const textureOverlayAlphaAvg =
+    organicDiag.textureOverlayAlphaCount > 0
+      ? organicDiag.textureOverlayAlphaSum / organicDiag.textureOverlayAlphaCount
+      : 0;
+  console.debug("[BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3_DIAG]", {
+    visibleSpans: spanAudit?.renderedSpanCount ?? organicDiag.organicSpanCount,
+    weakSpansDrawn: organicDiag.weakSpansDrawn,
+    mediumSpansDrawn: organicDiag.mediumSpansDrawn,
+    strongSpansDrawn: organicDiag.strongSpansDrawn,
+    organicSpans: organicDiag.organicSpanCount,
+    solidBaseAlphaAvg: Number(solidBaseAlphaAvg.toFixed(3)),
+    textureOverlayAlphaAvg: Number(textureOverlayAlphaAvg.toFixed(3)),
+    nearPriceBoosted: organicDiag.nearPriceBoostCount,
+    drawCap: drawCapHit,
+    skippedWeakFar,
+    timestamp: now,
+  });
 }
 
 function fillSpanRgba(
@@ -723,7 +801,14 @@ type OrganicSpanDrawParams = {
   runLength: number;
   sizeBtc: number;
   reinforcedBase: boolean;
+  nearPrice: boolean;
 };
+
+function recordSpanIntensityTier(diag: WallOrganicRenderDiagStats, vi: number): void {
+  if (vi >= 0.52) diag.strongSpansDrawn += 1;
+  else if (vi >= 0.22) diag.mediumSpansDrawn += 1;
+  else diag.weakSpansDrawn += 1;
+}
 
 function drawOrganicSpanBody(
   ctx: CanvasRenderingContext2D,
@@ -734,7 +819,8 @@ function drawOrganicSpanBody(
   params: OrganicSpanDrawParams,
   diag: WallOrganicRenderDiagStats,
 ): void {
-  const { rgb, bodyAlpha, vi, runLength, sizeBtc, reinforcedBase } = params;
+  const { rgb, bodyAlpha, vi, runLength, sizeBtc, reinforcedBase, nearPrice } =
+    params;
   const isStrongWall =
     vi >= H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY &&
     (sizeBtc >= WALL_IMPORTANT_BTC || runLength >= 3);
@@ -752,10 +838,12 @@ function drawOrganicSpanBody(
         bodyAlpha * H_PERSIST_V2_SOLID_BASE_ALPHA_MUL,
       );
     }
+    recordSpanIntensityTier(diag, vi);
     return;
   }
 
   diag.organicSpanCount += 1;
+  recordSpanIntensityTier(diag, vi);
   const modAlpha = resolveOrganicWallBodyAlpha(bodyAlpha, vi, runLength, sizeBtc);
   if (modAlpha < diag.baseAlphaMin || diag.baseAlphaMin === 0) {
     diag.baseAlphaMin = modAlpha;
@@ -764,10 +852,18 @@ function drawOrganicSpanBody(
     diag.baseAlphaMax = modAlpha;
   }
 
+  const weakMinI = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+    ? V3_WEAK_TEXTURE_MIN_INTENSITY
+    : TEX_CALIB_V2_WEAK_TEXTURE_MIN_INTENSITY;
+  const weakDepthMul = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+    ? V3_WEAK_DEPTH_ALPHA_MUL
+    : TEX_CALIB_V2_WEAK_DEPTH_ALPHA_MUL;
+  const weakDepthMaxVi = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 0.45 : 0.3;
+
   if (
     BOOKMAP_HEATMAP_DEPTH_PASS_V2 &&
-    vi < 0.3 &&
-    vi >= TEX_CALIB_V2_WEAK_TEXTURE_MIN_INTENSITY
+    vi < weakDepthMaxVi &&
+    vi >= weakMinI
   ) {
     fillSpanRgba(
       ctx,
@@ -776,25 +872,41 @@ function drawOrganicSpanBody(
       yTop,
       height,
       rgb,
-      modAlpha * TEX_CALIB_V2_WEAK_DEPTH_ALPHA_MUL,
+      modAlpha * weakDepthMul,
     );
     diag.weakDepthCount += 1;
   }
 
-  const edgePct = TEX_CALIB_V2_ORGANIC_EDGE_FADE_PCT;
-  const edgeW = Math.min(spanW * 0.45, Math.max(1, spanW * edgePct));
-  const centerW = Math.max(1, spanW - edgeW * 2);
-  const centerAlpha =
-    reinforcedBase && isStrongWall
-      ? Math.min(
-          modAlpha * H_PERSIST_V2_SOLID_BASE_ALPHA_MUL * 0.92,
-          TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP,
-        )
-      : modAlpha;
+  const edgePct = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+    ? V3_ORGANIC_EDGE_FADE_PCT
+    : TEX_CALIB_V2_ORGANIC_EDGE_FADE_PCT;
+  const useOrganicEdge = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+    ? vi >= V3_ORGANIC_MIN_INTENSITY && spanW >= 4
+    : isStrongWall && spanW >= 6;
 
-  if (isStrongWall && spanW >= 6) {
+  let centerAlpha = modAlpha;
+  if (reinforcedBase && isStrongWall) {
+    const reinforceMul = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+      ? H_PERSIST_V2_SOLID_BASE_ALPHA_MUL * V3_SOLID_BASE_REINFORCE_MUL
+      : H_PERSIST_V2_SOLID_BASE_ALPHA_MUL * 0.92;
+    const cap = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+      ? V3_STRONG_BASE_ALPHA_CAP
+      : TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP;
+    centerAlpha = Math.min(modAlpha * reinforceMul, cap);
+  }
+
+  let edgeAlphaMul = 0.38;
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+    if (vi >= 0.65) edgeAlphaMul = 0.3;
+    else if (vi >= 0.45) edgeAlphaMul = 0.34;
+    else edgeAlphaMul = 0.26;
+  }
+
+  if (useOrganicEdge) {
     diag.edgeFadeCount += 1;
-    fillSpanRgba(ctx, x0, edgeW, yTop, height, rgb, centerAlpha * 0.38);
+    const edgeW = Math.min(spanW * 0.48, Math.max(1, spanW * edgePct));
+    const centerW = Math.max(1, spanW - edgeW * 2);
+    fillSpanRgba(ctx, x0, edgeW, yTop, height, rgb, centerAlpha * edgeAlphaMul);
     fillSpanRgba(ctx, x0 + edgeW, centerW, yTop, height, rgb, centerAlpha);
     fillSpanRgba(
       ctx,
@@ -803,18 +915,50 @@ function drawOrganicSpanBody(
       yTop,
       height,
       rgb,
-      centerAlpha * 0.38,
+      centerAlpha * edgeAlphaMul,
     );
+    diag.solidBaseAlphaSum += centerAlpha;
+    diag.solidBaseAlphaCount += 1;
   } else {
     fillSpanRgba(ctx, x0, spanW, yTop, height, rgb, centerAlpha);
+    diag.solidBaseAlphaSum += centerAlpha;
+    diag.solidBaseAlphaCount += 1;
   }
 
-  if (isStrongWall && vi >= 0.58 && spanW >= 8) {
-    const coreW = Math.max(2, spanW * TEX_CALIB_V2_INNER_CORE_WIDTH_PCT);
+  if (
+    BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 &&
+    vi >= 0.45 &&
+    vi < 0.65 &&
+    spanW >= 6
+  ) {
+    const softCoreW = Math.max(2, spanW * 0.38);
+    const softCoreX = x0 + (spanW - softCoreW) / 2;
+    const softRgb = intensityToPassiveLiquidityRgb(Math.min(0.98, vi + 0.05));
+    fillSpanRgba(
+      ctx,
+      softCoreX,
+      softCoreW,
+      yTop,
+      height,
+      softRgb,
+      Math.min(0.72, centerAlpha * 0.44),
+    );
+  }
+
+  const coreMinSpanW = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 6 : 8;
+  if (
+    qualifiesOrganicInnerCore(vi, runLength, sizeBtc, nearPrice) &&
+    spanW >= coreMinSpanW
+  ) {
+    const coreWidthPct = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+      ? 0.48
+      : TEX_CALIB_V2_INNER_CORE_WIDTH_PCT;
+    const coreW = Math.max(2, spanW * coreWidthPct);
     const coreX = x0 + (spanW - coreW) / 2;
     const coreRgb = intensityToPassiveLiquidityRgb(
       resolveOrganicWallCoreIntensity(vi),
     );
+    const coreAlphaMul = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 1.32 : TEX_CALIB_V2_INNER_CORE_ALPHA_MUL;
     fillSpanRgba(
       ctx,
       coreX,
@@ -822,7 +966,7 @@ function drawOrganicSpanBody(
       yTop,
       height,
       coreRgb,
-      Math.min(1, centerAlpha * TEX_CALIB_V2_INNER_CORE_ALPHA_MUL),
+      Math.min(0.82, centerAlpha * coreAlphaMul),
     );
     diag.innerCoreCount += 1;
   }
@@ -1271,6 +1415,13 @@ function renderHeatmapTextureCells(
     overlaySpanCount: 0,
     baseAlphaMin: 0,
     baseAlphaMax: 0,
+    weakSpansDrawn: 0,
+    mediumSpansDrawn: 0,
+    strongSpansDrawn: 0,
+    solidBaseAlphaSum: 0,
+    solidBaseAlphaCount: 0,
+    textureOverlayAlphaSum: 0,
+    textureOverlayAlphaCount: 0,
   };
   const organicDiag = lastWallOrganicRenderDiagStats;
 
@@ -1352,10 +1503,13 @@ function renderHeatmapTextureCells(
       weight.pctFromMid,
       renderCtx.regime,
       rep.stableSizeBtc,
+      vi,
+      cell.continuityRunLength ?? 1,
     );
+    const bodyAlphaCap = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 0.82 : 0.72;
     const adjustedBodyAlpha =
       depthAlphaBoost > 0
-        ? Math.min(0.72, bodyAlpha * (1 + depthAlphaBoost))
+        ? Math.min(bodyAlphaCap, bodyAlpha * (1 + depthAlphaBoost))
         : bodyAlpha;
     if (depthAlphaBoost > 0) organicDiag.nearPriceBoostCount += 1;
     const globalMul =
@@ -1418,6 +1572,7 @@ function renderHeatmapTextureCells(
       }
 
       const runLength = cell.continuityRunLength ?? 1;
+      const nearPrice = weight.pctFromMid <= DEPTH_V2_NEAR_PRICE_PCT;
       const reinforcedBase =
         BOOKMAP_HORIZONTAL_PERSISTENCE_V2 &&
         vi >= H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY &&
@@ -1439,6 +1594,7 @@ function renderHeatmapTextureCells(
           runLength,
           sizeBtc: rep.stableSizeBtc,
           reinforcedBase,
+          nearPrice,
         },
         organicDiag,
       );
@@ -1574,14 +1730,17 @@ function renderHeatmapTextureCells(
               ? effectiveChunkOverlayAlpha /
                   BOOKMAP_TEXTURE_INTERNAL_CHUNK_OVERLAY_ALPHA
               : 1);
-          const strongWallOverlayScale =
+          const overlayScale = resolveAggressiveOverlayScale(vi);
+          const legacyStrongWallScale =
+            !BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 &&
             BOOKMAP_TEXTURE_CALIBRATION_V2 &&
             vi >= H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY
               ? 0.72
               : 1;
-          spanOverlayAlphaSum += overlayAlpha;
-          if (overlayAlpha > spanOverlayAlphaMax) {
-            spanOverlayAlphaMax = overlayAlpha;
+          const finalOverlayAlpha = overlayAlpha * overlayScale * legacyStrongWallScale;
+          spanOverlayAlphaSum += finalOverlayAlpha;
+          if (finalOverlayAlpha > spanOverlayAlphaMax) {
+            spanOverlayAlphaMax = finalOverlayAlpha;
           }
 
           chunkWidthSum += opW;
@@ -1590,11 +1749,13 @@ function renderHeatmapTextureCells(
             spanThinOps += 1;
           }
 
-          overlayAlphaSum += overlayAlpha;
+          overlayAlphaSum += finalOverlayAlpha;
           overlayAlphaCount += 1;
+          organicDiag.textureOverlayAlphaSum += finalOverlayAlpha;
+          organicDiag.textureOverlayAlphaCount += 1;
 
           const [r, g, b] = intensityToPassiveLiquidityRgb(overlayVi);
-          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${overlayAlpha * strongWallOverlayScale})`;
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${finalOverlayAlpha})`;
           ctx.fillRect(op.x0, yTop, opW, height);
         }
 
@@ -3511,6 +3672,12 @@ export function paintBookmapEngineHeatmapFrame(
   emitRenderPathProofDiag(
     primaryTextureDraw?.spanRenderContinuityAudit,
     lastWallOrganicRenderDiagStats,
+  );
+  emitAggressiveHeatmapCalibrationV3Diag(
+    primaryTextureDraw?.spanRenderContinuityAudit,
+    lastWallOrganicRenderDiagStats,
+    params.textureRenderStatsOut?.textureDrawCapHit ?? false,
+    getAggressiveHeatmapCalibrationV3PrepareStats().skippedWeakFar,
   );
   drawRenderPathProofWatermark(ctx);
 }

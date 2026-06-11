@@ -6,6 +6,7 @@ import {
   PALETTE_ALPHA_ACTIVE_WEAK_MIN,
   PALETTE_ALPHA_CLOSED_OLD_MUL,
   PALETTE_ALPHA_CLOSED_RECENT_MUL,
+  BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3,
   BOOKMAP_HEATMAP_DEPTH_PASS_V2,
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
   BOOKMAP_TEXTURE_CALIBRATION_V2,
@@ -14,6 +15,14 @@ import {
   H_PERSIST_V2_WEAK_HISTORICAL_ALPHA_MUL,
   TEX_CALIB_V2_LONG_WEAK_BASE_ALPHA_MUL,
   TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP,
+  V3_INNER_CORE_MIN_INTENSITY,
+  V3_INNER_CORE_MIN_RUN,
+  V3_INNER_CORE_MIN_SIZE_BTC,
+  V3_NEAR_PRICE_ALPHA_BOOST,
+  V3_NEAR_PRICE_MIN_INTENSITY,
+  V3_NEAR_PRICE_MIN_SIZE_OR_RUN,
+  V3_STRONG_BASE_ALPHA_CAP,
+  V3_SOLID_BASE_ALPHA_MUL,
   WALL_IMPORTANT_BTC,
   type BookmapZoomRegime,
 } from "@/lib/bookmapEngineConfig";
@@ -89,7 +98,24 @@ const PASSIVE_PALETTE_STOPS_CALIB_V2: readonly (readonly [number, number, number
   [255, 218, 172],
 ];
 
+/** B.2.3 — brighter weak blues, earlier yellow/orange on persistent liquidity. */
+const PASSIVE_PALETTE_STOPS_V3: readonly (readonly [number, number, number])[] = [
+  [4, 10, 22],
+  [8, 24, 46],
+  [14, 48, 78],
+  [20, 86, 124],
+  [40, 138, 184],
+  [148, 178, 38],
+  [232, 138, 22],
+  [208, 68, 30],
+  [186, 26, 26],
+  [255, 206, 160],
+];
+
 function activePassivePaletteStops(): readonly (readonly [number, number, number])[] {
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+    return PASSIVE_PALETTE_STOPS_V3;
+  }
   if (BOOKMAP_TEXTURE_CALIBRATION_V2) {
     return PASSIVE_PALETTE_STOPS_CALIB_V2;
   }
@@ -255,7 +281,17 @@ export function alphaForPassiveLiquidity(
   const t = clamp01(ctx.intensity);
   let body: number;
 
-  if (t < 0.22) {
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+    if (t < 0.22) {
+      body = 0.22 + (t / 0.22) * (0.36 - 0.22);
+    } else if (t < 0.52) {
+      body = 0.34 + ((t - 0.22) / 0.3) * (0.52 - 0.34);
+    } else if (t < 0.78) {
+      body = 0.55 + ((t - 0.52) / 0.26) * (0.76 - 0.55);
+    } else {
+      body = Math.min(0.82, 0.68 + ((t - 0.78) / 0.22) * 0.14);
+    }
+  } else if (t < 0.22) {
     body =
       PALETTE_ALPHA_ACTIVE_WEAK_MIN + (t / 0.22) * (0.36 - PALETTE_ALPHA_ACTIVE_WEAK_MIN);
     if (BOOKMAP_TEXTURE_CALIBRATION_V2) {
@@ -313,7 +349,10 @@ export function alphaForPassiveLiquidity(
     body *= 0.55 + ctx.farDistanceFade * 0.45;
   }
 
-  return Math.min(PALETTE_ALPHA_ACTIVE_EXTREME_MAX, Math.max(0.14, body));
+  return Math.min(
+    BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 0.82 : PALETTE_ALPHA_ACTIVE_EXTREME_MAX,
+    Math.max(0.14, body),
+  );
 }
 
 export function getPassiveLiquidityFill(
@@ -449,16 +488,45 @@ export function resolveDepthPassNearPriceAlphaBoost(
   pctFromMid: number,
   regime: BookmapZoomRegime,
   sizeBtc: number,
+  intensity = 0,
+  runLength = 1,
 ): number {
   if (!BOOKMAP_HEATMAP_DEPTH_PASS_V2) return 0;
   if (sizeBtc >= WALL_IMPORTANT_BTC) return 0;
   const nearPct = DEPTH_V2_NEAR_PRICE_PCT;
   if (pctFromMid > nearPct) return 0;
+
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+    if (
+      intensity < V3_NEAR_PRICE_MIN_INTENSITY &&
+      sizeBtc < V3_NEAR_PRICE_MIN_SIZE_OR_RUN &&
+      runLength < 2
+    ) {
+      return 0;
+    }
+    const proximity = 1 - pctFromMid / nearPct;
+    let boost = V3_NEAR_PRICE_ALPHA_BOOST * proximity;
+    if (runLength >= 2) boost *= 1 + Math.min(0.35, (runLength - 1) * 0.08);
+    if (regime === "macro") boost *= 0.65;
+    else if (regime === "scalp" || regime === "ultra_micro") boost *= 1.18;
+    return Math.max(0, Math.min(0.32, boost));
+  }
+
   const proximity = 1 - pctFromMid / nearPct;
   let boost = DEPTH_V2_NEAR_PRICE_ALPHA_BOOST * proximity;
   if (regime === "macro") boost *= 0.55;
   else if (regime === "scalp" || regime === "ultra_micro") boost *= 1.12;
   return Math.max(0, Math.min(0.28, boost));
+}
+
+/** B.2.3 — tiered granular overlay scale by span intensity. */
+export function resolveAggressiveOverlayScale(intensity: number): number {
+  if (!BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) return 1;
+  const t = clamp01(intensity);
+  if (t >= 0.65) return 2.55;
+  if (t >= 0.45) return 1.75;
+  if (t >= 0.22) return 1.15;
+  return 0.95;
 }
 
 /** B.2.1 — cap and modulate strong-wall body alpha for organic rendering. */
@@ -471,19 +539,60 @@ export function resolveOrganicWallBodyAlpha(
   if (!BOOKMAP_TEXTURE_CALIBRATION_V2) return bodyAlpha;
   const t = clamp01(intensity);
   let alpha = bodyAlpha;
-  if (
-    t >= 0.62 &&
-    (sizeBtc >= WALL_IMPORTANT_BTC || runLength >= 4)
-  ) {
-    alpha = Math.min(TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP, alpha);
+  const strongCap = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+    ? V3_STRONG_BASE_ALPHA_CAP
+    : TEX_CALIB_V2_STRONG_BASE_ALPHA_CAP;
+  const strongThreshold = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 0.52 : 0.62;
+  const strongSize = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+    ? V3_INNER_CORE_MIN_SIZE_BTC
+    : WALL_IMPORTANT_BTC;
+  const strongRun = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+    ? V3_INNER_CORE_MIN_RUN
+    : 4;
+
+  if (t >= strongThreshold && (sizeBtc >= strongSize || runLength >= strongRun)) {
+    alpha = Math.min(strongCap, alpha);
   } else if (runLength >= 5 && t < 0.48) {
     alpha *= TEX_CALIB_V2_LONG_WEAK_BASE_ALPHA_MUL;
   }
+
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+    alpha *= V3_SOLID_BASE_ALPHA_MUL;
+  }
+
   return Math.max(0.1, alpha);
 }
 
 /** B.2.1 — inner heat-core intensity bump for dominant walls. */
 export function resolveOrganicWallCoreIntensity(intensity: number): number {
   const t = clamp01(intensity);
-  return Math.min(0.98, t + 0.06 + t * 0.04);
+  const bump = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 0.1 : 0.06;
+  return Math.min(0.98, t + bump + t * 0.05);
+}
+
+/** B.2.3 — whether span qualifies for inner heat-core rendering. */
+export function qualifiesOrganicInnerCore(
+  intensity: number,
+  runLength: number,
+  sizeBtc: number,
+  nearPrice: boolean,
+): boolean {
+  if (!BOOKMAP_TEXTURE_CALIBRATION_V2) return false;
+  const t = clamp01(intensity);
+  const minI = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+    ? V3_INNER_CORE_MIN_INTENSITY
+    : 0.58;
+  if (t < minI) return false;
+
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+    if (sizeBtc >= V3_INNER_CORE_MIN_SIZE_BTC && runLength >= V3_INNER_CORE_MIN_RUN) {
+      return true;
+    }
+    if (nearPrice && runLength >= 3 && sizeBtc >= V3_NEAR_PRICE_MIN_SIZE_OR_RUN && t >= 0.52) {
+      return true;
+    }
+    return false;
+  }
+
+  return sizeBtc >= WALL_IMPORTANT_BTC || runLength >= 3;
 }

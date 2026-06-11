@@ -153,3 +153,46 @@ export const DEPTH_V2_WEAK_INTENSITY_FLOOR_MICRO = 0.006;
  * Confirms FLOWS uses the active engine renderer (not stale/duplicate files).
  */
 export const BOOKMAP_RENDER_PATH_PROOF_DIAG = true;
+
+/**
+ * B.2.3 — Aggressive heatmap visual calibration: visible texture, organic walls,
+ * reduced flat solid base. Builds on B.2 / B.2.1 flags.
+ */
+export const BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 = true;
+
+/** Solid base body alpha scale — reduces flat horizontal bars (~22% reduction). */
+export const V3_SOLID_BASE_ALPHA_MUL = 0.76;
+/** Reinforced strong-wall base alpha scale (was 1.18× via H_PERSIST). */
+export const V3_SOLID_BASE_REINFORCE_MUL = 0.82;
+/** Weak historical depth underlay alpha scale. */
+export const V3_WEAK_DEPTH_ALPHA_MUL = 0.88;
+/** Minimum intensity for weak depth underlay pass. */
+export const V3_WEAK_TEXTURE_MIN_INTENSITY = 0.06;
+/** Organic edge fade applies from this intensity upward. */
+export const V3_ORGANIC_MIN_INTENSITY = 0.22;
+/** Temporal edge fade width fraction. */
+export const V3_ORGANIC_EDGE_FADE_PCT = 0.14;
+/** Inner heat-core minimum intensity. */
+export const V3_INNER_CORE_MIN_INTENSITY = 0.45;
+/** Inner heat-core minimum size (BTC) with runLength >= V3_INNER_CORE_MIN_RUN. */
+export const V3_INNER_CORE_MIN_SIZE_BTC = 20;
+/** Inner heat-core minimum continuity run length. */
+export const V3_INNER_CORE_MIN_RUN = 2;
+/** Dominant wall body alpha cap. */
+export const V3_STRONG_BASE_ALPHA_CAP = 0.82;
+/** Granular overlay alpha targets by tier (weak / medium / strong). */
+export const V3_CHUNK_OVERLAY_WEAK = 0.12;
+export const V3_CHUNK_OVERLAY_MEDIUM = 0.2;
+export const V3_CHUNK_OVERLAY_STRONG = 0.28;
+/** Near-price renderer alpha boost (multiplier component). */
+export const V3_NEAR_PRICE_ALPHA_BOOST = 0.2;
+/** Near-price prepare intensity boost (additive, capped). */
+export const V3_NEAR_PRICE_VISIBILITY_BOOST = 0.14;
+/** Max intensity after near-price visibility boost. */
+export const V3_MAX_VISIBILITY_INTENSITY = 0.42;
+/** Fraction of texture draw cap reserved for weak/medium persistent cells. */
+export const V3_WEAK_MEDIUM_CAP_RESERVE_PCT = 0.28;
+/** Minimum vi for near-price alpha boost (skip noise). */
+export const V3_NEAR_PRICE_MIN_INTENSITY = 0.12;
+/** Minimum size (BTC) OR runLength for near-price boost when vi is low. */
+export const V3_NEAR_PRICE_MIN_SIZE_OR_RUN = 5;

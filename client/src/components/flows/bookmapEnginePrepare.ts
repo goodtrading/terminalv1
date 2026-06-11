@@ -1,6 +1,7 @@
 import {
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_ENGINE_MAX_RENDER_CELLS,
+  BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3,
   BOOKMAP_HEATMAP_DEPTH_PASS_V2,
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
   BOOKMAP_TEXTURE_CALIBRATION_V2,
@@ -16,6 +17,10 @@ import {
   H_PERSIST_V2_PRICE_BRIDGE_USD,
   H_PERSIST_V2_CHUNK_OVERLAY_ALPHA,
   TEX_CALIB_V2_CHUNK_OVERLAY_ALPHA,
+  V3_CHUNK_OVERLAY_MEDIUM,
+  V3_MAX_VISIBILITY_INTENSITY,
+  V3_NEAR_PRICE_VISIBILITY_BOOST,
+  V3_WEAK_MEDIUM_CAP_RESERVE_PCT,
   type BookmapZoomRegime,
   computeVisiblePriceRangePct,
   L2_MATERIAL_SIZE_CHANGE_BTC,
@@ -633,6 +638,106 @@ function textureCellPriorityScore(
   );
 }
 
+function textureCellCapTier(
+  cell: PreparedEngineTextureCell,
+  midPrice: number | null | undefined,
+): "strong" | "medium" | "weak" {
+  const vi = cell.intensity ?? 0;
+  const run = cell.continuityRunLength ?? 1;
+  if (vi >= 0.52 || cell.maxSizeInBucket >= WALL_IMPORTANT_BTC) return "strong";
+  if (vi >= 0.22 || run >= 2) return "medium";
+  if (midPrice != null && midPrice > 0) {
+    const pct = Math.abs(cell.price - midPrice) / midPrice;
+    if (pct <= DEPTH_V2_NEAR_PRICE_PCT / 100 && run >= 2) return "medium";
+  }
+  return "weak";
+}
+
+function prioritizeAndCapTextureCellsV3(
+  cells: PreparedEngineTextureCell[],
+  midPrice: number | null | undefined,
+  timeMax: number,
+  maxCells: number,
+  visibleTimeMin?: number,
+  visibleTimeMax?: number,
+): { cells: PreparedEngineTextureCell[]; capHit: boolean; skippedWeakFar: number } {
+  const reserveCount = Math.max(
+    64,
+    Math.floor(maxCells * V3_WEAK_MEDIUM_CAP_RESERVE_PCT),
+  );
+  const strongBudget = Math.max(1, maxCells - reserveCount);
+  const scored = cells.map((cell) => ({
+    cell,
+    score: textureCellPriorityScore(
+      cell,
+      midPrice,
+      timeMax,
+      visibleTimeMin,
+      visibleTimeMax,
+    ),
+    tier: textureCellCapTier(cell, midPrice),
+  }));
+
+  const strongRows = scored
+    .filter((row) => row.tier === "strong")
+    .sort((a, b) => b.score - a.score);
+  const mediumRows = scored
+    .filter((row) => row.tier === "medium")
+    .sort((a, b) => b.score - a.score);
+  const weakRows = scored
+    .filter((row) => row.tier === "weak")
+    .sort((a, b) => b.score - a.score);
+
+  const picked: PreparedEngineTextureCell[] = [];
+  const pickedKeys = new Set<string>();
+
+  const pushRow = (row: (typeof scored)[number]) => {
+    const key = `${row.cell.side}:${row.cell.price}:${row.cell.timeBucket}`;
+    if (pickedKeys.has(key)) return;
+    pickedKeys.add(key);
+    picked.push(row.cell);
+  };
+
+  for (const row of strongRows) {
+    if (picked.length >= strongBudget) break;
+    pushRow(row);
+  }
+
+  const reserveCandidates = [...mediumRows, ...weakRows].sort(
+    (a, b) => b.score - a.score,
+  );
+  let reserveFilled = 0;
+  for (const row of reserveCandidates) {
+    if (reserveFilled >= reserveCount || picked.length >= maxCells) break;
+    const before = picked.length;
+    pushRow(row);
+    if (picked.length > before) reserveFilled += 1;
+  }
+
+  for (const row of strongRows) {
+    if (picked.length >= maxCells) break;
+    pushRow(row);
+  }
+
+  const skippedWeakFar = weakRows.filter(
+    (row) => !pickedKeys.has(`${row.cell.side}:${row.cell.price}:${row.cell.timeBucket}`),
+  ).length;
+
+  return { cells: picked, capHit: true, skippedWeakFar };
+}
+
+let lastAggressiveV3PrepareStats = {
+  capHit: false,
+  skippedWeakFar: 0,
+  reserveFilled: 0,
+  inputCellCount: 0,
+  outputCellCount: 0,
+};
+
+export function getAggressiveHeatmapCalibrationV3PrepareStats() {
+  return lastAggressiveV3PrepareStats;
+}
+
 function prioritizeAndCapTextureCells(
   cells: PreparedEngineTextureCell[],
   midPrice: number | null | undefined,
@@ -642,7 +747,32 @@ function prioritizeAndCapTextureCells(
   visibleTimeMax?: number,
 ): { cells: PreparedEngineTextureCell[]; capHit: boolean } {
   if (cells.length <= maxCells) {
+    lastAggressiveV3PrepareStats = {
+      capHit: false,
+      skippedWeakFar: 0,
+      reserveFilled: 0,
+      inputCellCount: cells.length,
+      outputCellCount: cells.length,
+    };
     return { cells, capHit: false };
+  }
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+    const v3 = prioritizeAndCapTextureCellsV3(
+      cells,
+      midPrice,
+      timeMax,
+      maxCells,
+      visibleTimeMin,
+      visibleTimeMax,
+    );
+    lastAggressiveV3PrepareStats = {
+      capHit: true,
+      skippedWeakFar: v3.skippedWeakFar,
+      reserveFilled: Math.floor(maxCells * V3_WEAK_MEDIUM_CAP_RESERVE_PCT),
+      inputCellCount: cells.length,
+      outputCellCount: v3.cells.length,
+    };
+    return { cells: v3.cells, capHit: true };
   }
   const ranked = [...cells]
     .map((cell) => ({
@@ -998,6 +1128,9 @@ export function resolveEffectiveTextureMergeGapMs(): number {
 }
 
 export function resolveEffectiveChunkOverlayAlpha(): number {
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+    return V3_CHUNK_OVERLAY_MEDIUM;
+  }
   if (BOOKMAP_TEXTURE_CALIBRATION_V2) {
     return TEX_CALIB_V2_CHUNK_OVERLAY_ALPHA;
   }
@@ -1053,22 +1186,46 @@ function applyHeatmapDepthPassV2(
 
     if (intensity < 0.28) weakTextureCount += 1;
 
+    if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) {
+      const runLen = cell.continuityRunLength ?? 1;
+      const persistenceMs = cell.persistenceMs ?? 0;
+      if (runLen >= 2 && intensity < 0.52) {
+        intensity = Math.min(
+          V3_MAX_VISIBILITY_INTENSITY,
+          intensity + 0.035 * Math.min(runLen, 6),
+        );
+      }
+      if (persistenceMs >= BOOKMAP_TEXTURE_SAMPLER_MS * 4 && intensity < 0.48) {
+        intensity = Math.min(
+          V3_MAX_VISIBILITY_INTENSITY,
+          intensity + 0.04,
+        );
+      }
+    }
+
     if (midPrice != null && midPrice > 0) {
       const pctFromMid = Math.abs(cell.price - midPrice) / midPrice;
       const nearPrice = pctFromMid <= nearPriceBand;
       if (nearPrice) {
         nearPriceCount += 1;
+        const runLen = cell.continuityRunLength ?? 1;
+        const visibilityBoost = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+          ? V3_NEAR_PRICE_VISIBILITY_BOOST
+          : DEPTH_V2_NEAR_PRICE_VISIBILITY_BOOST;
+        const maxVis = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+          ? V3_MAX_VISIBILITY_INTENSITY
+          : DEPTH_V2_MAX_VISIBILITY_INTENSITY;
         if (cell.maxSizeInBucket < WALL_IMPORTANT_BTC) {
           const proximity = 1 - pctFromMid / nearPriceBand;
-          const boost = DEPTH_V2_NEAR_PRICE_VISIBILITY_BOOST * proximity;
-          intensity = Math.min(
-            DEPTH_V2_MAX_VISIBILITY_INTENSITY,
-            intensity + boost,
-          );
-          alphaFloor = Math.max(
-            alphaFloor,
-            Math.min(0.32, intensity * 0.38 + 0.05 * proximity),
-          );
+          let boost = visibilityBoost * proximity;
+          if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 && runLen >= 2) {
+            boost += 0.03 * Math.min(runLen, 5) * proximity;
+          }
+          intensity = Math.min(maxVis, intensity + boost);
+          const alphaTarget = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3
+            ? Math.min(0.42, intensity * 0.48 + 0.08 * proximity)
+            : Math.min(0.32, intensity * 0.38 + 0.05 * proximity);
+          alphaFloor = Math.max(alphaFloor, alphaTarget);
         }
       } else if (
         isMacro &&

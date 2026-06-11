@@ -57,6 +57,7 @@ import {
   resolveDotVisibleEndTime,
 } from "./bookmapEngineTradeDots";
 import {
+  getAggressiveHeatmapCalibrationV3RenderStats,
   getWallOrganicRenderDiagStats,
   paintBookmapEngineHeatmapFrame,
 } from "./bookmapEngineRenderer";
@@ -76,6 +77,7 @@ import {
   prepareEngineRenderData,
   getHorizontalPersistenceV2PrepareStats,
   getTextureCalibrationV2PrepareStats,
+  getAggressiveHeatmapCalibrationV3PrepareStats,
   type BookmapMicroVisualHierarchyTruth,
   type BookmapPerpFilterTruth,
   type BookmapTextureDiag,
@@ -2637,6 +2639,43 @@ export function LiquidityHeatmapPanel({
     };
     logWallOrganicRender();
     const id = window.setInterval(logWallOrganicRender, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const logAggressiveV3 = () => {
+      const render = getAggressiveHeatmapCalibrationV3RenderStats();
+      const prepare = getAggressiveHeatmapCalibrationV3PrepareStats();
+      if (render.organicSpanCount === 0) return;
+      console.debug("[BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3_DIAG]", {
+        visibleSpans: render.organicSpanCount,
+        weakSpansDrawn: render.weakSpansDrawn,
+        mediumSpansDrawn: render.mediumSpansDrawn,
+        strongSpansDrawn: render.strongSpansDrawn,
+        organicSpans: render.organicSpanCount,
+        solidBaseAlphaAvg:
+          render.solidBaseAlphaCount > 0
+            ? Number(
+                (render.solidBaseAlphaSum / render.solidBaseAlphaCount).toFixed(3),
+              )
+            : 0,
+        textureOverlayAlphaAvg:
+          render.textureOverlayAlphaCount > 0
+            ? Number(
+                (
+                  render.textureOverlayAlphaSum / render.textureOverlayAlphaCount
+                ).toFixed(3),
+              )
+            : 0,
+        nearPriceBoosted: render.nearPriceBoostCount,
+        drawCap: prepare.capHit,
+        skippedWeakFar: prepare.skippedWeakFar,
+        timestamp: Date.now(),
+      });
+    };
+    logAggressiveV3();
+    const id = window.setInterval(logAggressiveV3, 2_000);
     return () => window.clearInterval(id);
   }, [sourceMode, activeDomMarket]);
 
