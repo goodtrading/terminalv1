@@ -15,6 +15,12 @@ import {
   BOOKMAP_NATURAL_MATRIX_LOGIC_V1,
   BOOKMAP_PERSISTENT_WALL_ANCHORING_V1,
   BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1,
+  BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1,
+  ANCHORED_WALL_BASE_ALPHA_MUL,
+  ANCHORED_WALL_CORE_ALPHA_MUL,
+  ANCHORED_WALL_GLOW_ALPHA_MUL,
+  ANCHORED_WALL_PROJECTION_ALPHA_MUL,
+  ANCHORED_WALL_SEAM_BLEND_PCT,
   computeVisiblePriceRangePct,
   resolveZoomRegime,
   NATURAL_MATRIX_ALPHA_FADING,
@@ -165,6 +171,10 @@ import {
   resolveOrganicWallCoreIntensity,
   resolveAggressiveOverlayScale,
   qualifiesOrganicInnerCore,
+  resolveAnchoredWallBodyRgb,
+  resolveAnchoredWallCoreRgb,
+  resolveAnchoredWallGlowRgb,
+  resolveAnchoredWallLifecycleAlphaMul,
 } from "@/lib/bookmapBandColors";
 import { getBookmapPerpOverlayFill } from "@/lib/bookmapPerpOverlayColors";
 import {
@@ -923,7 +933,221 @@ type AnchoredWallRenderResult = {
   activeBodies: number;
   liveProjections: number;
   farMacroWalls: number;
+  visualIntegrationDiag: AnchoredWallVisualIntegrationDiagStats;
 };
+
+export type AnchoredWallVisualIntegrationDiagStats = {
+  anchoredWallsDrawn: number;
+  dominantWallCores: number;
+  mediumDomWallsDrawn: number;
+  farWallsDrawn: number;
+  avgWallAlpha: number;
+  avgCoreAlpha: number;
+  avgOuterGlowAlpha: number;
+  matrixPreservedUnderWalls: number;
+  liveProjectionConnected: number;
+  fadedWallsDrawn: number;
+  pullingWallsDrawn: number;
+  touchedWallsDrawn: number;
+  timestamp: number;
+};
+
+let lastAnchoredWallVisualDiag: AnchoredWallVisualIntegrationDiagStats = {
+  anchoredWallsDrawn: 0,
+  dominantWallCores: 0,
+  mediumDomWallsDrawn: 0,
+  farWallsDrawn: 0,
+  avgWallAlpha: 0,
+  avgCoreAlpha: 0,
+  avgOuterGlowAlpha: 0,
+  matrixPreservedUnderWalls: 1,
+  liveProjectionConnected: 0,
+  fadedWallsDrawn: 0,
+  pullingWallsDrawn: 0,
+  touchedWallsDrawn: 0,
+  timestamp: 0,
+};
+
+let lastAnchoredWallVisualDiagLogMs = 0;
+
+export function getAnchoredWallVisualIntegrationDiagStats(): AnchoredWallVisualIntegrationDiagStats {
+  return lastAnchoredWallVisualDiag;
+}
+
+function emitAnchoredWallVisualIntegrationDiag(): void {
+  if (!import.meta.env.DEV || !BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1) return;
+  const now = Date.now();
+  if (now - lastAnchoredWallVisualDiagLogMs < 2_000) return;
+  lastAnchoredWallVisualDiagLogMs = now;
+  console.debug("[BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1_DIAG]", {
+    ...lastAnchoredWallVisualDiag,
+  });
+}
+
+type AnchoredWallVisualDrawAcc = {
+  wallAlphaSum: number;
+  wallAlphaCount: number;
+  coreAlphaSum: number;
+  coreAlphaCount: number;
+  glowAlphaSum: number;
+  glowAlphaCount: number;
+  dominantWallCores: number;
+  mediumDomWallsDrawn: number;
+  farWallsDrawn: number;
+  fadedWallsDrawn: number;
+  pullingWallsDrawn: number;
+  touchedWallsDrawn: number;
+  liveProjectionConnected: number;
+  wallsDrawn: number;
+};
+
+function anchoredWallTextureHash(
+  price: number,
+  xSeed: number,
+  slot: number,
+): number {
+  const x =
+    Math.sin(price * 0.017 + xSeed * 0.0009 + slot * 1.73) * 43_758.5453;
+  return x - Math.floor(x);
+}
+
+function drawIntegratedAnchoredWallSpan(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  spanW: number,
+  yTop: number,
+  height: number,
+  wall: AnchoredWallEntity,
+  vi: number,
+  bodyAlphaBase: number,
+  layer: "historical" | "active" | "projection",
+  acc: AnchoredWallVisualDrawAcc,
+): void {
+  if (spanW < 0.5) return;
+
+  const lifecycle = wall.state;
+  const lifecycleMul = resolveAnchoredWallLifecycleAlphaMul(lifecycle, layer);
+  const integrationMul = BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1
+    ? ANCHORED_WALL_BASE_ALPHA_MUL
+    : 1;
+  let bodyAlpha = Math.min(
+    layer === "projection" ? 0.68 : 0.74,
+    bodyAlphaBase * lifecycleMul * integrationMul,
+  );
+  if (wall.visualTier === "far") bodyAlpha *= 0.82;
+  if (wall.visualTier === "weak") bodyAlpha *= 0.88;
+  if (layer === "projection") bodyAlpha *= ANCHORED_WALL_PROJECTION_ALPHA_MUL;
+
+  const bodyRgb = resolveAnchoredWallBodyRgb(vi, wall.visualTier, lifecycle);
+  const glowRgb = resolveAnchoredWallGlowRgb(bodyRgb, vi);
+  const glowAlpha =
+    bodyAlpha * ANCHORED_WALL_GLOW_ALPHA_MUL * (wall.visualTier === "far" ? 0.75 : 1);
+  const glowH = height * (wall.visualTier === "dominant" ? 1.28 : 1.18);
+  const glowY = yTop - (glowH - height) * 0.5;
+
+  acc.wallAlphaSum += bodyAlpha;
+  acc.wallAlphaCount += 1;
+  acc.glowAlphaSum += glowAlpha;
+  acc.glowAlphaCount += 1;
+  acc.wallsDrawn += 1;
+  if (wall.visualTier === "medium") acc.mediumDomWallsDrawn += 1;
+  if (wall.visualTier === "far") acc.farWallsDrawn += 1;
+  if (lifecycle === "fading" || lifecycle === "stale") acc.fadedWallsDrawn += 1;
+  if (lifecycle === "pulling") acc.pullingWallsDrawn += 1;
+  if (lifecycle === "touched") acc.touchedWallsDrawn += 1;
+  if (layer === "projection") acc.liveProjectionConnected += 1;
+
+  fillSpanRgba(
+    ctx,
+    x0 - 0.5,
+    spanW + 1,
+    glowY,
+    glowH,
+    glowRgb,
+    glowAlpha,
+  );
+
+  if (lifecycle === "pulling" && spanW >= 4) {
+    const fragCount = 3;
+    for (let i = 0; i < fragCount; i += 1) {
+      const fw = (spanW / fragCount) * 0.68;
+      const fx = x0 + (spanW / fragCount) * i + spanW * 0.04;
+      fillSpanRgba(ctx, fx, fw, yTop, height, bodyRgb, bodyAlpha * 0.72);
+    }
+  } else {
+    const edgePct = 0.22;
+    const edgeW = Math.max(1, spanW * edgePct);
+    const centerW = Math.max(1, spanW - edgeW * 2);
+    fillSpanRgba(ctx, x0, edgeW, yTop, height, bodyRgb, bodyAlpha * 0.42);
+    fillSpanRgba(ctx, x0 + edgeW, centerW, yTop, height, bodyRgb, bodyAlpha * 0.78);
+    fillSpanRgba(
+      ctx,
+      x0 + edgeW + centerW,
+      edgeW,
+      yTop,
+      height,
+      bodyRgb,
+      bodyAlpha * 0.38,
+    );
+  }
+
+  const stripCount = Math.min(5, Math.max(2, Math.floor(spanW / 10)));
+  for (let i = 0; i < stripCount; i += 1) {
+    const h = anchoredWallTextureHash(wall.anchorPrice, x0, i);
+    const stripX = x0 + (spanW * (i + 0.35)) / (stripCount + 0.5);
+    const stripW = Math.max(0.8, spanW / (stripCount * 2.8));
+    fillSpanRgba(
+      ctx,
+      stripX,
+      stripW,
+      yTop + height * 0.12,
+      height * 0.76,
+      bodyRgb,
+      bodyAlpha * (0.1 + h * 0.14),
+    );
+  }
+
+  const showCore =
+    (wall.visualTier === "dominant" || lifecycle === "reinforced") &&
+    lifecycle !== "fading" &&
+    lifecycle !== "stale" &&
+    lifecycle !== "pulling";
+  if (showCore && qualifiesOrganicInnerCore(vi, wall.runLength, wall.maxSizeBtc, wall.isNearPrice)) {
+    const coreRgb = resolveAnchoredWallCoreRgb(vi);
+    const coreH = height * 0.42;
+    const coreY = yTop + height * 0.29;
+    const coreW = spanW * (layer === "projection" ? 0.82 : 0.58);
+    const coreX = x0 + (spanW - coreW) * (layer === "historical" ? 0.12 : 0.06);
+    const coreAlpha = bodyAlpha * ANCHORED_WALL_CORE_ALPHA_MUL;
+    fillSpanRgba(ctx, coreX, coreW, coreY, coreH, coreRgb, coreAlpha);
+    acc.coreAlphaSum += coreAlpha;
+    acc.coreAlphaCount += 1;
+    acc.dominantWallCores += 1;
+  }
+}
+
+function drawAnchoredWallSeamBlend(
+  ctx: CanvasRenderingContext2D,
+  seamX: number,
+  projW: number,
+  yTop: number,
+  height: number,
+  rgb: [number, number, number],
+  histAlpha: number,
+  projAlpha: number,
+): void {
+  const blendW = Math.max(2, projW * ANCHORED_WALL_SEAM_BLEND_PCT);
+  fillSpanRgba(ctx, seamX - blendW * 0.35, blendW, yTop, height, rgb, histAlpha * 0.55);
+  fillSpanRgba(
+    ctx,
+    seamX + blendW * 0.15,
+    blendW * 0.85,
+    yTop,
+    height,
+    rgb,
+    (histAlpha + projAlpha) * 0.45,
+  );
+}
 
 function textureCellVerticalBoundsForWall(
   price: number,
@@ -948,11 +1172,27 @@ function renderAnchoredWallsPass(
     maxPrice: number;
   },
 ): AnchoredWallRenderResult {
+  const emptyVisualDiag: AnchoredWallVisualIntegrationDiagStats = {
+    anchoredWallsDrawn: 0,
+    dominantWallCores: 0,
+    mediumDomWallsDrawn: 0,
+    farWallsDrawn: 0,
+    avgWallAlpha: 0,
+    avgCoreAlpha: 0,
+    avgOuterGlowAlpha: 0,
+    matrixPreservedUnderWalls: 1,
+    liveProjectionConnected: 0,
+    fadedWallsDrawn: 0,
+    pullingWallsDrawn: 0,
+    touchedWallsDrawn: 0,
+    timestamp: Date.now(),
+  };
   const empty: AnchoredWallRenderResult = {
     historicalTrails: 0,
     activeBodies: 0,
     liveProjections: 0,
     farMacroWalls: 0,
+    visualIntegrationDiag: emptyVisualDiag,
   };
   if (!BOOKMAP_PERSISTENT_WALL_ANCHORING_V1 || !walls.length) return empty;
 
@@ -971,6 +1211,22 @@ function renderAnchoredWallsPass(
   let activeBodies = 0;
   let liveProjections = 0;
   let farMacroWalls = 0;
+  const visualAcc: AnchoredWallVisualDrawAcc = {
+    wallAlphaSum: 0,
+    wallAlphaCount: 0,
+    coreAlphaSum: 0,
+    coreAlphaCount: 0,
+    glowAlphaSum: 0,
+    glowAlphaCount: 0,
+    dominantWallCores: 0,
+    mediumDomWallsDrawn: 0,
+    farWallsDrawn: 0,
+    fadedWallsDrawn: 0,
+    pullingWallsDrawn: 0,
+    touchedWallsDrawn: 0,
+    liveProjectionConnected: 0,
+    wallsDrawn: 0,
+  };
 
   ctx.save();
   for (const wall of sorted) {
@@ -988,7 +1244,6 @@ function renderAnchoredWallsPass(
     if (yTop + height < HEATMAP_PAD.top - 2) continue;
     if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
 
-    const rgb = intensityToPassiveLiquidityRgb(vi);
     const alphaCtx = buildPassiveLiquidityAlphaContext({
       intensity: vi,
       isActive: wall.isLive,
@@ -1002,8 +1257,50 @@ function renderAnchoredWallsPass(
         isActive: wall.isLive,
       }),
     });
-    let bodyAlpha = alphaForPassiveLiquidity(alphaCtx) * globalMul * alphaMul;
-    bodyAlpha = Math.min(0.88, Math.max(0.12, bodyAlpha));
+    let bodyAlphaBase = alphaForPassiveLiquidity(alphaCtx) * globalMul * alphaMul;
+    bodyAlphaBase = Math.min(0.72, Math.max(0.1, bodyAlphaBase));
+
+    const drawSpan = (
+      x0: number,
+      spanW: number,
+      layer: "historical" | "active" | "projection",
+    ) => {
+      if (BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1) {
+        drawIntegratedAnchoredWallSpan(
+          ctx,
+          x0,
+          spanW,
+          yTop,
+          height,
+          wall,
+          vi,
+          bodyAlphaBase,
+          layer,
+          visualAcc,
+        );
+        return;
+      }
+      const rgb = intensityToPassiveLiquidityRgb(vi);
+      drawOrganicSpanBody(
+        ctx,
+        x0,
+        spanW,
+        yTop,
+        height,
+        {
+          rgb,
+          bodyAlpha: bodyAlphaBase,
+          vi,
+          runLength: wall.runLength,
+          sizeBtc: wall.maxSizeBtc,
+          reinforcedBase: wall.state === "reinforced",
+          nearPrice: wall.isNearPrice,
+        },
+        lastWallOrganicRenderDiagStats,
+      );
+    };
+
+    let drewHistorical = false;
 
     if (wall.isHistorical && wall.state !== "new") {
       const histStart = Math.max(
@@ -1020,88 +1317,86 @@ function renderAnchoredWallsPass(
         let spanW = timeToX(histEnd) - x0;
         if (spanW >= 1 && x0 < dataEdgeX) {
           spanW = Math.min(spanW, Math.max(1, dataEdgeX - x0));
-          if (spanW >= 3) {
-            drawOrganicSpanBody(
-              ctx,
-              x0,
-              spanW,
-              yTop,
-              height,
-              {
-                rgb,
-                bodyAlpha: bodyAlpha * (wall.state === "fading" || wall.state === "stale" ? 0.65 : 0.92),
-                vi,
-                runLength: wall.runLength,
-                sizeBtc: wall.maxSizeBtc,
-                reinforcedBase: wall.state === "reinforced",
-                nearPrice: wall.isNearPrice,
-              },
-              lastWallOrganicRenderDiagStats,
-            );
-          } else {
-            fillSpanRgba(ctx, x0, spanW, yTop, height, rgb, bodyAlpha * 0.85);
-          }
+          drawSpan(x0, spanW, "historical");
           historicalTrails += 1;
+          drewHistorical = true;
         }
       }
     }
 
-    if (wall.isLive) {
+    const skipStrongLive =
+      wall.state === "fading" ||
+      wall.state === "stale" ||
+      (wall.state === "pulling" && !wall.isDominant);
+
+    if (wall.isLive && !skipStrongLive) {
       const liveStart = Math.max(
         opts.dataEndTime - BOOKMAP_TEXTURE_SAMPLER_MS * 2,
         timeViewport.visibleStartTime,
       );
-      const liveHistEnd = opts.dataEndTime;
-      if (liveHistEnd > liveStart) {
-        const x0 = Math.max(timeToX(liveStart), dataEdgeX - 4);
+      if (opts.dataEndTime > liveStart) {
+        const x0 = Math.max(timeToX(liveStart), dataEdgeX - 6);
         const spanW = Math.max(1, dataEdgeX - x0);
         if (spanW >= 1) {
-          drawOrganicSpanBody(
-            ctx,
-            x0,
-            spanW,
-            yTop,
-            height,
-            {
-              rgb,
-              bodyAlpha: Math.min(0.92, bodyAlpha * 1.08),
-              vi,
-              runLength: Math.max(wall.runLength, 2),
-              sizeBtc: wall.currentSizeBtc,
-              reinforcedBase: wall.state === "reinforced" || wall.isDominant,
-              nearPrice: wall.isNearPrice,
-            },
-            lastWallOrganicRenderDiagStats,
-          );
+          drawSpan(x0, spanW, "active");
           activeBodies += 1;
         }
       }
 
       const projEnd = timeViewport.visibleEndTime;
-      if (projEnd > opts.dataEndTime + BOOKMAP_LIVE_PROJECTION_MIN_GAP_MS) {
+      if (
+        projEnd > opts.dataEndTime + BOOKMAP_LIVE_PROJECTION_MIN_GAP_MS &&
+        wall.state !== "fading" &&
+        wall.state !== "stale"
+      ) {
         const x0 = timeToX(opts.dataEndTime);
         const x1 = timeToX(projEnd);
         let projW = x1 - x0;
         if (projW >= 2) {
-          const liveAlpha = bodyAlpha * (wall.isFarButImportant ? 0.78 : 0.9);
-          drawOrganicSpanBody(
-            ctx,
-            x0,
-            projW,
-            yTop,
-            height,
-            {
-              rgb,
-              bodyAlpha: liveAlpha,
+          if (BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1 && drewHistorical) {
+            const bodyRgb = resolveAnchoredWallBodyRgb(
               vi,
-              runLength: Math.max(wall.runLength, 2),
-              sizeBtc: wall.currentSizeBtc,
-              reinforcedBase: wall.isDominant,
-              nearPrice: wall.isNearPrice,
-            },
-            lastWallOrganicRenderDiagStats,
-          );
+              wall.visualTier,
+              wall.state,
+            );
+            const histAlpha =
+              bodyAlphaBase *
+              ANCHORED_WALL_BASE_ALPHA_MUL *
+              resolveAnchoredWallLifecycleAlphaMul(wall.state, "historical");
+            const projAlpha =
+              bodyAlphaBase *
+              ANCHORED_WALL_BASE_ALPHA_MUL *
+              ANCHORED_WALL_PROJECTION_ALPHA_MUL *
+              resolveAnchoredWallLifecycleAlphaMul(wall.state, "projection");
+            drawAnchoredWallSeamBlend(
+              ctx,
+              x0,
+              projW,
+              yTop,
+              height,
+              bodyRgb,
+              histAlpha,
+              projAlpha,
+            );
+          }
+          drawSpan(x0, projW, "projection");
           liveProjections += 1;
+        }
+      }
+    } else if (
+      (wall.state === "fading" || wall.state === "stale") &&
+      wall.isHistorical
+    ) {
+      const histStart = Math.max(
+        wall.historicalStartTime,
+        timeViewport.visibleStartTime,
+      );
+      const histEnd = Math.min(opts.dataEndTime, wall.historicalEndTime);
+      if (histEnd > histStart) {
+        const x0 = timeToX(histStart);
+        const spanW = Math.min(timeToX(histEnd) - x0, Math.max(1, dataEdgeX - x0));
+        if (spanW >= 1) {
+          drawSpan(x0, spanW, "historical");
         }
       }
     }
@@ -1110,7 +1405,40 @@ function renderAnchoredWallsPass(
   }
   ctx.restore();
 
-  return { historicalTrails, activeBodies, liveProjections, farMacroWalls };
+  const visualIntegrationDiag: AnchoredWallVisualIntegrationDiagStats = {
+    anchoredWallsDrawn: visualAcc.wallsDrawn,
+    dominantWallCores: visualAcc.dominantWallCores,
+    mediumDomWallsDrawn: visualAcc.mediumDomWallsDrawn,
+    farWallsDrawn: visualAcc.farWallsDrawn,
+    avgWallAlpha:
+      visualAcc.wallAlphaCount > 0
+        ? Number((visualAcc.wallAlphaSum / visualAcc.wallAlphaCount).toFixed(3))
+        : 0,
+    avgCoreAlpha:
+      visualAcc.coreAlphaCount > 0
+        ? Number((visualAcc.coreAlphaSum / visualAcc.coreAlphaCount).toFixed(3))
+        : 0,
+    avgOuterGlowAlpha:
+      visualAcc.glowAlphaCount > 0
+        ? Number((visualAcc.glowAlphaSum / visualAcc.glowAlphaCount).toFixed(3))
+        : 0,
+    matrixPreservedUnderWalls: BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1 ? 1 : 0,
+    liveProjectionConnected: visualAcc.liveProjectionConnected,
+    fadedWallsDrawn: visualAcc.fadedWallsDrawn,
+    pullingWallsDrawn: visualAcc.pullingWallsDrawn,
+    touchedWallsDrawn: visualAcc.touchedWallsDrawn,
+    timestamp: Date.now(),
+  };
+  lastAnchoredWallVisualDiag = visualIntegrationDiag;
+  emitAnchoredWallVisualIntegrationDiag();
+
+  return {
+    historicalTrails,
+    activeBodies,
+    liveProjections,
+    farMacroWalls,
+    visualIntegrationDiag,
+  };
 }
 
 function computeGridUniformityScore(widths: number[]): number {
@@ -1348,6 +1676,19 @@ function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
       (BOOKMAP_PERSISTENT_WALL_ANCHORING_V1 ? 14 : 0);
     ctx.strokeText("MACRO DOM DEPTH V1 ACTIVE", x, macroY);
     ctx.fillText("MACRO DOM DEPTH V1 ACTIVE", x, macroY);
+  }
+  if (BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1) {
+    ctx.fillStyle = "rgba(244, 114, 182, 0.95)";
+    const visualY =
+      y +
+      (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 98 : 84) +
+      (BOOKMAP_MATRIX_AUDIT_DIAG ? 14 : 0) +
+      (BOOKMAP_GRANULAR_MATRIX_RENDERER_V1 ? 14 : 0) +
+      (BOOKMAP_NATURAL_MATRIX_LOGIC_V1 ? 14 : 0) +
+      (BOOKMAP_PERSISTENT_WALL_ANCHORING_V1 ? 14 : 0) +
+      (BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1 ? 14 : 0);
+    ctx.strokeText("ANCHORED WALL VISUAL V1 ACTIVE", x, visualY);
+    ctx.fillText("ANCHORED WALL VISUAL V1 ACTIVE", x, visualY);
   }
   ctx.font = "9px ui-monospace, monospace";
   ctx.fillStyle = "rgba(148, 163, 184, 0.85)";

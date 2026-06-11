@@ -7,7 +7,10 @@ import {
   MACRO_DOM_INCLUDE_FAR_WALLS,
   MACRO_DOM_MAX_LEVELS_PER_SIDE,
   MACRO_DOM_MIN_SIZE_BTC,
+  MACRO_DOM_MEDIUM_MIN_SIZE_BTC,
+  MACRO_DOM_MEDIUM_LEVELS_PER_SIDE,
   MACRO_DOM_VISIBLE_RANGE_MIN_RANK,
+  MACRO_DOM_WEAK_MIN_SIZE_BTC,
   WALL_ANCHOR_FADE_MS,
   WALL_ANCHOR_MAX_TRACKED_WALLS,
   WALL_ANCHOR_MIN_INTENSITY,
@@ -72,6 +75,8 @@ export type AnchoredWallEntity = {
   historicalEndTime: number;
   runLength: number;
   macroDomSourced: boolean;
+  /** B.4.1 — render tier for integrated wall palette. */
+  visualTier: "dominant" | "medium" | "weak" | "far";
 };
 
 export type WallAnchoringDiagStats = {
@@ -428,6 +433,59 @@ function collectMacroDomCandidates(
       });
     }
   }
+
+  const mediumLevels = inRange.filter(
+    (l) =>
+      l.size >= MACRO_DOM_MEDIUM_MIN_SIZE_BTC &&
+      l.size < MACRO_DOM_MIN_SIZE_BTC,
+  );
+  const weakLevels = inRange.filter(
+    (l) =>
+      l.size >= MACRO_DOM_WEAK_MIN_SIZE_BTC &&
+      l.size < MACRO_DOM_MEDIUM_MIN_SIZE_BTC,
+  );
+  for (const side of ["bid", "ask"] as const) {
+    const mediumSorted = mediumLevels
+      .filter((l) => l.side === side)
+      .sort((a, b) => b.size - a.size)
+      .slice(0, MACRO_DOM_MEDIUM_LEVELS_PER_SIDE);
+    for (const level of mediumSorted) {
+      out.push({
+        side,
+        price: level.price,
+        sizeBtc: level.size,
+        intensity: Math.min(
+          0.46,
+          0.22 +
+            Math.sqrt(level.size) / Math.sqrt(Math.max(1, viewportMaxSize)) * 0.38,
+        ),
+        runLength: 1,
+        persistenceMs: 0,
+        source: "dom",
+        isLive: true,
+      });
+    }
+    const weakSorted = weakLevels
+      .filter((l) => l.side === side)
+      .sort((a, b) => b.size - a.size)
+      .slice(0, Math.floor(MACRO_DOM_MEDIUM_LEVELS_PER_SIDE * 0.6));
+    for (const level of weakSorted) {
+      out.push({
+        side,
+        price: level.price,
+        sizeBtc: level.size,
+        intensity: Math.min(
+          0.32,
+          0.14 +
+            Math.sqrt(level.size) / Math.sqrt(Math.max(1, viewportMaxSize)) * 0.28,
+        ),
+        runLength: 1,
+        persistenceMs: 0,
+        source: "dom",
+        isLive: true,
+      });
+    }
+  }
   return out;
 }
 
@@ -569,6 +627,13 @@ function trackToEntity(
   const persistenceMs = Math.max(0, track.lastSeenTime - track.firstSeenTime);
   const ageMs = Math.max(0, now - track.firstSeenTime);
 
+  let visualTier: AnchoredWallEntity["visualTier"];
+  if (isDominant) visualTier = "dominant";
+  else if (isFarButImportant) visualTier = "far";
+  else if (track.maxSizeBtc >= MACRO_DOM_MIN_SIZE_BTC) visualTier = "medium";
+  else if (track.maxSizeBtc >= MACRO_DOM_MEDIUM_MIN_SIZE_BTC) visualTier = "medium";
+  else visualTier = "weak";
+
   return {
     wallId: track.wallId,
     side: track.side,
@@ -602,6 +667,7 @@ function trackToEntity(
     historicalEndTime: track.historicalEndTime,
     runLength: track.runLengthPeak,
     macroDomSourced: track.macroDomSourced,
+    visualTier,
   };
 }
 

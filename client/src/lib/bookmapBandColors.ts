@@ -596,3 +596,100 @@ export function qualifiesOrganicInnerCore(
 
   return sizeBtc >= WALL_IMPORTANT_BTC || runLength >= 3;
 }
+
+export type AnchoredWallVisualTier = "dominant" | "medium" | "weak" | "far";
+
+function desaturateRgb(
+  rgb: [number, number, number],
+  amount: number,
+): [number, number, number] {
+  const gray = rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114;
+  const a = clamp01(amount);
+  return [
+    Math.round(rgb[0] * (1 - a) + gray * a),
+    Math.round(rgb[1] * (1 - a) + gray * a),
+    Math.round(rgb[2] * (1 - a) + gray * a),
+  ];
+}
+
+/** B.4.1 — tiered anchored wall body color (not flat red blocks). */
+export function resolveAnchoredWallBodyRgb(
+  intensity: number,
+  tier: AnchoredWallVisualTier,
+  lifecycle:
+    | "new"
+    | "persistent"
+    | "reinforced"
+    | "pulling"
+    | "fading"
+    | "stale"
+    | "touched",
+): [number, number, number] {
+  let vi = clamp01(intensity);
+  if (tier === "weak") vi = Math.min(0.38, Math.max(0.16, vi * 0.82));
+  else if (tier === "medium") vi = Math.min(0.52, Math.max(0.24, vi * 0.9));
+  else if (tier === "far") vi = Math.min(0.62, vi * 0.88);
+
+  let rgb = intensityToPassiveLiquidityRgb(vi);
+  if (tier === "medium" || tier === "weak") {
+    rgb = intensityToPassiveLiquidityRgb(Math.min(0.48, vi + 0.06));
+  }
+  if (tier === "far") rgb = desaturateRgb(rgb, 0.28);
+  if (lifecycle === "pulling" || lifecycle === "fading") {
+    rgb = desaturateRgb(rgb, 0.22);
+  }
+  if (lifecycle === "stale") rgb = desaturateRgb(rgb, 0.45);
+  return rgb;
+}
+
+/** B.4.1 — soft outer glow (cooler / wider halo). */
+export function resolveAnchoredWallGlowRgb(
+  bodyRgb: [number, number, number],
+  intensity: number,
+): [number, number, number] {
+  const cool: [number, number, number] = [
+    Math.min(255, bodyRgb[0] * 0.55 + 18),
+    Math.min(255, bodyRgb[1] * 0.72 + 28),
+    Math.min(255, bodyRgb[2] * 0.95 + 36),
+  ];
+  const t = clamp01(intensity);
+  return lerpRgb(bodyRgb, cool, 0.35 + t * 0.2);
+}
+
+/** B.4.1 — warm inner core for reinforced/dominant walls. */
+export function resolveAnchoredWallCoreRgb(intensity: number): [number, number, number] {
+  const coreI = resolveOrganicWallCoreIntensity(intensity);
+  return intensityToPassiveLiquidityRgb(Math.min(0.98, coreI + 0.04));
+}
+
+/** B.4.1 — lifecycle alpha multiplier for integrated wall layers. */
+export function resolveAnchoredWallLifecycleAlphaMul(
+  lifecycle:
+    | "new"
+    | "persistent"
+    | "reinforced"
+    | "pulling"
+    | "fading"
+    | "stale"
+    | "touched",
+  layer: "historical" | "active" | "projection",
+): number {
+  switch (lifecycle) {
+    case "new":
+      return layer === "projection" ? 0.78 : 0.62;
+    case "persistent":
+      return layer === "projection" ? 0.92 : 0.84;
+    case "reinforced":
+      return layer === "projection" ? 1.02 : 0.94;
+    case "pulling":
+      return layer === "projection" ? 0.62 : 0.58;
+    case "fading":
+      return layer === "historical" ? 0.42 : 0.28;
+    case "stale":
+      return 0.22;
+    case "touched":
+      return layer === "projection" ? 0.86 : 0.78;
+    default:
+      return 0.8;
+  }
+}

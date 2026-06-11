@@ -245,6 +245,22 @@ export const MACRO_DOM_MAX_LEVELS_PER_SIDE = 48;
 export const MACRO_DOM_INCLUDE_FAR_WALLS = true;
 export const MACRO_DOM_DEPTH_ALPHA_MUL = 0.72;
 export const MACRO_DOM_FAR_WALL_ALPHA_FLOOR = 0.22;
+export const MACRO_DOM_MEDIUM_MIN_SIZE_BTC = 3;
+export const MACRO_DOM_WEAK_MIN_SIZE_BTC = 1.5;
+export const MACRO_DOM_MEDIUM_LEVELS_PER_SIDE = 32;
+
+/**
+ * B.4.1 — Layered anchored wall rendering integrated with historical heatmap.
+ */
+export const BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1 = true;
+
+/** Base body alpha scale — preserves granular matrix underneath. */
+export const ANCHORED_WALL_BASE_ALPHA_MUL = 0.76;
+export const ANCHORED_WALL_GLOW_ALPHA_MUL = 0.32;
+export const ANCHORED_WALL_CORE_ALPHA_MUL = 0.82;
+export const ANCHORED_WALL_PROJECTION_ALPHA_MUL = 0.8;
+/** Fraction of projection width used for historical→live seam blend. */
+export const ANCHORED_WALL_SEAM_BLEND_PCT = 0.16;
 
 /**
  * B.3.2 — Natural historical matrix: lifecycle, mini-fragments, irregular texture.
