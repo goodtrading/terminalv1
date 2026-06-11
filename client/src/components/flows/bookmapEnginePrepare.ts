@@ -154,6 +154,12 @@ import {
   shouldForceGranularBookmapTexture,
 } from "./bookmapVisualForceBookmapLike";
 import { dedupeLiveProjectionAgainstActiveDom } from "./bookmapLayerResponsibilities";
+import {
+  buildAnchoredWallLayer,
+  type AnchoredWallEntity,
+  type MacroDomCoverageDiagStats,
+  type WallAnchoringDiagStats,
+} from "./bookmapWallAnchoring";
 
 /** P7.2 — granular historical limit-order texture (not merged into bands). */
 export const BOOKMAP_TEXTURE_MODE_ENABLED = true;
@@ -385,6 +391,10 @@ export type PreparedEngineRenderData = {
   restingLiquidityRawCells?: HeatmapCell[];
   /** DEV — historical lock audit from last prepare pass. */
   historicalColorLockAudit?: HistoricalColorLockAudit;
+  /** B.4 — persistent anchored wall entities. */
+  anchoredWalls?: AnchoredWallEntity[];
+  wallAnchoringDiag?: WallAnchoringDiagStats;
+  macroDomCoverageDiag?: MacroDomCoverageDiagStats;
 };
 
 export type MicroScalpVisualContext = {
@@ -2386,6 +2396,27 @@ export function prepareEngineRenderData(
     options?.liveDomTimestamp,
   );
 
+  const bestBid =
+    state.bids.find((b) => b.size > 0 && !b.stale)?.price ?? null;
+  const bestAsk =
+    state.asks.find((a) => a.size > 0 && !a.stale)?.price ?? null;
+  const wallAnchorLayer = buildAnchoredWallLayer({
+    textureCells,
+    walls,
+    bands,
+    liveProjectionLevels: liveProjection.levels,
+    activeDomLevels: liveProjection.activeDomBands,
+    bookLevels,
+    minPrice,
+    maxPrice,
+    midPrice: spotPrice ?? null,
+    dataEndTime: timeMax,
+    timeMin,
+    bestBid,
+    bestAsk,
+    viewportMaxSize,
+  });
+
   const textureStats: BookmapTexturePrepareStats = {
     rawHeatmapCellCount,
     preparedCellCount: preparedTextureRaw.length + cappedWallCells.length,
@@ -2436,6 +2467,9 @@ export function prepareEngineRenderData(
     activeDomBands: liveProjection.activeDomBands,
     liveDomSelection: liveProjection.selection,
     restingLiquidityRawCells: materializedHeatmapCells,
+    anchoredWalls: wallAnchorLayer.walls,
+    wallAnchoringDiag: wallAnchorLayer.wallAnchoringDiag,
+    macroDomCoverageDiag: wallAnchorLayer.macroDomCoverageDiag,
   };
 }
 

@@ -224,6 +224,29 @@ export const BOOKMAP_GRANULAR_ALPHA_MOD_MIN = 0.92;
 export const BOOKMAP_GRANULAR_ALPHA_MOD_RANGE = 0.14;
 
 /**
+ * B.4 — Persistent wall anchoring + macro DOM depth coverage.
+ */
+export const BOOKMAP_PERSISTENT_WALL_ANCHORING_V1 = true;
+export const BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1 = true;
+
+export const WALL_ANCHOR_MIN_SIZE_BTC = 20;
+export const WALL_ANCHOR_MIN_INTENSITY = 0.45;
+export const WALL_ANCHOR_PRICE_BRIDGE_USD = 10;
+export const WALL_ANCHOR_STALE_GRACE_MS = 120_000;
+export const WALL_ANCHOR_FADE_MS = 300_000;
+export const WALL_ANCHOR_REFILL_BOOST = 0.18;
+export const WALL_ANCHOR_PULL_DECAY = 0.22;
+export const WALL_ANCHOR_MAX_TRACKED_WALLS = 96;
+export const WALL_ANCHOR_NEAR_PRICE_BOOST_PCT = 0.15;
+
+export const MACRO_DOM_MIN_SIZE_BTC = 8;
+export const MACRO_DOM_VISIBLE_RANGE_MIN_RANK = 0.72;
+export const MACRO_DOM_MAX_LEVELS_PER_SIDE = 48;
+export const MACRO_DOM_INCLUDE_FAR_WALLS = true;
+export const MACRO_DOM_DEPTH_ALPHA_MUL = 0.72;
+export const MACRO_DOM_FAR_WALL_ALPHA_FLOOR = 0.22;
+
+/**
  * B.3.2 — Natural historical matrix: lifecycle, mini-fragments, irregular texture.
  */
 export const BOOKMAP_NATURAL_MATRIX_LOGIC_V1 = true;

@@ -13,6 +13,10 @@ import {
   BOOKMAP_MATRIX_AUDIT_DIAG,
   BOOKMAP_MATRIX_TEXTURE_MODE_V1,
   BOOKMAP_NATURAL_MATRIX_LOGIC_V1,
+  BOOKMAP_PERSISTENT_WALL_ANCHORING_V1,
+  BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1,
+  computeVisiblePriceRangePct,
+  resolveZoomRegime,
   NATURAL_MATRIX_ALPHA_FADING,
   NATURAL_MATRIX_ALPHA_NEW,
   NATURAL_MATRIX_ALPHA_PERSISTENT,
@@ -260,6 +264,12 @@ import {
   renderPassiveConfluenceOverlay,
   type ConfluenceRenderMode,
 } from "./bookmapConfluenceRenderer";
+import {
+  resolveAnchoredWallAlphaMultiplier,
+  type AnchoredWallEntity,
+  type MacroDomCoverageDiagStats,
+  type WallAnchoringDiagStats,
+} from "./bookmapWallAnchoring";
 
 export type BookmapEngineFrameParams = {
   width: number;
@@ -843,6 +853,266 @@ function emitNaturalMatrixLogicDiag(): void {
   });
 }
 
+let lastWallAnchoringDiag: WallAnchoringDiagStats = {
+  wallCandidates: 0,
+  anchoredWalls: 0,
+  activeWalls: 0,
+  historicalWalls: 0,
+  farMacroWalls: 0,
+  fadingWalls: 0,
+  reinforcedWalls: 0,
+  pullingWalls: 0,
+  touchedWalls: 0,
+  dominantWalls: 0,
+  avgWallAgeSec: 0,
+  maxWallAgeSec: 0,
+  avgPersistenceSec: 0,
+  maxPersistenceSec: 0,
+  liveProjectionConnected: 0,
+  timestamp: 0,
+};
+
+let lastMacroDomCoverageDiag: MacroDomCoverageDiagStats = {
+  zoomRegime: "macro",
+  visiblePriceMin: 0,
+  visiblePriceMax: 0,
+  domLevelsVisible: 0,
+  domLargeLevelsVisible: 0,
+  domLargeLevelsRendered: 0,
+  farBidWallsRendered: 0,
+  farAskWallsRendered: 0,
+  domMatchedAnchors: 0,
+  domUnmatchedLargeWalls: 0,
+  skippedByDistance: 0,
+  skippedByCap: 0,
+  skippedBySize: 0,
+  timestamp: 0,
+};
+
+let lastWallAnchoringDiagLogMs = 0;
+let lastMacroDomCoverageDiagLogMs = 0;
+
+export function getWallAnchoringDiagStats(): WallAnchoringDiagStats {
+  return lastWallAnchoringDiag;
+}
+
+export function getMacroDomCoverageDiagStats(): MacroDomCoverageDiagStats {
+  return lastMacroDomCoverageDiag;
+}
+
+function emitWallAnchoringDiag(): void {
+  if (!import.meta.env.DEV || !BOOKMAP_PERSISTENT_WALL_ANCHORING_V1) return;
+  const now = Date.now();
+  if (now - lastWallAnchoringDiagLogMs < 2_000) return;
+  lastWallAnchoringDiagLogMs = now;
+  console.debug("[BOOKMAP_WALL_ANCHORING_V1_DIAG]", { ...lastWallAnchoringDiag });
+}
+
+function emitMacroDomCoverageDiag(): void {
+  if (!import.meta.env.DEV || !BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1) return;
+  const now = Date.now();
+  if (now - lastMacroDomCoverageDiagLogMs < 2_000) return;
+  lastMacroDomCoverageDiagLogMs = now;
+  console.debug("[BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1_DIAG]", {
+    ...lastMacroDomCoverageDiag,
+  });
+}
+
+type AnchoredWallRenderResult = {
+  historicalTrails: number;
+  activeBodies: number;
+  liveProjections: number;
+  farMacroWalls: number;
+};
+
+function textureCellVerticalBoundsForWall(
+  price: number,
+  priceToY: (p: number) => number,
+  domBucketSize: number,
+): { yTop: number; height: number } {
+  return textureCellVerticalBounds(price, priceToY, domBucketSize);
+}
+
+function renderAnchoredWallsPass(
+  ctx: CanvasRenderingContext2D,
+  metrics: EnginePlotMetrics,
+  walls: AnchoredWallEntity[],
+  timeViewport: BookmapTimeViewport,
+  visualSettings: BookmapVisualSettings | undefined,
+  opts: {
+    midPrice: number | null;
+    dataEndTime: number;
+    textureOpacityMul: number;
+    domBucketSize: number;
+    minPrice: number;
+    maxPrice: number;
+  },
+): AnchoredWallRenderResult {
+  const empty: AnchoredWallRenderResult = {
+    historicalTrails: 0,
+    activeBodies: 0,
+    liveProjections: 0,
+    farMacroWalls: 0,
+  };
+  if (!BOOKMAP_PERSISTENT_WALL_ANCHORING_V1 || !walls.length) return empty;
+
+  const { priceToY, timeToX } = metrics;
+  const zoomRegime = resolveZoomRegime(
+    computeVisiblePriceRangePct(opts.minPrice, opts.maxPrice),
+  );
+  const heatmapOpacity = visualSettings?.heatmap.opacity ?? 1;
+  const globalMul = BOOKMAP_TEXTURE_OPACITY_MUL * heatmapOpacity * opts.textureOpacityMul;
+  const dataEdgeX = timeToX(opts.dataEndTime);
+  const sorted = [...walls].sort(
+    (a, b) => a.peakIntensity - b.peakIntensity || a.maxSizeBtc - b.maxSizeBtc,
+  );
+
+  let historicalTrails = 0;
+  let activeBodies = 0;
+  let liveProjections = 0;
+  let farMacroWalls = 0;
+
+  ctx.save();
+  for (const wall of sorted) {
+    const vi = Math.max(
+      wall.peakIntensity,
+      mapWallSizeToStableVisualIntensity(wall.maxSizeBtc),
+      wall.currentIntensity,
+    );
+    const alphaMul = resolveAnchoredWallAlphaMultiplier(wall, zoomRegime);
+    const { yTop, height } = textureCellVerticalBoundsForWall(
+      wall.anchorPrice,
+      priceToY,
+      opts.domBucketSize,
+    );
+    if (yTop + height < HEATMAP_PAD.top - 2) continue;
+    if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
+
+    const rgb = intensityToPassiveLiquidityRgb(vi);
+    const alphaCtx = buildPassiveLiquidityAlphaContext({
+      intensity: vi,
+      isActive: wall.isLive,
+      stableSizeBtc: wall.maxSizeBtc,
+      weight: computeBookmapVisualWeight({
+        sizeBtc: wall.maxSizeBtc,
+        price: wall.anchorPrice,
+        midPrice: opts.midPrice,
+        regime: zoomRegime,
+        baseIntensity: vi,
+        isActive: wall.isLive,
+      }),
+    });
+    let bodyAlpha = alphaForPassiveLiquidity(alphaCtx) * globalMul * alphaMul;
+    bodyAlpha = Math.min(0.88, Math.max(0.12, bodyAlpha));
+
+    if (wall.isHistorical && wall.state !== "new") {
+      const histStart = Math.max(
+        wall.historicalStartTime,
+        timeViewport.visibleStartTime,
+      );
+      const histEnd = Math.min(
+        opts.dataEndTime,
+        wall.historicalEndTime,
+        timeViewport.visibleEndTime,
+      );
+      if (histEnd > histStart) {
+        const x0 = timeToX(histStart);
+        let spanW = timeToX(histEnd) - x0;
+        if (spanW >= 1 && x0 < dataEdgeX) {
+          spanW = Math.min(spanW, Math.max(1, dataEdgeX - x0));
+          if (spanW >= 3) {
+            drawOrganicSpanBody(
+              ctx,
+              x0,
+              spanW,
+              yTop,
+              height,
+              {
+                rgb,
+                bodyAlpha: bodyAlpha * (wall.state === "fading" || wall.state === "stale" ? 0.65 : 0.92),
+                vi,
+                runLength: wall.runLength,
+                sizeBtc: wall.maxSizeBtc,
+                reinforcedBase: wall.state === "reinforced",
+                nearPrice: wall.isNearPrice,
+              },
+              lastWallOrganicRenderDiagStats,
+            );
+          } else {
+            fillSpanRgba(ctx, x0, spanW, yTop, height, rgb, bodyAlpha * 0.85);
+          }
+          historicalTrails += 1;
+        }
+      }
+    }
+
+    if (wall.isLive) {
+      const liveStart = Math.max(
+        opts.dataEndTime - BOOKMAP_TEXTURE_SAMPLER_MS * 2,
+        timeViewport.visibleStartTime,
+      );
+      const liveHistEnd = opts.dataEndTime;
+      if (liveHistEnd > liveStart) {
+        const x0 = Math.max(timeToX(liveStart), dataEdgeX - 4);
+        const spanW = Math.max(1, dataEdgeX - x0);
+        if (spanW >= 1) {
+          drawOrganicSpanBody(
+            ctx,
+            x0,
+            spanW,
+            yTop,
+            height,
+            {
+              rgb,
+              bodyAlpha: Math.min(0.92, bodyAlpha * 1.08),
+              vi,
+              runLength: Math.max(wall.runLength, 2),
+              sizeBtc: wall.currentSizeBtc,
+              reinforcedBase: wall.state === "reinforced" || wall.isDominant,
+              nearPrice: wall.isNearPrice,
+            },
+            lastWallOrganicRenderDiagStats,
+          );
+          activeBodies += 1;
+        }
+      }
+
+      const projEnd = timeViewport.visibleEndTime;
+      if (projEnd > opts.dataEndTime + BOOKMAP_LIVE_PROJECTION_MIN_GAP_MS) {
+        const x0 = timeToX(opts.dataEndTime);
+        const x1 = timeToX(projEnd);
+        let projW = x1 - x0;
+        if (projW >= 2) {
+          const liveAlpha = bodyAlpha * (wall.isFarButImportant ? 0.78 : 0.9);
+          drawOrganicSpanBody(
+            ctx,
+            x0,
+            projW,
+            yTop,
+            height,
+            {
+              rgb,
+              bodyAlpha: liveAlpha,
+              vi,
+              runLength: Math.max(wall.runLength, 2),
+              sizeBtc: wall.currentSizeBtc,
+              reinforcedBase: wall.isDominant,
+              nearPrice: wall.isNearPrice,
+            },
+            lastWallOrganicRenderDiagStats,
+          );
+          liveProjections += 1;
+        }
+      }
+    }
+
+    if (wall.isFarButImportant) farMacroWalls += 1;
+  }
+  ctx.restore();
+
+  return { historicalTrails, activeBodies, liveProjections, farMacroWalls };
+}
+
 function computeGridUniformityScore(widths: number[]): number {
   if (widths.length < 4) return 0.5;
   const mean = widths.reduce((a, b) => a + b, 0) / widths.length;
@@ -1055,6 +1325,29 @@ function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
       (BOOKMAP_GRANULAR_MATRIX_RENDERER_V1 ? 14 : 0);
     ctx.strokeText("NATURAL MATRIX LOGIC V1 ACTIVE", x, naturalY);
     ctx.fillText("NATURAL MATRIX LOGIC V1 ACTIVE", x, naturalY);
+  }
+  if (BOOKMAP_PERSISTENT_WALL_ANCHORING_V1) {
+    ctx.fillStyle = "rgba(244, 114, 182, 0.95)";
+    const anchorY =
+      y +
+      (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 70 : 56) +
+      (BOOKMAP_MATRIX_AUDIT_DIAG ? 14 : 0) +
+      (BOOKMAP_GRANULAR_MATRIX_RENDERER_V1 ? 14 : 0) +
+      (BOOKMAP_NATURAL_MATRIX_LOGIC_V1 ? 14 : 0);
+    ctx.strokeText("WALL ANCHORING V1 ACTIVE", x, anchorY);
+    ctx.fillText("WALL ANCHORING V1 ACTIVE", x, anchorY);
+  }
+  if (BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1) {
+    ctx.fillStyle = "rgba(251, 191, 36, 0.95)";
+    const macroY =
+      y +
+      (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 84 : 70) +
+      (BOOKMAP_MATRIX_AUDIT_DIAG ? 14 : 0) +
+      (BOOKMAP_GRANULAR_MATRIX_RENDERER_V1 ? 14 : 0) +
+      (BOOKMAP_NATURAL_MATRIX_LOGIC_V1 ? 14 : 0) +
+      (BOOKMAP_PERSISTENT_WALL_ANCHORING_V1 ? 14 : 0);
+    ctx.strokeText("MACRO DOM DEPTH V1 ACTIVE", x, macroY);
+    ctx.fillText("MACRO DOM DEPTH V1 ACTIVE", x, macroY);
   }
   ctx.font = "9px ui-monospace, monospace";
   ctx.fillStyle = "rgba(148, 163, 184, 0.85)";
@@ -3779,6 +4072,38 @@ export function paintBookmapEngineHeatmapFrame(
     if (textureDraw.drawCapHit && params.textureRenderStatsOut) {
       params.textureRenderStatsOut.textureDrawCapHit = true;
     }
+  }
+
+  const anchoredWalls = engine.anchoredWalls ?? [];
+  let anchoredWallRender: AnchoredWallRenderResult | null = null;
+  if (BOOKMAP_PERSISTENT_WALL_ANCHORING_V1 && anchoredWalls.length > 0) {
+    renderedLayerOrder.push("anchoredWalls");
+    anchoredWallRender = renderAnchoredWallsPass(
+      ctx,
+      metrics,
+      anchoredWalls,
+      timeViewport,
+      params.visualSettings,
+      {
+        midPrice: spot,
+        dataEndTime: timeViewport.dataEndTime,
+        textureOpacityMul: 1,
+        domBucketSize: metrics.domBucketSize,
+        minPrice,
+        maxPrice,
+      },
+    );
+    if (engine.wallAnchoringDiag) {
+      lastWallAnchoringDiag = {
+        ...engine.wallAnchoringDiag,
+        liveProjectionConnected: anchoredWallRender.liveProjections,
+      };
+    }
+    if (engine.macroDomCoverageDiag) {
+      lastMacroDomCoverageDiag = engine.macroDomCoverageDiag;
+    }
+    emitWallAnchoringDiag();
+    emitMacroDomCoverageDiag();
   }
 
   const microScalpStats = emptyMicroScalpRenderStats();
