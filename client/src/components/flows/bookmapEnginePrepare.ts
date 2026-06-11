@@ -4,6 +4,8 @@ import {
   BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3,
   BOOKMAP_HEATMAP_DEPTH_PASS_V2,
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
+  BOOKMAP_MATRIX_AUDIT_DIAG,
+  BOOKMAP_MATRIX_TEXTURE_MODE_V1,
   BOOKMAP_TEXTURE_CALIBRATION_V2,
   DEPTH_V2_MAX_VISIBILITY_INTENSITY,
   DEPTH_V2_NEAR_PRICE_PCT,
@@ -21,6 +23,9 @@ import {
   V3_MAX_VISIBILITY_INTENSITY,
   V3_NEAR_PRICE_VISIBILITY_BOOST,
   V3_WEAK_MEDIUM_CAP_RESERVE_PCT,
+  MATRIX_V1_GRANULAR_CAP_PCT,
+  MATRIX_V1_SPAN_MIN_INTENSITY,
+  MATRIX_V1_SPAN_MIN_SIZE_BTC,
   type BookmapZoomRegime,
   computeVisiblePriceRangePct,
   L2_MATERIAL_SIZE_CHANGE_BTC,
@@ -46,7 +51,9 @@ import {
   WALL_MAJOR_BTC,
   WALL_STRUCTURAL_BTC,
 } from "@/lib/bookmapEngineConfig";
-import type { BookmapSourceMode } from "@shared/bookmapSourceMode";
+import {
+  classifyMatrixTierByIntensity,
+} from "@/lib/bookmapMatrixAudit";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
 import { mapSizeToVisualIntensity } from "@/lib/bookmapIntensity";
 import {
@@ -290,6 +297,8 @@ export type BookmapTexturePrepareStats = {
   textureContinuousMode: string;
   cellsWithEndTime: number;
   cellsUsingSyntheticEndTime: number;
+  matrixGranularCellCount?: number;
+  horizontalSpanCellCount?: number;
 };
 
 export type BookmapTextureDiag = BookmapTexturePrepareStats & {
@@ -812,6 +821,297 @@ function mapTextureSizeToVisualIntensity(
   return Math.min(0.95, Math.max(floor, base * (1 + mediumLift * 0.5) + mediumLift * 0.16));
 }
 
+function isHorizontalSpanCandidate(cell: PreparedEngineTextureCell): boolean {
+  const vi = cell.intensity ?? 0;
+  if (cell.maxSizeInBucket >= WALL_IMPORTANT_BTC) return true;
+  if (
+    cell.maxSizeInBucket >= MATRIX_V1_SPAN_MIN_SIZE_BTC &&
+    vi >= MATRIX_V1_SPAN_MIN_INTENSITY
+  ) {
+    return true;
+  }
+  if (cell.lifecycleWall) return true;
+  return false;
+}
+
+function toGranularMatrixCell(
+  cell: PreparedEngineTextureCell,
+): PreparedEngineTextureCell {
+  return {
+    ...cell,
+    endTimeBucket: cell.timeBucket + BOOKMAP_TEXTURE_SAMPLER_MS,
+    continuityRunLength: 1,
+  };
+}
+
+export type PrepareMatrixDiagStats = {
+  inputCells: number;
+  outputTextureCells: number;
+  outputSpans: number;
+  mergedSpans: number;
+  bridgeMergedSpans: number;
+  granularMatrixCells: number;
+  horizontalSpanCells: number;
+  weakInput: number;
+  weakOutput: number;
+  mediumInput: number;
+  mediumOutput: number;
+  strongInput: number;
+  strongOutput: number;
+  capHit: boolean;
+  capLimit: number;
+  removedByCap: number;
+  removedWeak: number;
+  removedMedium: number;
+  removedStrong: number;
+  avgSpanDurationSec: number;
+  maxSpanDurationSec: number;
+  avgRunLength: number;
+  maxRunLength: number;
+  timestamp: number;
+};
+
+let lastPrepareMatrixDiag: PrepareMatrixDiagStats = {
+  inputCells: 0,
+  outputTextureCells: 0,
+  outputSpans: 0,
+  mergedSpans: 0,
+  bridgeMergedSpans: 0,
+  granularMatrixCells: 0,
+  horizontalSpanCells: 0,
+  weakInput: 0,
+  weakOutput: 0,
+  mediumInput: 0,
+  mediumOutput: 0,
+  strongInput: 0,
+  strongOutput: 0,
+  capHit: false,
+  capLimit: 0,
+  removedByCap: 0,
+  removedWeak: 0,
+  removedMedium: 0,
+  removedStrong: 0,
+  avgSpanDurationSec: 0,
+  maxSpanDurationSec: 0,
+  avgRunLength: 0,
+  maxRunLength: 0,
+  timestamp: 0,
+};
+
+let lastPrepareMatrixLogMs = 0;
+
+export function getPrepareMatrixDiagStats(): PrepareMatrixDiagStats {
+  return lastPrepareMatrixDiag;
+}
+
+function countMatrixTiers(cells: PreparedEngineTextureCell[]): {
+  weak: number;
+  medium: number;
+  strong: number;
+} {
+  let weak = 0;
+  let medium = 0;
+  let strong = 0;
+  for (const cell of cells) {
+    const tier = classifyMatrixTierByIntensity(
+      cell.intensity ?? 0,
+      cell.maxSizeInBucket,
+    );
+    if (tier === "weak") weak += 1;
+    else if (tier === "medium") medium += 1;
+    else strong += 1;
+  }
+  return { weak, medium, strong };
+}
+
+function countRemovedTiers(
+  before: PreparedEngineTextureCell[],
+  after: PreparedEngineTextureCell[],
+): { weak: number; medium: number; strong: number } {
+  const afterKeys = new Set(
+    after.map((c) => `${c.timeBucket}:${c.side}:${c.price}:${c.endTimeBucket ?? 0}`),
+  );
+  let weak = 0;
+  let medium = 0;
+  let strong = 0;
+  for (const cell of before) {
+    const key = `${cell.timeBucket}:${cell.side}:${cell.price}:${cell.endTimeBucket ?? 0}`;
+    if (afterKeys.has(key)) continue;
+    const tier = classifyMatrixTierByIntensity(
+      cell.intensity ?? 0,
+      cell.maxSizeInBucket,
+    );
+    if (tier === "weak") weak += 1;
+    else if (tier === "medium") medium += 1;
+    else strong += 1;
+  }
+  return { weak, medium, strong };
+}
+
+function recordPrepareMatrixDiag(
+  visible: PreparedEngineTextureCell[],
+  preCap: PreparedEngineTextureCell[],
+  postCap: PreparedEngineTextureCell[],
+  opts: {
+    mergedSpanCount: number;
+    bridgeMergedSpanCount: number;
+    granularCount: number;
+    horizontalSpanCount: number;
+    capHit: boolean;
+    capLimit: number;
+  },
+): void {
+  const inputTiers = countMatrixTiers(visible);
+  const outputTiers = countMatrixTiers(postCap);
+  const removedTiers = countRemovedTiers(preCap, postCap);
+  const runLengths = postCap.map((c) => c.continuityRunLength ?? 1);
+  const spanDurations = postCap
+    .filter((c) => (c.continuityRunLength ?? 1) > 1 || c.endTimeBucket != null)
+    .map(
+      (c) =>
+        ((c.endTimeBucket ?? c.timeBucket + BOOKMAP_TEXTURE_SAMPLER_MS) -
+          c.timeBucket) /
+        1000,
+    );
+  const avgRun =
+    runLengths.length > 0
+      ? runLengths.reduce((a, b) => a + b, 0) / runLengths.length
+      : 0;
+  lastPrepareMatrixDiag = {
+    inputCells: visible.length,
+    outputTextureCells: postCap.length,
+    outputSpans: postCap.length,
+    mergedSpans: opts.mergedSpanCount,
+    bridgeMergedSpans: opts.bridgeMergedSpanCount,
+    granularMatrixCells: opts.granularCount,
+    horizontalSpanCells: opts.horizontalSpanCount,
+    weakInput: inputTiers.weak,
+    weakOutput: outputTiers.weak,
+    mediumInput: inputTiers.medium,
+    mediumOutput: outputTiers.medium,
+    strongInput: inputTiers.strong,
+    strongOutput: outputTiers.strong,
+    capHit: opts.capHit,
+    capLimit: opts.capLimit,
+    removedByCap: Math.max(0, preCap.length - postCap.length),
+    removedWeak: removedTiers.weak,
+    removedMedium: removedTiers.medium,
+    removedStrong: removedTiers.strong,
+    avgSpanDurationSec:
+      spanDurations.length > 0
+        ? Number(
+            (
+              spanDurations.reduce((a, b) => a + b, 0) / spanDurations.length
+            ).toFixed(2),
+          )
+        : 0,
+    maxSpanDurationSec:
+      spanDurations.length > 0 ? Number(Math.max(...spanDurations).toFixed(2)) : 0,
+    avgRunLength: Number(avgRun.toFixed(2)),
+    maxRunLength: runLengths.length ? Math.max(...runLengths) : 0,
+    timestamp: Date.now(),
+  };
+
+  if (import.meta.env.DEV && BOOKMAP_MATRIX_AUDIT_DIAG) {
+    const now = Date.now();
+    if (now - lastPrepareMatrixLogMs >= 2_000) {
+      lastPrepareMatrixLogMs = now;
+      console.debug("[BOOKMAP_PREPARE_MATRIX_DIAG]", {
+        inputCells: lastPrepareMatrixDiag.inputCells,
+        outputTextureCells: lastPrepareMatrixDiag.outputTextureCells,
+        outputSpans: lastPrepareMatrixDiag.outputSpans,
+        mergedSpans: lastPrepareMatrixDiag.mergedSpans,
+        bridgeMergedSpans: lastPrepareMatrixDiag.bridgeMergedSpans,
+        granularMatrixCells: lastPrepareMatrixDiag.granularMatrixCells,
+        horizontalSpanCells: lastPrepareMatrixDiag.horizontalSpanCells,
+        weakInput: lastPrepareMatrixDiag.weakInput,
+        weakOutput: lastPrepareMatrixDiag.weakOutput,
+        mediumInput: lastPrepareMatrixDiag.mediumInput,
+        mediumOutput: lastPrepareMatrixDiag.mediumOutput,
+        strongInput: lastPrepareMatrixDiag.strongInput,
+        strongOutput: lastPrepareMatrixDiag.strongOutput,
+        capHit: lastPrepareMatrixDiag.capHit,
+        capLimit: lastPrepareMatrixDiag.capLimit,
+        removedByCap: lastPrepareMatrixDiag.removedByCap,
+        removedWeak: lastPrepareMatrixDiag.removedWeak,
+        removedMedium: lastPrepareMatrixDiag.removedMedium,
+        removedStrong: lastPrepareMatrixDiag.removedStrong,
+        avgSpanDurationSec: lastPrepareMatrixDiag.avgSpanDurationSec,
+        maxSpanDurationSec: lastPrepareMatrixDiag.maxSpanDurationSec,
+        avgRunLength: lastPrepareMatrixDiag.avgRunLength,
+        maxRunLength: lastPrepareMatrixDiag.maxRunLength,
+        timestamp: now,
+      });
+    }
+  }
+}
+
+function prioritizeMatrixTextureCells(
+  granular: PreparedEngineTextureCell[],
+  spans: PreparedEngineTextureCell[],
+  midPrice: number | null | undefined,
+  timeMax: number,
+  maxCells: number,
+): { cells: PreparedEngineTextureCell[]; capHit: boolean } {
+  const granularBudget = Math.max(
+    128,
+    Math.floor(maxCells * MATRIX_V1_GRANULAR_CAP_PCT),
+  );
+  const spanBudget = Math.max(64, maxCells - granularBudget);
+  const cappedGranular = prioritizeAndCapTextureCells(
+    granular,
+    midPrice,
+    timeMax,
+    granularBudget,
+  );
+  const cappedSpans = prioritizeAndCapTextureCells(
+    spans,
+    midPrice,
+    timeMax,
+    spanBudget,
+  );
+  return {
+    cells: [...cappedGranular.cells, ...cappedSpans.cells],
+    capHit: cappedGranular.capHit || cappedSpans.capHit,
+  };
+}
+
+function applyHorizontalSpanPreparePass(
+  cells: PreparedEngineTextureCell[],
+  midPrice: number | null | undefined,
+  minPrice: number,
+  maxPrice: number,
+): PreparedEngineTextureCell[] {
+  if (
+    !BOOKMAP_HORIZONTAL_PERSISTENCE_V2 ||
+    minPrice == null ||
+    maxPrice == null ||
+    maxPrice <= minPrice
+  ) {
+    return cells;
+  }
+  let mergedCells = mergeAdjacentPriceTextureSpansV2(
+    cells,
+    H_PERSIST_V2_PRICE_BRIDGE_USD,
+    resolveEffectiveTextureMergeGapMs(),
+  );
+  mergedCells = applyHorizontalPersistenceV2PreparePass(
+    mergedCells,
+    midPrice,
+    minPrice,
+    maxPrice,
+  );
+  if (BOOKMAP_HEATMAP_DEPTH_PASS_V2) {
+    mergedCells = applyHeatmapDepthPassV2(
+      mergedCells,
+      midPrice,
+      minPrice,
+      maxPrice,
+    );
+  }
+  return mergedCells;
+}
+
 function prepareTextureCells(
   cells: PreparedEngineTextureCell[],
   visualScale: AdaptiveVisualScale,
@@ -916,6 +1216,82 @@ function prepareTextureCells(
   const visible = scored.filter((c) => c.intensity >= minRender);
   const filteredByIntensity = scored.length - visible.length;
   const mergeGapMs = resolveEffectiveTextureMergeGapMs();
+
+  if (BOOKMAP_MATRIX_TEXTURE_MODE_V1) {
+    const granularInput = visible.filter((c) => !isHorizontalSpanCandidate(c));
+    const spanInput = visible.filter((c) => isHorizontalSpanCandidate(c));
+    let granularCells = granularInput.map(toGranularMatrixCell);
+    if (
+      BOOKMAP_HEATMAP_DEPTH_PASS_V2 &&
+      minPrice != null &&
+      maxPrice != null &&
+      maxPrice > minPrice
+    ) {
+      granularCells = applyHeatmapDepthPassV2(
+        granularCells,
+        midPrice,
+        minPrice,
+        maxPrice,
+      );
+    }
+    const merged = mergeTextureCellsToTimeSpans(
+      spanInput,
+      mergeGapMs,
+      BOOKMAP_TEXTURE_SAMPLER_MS,
+      timeMax,
+    );
+    let spanCells = merged.cells;
+    const bridgeBefore = spanCells.length;
+    if (
+      minPrice != null &&
+      maxPrice != null &&
+      maxPrice > minPrice &&
+      BOOKMAP_HORIZONTAL_PERSISTENCE_V2
+    ) {
+      spanCells = applyHorizontalSpanPreparePass(
+        spanCells,
+        midPrice,
+        minPrice,
+        maxPrice,
+      );
+    } else if (BOOKMAP_HEATMAP_DEPTH_PASS_V2) {
+      spanCells = applyHeatmapDepthPassV2(
+        spanCells,
+        midPrice,
+        minPrice ?? 0,
+        maxPrice ?? 0,
+      );
+    }
+    const preCapCombined = [...granularCells, ...spanCells];
+    const capped = prioritizeMatrixTextureCells(
+      granularCells,
+      spanCells,
+      midPrice,
+      timeMax,
+      maxCells,
+    );
+    recordPrepareMatrixDiag(visible, preCapCombined, capped.cells, {
+      mergedSpanCount: merged.cells.length,
+      bridgeMergedSpanCount: Math.max(0, bridgeBefore - spanCells.length),
+      granularCount: capped.cells.filter((c) => (c.continuityRunLength ?? 1) <= 1)
+        .length,
+      horizontalSpanCount: capped.cells.filter(
+        (c) => (c.continuityRunLength ?? 1) > 1,
+      ).length,
+      capHit: capped.capHit,
+      capLimit: maxCells,
+    });
+    return {
+      cells: capped.cells,
+      filteredByIntensity,
+      capHit: capped.capHit,
+      cellsWithEndTime: merged.cellsWithEndTime,
+      cellsUsingSyntheticEndTime: merged.cellsUsingSyntheticEndTime,
+      matrixGranularCellCount: granularCells.length,
+      horizontalSpanCellCount: spanCells.length,
+    };
+  }
+
   const merged = mergeTextureCellsToTimeSpans(
     visible,
     mergeGapMs,
@@ -968,6 +1344,18 @@ function prepareTextureCells(
     timeMax,
     maxCells,
   );
+  recordPrepareMatrixDiag(visible, mergedCells, capped.cells, {
+    mergedSpanCount: merged.cells.length,
+    bridgeMergedSpanCount: Math.max(
+      0,
+      lastHorizontalPersistenceV2Stats.afterTimeMergeCount -
+        lastHorizontalPersistenceV2Stats.afterPriceBridgeCount,
+    ),
+    granularCount: 0,
+    horizontalSpanCount: capped.cells.length,
+    capHit: capped.capHit,
+    capLimit: maxCells,
+  });
   return {
     cells: capped.cells,
     filteredByIntensity,
@@ -1734,6 +2122,8 @@ export function prepareEngineRenderData(
     textureContinuousMode: BOOKMAP_TEXTURE_CONTINUOUS_MODE,
     cellsWithEndTime: texturePrepared.cellsWithEndTime,
     cellsUsingSyntheticEndTime: texturePrepared.cellsUsingSyntheticEndTime,
+    matrixGranularCellCount: texturePrepared.matrixGranularCellCount,
+    horizontalSpanCellCount: texturePrepared.horizontalSpanCellCount,
   };
 
   return {

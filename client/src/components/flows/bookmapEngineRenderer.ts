@@ -3,6 +3,8 @@ import {
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_HEATMAP_DEPTH_PASS_V2,
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
+  BOOKMAP_MATRIX_AUDIT_DIAG,
+  BOOKMAP_MATRIX_TEXTURE_MODE_V1,
   BOOKMAP_RENDER_PATH_PROOF_DIAG,
   BOOKMAP_TEXTURE_CALIBRATION_V2,
   computeVisiblePriceRangePct,
@@ -663,6 +665,93 @@ export function getAggressiveHeatmapCalibrationV3RenderStats(): WallOrganicRende
   return lastWallOrganicRenderDiagStats;
 }
 
+export type RenderMatrixDiagStats = {
+  visibleTextureCells: number;
+  visibleSpans: number;
+  weakDrawn: number;
+  mediumDrawn: number;
+  strongDrawn: number;
+  liveProjectionSpans: number;
+  historicalSpans: number;
+  granularMatrixCells: number;
+  solidBaseSpans: number;
+  granularOverlaySpans: number;
+  skippedForAlpha: number;
+  skippedForSize: number;
+  skippedForViewport: number;
+  timestamp: number;
+};
+
+let lastRenderMatrixDiag: RenderMatrixDiagStats = {
+  visibleTextureCells: 0,
+  visibleSpans: 0,
+  weakDrawn: 0,
+  mediumDrawn: 0,
+  strongDrawn: 0,
+  liveProjectionSpans: 0,
+  historicalSpans: 0,
+  granularMatrixCells: 0,
+  solidBaseSpans: 0,
+  granularOverlaySpans: 0,
+  skippedForAlpha: 0,
+  skippedForSize: 0,
+  skippedForViewport: 0,
+  timestamp: 0,
+};
+
+export function getRenderMatrixDiagStats(): RenderMatrixDiagStats {
+  return lastRenderMatrixDiag;
+}
+
+export type LiveVsHistoricalDiagStats = {
+  historicalTextureCount: number;
+  liveProjectionCount: number;
+  historicalAlphaAvg: number;
+  liveProjectionAlphaAvg: number;
+  liveProjectionDominates: boolean;
+  projectionWidthPx: number;
+  historicalWidthPx: number;
+  timestamp: number;
+};
+
+let lastLiveVsHistoricalDiag: LiveVsHistoricalDiagStats = {
+  historicalTextureCount: 0,
+  liveProjectionCount: 0,
+  historicalAlphaAvg: 0,
+  liveProjectionAlphaAvg: 0,
+  liveProjectionDominates: false,
+  projectionWidthPx: 0,
+  historicalWidthPx: 0,
+  timestamp: 0,
+};
+
+let lastRenderMatrixDiagLogMs = 0;
+let lastLiveVsHistoricalDiagLogMs = 0;
+
+export function getLiveVsHistoricalDiagStats(): LiveVsHistoricalDiagStats {
+  return lastLiveVsHistoricalDiag;
+}
+
+function emitRenderMatrixDiag(): void {
+  if (!import.meta.env.DEV || !BOOKMAP_MATRIX_AUDIT_DIAG) return;
+  const now = Date.now();
+  if (now - lastRenderMatrixDiagLogMs < 2_000) return;
+  lastRenderMatrixDiagLogMs = now;
+  console.debug("[BOOKMAP_RENDER_MATRIX_DIAG]", {
+    ...lastRenderMatrixDiag,
+  });
+}
+
+function emitLiveVsHistoricalDiag(): void {
+  if (!import.meta.env.DEV || !BOOKMAP_MATRIX_AUDIT_DIAG) return;
+  const now = Date.now();
+  if (now - lastLiveVsHistoricalDiagLogMs < 2_000) return;
+  lastLiveVsHistoricalDiagLogMs = now;
+  console.debug("[BOOKMAP_LIVE_VS_HISTORICAL_DIAG]", {
+    ...lastLiveVsHistoricalDiag,
+  });
+}
+
 export function getWallOrganicRenderDiagStats(): WallOrganicRenderDiagStats {
   return lastWallOrganicRenderDiagStats;
 }
@@ -739,9 +828,19 @@ function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
     ctx.strokeText("V3 AGGRESSIVE ACTIVE", x, y + 14);
     ctx.fillText("V3 AGGRESSIVE ACTIVE", x, y + 14);
   }
+  if (BOOKMAP_MATRIX_AUDIT_DIAG) {
+    ctx.fillStyle = "rgba(96, 165, 250, 0.95)";
+    const matrixY = y + (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 28 : 14);
+    ctx.strokeText("MATRIX AUDIT ACTIVE", x, matrixY);
+    ctx.fillText("MATRIX AUDIT ACTIVE", x, matrixY);
+  }
   ctx.font = "9px ui-monospace, monospace";
   ctx.fillStyle = "rgba(148, 163, 184, 0.85)";
-  ctx.fillText(RENDERER_FILE_PATH, x, y + (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 28 : 12));
+  const pathY =
+    y +
+    (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 28 : 12) +
+    (BOOKMAP_MATRIX_AUDIT_DIAG ? 14 : 0);
+  ctx.fillText(RENDERER_FILE_PATH, x, pathY);
   ctx.restore();
 }
 
@@ -1424,6 +1523,20 @@ function renderHeatmapTextureCells(
     textureOverlayAlphaCount: 0,
   };
   const organicDiag = lastWallOrganicRenderDiagStats;
+  const matrixDiagAcc = {
+    visibleTextureCells: 0,
+    visibleSpans: 0,
+    weakDrawn: 0,
+    mediumDrawn: 0,
+    strongDrawn: 0,
+    historicalSpans: 0,
+    granularMatrixCells: 0,
+    solidBaseSpans: 0,
+    granularOverlaySpans: 0,
+    skippedForAlpha: 0,
+    skippedForSize: 0,
+    skippedForViewport: filteredByTime,
+  };
 
   let rendered = 0;
   let widthSum = 0;
@@ -1466,7 +1579,10 @@ function renderHeatmapTextureCells(
       resolveTextureSourceKindForPrepared(cell) === "base"
         ? BOOKMAP_BASE_TEXTURE_MIN_RENDER_INTENSITY
         : BOOKMAP_TEXTURE_MIN_RENDER_INTENSITY;
-    if (viRaw < minRenderI) continue;
+    if (viRaw < minRenderI) {
+      matrixDiagAcc.skippedForAlpha += 1;
+      continue;
+    }
 
     const sourceKind = resolveTextureSourceKindForPrepared(cell);
     const maxSize = renderCtx.viewportMaxSize ?? rep.stableSizeBtc;
@@ -1539,8 +1655,14 @@ function renderHeatmapTextureCells(
       priceToY,
       metrics.domBucketSize,
     );
-    if (yTop + height < HEATMAP_PAD.top - 2) continue;
-    if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
+    if (yTop + height < HEATMAP_PAD.top - 2) {
+      matrixDiagAcc.skippedForViewport += 1;
+      continue;
+    }
+    if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) {
+      matrixDiagAcc.skippedForViewport += 1;
+      continue;
+    }
 
     if (spanBaseEnabled) {
       const clip = clipHistoricalSpanToDataEdge(
@@ -1598,6 +1720,15 @@ function renderHeatmapTextureCells(
         },
         organicDiag,
       );
+
+      matrixDiagAcc.visibleTextureCells += 1;
+      matrixDiagAcc.visibleSpans += 1;
+      if (runLength <= 1) matrixDiagAcc.granularMatrixCells += 1;
+      else matrixDiagAcc.historicalSpans += 1;
+      if (spanBaseEnabled) matrixDiagAcc.solidBaseSpans += 1;
+      if (vi < 0.22) matrixDiagAcc.weakDrawn += 1;
+      else if (vi < 0.52) matrixDiagAcc.mediumDrawn += 1;
+      else matrixDiagAcc.strongDrawn += 1;
 
       rendered += 1;
       widthSum += spanW;
@@ -1703,6 +1834,7 @@ function renderHeatmapTextureCells(
           );
       if (overlayOps.length > 0) {
         organicDiag.overlaySpanCount += 1;
+        matrixDiagAcc.granularOverlaySpans += 1;
         spansWithOverlay += 1;
         let spanOverlayAlphaSum = 0;
         let spanOverlayAlphaMax = 0;
@@ -1773,6 +1905,12 @@ function renderHeatmapTextureCells(
       }
     }
   }
+
+  lastRenderMatrixDiag = {
+    ...matrixDiagAcc,
+    liveProjectionSpans: lastRenderMatrixDiag.liveProjectionSpans,
+    timestamp: Date.now(),
+  };
 
   ctx.restore();
 
@@ -3158,6 +3296,31 @@ export function paintBookmapEngineHeatmapFrame(
       combinedLiveDraw.projectionOverlapsHistory;
   }
 
+  lastRenderMatrixDiag = {
+    ...lastRenderMatrixDiag,
+    liveProjectionSpans: combinedLiveDraw.rendered,
+  };
+  const historicalAlphaAvg =
+    lastWallOrganicRenderDiagStats.solidBaseAlphaCount > 0
+      ? lastWallOrganicRenderDiagStats.solidBaseAlphaSum /
+        lastWallOrganicRenderDiagStats.solidBaseAlphaCount
+      : 0;
+  const historicalWidthPx = primaryTextureDraw?.avgTextureCellWidthPx ?? 0;
+  lastLiveVsHistoricalDiag = {
+    historicalTextureCount: renderedTextureTotal,
+    liveProjectionCount: combinedLiveDraw.rendered,
+    historicalAlphaAvg: Number(historicalAlphaAvg.toFixed(3)),
+    liveProjectionAlphaAvg: Number(
+      (combinedLiveDraw.avgProjectionWidthPx > 0 ? 0.55 : 0).toFixed(3),
+    ),
+    liveProjectionDominates:
+      combinedLiveDraw.avgProjectionWidthPx >
+      Math.max(1, historicalWidthPx) * 1.35,
+    projectionWidthPx: Number(combinedLiveDraw.avgProjectionWidthPx.toFixed(2)),
+    historicalWidthPx: Number(historicalWidthPx.toFixed(2)),
+    timestamp: Date.now(),
+  };
+
   if (hasBands && preparedPrimaryWalls) {
     renderedLayerOrder.push("wallBands");
     const baseTexturePriceKeys = new Set<string>();
@@ -3679,6 +3842,8 @@ export function paintBookmapEngineHeatmapFrame(
     params.textureRenderStatsOut?.textureDrawCapHit ?? false,
     getAggressiveHeatmapCalibrationV3PrepareStats().skippedWeakFar,
   );
+  emitRenderMatrixDiag();
+  emitLiveVsHistoricalDiag();
   drawRenderPathProofWatermark(ctx);
 }
 

@@ -196,3 +196,20 @@ export const V3_WEAK_MEDIUM_CAP_RESERVE_PCT = 0.28;
 export const V3_NEAR_PRICE_MIN_INTENSITY = 0.12;
 /** Minimum size (BTC) OR runLength for near-price boost when vi is low. */
 export const V3_NEAR_PRICE_MIN_SIZE_OR_RUN = 5;
+
+/**
+ * B.3 — Matrix texture mode: preserve granular time×price cells alongside horizontal spans.
+ */
+export const BOOKMAP_MATRIX_TEXTURE_MODE_V1 = true;
+
+/** DEV-only matrix density audit logs (throttled 2s). */
+export const BOOKMAP_MATRIX_AUDIT_DIAG = true;
+
+/** Fraction of texture prepare cap reserved for granular matrix cells. */
+export const MATRIX_V1_GRANULAR_CAP_PCT = 0.48;
+/** Minimum size (BTC) for horizontal span merge path. */
+export const MATRIX_V1_SPAN_MIN_SIZE_BTC = 20;
+/** Minimum intensity for horizontal span merge path. */
+export const MATRIX_V1_SPAN_MIN_INTENSITY = 0.36;
+/** Skip horizontal time merge for granular matrix cells. */
+export const MATRIX_V1_GRANULAR_SINGLE_BUCKET = true;

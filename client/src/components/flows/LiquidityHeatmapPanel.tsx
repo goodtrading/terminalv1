@@ -45,7 +45,9 @@ import {
   ENABLE_BOOKMAP_TRADE_DOTS,
   TRADE_DOT_COLOR_MODE,
   USE_BOOKMAP_ENGINE,
+  BOOKMAP_MATRIX_AUDIT_DIAG,
 } from "@/lib/bookmapEngineConfig";
+import { buildRawHeatmapMatrixDiag } from "@/lib/bookmapMatrixAudit";
 import {
   logBookmapFrontendDataDiag,
   logBookmapRailwayEnableAudit,
@@ -2619,6 +2621,25 @@ export function LiquidityHeatmapPanel({
     const id = window.setInterval(logDepthLayerV2, 2_000);
     return () => window.clearInterval(id);
   }, [sourceMode, activeDomMarket]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !BOOKMAP_MATRIX_AUDIT_DIAG) return;
+    if (!primaryHeatmapState) return;
+    const logRawMatrix = () => {
+      if (!primaryHeatmapState?.heatmapCells.length) return;
+      console.debug(
+        "[BOOKMAP_RAW_HEATMAP_MATRIX_DIAG]",
+        buildRawHeatmapMatrixDiag(primaryHeatmapState, {
+          market: activeDomMarket,
+          sourceMode,
+          activeTradeMarket,
+        }),
+      );
+    };
+    logRawMatrix();
+    const id = window.setInterval(logRawMatrix, 2_000);
+    return () => window.clearInterval(id);
+  }, [sourceMode, activeDomMarket, activeTradeMarket, primaryHeatmapState]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
