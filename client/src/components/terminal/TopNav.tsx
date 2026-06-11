@@ -10,6 +10,7 @@ import { TopNavUserMenu } from "./TopNavUserMenu";
 import type { HealthTone } from "./health/healthUi";
 import { DesktopAssetSelector } from "@/components/desktop/DesktopAssetSelector";
 import { DesktopPanelVisibilityToggle } from "@/components/desktop/DesktopPanelVisibilityToggle";
+import { DesktopFocusModeIndicator } from "@/components/desktop/DesktopFocusModeIndicator";
 
 interface TopNavProps {
   activeTab: string;
@@ -125,10 +126,13 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
           <ContextChip label="TF" value="15M" />
           <ContextChip label="Feed" value="DERIBIT" />
           {showDesktopLayoutControls && onTogglePanels ? (
-            <DesktopPanelVisibilityToggle
-              panelsVisible={panelsVisible}
-              onToggle={onTogglePanels}
-            />
+            <>
+              <DesktopPanelVisibilityToggle
+                panelsVisible={panelsVisible}
+                onToggle={onTogglePanels}
+              />
+              {!panelsVisible ? <DesktopFocusModeIndicator /> : null}
+            </>
           ) : null}
         </div>
 
