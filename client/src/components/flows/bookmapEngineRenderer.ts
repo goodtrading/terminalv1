@@ -12,6 +12,16 @@ import {
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
   BOOKMAP_MATRIX_AUDIT_DIAG,
   BOOKMAP_MATRIX_TEXTURE_MODE_V1,
+  BOOKMAP_NATURAL_MATRIX_LOGIC_V1,
+  NATURAL_MATRIX_ALPHA_FADING,
+  NATURAL_MATRIX_ALPHA_NEW,
+  NATURAL_MATRIX_ALPHA_PERSISTENT,
+  NATURAL_MATRIX_ALPHA_REINFORCED,
+  NATURAL_MATRIX_ALPHA_STALE,
+  NATURAL_MATRIX_JITTER_X_MAX_PX,
+  NATURAL_MATRIX_MAX_FRAGMENT_BUCKETS,
+  NATURAL_MATRIX_WEAK_VISIBILITY_BOOST,
+  NATURAL_MATRIX_WIDTH_VARIANCE,
   BOOKMAP_RENDER_PATH_PROOF_DIAG,
   BOOKMAP_TEXTURE_CALIBRATION_V2,
   computeVisiblePriceRangePct,
@@ -781,6 +791,150 @@ function emitGranularMatrixRendererDiag(): void {
   });
 }
 
+export type NaturalMatrixLogicDiagStats = {
+  granularCellsInput: number;
+  granularCellsDrawn: number;
+  miniFragmentsDrawn: number;
+  persistentFragments: number;
+  newCells: number;
+  fadingCells: number;
+  reinforcedCells: number;
+  wallCandidates: number;
+  avgCellWidthPx: number;
+  avgFragmentWidthPx: number;
+  avgAlphaWeak: number;
+  avgAlphaMedium: number;
+  avgAlphaStrong: number;
+  gridUniformityScore: number;
+  timestamp: number;
+};
+
+let lastNaturalMatrixLogicDiag: NaturalMatrixLogicDiagStats = {
+  granularCellsInput: 0,
+  granularCellsDrawn: 0,
+  miniFragmentsDrawn: 0,
+  persistentFragments: 0,
+  newCells: 0,
+  fadingCells: 0,
+  reinforcedCells: 0,
+  wallCandidates: 0,
+  avgCellWidthPx: 0,
+  avgFragmentWidthPx: 0,
+  avgAlphaWeak: 0,
+  avgAlphaMedium: 0,
+  avgAlphaStrong: 0,
+  gridUniformityScore: 1,
+  timestamp: 0,
+};
+
+let lastNaturalMatrixLogicDiagLogMs = 0;
+
+export function getNaturalMatrixLogicDiagStats(): NaturalMatrixLogicDiagStats {
+  return lastNaturalMatrixLogicDiag;
+}
+
+function emitNaturalMatrixLogicDiag(): void {
+  if (!import.meta.env.DEV || !BOOKMAP_NATURAL_MATRIX_LOGIC_V1) return;
+  const now = Date.now();
+  if (now - lastNaturalMatrixLogicDiagLogMs < 2_000) return;
+  lastNaturalMatrixLogicDiagLogMs = now;
+  console.debug("[BOOKMAP_NATURAL_MATRIX_LOGIC_V1_DIAG]", {
+    ...lastNaturalMatrixLogicDiag,
+  });
+}
+
+function computeGridUniformityScore(widths: number[]): number {
+  if (widths.length < 4) return 0.5;
+  const mean = widths.reduce((a, b) => a + b, 0) / widths.length;
+  const variance =
+    widths.reduce((sum, w) => sum + (w - mean) ** 2, 0) / widths.length;
+  const cv = Math.sqrt(variance) / Math.max(0.001, mean);
+  return Math.max(0, Math.min(1, 1 - cv / 0.42));
+}
+
+function resolveNaturalMatrixAlphaMultiplier(
+  cell: PreparedEngineTextureCell,
+): number {
+  if (!BOOKMAP_NATURAL_MATRIX_LOGIC_V1) return 1;
+  const stage = cell.liquidityLifeStage;
+  const fade = cell.visualFadeScore ?? 0;
+  const refill = cell.visualRefillScore ?? 0;
+  const continuity = cell.visualContinuityScore ?? 0;
+  switch (stage) {
+    case "new":
+      return NATURAL_MATRIX_ALPHA_NEW;
+    case "persistent":
+      return NATURAL_MATRIX_ALPHA_PERSISTENT * (0.94 + continuity * 0.12);
+    case "reinforced":
+      return NATURAL_MATRIX_ALPHA_REINFORCED * (0.96 + refill * 0.1);
+    case "fading":
+      return NATURAL_MATRIX_ALPHA_FADING * (1 - fade * 0.28);
+    case "stale":
+      return NATURAL_MATRIX_ALPHA_STALE;
+    case "wall_candidate":
+      return 1.04;
+    default:
+      return 1;
+  }
+}
+
+function resolveNaturalGranularDrawGeom(
+  cell: PreparedEngineTextureCell,
+  timeToX: (t: number) => number,
+  regime: BookmapZoomRegime,
+): { x0: number; w: number } {
+  const hash = granularCellDeterministicHash(cell.price, cell.timeBucket);
+  const hash2 = granularCellDeterministicHash(
+    cell.price * 1.7,
+    cell.timeBucket + 17,
+  );
+
+  if (cell.isMiniFragment) {
+    const bucketCount = Math.min(
+      NATURAL_MATRIX_MAX_FRAGMENT_BUCKETS,
+      cell.continuityRunLength ?? 2,
+    );
+    const endTime =
+      cell.endTimeBucket ??
+      cell.timeBucket + bucketCount * BOOKMAP_ENGINE_BUCKET_MS;
+    const baseX = timeToX(cell.timeBucket);
+    let w = Math.max(2, timeToX(endTime) - baseX);
+    const maxW =
+      resolveGranularMaxWidthPx(regime) * (1.15 + bucketCount * 0.32);
+    w = Math.min(w, maxW);
+    w *= 0.88 + hash2 * NATURAL_MATRIX_WIDTH_VARIANCE;
+    const jitter =
+      (hash - 0.5) * 2 * NATURAL_MATRIX_JITTER_X_MAX_PX * 0.45;
+    return { x0: baseX + jitter, w: Math.max(1.5, w) };
+  }
+
+  const baseW = resolveGranularCellWidthPx(
+    timeToX,
+    cell.timeBucket,
+    regime,
+  );
+  const stage = cell.liquidityLifeStage;
+  const stageMul =
+    stage === "new"
+      ? 0.8
+      : stage === "persistent"
+        ? 0.96 + (cell.visualContinuityScore ?? 0) * 0.14
+        : stage === "reinforced"
+          ? 1.08
+          : stage === "fading"
+            ? 0.72
+            : stage === "stale"
+              ? 0.68
+              : 0.9;
+  const widthMul = (0.76 + hash * NATURAL_MATRIX_WIDTH_VARIANCE * 2) * stageMul;
+  const w = Math.max(1, baseW * widthMul);
+  const jitter = (hash2 - 0.5) * 2 * NATURAL_MATRIX_JITTER_X_MAX_PX;
+  return {
+    x0: timeToX(cell.timeBucket) + jitter,
+    w,
+  };
+}
+
 function emitRenderMatrixDiag(): void {
   if (!import.meta.env.DEV || !BOOKMAP_MATRIX_AUDIT_DIAG) return;
   const now = Date.now();
@@ -891,6 +1045,16 @@ function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
       (BOOKMAP_MATRIX_AUDIT_DIAG ? 14 : 0);
     ctx.strokeText("GRANULAR MATRIX V1 ACTIVE", x, granularY);
     ctx.fillText("GRANULAR MATRIX V1 ACTIVE", x, granularY);
+  }
+  if (BOOKMAP_NATURAL_MATRIX_LOGIC_V1) {
+    ctx.fillStyle = "rgba(167, 139, 250, 0.95)";
+    const naturalY =
+      y +
+      (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 56 : 42) +
+      (BOOKMAP_MATRIX_AUDIT_DIAG ? 14 : 0) +
+      (BOOKMAP_GRANULAR_MATRIX_RENDERER_V1 ? 14 : 0);
+    ctx.strokeText("NATURAL MATRIX LOGIC V1 ACTIVE", x, naturalY);
+    ctx.fillText("NATURAL MATRIX LOGIC V1 ACTIVE", x, naturalY);
   }
   ctx.font = "9px ui-monospace, monospace";
   ctx.fillStyle = "rgba(148, 163, 184, 0.85)";
@@ -1374,6 +1538,23 @@ type GranularMatrixDrawPassResult = {
   overSpanWidthCount: number;
   weakDrawn: number;
   mediumDrawn: number;
+  miniFragmentsDrawn: number;
+  persistentFragments: number;
+  newCells: number;
+  fadingCells: number;
+  reinforcedCells: number;
+  wallCandidates: number;
+  cellWidthSum: number;
+  cellWidthCount: number;
+  fragmentWidthSum: number;
+  fragmentWidthCount: number;
+  weakAlphaSum: number;
+  weakAlphaCount: number;
+  mediumAlphaSum: number;
+  mediumAlphaCount: number;
+  strongAlphaSum: number;
+  strongAlphaCount: number;
+  drawnWidths: number[];
 };
 
 function drawGranularMatrixCellsPass(
@@ -1394,6 +1575,23 @@ function drawGranularMatrixCellsPass(
     overSpanWidthCount: 0,
     weakDrawn: 0,
     mediumDrawn: 0,
+    miniFragmentsDrawn: 0,
+    persistentFragments: 0,
+    newCells: 0,
+    fadingCells: 0,
+    reinforcedCells: 0,
+    wallCandidates: 0,
+    cellWidthSum: 0,
+    cellWidthCount: 0,
+    fragmentWidthSum: 0,
+    fragmentWidthCount: 0,
+    weakAlphaSum: 0,
+    weakAlphaCount: 0,
+    mediumAlphaSum: 0,
+    mediumAlphaCount: 0,
+    strongAlphaSum: 0,
+    strongAlphaCount: 0,
+    drawnWidths: [],
   };
   if (!cells.length) return empty;
 
@@ -1422,6 +1620,23 @@ function drawGranularMatrixCellsPass(
   let overSpanWidthCount = 0;
   let weakDrawn = 0;
   let mediumDrawn = 0;
+  let miniFragmentsDrawn = 0;
+  let persistentFragments = 0;
+  let newCells = 0;
+  let fadingCells = 0;
+  let reinforcedCells = 0;
+  let wallCandidates = 0;
+  let cellWidthSum = 0;
+  let cellWidthCount = 0;
+  let fragmentWidthSum = 0;
+  let fragmentWidthCount = 0;
+  let weakAlphaSum = 0;
+  let weakAlphaCount = 0;
+  let mediumAlphaSum = 0;
+  let mediumAlphaCount = 0;
+  let strongAlphaSum = 0;
+  let strongAlphaCount = 0;
+  const drawnWidths: number[] = [];
 
   for (const cell of sorted) {
     const viRaw = cell.intensity ?? 0;
@@ -1490,6 +1705,10 @@ function drawGranularMatrixCellsPass(
     const hash = granularCellDeterministicHash(cell.price, cell.timeBucket);
     bodyAlpha *=
       BOOKMAP_GRANULAR_ALPHA_MOD_MIN + hash * BOOKMAP_GRANULAR_ALPHA_MOD_RANGE;
+    bodyAlpha *= resolveNaturalMatrixAlphaMultiplier(cell);
+    if (vi < 0.22) {
+      bodyAlpha *= NATURAL_MATRIX_WEAK_VISIBILITY_BOOST;
+    }
 
     const { yTop, height } = textureCellVerticalBounds(
       cell.price,
@@ -1499,26 +1718,62 @@ function drawGranularMatrixCellsPass(
     if (yTop + height < HEATMAP_PAD.top - 2) continue;
     if (yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
 
-    const x0 = timeToX(cell.timeBucket);
-    if (x0 >= dataEdgeX) continue;
-    let cellW = resolveGranularCellWidthPx(
+    const { x0, w: cellWRaw } = resolveNaturalGranularDrawGeom(
+      cell,
       timeToX,
-      cell.timeBucket,
       renderCtx.regime,
     );
+    if (x0 >= dataEdgeX) continue;
+    let cellW = cellWRaw;
     if (x0 + cellW > dataEdgeX) {
       cellW = Math.max(1, dataEdgeX - x0);
     }
-    if (cellW > overSpanThreshold) overSpanWidthCount += 1;
+    if (cellW > overSpanThreshold && !cell.isMiniFragment) {
+      overSpanWidthCount += 1;
+    }
+
+    let drawVi = vi;
+    if (
+      BOOKMAP_NATURAL_MATRIX_LOGIC_V1 &&
+      cell.liquidityLifeStage === "reinforced"
+    ) {
+      drawVi = Math.min(0.92, vi * (1.04 + (cell.visualRefillScore ?? 0) * 0.08));
+    } else if (
+      BOOKMAP_NATURAL_MATRIX_LOGIC_V1 &&
+      (cell.liquidityLifeStage === "fading" || cell.liquidityLifeStage === "stale")
+    ) {
+      drawVi = vi * 0.92;
+    }
 
     const rgb: [number, number, number] = microVisualMode
-      ? intensityToMicroHistoricalTextureRgb(vi)
-      : intensityToPassiveLiquidityRgb(vi);
+      ? intensityToMicroHistoricalTextureRgb(drawVi)
+      : intensityToPassiveLiquidityRgb(drawVi);
 
-    if (
+    if (cell.isMiniFragment && cellW >= 3) {
+      drawOrganicSpanBody(
+        ctx,
+        x0,
+        cellW,
+        yTop,
+        height,
+        {
+          rgb,
+          bodyAlpha,
+          vi: drawVi,
+          runLength: cell.continuityRunLength ?? 2,
+          sizeBtc: cell.maxSizeInBucket,
+          reinforcedBase: false,
+          nearPrice: weight.pctFromMid <= DEPTH_V2_NEAR_PRICE_PCT,
+        },
+        lastWallOrganicRenderDiagStats,
+      );
+      miniFragmentsDrawn += 1;
+      fragmentWidthSum += cellW;
+      fragmentWidthCount += 1;
+    } else if (
       BOOKMAP_HEATMAP_DEPTH_PASS_V2 &&
-      vi < weakDepthMaxVi &&
-      vi >= weakMinI
+      drawVi < weakDepthMaxVi &&
+      drawVi >= weakMinI
     ) {
       fillSpanRgba(ctx, x0, cellW, yTop, height, rgb, bodyAlpha * weakDepthMul);
     } else {
@@ -1527,10 +1782,44 @@ function drawGranularMatrixCellsPass(
 
     drawn += 1;
     widthSum += cellW;
+    drawnWidths.push(cellW);
     if (cellW < widthMin) widthMin = cellW;
     if (cellW > widthMax) widthMax = cellW;
-    if (vi < 0.22) weakDrawn += 1;
-    else if (vi < 0.52) mediumDrawn += 1;
+    if (vi < 0.22) {
+      weakDrawn += 1;
+      weakAlphaSum += bodyAlpha;
+      weakAlphaCount += 1;
+    } else if (vi < 0.52) {
+      mediumDrawn += 1;
+      mediumAlphaSum += bodyAlpha;
+      mediumAlphaCount += 1;
+    } else {
+      strongAlphaSum += bodyAlpha;
+      strongAlphaCount += 1;
+    }
+    if (!cell.isMiniFragment) {
+      cellWidthSum += cellW;
+      cellWidthCount += 1;
+    }
+    switch (cell.liquidityLifeStage) {
+      case "new":
+        newCells += 1;
+        break;
+      case "persistent":
+        persistentFragments += 1;
+        break;
+      case "reinforced":
+        reinforcedCells += 1;
+        break;
+      case "fading":
+        fadingCells += 1;
+        break;
+      case "wall_candidate":
+        wallCandidates += 1;
+        break;
+      default:
+        break;
+    }
   }
 
   return {
@@ -1541,6 +1830,23 @@ function drawGranularMatrixCellsPass(
     overSpanWidthCount,
     weakDrawn,
     mediumDrawn,
+    miniFragmentsDrawn,
+    persistentFragments,
+    newCells,
+    fadingCells,
+    reinforcedCells,
+    wallCandidates,
+    cellWidthSum,
+    cellWidthCount,
+    fragmentWidthSum,
+    fragmentWidthCount,
+    weakAlphaSum,
+    weakAlphaCount,
+    mediumAlphaSum,
+    mediumAlphaCount,
+    strongAlphaSum,
+    strongAlphaCount,
+    drawnWidths,
   };
 }
 
@@ -1900,6 +2206,23 @@ function renderHeatmapTextureCells(
         })
       : viRaw;
 
+    if (BOOKMAP_NATURAL_MATRIX_LOGIC_V1 && cell.liquidityLifeStage) {
+      if (
+        cell.liquidityLifeStage === "reinforced" ||
+        cell.liquidityLifeStage === "wall_candidate"
+      ) {
+        vi = Math.min(
+          0.96,
+          vi * (1.03 + (cell.visualRefillScore ?? 0) * 0.06),
+        );
+      } else if (
+        cell.liquidityLifeStage === "fading" ||
+        cell.liquidityLifeStage === "stale"
+      ) {
+        vi *= 0.94;
+      }
+    }
+
     const bodyAlpha = resolveTextureSegmentBodyAlpha(
       rep,
       vi,
@@ -1915,10 +2238,13 @@ function renderHeatmapTextureCells(
       cell.continuityRunLength ?? 1,
     );
     const bodyAlphaCap = BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 ? 0.82 : 0.72;
-    const adjustedBodyAlpha =
+    let adjustedBodyAlpha =
       depthAlphaBoost > 0
         ? Math.min(bodyAlphaCap, bodyAlpha * (1 + depthAlphaBoost))
         : bodyAlpha;
+    if (BOOKMAP_NATURAL_MATRIX_LOGIC_V1 && cell.liquidityLifeStage) {
+      adjustedBodyAlpha *= resolveNaturalMatrixAlphaMultiplier(cell);
+    }
     if (depthAlphaBoost > 0) organicDiag.nearPriceBoostCount += 1;
     const globalMul =
       textureOpacityMul * (mode === "perp-overlay" ? 0.88 : 1);
@@ -2226,6 +2552,45 @@ function renderHeatmapTextureCells(
       timestamp: Date.now(),
     };
     emitGranularMatrixRendererDiag();
+  }
+
+  if (BOOKMAP_NATURAL_MATRIX_LOGIC_V1) {
+    const g = granularDrawResult;
+    lastNaturalMatrixLogicDiag = {
+      granularCellsInput: granularPool.length,
+      granularCellsDrawn: g?.drawn ?? 0,
+      miniFragmentsDrawn: g?.miniFragmentsDrawn ?? 0,
+      persistentFragments: g?.persistentFragments ?? 0,
+      newCells: g?.newCells ?? 0,
+      fadingCells: g?.fadingCells ?? 0,
+      reinforcedCells: g?.reinforcedCells ?? 0,
+      wallCandidates: g?.wallCandidates ?? 0,
+      avgCellWidthPx:
+        g != null && g.cellWidthCount > 0
+          ? Number((g.cellWidthSum / g.cellWidthCount).toFixed(2))
+          : 0,
+      avgFragmentWidthPx:
+        g != null && g.fragmentWidthCount > 0
+          ? Number((g.fragmentWidthSum / g.fragmentWidthCount).toFixed(2))
+          : 0,
+      avgAlphaWeak:
+        g != null && g.weakAlphaCount > 0
+          ? Number((g.weakAlphaSum / g.weakAlphaCount).toFixed(3))
+          : 0,
+      avgAlphaMedium:
+        g != null && g.mediumAlphaCount > 0
+          ? Number((g.mediumAlphaSum / g.mediumAlphaCount).toFixed(3))
+          : 0,
+      avgAlphaStrong:
+        g != null && g.strongAlphaCount > 0
+          ? Number((g.strongAlphaSum / g.strongAlphaCount).toFixed(3))
+          : 0,
+      gridUniformityScore: Number(
+        computeGridUniformityScore(g?.drawnWidths ?? []).toFixed(3),
+      ),
+      timestamp: Date.now(),
+    };
+    emitNaturalMatrixLogicDiag();
   }
 
   ctx.restore();

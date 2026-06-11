@@ -223,6 +223,33 @@ export const BOOKMAP_GRANULAR_MAX_WIDTH_SCALP_PX = 10;
 export const BOOKMAP_GRANULAR_ALPHA_MOD_MIN = 0.92;
 export const BOOKMAP_GRANULAR_ALPHA_MOD_RANGE = 0.14;
 
+/**
+ * B.3.2 — Natural historical matrix: lifecycle, mini-fragments, irregular texture.
+ */
+export const BOOKMAP_NATURAL_MATRIX_LOGIC_V1 = true;
+
+/** Medium mini-fragment intensity band. */
+export const NATURAL_MATRIX_MIN_VI_FRAGMENT = 0.22;
+export const NATURAL_MATRIX_MAX_VI_FRAGMENT = 0.45;
+/** Minimum consecutive buckets for mini-fragment merge. */
+export const NATURAL_MATRIX_MIN_RUN_FRAGMENT = 2;
+/** Maximum consecutive buckets in a mini-fragment. */
+export const NATURAL_MATRIX_MAX_FRAGMENT_BUCKETS = 5;
+/** Minimum persistence (ms) for mini-fragment eligibility. */
+export const NATURAL_MATRIX_MIN_PERSISTENCE_MS = 1_200;
+
+/** Deterministic visual jitter — breaks perfect grid without moving price level. */
+export const NATURAL_MATRIX_JITTER_X_MAX_PX = 0.65;
+export const NATURAL_MATRIX_WIDTH_VARIANCE = 0.24;
+
+/** Life-stage alpha multipliers (historical granular only). */
+export const NATURAL_MATRIX_ALPHA_NEW = 0.78;
+export const NATURAL_MATRIX_ALPHA_PERSISTENT = 1.1;
+export const NATURAL_MATRIX_ALPHA_REINFORCED = 1.2;
+export const NATURAL_MATRIX_ALPHA_FADING = 0.58;
+export const NATURAL_MATRIX_ALPHA_STALE = 0.45;
+export const NATURAL_MATRIX_WEAK_VISIBILITY_BOOST = 1.14;
+
 /** Fraction of texture prepare cap reserved for granular matrix cells. */
 export const MATRIX_V1_GRANULAR_CAP_PCT = 0.48;
 /** Minimum size (BTC) for horizontal span merge path. */

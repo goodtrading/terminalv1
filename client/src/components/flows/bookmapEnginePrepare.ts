@@ -6,6 +6,7 @@ import {
   BOOKMAP_HORIZONTAL_PERSISTENCE_V2,
   BOOKMAP_MATRIX_AUDIT_DIAG,
   BOOKMAP_MATRIX_TEXTURE_MODE_V1,
+  BOOKMAP_NATURAL_MATRIX_LOGIC_V1,
   BOOKMAP_TEXTURE_CALIBRATION_V2,
   DEPTH_V2_MAX_VISIBILITY_INTENSITY,
   DEPTH_V2_NEAR_PRICE_PCT,
@@ -26,6 +27,11 @@ import {
   MATRIX_V1_GRANULAR_CAP_PCT,
   MATRIX_V1_SPAN_MIN_INTENSITY,
   MATRIX_V1_SPAN_MIN_SIZE_BTC,
+  NATURAL_MATRIX_MAX_FRAGMENT_BUCKETS,
+  NATURAL_MATRIX_MIN_PERSISTENCE_MS,
+  NATURAL_MATRIX_MIN_RUN_FRAGMENT,
+  NATURAL_MATRIX_MIN_VI_FRAGMENT,
+  NATURAL_MATRIX_MAX_VI_FRAGMENT,
   type BookmapZoomRegime,
   computeVisiblePriceRangePct,
   L2_MATERIAL_SIZE_CHANGE_BTC,
@@ -244,6 +250,22 @@ export type PreparedEngineCell = {
   textureSourceKind?: TextureSourceKind;
   /** B.3.1 — short time-bucket mosaic cell (not horizontal span). */
   isGranularMatrixCell?: boolean;
+  /** B.3.2 — medium persistent mini-fragment (2–5 buckets). */
+  isMiniFragment?: boolean;
+  /** B.3.2 — derived liquidity lifecycle stage for historical render. */
+  liquidityLifeStage?:
+    | "new"
+    | "persistent"
+    | "reinforced"
+    | "fading"
+    | "stale"
+    | "wall_candidate";
+  /** B.3.2 — 0–1 continuity score from run length + persistence. */
+  visualContinuityScore?: number;
+  /** B.3.2 — 0–1 fade hint when size drops or level ends. */
+  visualFadeScore?: number;
+  /** B.3.2 — 0–1 refill hint when size increases vs prior bucket. */
+  visualRefillScore?: number;
 };
 
 export type PreparedEngineTextureCell = PreparedEngineCell;
@@ -847,6 +869,264 @@ function toGranularMatrixCell(
   };
 }
 
+function granularPriceLevelKey(cell: PreparedEngineTextureCell): string {
+  return `${cell.side}:${cell.price}`;
+}
+
+function isConsecutiveGranularBucket(
+  prev: PreparedEngineTextureCell,
+  cur: PreparedEngineTextureCell,
+): boolean {
+  return cur.timeBucket - prev.timeBucket <= BOOKMAP_ENGINE_BUCKET_MS * 1.5;
+}
+
+function finalizeGranularRun(
+  group: PreparedEngineTextureCell[],
+  start: number,
+  end: number,
+): void {
+  const runLen = end - start + 1;
+  const runStartTime = group[start]!.timeBucket;
+  for (let i = start; i <= end; i++) {
+    group[i] = {
+      ...group[i]!,
+      continuityRunLength: runLen,
+      runStartTimeBucket: runStartTime,
+      cellsInRun: runLen,
+    };
+  }
+}
+
+function computeGranularPriceRuns(
+  cells: PreparedEngineTextureCell[],
+): PreparedEngineTextureCell[] {
+  const byLevel = new Map<string, PreparedEngineTextureCell[]>();
+  for (const cell of cells) {
+    const key = granularPriceLevelKey(cell);
+    const bucket = byLevel.get(key);
+    if (bucket) bucket.push(cell);
+    else byLevel.set(key, [cell]);
+  }
+  const out: PreparedEngineTextureCell[] = [];
+  for (const group of byLevel.values()) {
+    group.sort((a, b) => a.timeBucket - b.timeBucket);
+    let runStart = 0;
+    for (let i = 1; i < group.length; i++) {
+      if (!isConsecutiveGranularBucket(group[i - 1]!, group[i]!)) {
+        finalizeGranularRun(group, runStart, i - 1);
+        runStart = i;
+      }
+    }
+    finalizeGranularRun(group, runStart, group.length - 1);
+    out.push(...group);
+  }
+  return out;
+}
+
+function deriveNaturalMatrixVisualFields(
+  cell: PreparedEngineTextureCell,
+  prevSameLevel: PreparedEngineTextureCell | null,
+  nextSameLevel: PreparedEngineTextureCell | null,
+): Pick<
+  PreparedEngineCell,
+  | "liquidityLifeStage"
+  | "visualContinuityScore"
+  | "visualFadeScore"
+  | "visualRefillScore"
+> {
+  const vi = cell.intensity ?? 0;
+  const runLen = cell.continuityRunLength ?? 1;
+  const persistenceMs =
+    cell.persistenceMs ?? runLen * BOOKMAP_ENGINE_BUCKET_MS;
+  const size = cell.maxSizeInBucket;
+  const prevSize = prevSameLevel?.maxSizeInBucket ?? size;
+
+  const hasGapAfter =
+    nextSameLevel == null ||
+    nextSameLevel.timeBucket - cell.timeBucket >
+      BOOKMAP_ENGINE_BUCKET_MS * 1.5;
+  const refillScore =
+    size > prevSize * 1.08
+      ? Math.min(1, (size - prevSize) / Math.max(1, prevSize))
+      : 0;
+  const fadeScore =
+    size < prevSize * 0.85
+      ? Math.min(1, (prevSize - size) / Math.max(1, prevSize))
+      : hasGapAfter && runLen <= 2
+        ? 0.32
+        : cell.lifecyclePulled
+          ? 0.55
+          : 0;
+
+  let liquidityLifeStage: NonNullable<
+    PreparedEngineCell["liquidityLifeStage"]
+  >;
+  if (
+    size >= WALL_IMPORTANT_BTC * 0.55 ||
+    vi >= 0.48 ||
+    cell.lifecycleWall
+  ) {
+    liquidityLifeStage = "wall_candidate";
+  } else if (cell.lifecyclePulled || (hasGapAfter && runLen === 1)) {
+    liquidityLifeStage = "fading";
+  } else if (
+    persistenceMs >= NATURAL_MATRIX_MIN_PERSISTENCE_MS * 6 &&
+    vi < 0.28
+  ) {
+    liquidityLifeStage = "stale";
+  } else if (refillScore > 0.18 || (vi >= 0.36 && runLen >= 3)) {
+    liquidityLifeStage = "reinforced";
+  } else if (
+    runLen >= 2 ||
+    persistenceMs >= NATURAL_MATRIX_MIN_PERSISTENCE_MS * 2
+  ) {
+    liquidityLifeStage = "persistent";
+  } else {
+    liquidityLifeStage = "new";
+  }
+
+  const visualContinuityScore = Math.min(
+    1,
+    (runLen - 1) * 0.17 +
+      persistenceMs / (BOOKMAP_TEXTURE_SAMPLER_MS * 8),
+  );
+
+  return {
+    liquidityLifeStage,
+    visualContinuityScore,
+    visualFadeScore: fadeScore,
+    visualRefillScore: refillScore,
+  };
+}
+
+function buildMiniHistoricalFragments(
+  cells: PreparedEngineTextureCell[],
+): PreparedEngineTextureCell[] {
+  const singles: PreparedEngineTextureCell[] = [];
+  const fragments: PreparedEngineTextureCell[] = [];
+  const byLevel = new Map<string, PreparedEngineTextureCell[]>();
+
+  for (const cell of cells) {
+    if (cell.liquidityLifeStage === "wall_candidate") {
+      singles.push(cell);
+      continue;
+    }
+    const key = granularPriceLevelKey(cell);
+    const bucket = byLevel.get(key);
+    if (bucket) bucket.push(cell);
+    else byLevel.set(key, [cell]);
+  }
+
+  for (const group of byLevel.values()) {
+    group.sort((a, b) => a.timeBucket - b.timeBucket);
+    let i = 0;
+    while (i < group.length) {
+      let j = i;
+      while (
+        j + 1 < group.length &&
+        isConsecutiveGranularBucket(group[j]!, group[j + 1]!)
+      ) {
+        j += 1;
+      }
+      const run = group.slice(i, j + 1);
+      const runLen = run.length;
+      const avgVi =
+        run.reduce((sum, c) => sum + (c.intensity ?? 0), 0) / runLen;
+      const maxSize = Math.max(...run.map((c) => c.maxSizeInBucket));
+      const totalPersistence = Math.max(
+        ...run.map((c) => c.persistenceMs ?? 0),
+      );
+      const qualifies =
+        runLen >= NATURAL_MATRIX_MIN_RUN_FRAGMENT &&
+        runLen <= NATURAL_MATRIX_MAX_FRAGMENT_BUCKETS &&
+        avgVi >= NATURAL_MATRIX_MIN_VI_FRAGMENT &&
+        avgVi <= NATURAL_MATRIX_MAX_VI_FRAGMENT &&
+        totalPersistence >= NATURAL_MATRIX_MIN_PERSISTENCE_MS &&
+        maxSize < MATRIX_V1_SPAN_MIN_SIZE_BTC;
+
+      if (qualifies) {
+        const first = run[0]!;
+        const last = run[run.length - 1]!;
+        const peakVi = Math.max(...run.map((c) => c.intensity ?? 0));
+        const peakContinuity = Math.max(
+          ...run.map((c) => c.visualContinuityScore ?? 0),
+        );
+        fragments.push({
+          ...first,
+          intensity: peakVi,
+          maxSizeInBucket: maxSize,
+          endTimeBucket: last.timeBucket + BOOKMAP_ENGINE_BUCKET_MS,
+          continuityRunLength: runLen,
+          runStartTimeBucket: first.timeBucket,
+          cellsInRun: runLen,
+          isMiniFragment: true,
+          isGranularMatrixCell: true,
+          liquidityLifeStage:
+            runLen >= 3 ? "persistent" : first.liquidityLifeStage,
+          visualContinuityScore: Math.min(1, peakContinuity + runLen * 0.08),
+          visualRefillScore: Math.max(
+            ...run.map((c) => c.visualRefillScore ?? 0),
+          ),
+        });
+      } else {
+        singles.push(...run);
+      }
+      i = j + 1;
+    }
+  }
+
+  return [...singles, ...fragments];
+}
+
+function applyNaturalMatrixVisualState(
+  cells: PreparedEngineTextureCell[],
+): PreparedEngineTextureCell[] {
+  if (!BOOKMAP_NATURAL_MATRIX_LOGIC_V1) return cells;
+
+  const withRuns = computeGranularPriceRuns(cells);
+  const byLevel = new Map<string, PreparedEngineTextureCell[]>();
+  for (const cell of withRuns) {
+    const key = granularPriceLevelKey(cell);
+    const bucket = byLevel.get(key);
+    if (bucket) bucket.push(cell);
+    else byLevel.set(key, [cell]);
+  }
+
+  const enriched: PreparedEngineTextureCell[] = [];
+  for (const group of byLevel.values()) {
+    group.sort((a, b) => a.timeBucket - b.timeBucket);
+    for (let i = 0; i < group.length; i++) {
+      const derived = deriveNaturalMatrixVisualFields(
+        group[i]!,
+        i > 0 ? group[i - 1]! : null,
+        i < group.length - 1 ? group[i + 1]! : null,
+      );
+      enriched.push({ ...group[i]!, ...derived });
+    }
+  }
+
+  return buildMiniHistoricalFragments(enriched);
+}
+
+function enrichSpanCellsWithNaturalState(
+  cells: PreparedEngineTextureCell[],
+): PreparedEngineTextureCell[] {
+  if (!BOOKMAP_NATURAL_MATRIX_LOGIC_V1) return cells;
+  return cells.map((cell) => {
+    const derived = deriveNaturalMatrixVisualFields(cell, null, null);
+    return {
+      ...cell,
+      ...derived,
+      liquidityLifeStage:
+        isHorizontalSpanCandidate(cell) ? "wall_candidate" : derived.liquidityLifeStage,
+      visualContinuityScore: Math.max(
+        derived.visualContinuityScore ?? 0,
+        Math.min(1, (cell.continuityRunLength ?? 1) * 0.15),
+      ),
+    };
+  });
+}
+
 export type PrepareMatrixDiagStats = {
   inputCells: number;
   outputTextureCells: number;
@@ -1237,6 +1517,7 @@ function prepareTextureCells(
         maxPrice,
       );
     }
+    granularCells = applyNaturalMatrixVisualState(granularCells);
     const merged = mergeTextureCellsToTimeSpans(
       spanInput,
       mergeGapMs,
@@ -1265,6 +1546,7 @@ function prepareTextureCells(
         maxPrice ?? 0,
       );
     }
+    spanCells = enrichSpanCellsWithNaturalState(spanCells);
     const preCapCombined = [...granularCells, ...spanCells];
     const capped = prioritizeMatrixTextureCells(
       granularCells,
