@@ -20,12 +20,23 @@ import {
   writeDismissedOptionalVersion,
 } from "@/lib/desktopUpdateDismiss";
 import { isDesktopApp } from "@/lib/desktopRuntime";
+import { writeDesktopLog } from "@/lib/desktopStorage";
+import { appVersion } from "@/lib/appVersion";
+
+export type ManualCheckFeedback =
+  | "idle"
+  | "checking"
+  | "up_to_date"
+  | "update_available"
+  | "error";
 
 type DesktopUpdateContextValue = {
   update: DesktopUpdateState;
   dismissedOptional: boolean;
   shouldShowOptionalModal: boolean;
+  manualCheckFeedback: ManualCheckFeedback;
   checkNow: () => Promise<void>;
+  checkManually: () => Promise<void>;
   dismissOptional: () => void;
   showOptionalModal: () => void;
   downloadUpdate: () => Promise<void>;
@@ -50,6 +61,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
   );
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadOpening, setDownloadOpening] = useState(false);
+  const [manualCheckFeedback, setManualCheckFeedback] = useState<ManualCheckFeedback>("idle");
   const checkingRef = useRef(false);
 
   const dismissedOptional = syncDismissedForLatest(update, dismissedVersion);
@@ -90,6 +102,65 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
     }
   }, [applyUpdateResult]);
 
+  const checkManually = useCallback(async () => {
+    if (!isDesktopApp() || checkingRef.current) return;
+
+    await writeDesktopLog("desktop_update_manual_check_click", {
+      currentVersion: appVersion,
+    });
+
+    checkingRef.current = true;
+    setManualCheckFeedback("checking");
+    setUpdate((current) => ({
+      ...current,
+      updateStatus: "checking",
+      lastUpdateError: null,
+    }));
+
+    try {
+      const next = await checkDesktopUpdate();
+      applyUpdateResult(next);
+
+      if (next.updateStatus === "error") {
+        await writeDesktopLog("desktop_update_manual_check_error", {
+          currentVersion: appVersion,
+          error: next.lastUpdateError ?? "unknown",
+        });
+        setManualCheckFeedback("error");
+        return;
+      }
+
+      await writeDesktopLog("desktop_update_manual_check_success", {
+        currentVersion: appVersion,
+        latestVersion: next.latestVersion,
+        updateStatus: next.updateStatus,
+      });
+
+      if (
+        next.updateStatus === "optional_update" ||
+        next.updateStatus === "required_update"
+      ) {
+        setManualCheckFeedback("update_available");
+        if (next.updateStatus === "optional_update") {
+          clearDismissedOptionalVersion();
+          setDismissedVersion(null);
+        }
+        return;
+      }
+
+      setManualCheckFeedback("up_to_date");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await writeDesktopLog("desktop_update_manual_check_error", {
+        currentVersion: appVersion,
+        error: message,
+      });
+      setManualCheckFeedback("error");
+    } finally {
+      checkingRef.current = false;
+    }
+  }, [applyUpdateResult]);
+
   const dismissOptional = useCallback(() => {
     const latestVersion = update.latestVersion?.trim();
     if (!latestVersion) return;
@@ -123,7 +194,9 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
       update,
       dismissedOptional,
       shouldShowOptionalModal,
+      manualCheckFeedback,
       checkNow,
+      checkManually,
       dismissOptional,
       showOptionalModal,
       downloadUpdate,
@@ -131,12 +204,14 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
       downloadOpening,
     }),
     [
+      checkManually,
       checkNow,
       dismissOptional,
       dismissedOptional,
       downloadError,
       downloadOpening,
       downloadUpdate,
+      manualCheckFeedback,
       shouldShowOptionalModal,
       showOptionalModal,
       update,
@@ -153,7 +228,9 @@ export function useDesktopUpdateCheck(): DesktopUpdateContextValue {
       update: defaultDesktopUpdateState,
       dismissedOptional: false,
       shouldShowOptionalModal: false,
+      manualCheckFeedback: "idle" as ManualCheckFeedback,
       checkNow: async () => {},
+      checkManually: async () => {},
       dismissOptional: () => {},
       showOptionalModal: () => {},
       downloadUpdate: async () => {},

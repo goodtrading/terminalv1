@@ -4,7 +4,6 @@ import { useTerminalState } from "@/hooks/useTerminalState";
 import { getDesktopStoragePaths, isDesktopBuild } from "@/lib/desktopStorage";
 import { useDesktopFeedDiagnostics } from "@/lib/desktopDiagnostics";
 import { useDesktopUpdateCheck } from "@/hooks/useDesktopUpdateCheck";
-import { isDesktopApp } from "@/lib/desktopRuntime";
 import { CompactStatusPill } from "./CompactStatusPill";
 import { TopNavUserMenu } from "./TopNavUserMenu";
 import type { HealthTone } from "./health/healthUi";
@@ -54,11 +53,10 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
     };
   }, []);
 
-  const desktopTone: HealthTone =
-    desktopStorageOk == null ? "warn" : desktopStorageOk ? "ok" : "error";
   const storageTone: HealthTone =
     desktopStorageOk == null ? "warn" : desktopStorageOk ? "ok" : "error";
   const feedTone: HealthTone = desktopFeed.connected ? "ok" : "warn";
+  const updateTone: HealthTone = updateAvailable ? "warn" : "ok";
 
   return (
     <header className="shrink-0 w-full z-10 relative bg-terminal-bg border-b border-terminal-border">
@@ -92,21 +90,6 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {isDesktopApp() && updateAvailable && (
-            <button
-              type="button"
-              onClick={() => desktopUpdate.showOptionalModal()}
-              className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wide text-amber-300 hover:bg-amber-500/20 transition-colors"
-              title={
-                desktopUpdate.update.latestVersion
-                  ? `Update v${desktopUpdate.update.latestVersion} available`
-                  : "Update available"
-              }
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-              Update
-            </button>
-          )}
           <TopNavUserMenu />
         </div>
       </div>
@@ -128,17 +111,6 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
           {isDesktopBuild && (
             <div className="hidden sm:flex items-center gap-1.5 pl-2 border-l border-terminal-border/60">
               <CompactStatusPill
-                label="Desktop"
-                tone={desktopTone}
-                title={
-                  desktopStorageOk == null
-                    ? "Checking desktop runtime"
-                    : desktopStorageOk
-                      ? "Desktop runtime ready"
-                      : "Desktop runtime issue"
-                }
-              />
-              <CompactStatusPill
                 label="Storage"
                 tone={storageTone}
                 title={
@@ -154,6 +126,20 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
                 tone={feedTone}
                 title={desktopFeed.connected ? "Feed connected" : "Waiting for feed"}
               />
+              {updateAvailable ? (
+                <button
+                  type="button"
+                  onClick={() => desktopUpdate.showOptionalModal()}
+                  className="inline-flex"
+                  title={
+                    desktopUpdate.update.latestVersion
+                      ? `Update v${desktopUpdate.update.latestVersion} available`
+                      : "Update available"
+                  }
+                >
+                  <CompactStatusPill label="Update" tone={updateTone} />
+                </button>
+              ) : null}
             </div>
           )}
         </div>

@@ -143,7 +143,7 @@ export function DesktopDiagnosticsPanel() {
         <div className="flex flex-wrap items-center gap-2 pt-2">
           <button
             type="button"
-            onClick={() => void desktopUpdate.checkNow()}
+            onClick={() => void desktopUpdate.checkManually()}
             className="text-[9px] px-2 py-1 rounded border border-terminal-border/70 text-slate-300 hover:text-white"
           >
             Re-chequear update
