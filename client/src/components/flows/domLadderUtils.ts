@@ -2,7 +2,12 @@ import type { OrderbookLevel } from "./liquidityHeatmapUtils";
 import {
   BOOKMAP_BTCUSDT_TICK_SIZE,
   BOOKMAP_DOM_FULL_DEPTH_DIAG,
+  BOOKMAP_DOM_MACRO_COLLISION_BAND_PX,
   BOOKMAP_DOM_MAX_SCAFFOLD_ROWS,
+  BOOKMAP_DOM_MICRO_COLLISION_BAND_PX,
+  BOOKMAP_DOM_MICRO_MAX_LABELS_PER_COLUMN,
+  BOOKMAP_DOM_MICRO_MIN_LABEL_SPACING_PX,
+  BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD,
   BOOKMAP_BINANCE_RAW_DOM_SOURCE_DIAG,
   BOOKMAP_DOM_VALUE_MAPPING_DIAG,
   BOOKMAP_FULL_RAW_DOM_LADDER_DIAG,
@@ -484,6 +489,31 @@ export type DomLodRendererDiag = {
   rawDataMutatedForLayout: false;
   syntheticRowsCreated: 0;
   valuesCreatedWithoutBookLevel: 0;
+};
+
+export type DomMicroReadabilityDiag = {
+  selectedDepthMode: string;
+  visiblePriceRangeUsd: number;
+  pixelsPerDollar: number;
+  microModeActive: boolean;
+  collisionBandPx: number;
+  nearPricePriorityUsd: number;
+  visibleRawBidLevels: number;
+  visibleRawAskLevels: number;
+  individualBidLabelsRendered: number;
+  individualAskLabelsRendered: number;
+  groupedBidLabelsRendered: number;
+  groupedAskLabelsRendered: number;
+  bidBarsRendered: number;
+  askBarsRendered: number;
+  labelsHiddenDueToDensity: number;
+  bestBidVisible: boolean;
+  bestAskVisible: boolean;
+  largeLevelsVisible: number;
+  maxLabelsPerColumn: number;
+  domUsesSharedPriceScale: true;
+  independentDomScroll: false;
+  syntheticRowsCreated: 0;
 };
 
 export type DomScaffoldResult = {
@@ -1761,6 +1791,7 @@ export type PriceAlignedRawDomResult = DomScaffoldResult & {
   alignmentDiag: DomPriceAlignmentDiag;
   autoScaleDiag: DomAutoScaleLayoutDiag;
   lodDiag: DomLodRendererDiag;
+  microReadabilityDiag: DomMicroReadabilityDiag;
 };
 
 let lastDomPriceAlignmentDiagMs = 0;
@@ -1832,6 +1863,16 @@ function emitDomLodRendererDiag(diag: DomLodRendererDiag): void {
   console.debug("[BOOKMAP_DOM_LOD_RENDERER_DIAG]", diag);
 }
 
+let lastDomMicroReadabilityDiagMs = 0;
+
+function emitDomMicroReadabilityDiag(diag: DomMicroReadabilityDiag): void {
+  if (!import.meta.env.DEV) return;
+  const now = Date.now();
+  if (now - lastDomMicroReadabilityDiagMs < 2_000) return;
+  lastDomMicroReadabilityDiagMs = now;
+  console.debug("[BOOKMAP_DOM_MICRO_READABILITY_DIAG]", diag);
+}
+
 function logDomEmptyRenderRegression(params: {
   visibleRawLevels: number;
   barsRendered: number;
@@ -1864,6 +1905,7 @@ export function buildPriceAlignedRawDomRows(params: {
   feedVenue?: string;
   market?: string;
   mode?: string;
+  depthPreset?: DepthRangePreset;
 }): PriceAlignedRawDomResult {
   const showDomNumbers = params.showDomNumbers !== false;
   const majorWallBtc = params.majorWallBtc ?? HEATMAP_MAJOR_WALL_BTC;
@@ -1874,9 +1916,22 @@ export function buildPriceAlignedRawDomRows(params: {
   const inChartRange = (price: number) => price >= minPrice && price <= maxPrice;
   const textHeightPx = 13;
   const fullTextThresholdPx = 16;
-  const minCollisionBandPx = 7;
   const priceRangeUsd = Math.max(1e-9, maxPrice - minPrice);
   const pixelsPerDollar = params.plotHeight > 0 ? params.plotHeight / priceRangeUsd : 0;
+  const selectedDepthMode = params.depthPreset ?? "local";
+  const microModeActive =
+    selectedDepthMode === "local" ||
+    priceRangeUsd <= BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD * 4 ||
+    pixelsPerDollar >= 0.18;
+  const minCollisionBandPx = microModeActive
+    ? BOOKMAP_DOM_MICRO_COLLISION_BAND_PX
+    : BOOKMAP_DOM_MACRO_COLLISION_BAND_PX;
+  const labelSpacingPx = microModeActive
+    ? BOOKMAP_DOM_MICRO_MIN_LABEL_SPACING_PX
+    : fullTextThresholdPx;
+  const maxLabelsPerColumn = microModeActive
+    ? BOOKMAP_DOM_MICRO_MAX_LABELS_PER_COLUMN
+    : Math.max(12, Math.floor(params.plotHeight / fullTextThresholdPx));
   const bestBid = rawBids.find((level) => level.sizeBtc > 0) ?? null;
   const bestAsk = rawAsks.find((level) => level.sizeBtc > 0) ?? null;
   const bestBidPrice = bestBid?.price ?? null;
@@ -2027,18 +2082,26 @@ export function buildPriceAlignedRawDomRows(params: {
         y: group.y,
         score:
           (group.containsBest ? 10_000_000 : 0) +
+          (group.nearSpotDistance <= BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD ? 250_000 : 0) +
+          (group.levels.length === 1 && microModeActive ? 50_000 : 0) +
           (group.levels.length > 1 ? 2_000 : 0) +
           group.size * 100 +
           (Number.isFinite(group.nearSpotDistance) ? Math.max(0, 1_000 - group.nearSpotDistance) : 0),
       }))
       .sort((a, b) => b.score - a.score);
     for (const candidate of ranked) {
+      if (labelIndexes.size >= maxLabelsPerColumn) break;
       const group = groups[candidate.index]!;
-      const mandatory = group.containsBest || group.size >= visibleMaxLiquidity * 0.72;
-      const collides = acceptedLabelYs.some((y) => Math.abs(y - candidate.y) < fullTextThresholdPx);
+      const mandatory =
+        group.containsBest ||
+        group.size >= visibleMaxLiquidity * (microModeActive ? 0.52 : 0.72);
+      const nearPricePriority =
+        microModeActive && group.nearSpotDistance <= BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD;
+      const collides = acceptedLabelYs.some((y) => Math.abs(y - candidate.y) < labelSpacingPx);
       if (collides && !mandatory) continue;
       labelIndexes.add(candidate.index);
       acceptedLabelYs.push(candidate.y);
+      if (nearPricePriority && labelIndexes.size >= maxLabelsPerColumn) break;
     }
     return labelIndexes;
   };
@@ -2165,8 +2228,23 @@ export function buildPriceAlignedRawDomRows(params: {
   const askLabelsRendered = rows.filter((row) => row.showAskText && row.askSize > 0).length;
   const cobLabelsRendered = rows.filter((row) => row.showCobText && row.cobSize > 0).length;
   const svpLabelsRendered = rows.filter((row) => row.showSvpText && row.cobSize > 0).length;
+  const individualBidLabelsRendered = bidGroups.filter(
+    (group, index) => bidLabelIndexes.has(index) && group.levels.length === 1,
+  ).length;
+  const individualAskLabelsRendered = askGroups.filter(
+    (group, index) => askLabelIndexes.has(index) && group.levels.length === 1,
+  ).length;
+  const groupedBidLabelsRendered = bidGroups.filter(
+    (group, index) => bidLabelIndexes.has(index) && group.levels.length > 1,
+  ).length;
+  const groupedAskLabelsRendered = askGroups.filter(
+    (group, index) => askLabelIndexes.has(index) && group.levels.length > 1,
+  ).length;
   const strongestBidGroupValue = bidGroups.reduce((max, group) => Math.max(max, group.size), 0);
   const strongestAskGroupValue = askGroups.reduce((max, group) => Math.max(max, group.size), 0);
+  const largeLevelsVisible = bidGroups.concat(askGroups).filter(
+    (group) => group.size >= visibleMaxLiquidity * 0.52,
+  ).length;
   const averageLevelsPerVisualGroup =
     visualGroups.length > 0
       ? visualGroups.reduce((sum, group) => sum + group.levels.length, 0) / visualGroups.length
@@ -2243,6 +2321,32 @@ export function buildPriceAlignedRawDomRows(params: {
     valuesCreatedWithoutBookLevel: 0,
   };
   emitDomLodRendererDiag(lodDiag);
+
+  const microReadabilityDiag: DomMicroReadabilityDiag = {
+    selectedDepthMode,
+    visiblePriceRangeUsd: priceRangeUsd,
+    pixelsPerDollar,
+    microModeActive,
+    collisionBandPx: minCollisionBandPx,
+    nearPricePriorityUsd: BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD,
+    visibleRawBidLevels: visibleBidLevelsRendered,
+    visibleRawAskLevels: visibleAskLevelsRendered,
+    individualBidLabelsRendered,
+    individualAskLabelsRendered,
+    groupedBidLabelsRendered,
+    groupedAskLabelsRendered,
+    bidBarsRendered,
+    askBarsRendered,
+    labelsHiddenDueToDensity,
+    bestBidVisible,
+    bestAskVisible,
+    largeLevelsVisible,
+    maxLabelsPerColumn,
+    domUsesSharedPriceScale: true,
+    independentDomScroll: false,
+    syntheticRowsCreated: 0,
+  };
+  emitDomMicroReadabilityDiag(microReadabilityDiag);
 
   const autoScaleDiag: DomAutoScaleLayoutDiag = {
     enabled: true,
@@ -2333,6 +2437,7 @@ export function buildPriceAlignedRawDomRows(params: {
     alignmentDiag,
     autoScaleDiag,
     lodDiag,
+    microReadabilityDiag,
   };
 }
 

@@ -426,6 +426,7 @@ export function BookmapDomPanel({
         feedVenue,
         market,
         mode: marketMode,
+        depthPreset: scale.depthRangePreset,
       });
     }
 
