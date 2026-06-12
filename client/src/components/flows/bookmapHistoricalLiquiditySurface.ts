@@ -77,17 +77,6 @@ export type HistoricalLiquiditySurfaceDiag = {
   renderedStrongCells: number;
   visiblePriceLevelsAbovePrice: number;
   visiblePriceLevelsBelowPrice: number;
-  domLadderTickSize: number;
-  heatmapPriceBucketSize: number;
-  effectiveRenderPriceStep: number;
-  priceAxisStep: number;
-  visiblePriceMin: number;
-  visiblePriceMax: number;
-  visibleRangeAbovePrice: number;
-  visibleRangeBelowPrice: number;
-  heatmapRowsAlignedToDom: boolean;
-  priceRoundingModeUsedByHeatmap: string;
-  priceRoundingModeUsedByDomCob: string;
   skippedEmptyLevels: number;
   inactiveLevelCount: number;
   cacheBucketCount: number;
@@ -118,8 +107,6 @@ type UpdateHistoricalLiquiditySurfaceParams = {
   levels: LiveDomBookLevel[];
   sourceKey: string;
   priceBucketSize: number;
-  heatmapBucketSize: number;
-  priceAxisStep: number;
   visibleStartTime: number;
   visibleEndTime: number;
   minPrice: number;
@@ -149,8 +136,10 @@ function roundBucket(timeMs: number, bucketMs: number): number {
 }
 
 function bucketPrice(price: number, step: number): number {
-  const safeStep =
-    Number.isFinite(step) && step > 0 ? step : HISTORICAL_SURFACE_PRICE_BUCKET_USD;
+  const safeStep = Math.max(
+    0.5,
+    Math.min(step || HISTORICAL_SURFACE_PRICE_BUCKET_USD, HISTORICAL_SURFACE_PRICE_BUCKET_USD),
+  );
   return Math.round(price / safeStep) * safeStep;
 }
 
@@ -193,17 +182,6 @@ function emptyDiag(sourceKey: string): HistoricalLiquiditySurfaceDiag {
     renderedStrongCells: 0,
     visiblePriceLevelsAbovePrice: 0,
     visiblePriceLevelsBelowPrice: 0,
-    domLadderTickSize: 0,
-    heatmapPriceBucketSize: 0,
-    effectiveRenderPriceStep: 0,
-    priceAxisStep: 0,
-    visiblePriceMin: 0,
-    visiblePriceMax: 0,
-    visibleRangeAbovePrice: 0,
-    visibleRangeBelowPrice: 0,
-    heatmapRowsAlignedToDom: true,
-    priceRoundingModeUsedByHeatmap: "nearest-dom-bucket",
-    priceRoundingModeUsedByDomCob: "nearest-dom-bucket",
     skippedEmptyLevels: 0,
     inactiveLevelCount: 0,
     cacheBucketCount: 0,
@@ -431,10 +409,6 @@ function buildDiag(
   sourceLevelCount: number,
   midPrice: number | null | undefined,
   originalPriceBucketSize: number,
-  heatmapPriceBucketSize: number,
-  priceAxisStep: number,
-  minPrice: number,
-  maxPrice: number,
   inactiveLevelCount: number,
 ): HistoricalLiquiditySurfaceDiag {
   const bucketSet = new Set<number>();
@@ -468,13 +442,6 @@ function buildDiag(
   const medianLiquidity = sizes.length
     ? sizes[Math.floor((sizes.length - 1) / 2)] ?? 0
     : 0;
-  const effectivePriceStep =
-    Number.isFinite(originalPriceBucketSize) && originalPriceBucketSize > 0
-      ? originalPriceBucketSize
-      : HISTORICAL_SURFACE_PRICE_BUCKET_USD;
-  const rowsAlignedToDom = Array.from(priceSet).every(
-    (price) => Math.abs(bucketPrice(price, effectivePriceStep) - price) < 0.000_001,
-  );
   return {
     enabled: BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_V1,
     rendererPath: "minimal-stable-historical-surface",
@@ -504,19 +471,6 @@ function buildDiag(
     renderedStrongCells: strong,
     visiblePriceLevelsAbovePrice: abovePriceLevels.size,
     visiblePriceLevelsBelowPrice: belowPriceLevels.size,
-    domLadderTickSize: effectivePriceStep,
-    heatmapPriceBucketSize,
-    effectiveRenderPriceStep: effectivePriceStep,
-    priceAxisStep,
-    visiblePriceMin: minPrice,
-    visiblePriceMax: maxPrice,
-    visibleRangeAbovePrice:
-      mid != null && Number.isFinite(mid) ? Math.max(0, maxPrice - mid) : 0,
-    visibleRangeBelowPrice:
-      mid != null && Number.isFinite(mid) ? Math.max(0, mid - minPrice) : 0,
-    heatmapRowsAlignedToDom: rowsAlignedToDom,
-    priceRoundingModeUsedByHeatmap: "nearest-dom-bucket",
-    priceRoundingModeUsedByDomCob: "nearest-dom-bucket",
     skippedEmptyLevels: Math.max(0, sourceLevelCount - selectedLevelCount),
     inactiveLevelCount,
     cacheBucketCount: new Set(Array.from(store.cells.values()).map((c) => c.timeBucket)).size,
@@ -680,10 +634,6 @@ export function updateHistoricalLiquiditySurface(
     params.levels.length,
     params.midPrice,
     params.priceBucketSize,
-    params.heatmapBucketSize,
-    params.priceAxisStep,
-    params.minPrice,
-    params.maxPrice,
     inactiveLevelCount,
   );
   emitDiag(diag);

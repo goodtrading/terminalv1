@@ -2410,13 +2410,8 @@ export function prepareEngineRenderData(
   const historicalSurface = updateHistoricalLiquiditySurface({
     state,
     levels: bookLevels,
-    sourceKey: `${state.exchange}:${state.market ?? "spot"}:${state.symbol}:ladder:${Math.max(
-      1,
-      domBucketSize || heatmapBucketSize || 1,
-    )}`,
-    priceBucketSize: Math.max(1, domBucketSize || heatmapBucketSize || 1),
-    heatmapBucketSize: Math.max(1, heatmapBucketSize || 1),
-    priceAxisStep: Math.max(1, labelStep || domBucketSize || heatmapBucketSize || 1),
+    sourceKey: `${state.exchange}:${state.market ?? "spot"}:${state.symbol}`,
+    priceBucketSize: Math.max(1, heatmapBucketSize || domBucketSize || 1),
     visibleStartTime: dataEndTime - BOOKMAP_HISTORY_RETENTION_MS,
     visibleEndTime: dataEndTime + BOOKMAP_ENGINE_BUCKET_MS,
     minPrice,
