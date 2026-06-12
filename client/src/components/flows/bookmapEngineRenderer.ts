@@ -62,6 +62,11 @@ import {
   WALL_MAJOR_BTC,
   WALL_STRUCTURAL_BTC,
   type BookmapZoomRegime,
+  BOOKMAP_MINIMAL_STABLE_RENDERER_V1,
+  BOOKMAP_CLEAN_BASELINE_DIAG,
+  BOOKMAP_SURFACE_RENDERER_V1,
+  BOOKMAP_CANONICAL_HEATMAP_V1,
+  countBookmapExperimentalVisualFlagsEnabled,
 } from "@/lib/bookmapEngineConfig";
 import type { BookmapTimeViewport } from "@/hooks/useBookmapTimeScale";
 import type { VerticalCompressionMode } from "@/lib/bookmapDepthRange";
@@ -189,6 +194,10 @@ import {
   type BookmapHeatmapRenderParams,
 } from "./bookmapHeatmapRenderer";
 import type { BookmapPlotMetrics } from "./bookmapHeatmapRenderer";
+import {
+  drawMinimalStableWatermark,
+  paintMinimalStableBookmapFrame,
+} from "./bookmapMinimalStableRenderer";
 import type { BookmapVisualSettings } from "@/components/terminal/bookmap/bookmapSettings";
 import {
   renderBookmapBidAskGuideLines,
@@ -1623,7 +1632,13 @@ function emitRenderPathProofDiag(
 }
 
 function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
-  if (BOOKMAP_CANONICAL_HEATMAP_V1 || BOOKMAP_SURFACE_RENDERER_V1) return;
+  if (
+    BOOKMAP_MINIMAL_STABLE_RENDERER_V1 ||
+    BOOKMAP_CANONICAL_HEATMAP_V1 ||
+    BOOKMAP_SURFACE_RENDERER_V1
+  ) {
+    return;
+  }
   if (!import.meta.env.DEV || !BOOKMAP_RENDER_PATH_PROOF_DIAG) return;
   ctx.save();
   ctx.font = "bold 11px ui-monospace, monospace";
@@ -1709,6 +1724,34 @@ function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
     (BOOKMAP_MATRIX_AUDIT_DIAG ? 14 : 0);
   ctx.fillText(RENDERER_FILE_PATH, x, pathY);
   ctx.restore();
+}
+
+let lastCleanBaselineDiagLogMs = 0;
+
+function emitCleanBaselineDiag(payload: {
+  minimalStableRendererActive: boolean;
+  visibleHeatmapCells: number;
+  visibleDots: number;
+  domRows: number;
+  activeTradeMarket: string;
+  sourceMode: string;
+}): void {
+  if (!import.meta.env.DEV || !BOOKMAP_CLEAN_BASELINE_DIAG) return;
+  const now = Date.now();
+  if (now - lastCleanBaselineDiagLogMs < 2_000) return;
+  lastCleanBaselineDiagLogMs = now;
+  console.debug("[BOOKMAP_CLEAN_BASELINE_DIAG]", {
+    minimalStableRendererActive: payload.minimalStableRendererActive,
+    surfaceRendererEnabled: BOOKMAP_SURFACE_RENDERER_V1,
+    canonicalRendererEnabled: BOOKMAP_CANONICAL_HEATMAP_V1,
+    experimentalFlagsEnabled: countBookmapExperimentalVisualFlagsEnabled(),
+    visibleHeatmapCells: payload.visibleHeatmapCells,
+    visibleDots: payload.visibleDots,
+    domRows: payload.domRows,
+    activeTradeMarket: payload.activeTradeMarket,
+    sourceMode: payload.sourceMode,
+    timestamp: Date.now(),
+  });
 }
 
 let lastAggressiveV3DiagLogMs = 0;
@@ -4200,6 +4243,136 @@ export function paintBookmapEngineHeatmapFrame(
   }
 
   const crosshairMetrics = metricsForCrosshair(metrics);
+
+  if (BOOKMAP_MINIMAL_STABLE_RENDERER_V1) {
+    const minimalResult = paintMinimalStableBookmapFrame(
+      ctx,
+      {
+        minPrice,
+        maxPrice,
+        spot,
+        engine,
+        timeViewport,
+        visualSettings: params.visualSettings,
+      },
+      {
+        plotW: metrics.plotW,
+        plotH: metrics.plotH,
+        priceToY: params.priceToY,
+        timeToX: metrics.timeToX,
+        domBucketSize: metrics.domBucketSize,
+      },
+    );
+
+    if (
+      params.showHistoricalBboPath === true &&
+      params.bboHistoryPoints &&
+      params.bboHistoryPoints.length >= 2
+    ) {
+      const bounds = getBboPathPlotBounds(w, h);
+      renderHistoricalBboPath(ctx, {
+        points: params.bboHistoryPoints,
+        plotW: bounds.plotW,
+        plotH: bounds.plotH,
+        plotLeft: bounds.plotLeft,
+        plotTop: bounds.plotTop,
+        plotBottom: bounds.plotBottom,
+        minPrice,
+        maxPrice,
+        timeToX: metrics.timeToX,
+        priceToY: params.priceToY,
+        timeViewport,
+        verticalMode: params.tradeDotVerticalMode ?? "intraday",
+        opacity: params.bboPathOpacity ?? "normal",
+      });
+    }
+
+    if (
+      params.showDivergenceMarkers !== false &&
+      params.divergenceMarkers &&
+      params.divergenceMarkers.length > 0
+    ) {
+      renderDivergenceMarkers(ctx, params.divergenceMarkers, {
+        plotW: metrics.plotW,
+        plotH: metrics.plotH,
+        priceToY: params.priceToY,
+        timeToX: metrics.timeToX,
+        timeViewport,
+        minPrice,
+        maxPrice,
+      });
+    }
+
+    if (params.showBidAskLines !== false && params.bboGuide) {
+      renderBookmapBidAskGuideLines(
+        ctx,
+        params.bboGuide,
+        metrics,
+        timeViewport,
+        params.tradeDotVerticalMode ?? "intraday",
+        params.bidAskLineOpacity ?? "normal",
+        Math.max(1, params.domBucketSize ?? params.heatmapBucketSize),
+      );
+    }
+
+    if (params.tradeDotRenderStatsOut) {
+      Object.assign(params.tradeDotRenderStatsOut, EMPTY_TRADE_DOT_RENDER_STATS);
+    }
+    if (params.tradeDots && params.tradeDots.length > 0) {
+      if (params.executionRailsEnabled !== false) {
+        renderEngineExecutionRails(
+          ctx,
+          params.tradeDots,
+          metrics.timeToX,
+          metrics.priceToY,
+          metrics.plotW,
+          metrics.plotH,
+          {
+            verticalMode: params.tradeDotVerticalMode ?? "intraday",
+            railLength: params.executionRailLength ?? "normal",
+            visual: params.tradeDotVisual,
+          },
+        );
+      }
+      renderEngineTradeDots(
+        ctx,
+        params.tradeDots,
+        metrics.timeToX,
+        metrics.priceToY,
+        metrics.plotW,
+        metrics.plotH,
+        params.tradeDotVerticalMode ?? "intraday",
+        params.tradeDotVisual,
+        params.tradeDotRenderStatsOut,
+      );
+    }
+
+    if (spot != null) {
+      renderSpotLine(ctx, w, crosshairMetrics, spot, minPrice, maxPrice);
+    }
+
+    if (params.showFarWallMarkers !== false) {
+      renderEngineFarWallMarkers(ctx, params, metrics);
+    }
+
+    if (params.crosshair) {
+      renderCrosshair(ctx, w, h, params.crosshair, crosshairMetrics);
+    }
+
+    emitCleanBaselineDiag({
+      minimalStableRendererActive: true,
+      visibleHeatmapCells:
+        minimalResult.visibleHeatmapCells +
+        minimalResult.visibleLiveLevels +
+        minimalResult.visibleWallBands,
+      visibleDots: params.tradeDots?.length ?? 0,
+      domRows: engine.liveDomSelection?.currentBookVisibleLevelsCount ?? 0,
+      activeTradeMarket: params.activeDomMarket ?? "spot",
+      sourceMode: params.sourceMode ?? "spot",
+    });
+    drawMinimalStableWatermark(ctx);
+    return;
+  }
 
   const renderCanonicalOrSurfaceOverlays = () => {
     if (

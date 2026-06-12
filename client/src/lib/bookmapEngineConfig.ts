@@ -90,7 +90,7 @@ export const PALETTE_RELEVANT_L2_ALPHA_FLOOR = 0.55;
  * B.2 — Horizontal Persistence V2: stronger resting runs, clearer wall hierarchy,
  * Bookmap-like palette. Toggle off to revert to pre-B.2 visual prepare/render.
  */
-export const BOOKMAP_HORIZONTAL_PERSISTENCE_V2 = true;
+export const BOOKMAP_HORIZONTAL_PERSISTENCE_V2 = false;
 
 /** Wider time gap merge for resting run continuity (ms). */
 export const H_PERSIST_V2_MERGE_GAP_MS = 24_000;
@@ -115,8 +115,8 @@ export const H_PERSIST_V2_MACRO_NOISE_SIZE_BTC = 4;
  * B.2.1 — Texture Calibration + Heatmap Depth Pass: organic walls, historical
  * texture, thermal palette. Builds on HORIZONTAL_PERSISTENCE_V2.
  */
-export const BOOKMAP_TEXTURE_CALIBRATION_V2 = true;
-export const BOOKMAP_HEATMAP_DEPTH_PASS_V2 = true;
+export const BOOKMAP_TEXTURE_CALIBRATION_V2 = false;
+export const BOOKMAP_HEATMAP_DEPTH_PASS_V2 = false;
 
 /** Internal chunk overlay alpha when texture calibration V2 is on. */
 export const TEX_CALIB_V2_CHUNK_OVERLAY_ALPHA = 0.11;
@@ -152,13 +152,13 @@ export const DEPTH_V2_WEAK_INTENSITY_FLOOR_MICRO = 0.006;
  * B.2.2 — DEV-only render path proof: canvas watermark + throttled console.
  * Confirms FLOWS uses the active engine renderer (not stale/duplicate files).
  */
-export const BOOKMAP_RENDER_PATH_PROOF_DIAG = true;
+export const BOOKMAP_RENDER_PATH_PROOF_DIAG = false;
 
 /**
  * B.2.3 — Aggressive heatmap visual calibration: visible texture, organic walls,
  * reduced flat solid base. Builds on B.2 / B.2.1 flags.
  */
-export const BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 = true;
+export const BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3 = false;
 
 /** Solid base body alpha scale — reduces flat horizontal bars (~22% reduction). */
 export const V3_SOLID_BASE_ALPHA_MUL = 0.76;
@@ -200,16 +200,16 @@ export const V3_NEAR_PRICE_MIN_SIZE_OR_RUN = 5;
 /**
  * B.3 — Matrix texture mode: preserve granular time×price cells alongside horizontal spans.
  */
-export const BOOKMAP_MATRIX_TEXTURE_MODE_V1 = true;
+export const BOOKMAP_MATRIX_TEXTURE_MODE_V1 = false;
 
 /** DEV-only matrix density audit logs (throttled 2s). */
-export const BOOKMAP_MATRIX_AUDIT_DIAG = true;
+export const BOOKMAP_MATRIX_AUDIT_DIAG = false;
 
 /**
  * B.3.1 — Draw weak/medium historical matrix as short time-bucket mosaic cells
  * (not stretched horizontal spans). Strong walls remain span-rendered.
  */
-export const BOOKMAP_GRANULAR_MATRIX_RENDERER_V1 = true;
+export const BOOKMAP_GRANULAR_MATRIX_RENDERER_V1 = false;
 
 /** Live projection alpha scale when granular matrix renderer is active. */
 export const BOOKMAP_GRANULAR_LIVE_PROJECTION_ALPHA_MUL = 0.85;
@@ -226,8 +226,8 @@ export const BOOKMAP_GRANULAR_ALPHA_MOD_RANGE = 0.14;
 /**
  * B.4 — Persistent wall anchoring + macro DOM depth coverage.
  */
-export const BOOKMAP_PERSISTENT_WALL_ANCHORING_V1 = true;
-export const BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1 = true;
+export const BOOKMAP_PERSISTENT_WALL_ANCHORING_V1 = false;
+export const BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1 = false;
 
 export const WALL_ANCHOR_MIN_SIZE_BTC = 20;
 export const WALL_ANCHOR_MIN_INTENSITY = 0.45;
@@ -252,7 +252,7 @@ export const MACRO_DOM_MEDIUM_LEVELS_PER_SIDE = 32;
 /**
  * B.4.1 — Layered anchored wall rendering integrated with historical heatmap.
  */
-export const BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1 = true;
+export const BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1 = false;
 
 /** Base body alpha scale — preserves granular matrix underneath. */
 export const ANCHORED_WALL_BASE_ALPHA_MUL = 0.76;
@@ -265,7 +265,7 @@ export const ANCHORED_WALL_SEAM_BLEND_PCT = 0.16;
 /**
  * B.3.2 — Natural historical matrix: lifecycle, mini-fragments, irregular texture.
  */
-export const BOOKMAP_NATURAL_MATRIX_LOGIC_V1 = true;
+export const BOOKMAP_NATURAL_MATRIX_LOGIC_V1 = false;
 
 /** Medium mini-fragment intensity band. */
 export const NATURAL_MATRIX_MIN_VI_FRAGMENT = 0.22;
@@ -299,12 +299,20 @@ export const MATRIX_V1_SPAN_MIN_INTENSITY = 0.36;
 export const MATRIX_V1_GRANULAR_SINGLE_BUCKET = true;
 
 /**
+ * B.CLEAN.1 — Minimal stable desktop bookmap renderer (single active path).
+ */
+export const BOOKMAP_MINIMAL_STABLE_RENDERER_V1 = true;
+
+/** DEV-only clean baseline diagnostics (throttled 2s). */
+export const BOOKMAP_CLEAN_BASELINE_DIAG = true;
+
+/**
  * B.5 — Clean surface renderer bypassing experimental visual pipeline.
  */
-export const BOOKMAP_SURFACE_RENDERER_V1 = true;
+export const BOOKMAP_SURFACE_RENDERER_V1 = false;
 
 /** DEV-only surface renderer diagnostics (throttled 2s). */
-export const BOOKMAP_SURFACE_RENDERER_DIAG = true;
+export const BOOKMAP_SURFACE_RENDERER_DIAG = false;
 
 export const SURFACE_HISTORICAL_MAX_DRAW = 12_000;
 export const SURFACE_LIVE_MAX_PER_SIDE = 180;
@@ -315,10 +323,10 @@ export const SURFACE_FAR_DISTANCE_ALPHA_MUL = 0.82;
 /**
  * B.6 — Limit order lifecycle engine (client-side entity tracking).
  */
-export const BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1 = true;
+export const BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1 = false;
 
 /** DEV-only lifecycle diagnostics (throttled 2s). */
-export const BOOKMAP_LIMIT_ORDER_LIFECYCLE_DIAG = true;
+export const BOOKMAP_LIMIT_ORDER_LIFECYCLE_DIAG = false;
 
 export const LIMIT_ORDER_PRICE_BUCKET_USD = 10;
 export const LIMIT_ORDER_FADE_MS = 90_000;
@@ -337,10 +345,10 @@ export const LIMIT_ORDER_TOUCH_PCT = 0.08;
  * B.reset / B.rebuild.1 — Canonical heatmap: single visual grammar for historical + live.
  * Takes priority over surface/lifecycle render paths when active.
  */
-export const BOOKMAP_CANONICAL_HEATMAP_V1 = true;
+export const BOOKMAP_CANONICAL_HEATMAP_V1 = false;
 
 /** DEV-only canonical heatmap diagnostics (throttled 2s). */
-export const BOOKMAP_CANONICAL_HEATMAP_DIAG = true;
+export const BOOKMAP_CANONICAL_HEATMAP_DIAG = false;
 
 export const CANONICAL_HISTORICAL_MAX_DRAW = 14_000;
 export const CANONICAL_LIVE_MAX_PER_SIDE = 200;
@@ -359,3 +367,22 @@ export const CANONICAL_LEGACY_RIGHT_SIDE_MISMATCH_CAUSE =
   "(edgeW 14% + body 86% at higher alpha), and drawImportantWalls/drawLifecycleWalls " +
   "added glow bands at height*1.22 plus a third full-width projection rect — while " +
   "historical cells used single BOOKMAP_ENGINE_BUCKET_MS-wide rects at bodyAlpha only.";
+
+/** Count experimental visual flags still enabled (diag helper). */
+export function countBookmapExperimentalVisualFlagsEnabled(): number {
+  let count = 0;
+  if (BOOKMAP_HORIZONTAL_PERSISTENCE_V2) count += 1;
+  if (BOOKMAP_TEXTURE_CALIBRATION_V2) count += 1;
+  if (BOOKMAP_HEATMAP_DEPTH_PASS_V2) count += 1;
+  if (BOOKMAP_AGGRESSIVE_HEATMAP_CALIBRATION_V3) count += 1;
+  if (BOOKMAP_MATRIX_TEXTURE_MODE_V1) count += 1;
+  if (BOOKMAP_GRANULAR_MATRIX_RENDERER_V1) count += 1;
+  if (BOOKMAP_NATURAL_MATRIX_LOGIC_V1) count += 1;
+  if (BOOKMAP_PERSISTENT_WALL_ANCHORING_V1) count += 1;
+  if (BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1) count += 1;
+  if (BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1) count += 1;
+  if (BOOKMAP_SURFACE_RENDERER_V1) count += 1;
+  if (BOOKMAP_CANONICAL_HEATMAP_V1) count += 1;
+  if (BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1) count += 1;
+  return count;
+}
