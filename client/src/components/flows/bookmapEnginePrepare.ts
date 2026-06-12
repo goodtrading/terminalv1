@@ -383,6 +383,9 @@ export type PreparedEngineRenderData = {
     labelStep: number;
     heatmapBucketSize: number;
     domBucketSize: number;
+    domLadderStep: number;
+    heatmapStorageBucketStep: number;
+    heatmapRenderSnapStep: number;
   };
   /** P7.5 — current book levels projected into right-space (not historical cells). */
   liveProjectionLevels: PreparedLiveProjectionLevel[];
@@ -2408,6 +2411,10 @@ export function prepareEngineRenderData(
     options?.liveDomBook,
     options?.liveDomTimestamp,
   );
+  const heatmapRenderSnapStep = Math.min(
+    Math.max(1, heatmapBucketSize || 1),
+    HISTORICAL_SURFACE_PRICE_BUCKET_USD,
+  );
   const historicalSurface = updateHistoricalLiquiditySurface({
     state,
     levels: bookLevels,
@@ -2417,7 +2424,7 @@ export function prepareEngineRenderData(
     )}:store:${HISTORICAL_SURFACE_PRICE_BUCKET_USD}`,
     priceBucketSize: HISTORICAL_SURFACE_PRICE_BUCKET_USD,
     domLadderStep: Math.max(1, domBucketSize || 1),
-    heatmapRenderSnapStep: Math.max(1, domBucketSize || 1),
+    heatmapRenderSnapStep,
     heatmapBucketSize: Math.max(1, heatmapBucketSize || 1),
     priceAxisStep: Math.max(1, labelStep || domBucketSize || heatmapBucketSize || 1),
     visibleStartTime: dataEndTime - BOOKMAP_HISTORY_RETENTION_MS,
@@ -2492,6 +2499,9 @@ export function prepareEngineRenderData(
       labelStep,
       heatmapBucketSize,
       domBucketSize,
+      domLadderStep: Math.max(1, domBucketSize || 1),
+      heatmapStorageBucketStep: HISTORICAL_SURFACE_PRICE_BUCKET_USD,
+      heatmapRenderSnapStep,
     },
     liveProjectionLevels: liveProjection.levels,
     liveProjectionStats: liveProjection.stats,

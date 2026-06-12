@@ -342,6 +342,24 @@ export const BOOKMAP_MICROSCALPING_RANGE_MAX_USD = 3_200;
 /** DEV-only DOM ladder vs heatmap alignment diagnostics (throttled 2s). */
 export const BOOKMAP_DOM_LADDER_ALIGNMENT_DIAG = true;
 
+/** DEV-only zoom/range/depth coverage diagnostics (throttled 2s). */
+export const BOOKMAP_ZOOM_RANGE_ALIGNMENT_DIAG = true;
+
+/**
+ * STEP 1.5.2 — Max chart span as fraction of spot when depth preset is Local / manual zoom-out.
+ * Local ±1000 initial view is unchanged; wheel zoom-out can expand toward Bookmap-like range.
+ */
+export const BOOKMAP_LOCAL_DEPTH_MAX_SPAN_RATIO = 1.2;
+
+/** Depth data ingestion padding beyond visible chart range (each side). */
+export const BOOKMAP_DEPTH_DATA_RANGE_PADDING_PCT = 0.85;
+
+/** Minimum size (BTC) for far off-price liquidity to stay in surface selection. */
+export const HISTORICAL_SURFACE_FAR_LIQUIDITY_MIN_BTC = 0.5;
+
+/** Strong far liquidity threshold for visibility boost during render. */
+export const HISTORICAL_SURFACE_FAR_STRONG_MIN_BTC = 8;
+
 /**
  * B.5 — Clean surface renderer bypassing experimental visual pipeline.
  */

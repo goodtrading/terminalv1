@@ -7,12 +7,18 @@ import {
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG,
   BOOKMAP_DOM_LADDER_ALIGNMENT_DIAG,
+  BOOKMAP_LOCAL_DEPTH_MAX_SPAN_RATIO,
   BOOKMAP_MINIMAL_STABLE_RENDERER_V1,
+  BOOKMAP_ZOOM_RANGE_ALIGNMENT_DIAG,
+  BOOKMAP_DEPTH_DATA_RANGE_PADDING_PCT,
+  HISTORICAL_SURFACE_FAR_LIQUIDITY_MIN_BTC,
+  HISTORICAL_SURFACE_FAR_STRONG_MIN_BTC,
   HISTORICAL_SURFACE_MICROCELL_GAP_PX,
   HISTORICAL_SURFACE_MICROCELL_MIN_WIDTH_PX,
   HISTORICAL_SURFACE_MICROCELL_TEXTURE_V1,
   HISTORICAL_SURFACE_MIN_CELL_WIDTH_MS,
   HISTORICAL_SURFACE_PERSISTENT_CELL_WIDTH_MS,
+  HISTORICAL_SURFACE_PRICE_BUCKET_USD,
   HISTORICAL_SURFACE_PROJECTION_TEXTURE_V1,
 } from "@/lib/bookmapEngineConfig";
 import {
@@ -57,9 +63,10 @@ type BandGeom = { yTop: number; height: number };
 
 let lastHistoricalSurfaceRenderDiagMs = 0;
 let lastDomLadderAlignmentDiagMs = 0;
+let lastZoomRangeAlignmentDiagMs = 0;
 
-function domAlignedPrice(price: number, domLadderStep: number): number {
-  return bucketDomPrice(price, Math.max(1, domLadderStep || 1));
+function renderSnapPrice(price: number, renderStep: number): number {
+  return bucketDomPrice(price, Math.max(1, renderStep || 1));
 }
 
 function bandGeom(
@@ -107,7 +114,11 @@ function surfaceBandGeom(
   return ladderRowGeom(price, priceToY, domBucketSize);
 }
 
-function thermalFromSurfaceCell(cell: HistoricalLiquiditySurfaceCell): {
+function thermalFromSurfaceCell(
+  cell: HistoricalLiquiditySurfaceCell,
+  midPrice: number | null,
+  visibleRangeUsd: number,
+): {
   rgb: [number, number, number];
   alpha: number;
   intensity: number;
@@ -115,10 +126,21 @@ function thermalFromSurfaceCell(cell: HistoricalLiquiditySurfaceCell): {
   const intensity = Math.max(cell.intensity, Math.min(1, cell.maxSize / 120));
   const persistenceBoost = Math.min(0.2, cell.persistenceMs / 90_000);
   const weakFloor = cell.maxSize < 1 ? 0.075 : cell.maxSize < 5 ? 0.105 : 0.145;
-  const alpha =
+  let alpha =
     Math.max(weakFloor, 0.095 + intensity * 0.38 + persistenceBoost * 0.45) *
     cell.decay *
     (cell.coldStartSeeded ? 0.52 : 1);
+  if (midPrice != null && Number.isFinite(midPrice) && visibleRangeUsd > 0) {
+    const dist = Math.abs(cell.price - midPrice);
+    const isFar = dist > visibleRangeUsd * 0.35;
+    if (isFar && cell.maxSize >= HISTORICAL_SURFACE_FAR_STRONG_MIN_BTC) {
+      alpha *= 1.38;
+    } else if (isFar && cell.maxSize >= HISTORICAL_SURFACE_FAR_LIQUIDITY_MIN_BTC) {
+      alpha *= 1.16;
+    } else if (isFar && cell.maxSize >= 2) {
+      alpha *= 1.06;
+    }
+  }
   return {
     intensity,
     rgb: intensityToPassiveLiquidityRgb(intensity),
@@ -254,24 +276,24 @@ function collectHistoricalSurfaceCells(
   maxPrice: number,
   visibleStart: number,
   visibleEnd: number,
-  domBucketSize: number,
+  heatmapRenderSnapStep: number,
 ): HistoricalLiquiditySurfaceCell[] {
   return (engine.historicalSurfaceCells ?? []).filter((cell) => {
     const end = cell.timeBucket + BOOKMAP_ENGINE_BUCKET_MS;
     if (end < visibleStart || cell.timeBucket > visibleEnd) return false;
     if (cell.timeBucket >= dataEndTime + BOOKMAP_ENGINE_BUCKET_MS) return false;
-    const rowPrice = domAlignedPrice(cell.price, domBucketSize);
+    const rowPrice = renderSnapPrice(cell.price, heatmapRenderSnapStep);
     return rowPrice >= minPrice && rowPrice <= maxPrice && cell.maxSize > 0;
   });
 }
 
 function collectLiveLevels(
   engine: PreparedEngineRenderData,
-  domBucketSize: number,
+  heatmapRenderSnapStep: number,
 ): PreparedLiveProjectionLevel[] {
   const map = new Map<string, PreparedLiveProjectionLevel>();
   const add = (level: PreparedLiveProjectionLevel) => {
-    const rowPrice = domAlignedPrice(level.price, domBucketSize);
+    const rowPrice = renderSnapPrice(level.price, heatmapRenderSnapStep);
     const key = `${level.side}:${rowPrice}`;
     const prev = map.get(key);
     if (!prev || level.sizeBtc > prev.sizeBtc) map.set(key, { ...level, price: rowPrice });
@@ -323,10 +345,46 @@ export function paintMinimalStableBookmapFrame(
   if (!BOOKMAP_MINIMAL_STABLE_RENDERER_V1) return result;
 
   const { engine, timeViewport, minPrice, maxPrice } = params;
-  const domLadderStep = Math.max(1, metrics.domBucketSize || 1);
-  const heatmapStorageBucketStep = engine.historicalSurfaceDiag?.heatmapStorageBucketStep
-    ?? engine.bandPrepareMeta.heatmapBucketSize;
-  const heatmapRenderSnapStep = domLadderStep;
+  const meta = engine.bandPrepareMeta;
+  const domLadderStep = Math.max(1, meta.domLadderStep ?? (metrics.domBucketSize || 1));
+  const heatmapStorageBucketStep =
+    meta.heatmapStorageBucketStep ??
+    engine.historicalSurfaceDiag?.heatmapStorageBucketStep ??
+    HISTORICAL_SURFACE_PRICE_BUCKET_USD;
+  const heatmapRenderSnapStep = Math.max(
+    1,
+    meta.heatmapRenderSnapStep ??
+      engine.historicalSurfaceDiag?.heatmapRenderSnapStep ??
+      HISTORICAL_SURFACE_PRICE_BUCKET_USD,
+  );
+  const priceAxisStep = Math.max(1, meta.labelStep ?? domLadderStep);
+  const chartVisibleRangeUsd = maxPrice - minPrice;
+  const spot = params.spot;
+  const depthDataRangeMin =
+    minPrice - chartVisibleRangeUsd * BOOKMAP_DEPTH_DATA_RANGE_PADDING_PCT;
+  const depthDataRangeMax =
+    maxPrice + chartVisibleRangeUsd * BOOKMAP_DEPTH_DATA_RANGE_PADDING_PCT;
+  const visibleRangeAbovePrice =
+    spot != null && Number.isFinite(spot) ? Math.max(0, maxPrice - spot) : chartVisibleRangeUsd / 2;
+  const visibleRangeBelowPrice =
+    spot != null && Number.isFinite(spot) ? Math.max(0, spot - minPrice) : chartVisibleRangeUsd / 2;
+  const selectedDepthValue = Math.round(
+    Math.max(visibleRangeAbovePrice, visibleRangeBelowPrice),
+  );
+  const maxAllowedZoomOutRangeUsd =
+    spot != null && Number.isFinite(spot) && spot > 0
+      ? spot * BOOKMAP_LOCAL_DEPTH_MAX_SPAN_RATIO
+      : chartVisibleRangeUsd;
+  const currentVerticalZoomFactor =
+    selectedDepthValue > 0 ? chartVisibleRangeUsd / (selectedDepthValue * 2) : 1;
+  let historicalCellsInVisibleRange = 0;
+  let offPriceCellsRendered = 0;
+  let farLiquidityLevelsRendered = 0;
+  let nearPriceCellsRendered = 0;
+  let renderedRowsAbovePrice = 0;
+  let renderedRowsBelowPrice = 0;
+  const rowsAboveSpot = new Set<number>();
+  const rowsBelowSpot = new Set<number>();
   const dataEndTime = timeViewport.dataEndTime;
   const dataEdgeX = metrics.timeToX(dataEndTime);
   const opacity = params.visualSettings?.heatmap.opacity ?? 1;
@@ -372,12 +430,13 @@ export function paintMinimalStableBookmapFrame(
     maxPrice,
     timeViewport.visibleStartTime,
     timeViewport.visibleEndTime,
-    domLadderStep,
+    heatmapRenderSnapStep,
   );
+  historicalCellsInVisibleRange = surfaceCells.length;
 
   if (surfaceCells.length > 0) {
     for (const cell of surfaceCells) {
-      const rowPrice = domAlignedPrice(cell.price, heatmapRenderSnapStep);
+      const rowPrice = renderSnapPrice(cell.price, heatmapRenderSnapStep);
       const renderCell =
         rowPrice === cell.price ? cell : { ...cell, price: rowPrice };
       const geom = surfaceBandGeom(rowPrice, metrics.priceToY, heatmapRenderSnapStep);
@@ -400,7 +459,7 @@ export function paintMinimalStableBookmapFrame(
         Math.max(1, dataEdgeX - x0),
       );
 
-      const thermal = thermalFromSurfaceCell(renderCell);
+      const thermal = thermalFromSurfaceCell(renderCell, spot, chartVisibleRangeUsd);
       const alpha = thermal.alpha * opacity * 0.88;
       if (alpha <= 0.004) {
         renderSkips.tinyAlpha += 1;
@@ -427,7 +486,22 @@ export function paintMinimalStableBookmapFrame(
       renderedRows.add(rowPrice);
       renderedBuckets.add(cell.timeBucket);
       result.visibleHeatmapCells += 1;
+      if (spot != null && Number.isFinite(spot)) {
+        const dist = Math.abs(rowPrice - spot);
+        if (dist > domLadderStep) offPriceCellsRendered += 1;
+        if (dist > chartVisibleRangeUsd * 0.35) {
+          if (cell.maxSize >= HISTORICAL_SURFACE_FAR_LIQUIDITY_MIN_BTC) {
+            farLiquidityLevelsRendered += 1;
+          }
+        } else {
+          nearPriceCellsRendered += 1;
+        }
+        if (rowPrice > spot) rowsAboveSpot.add(rowPrice);
+        else if (rowPrice < spot) rowsBelowSpot.add(rowPrice);
+      }
     }
+    renderedRowsAbovePrice = rowsAboveSpot.size;
+    renderedRowsBelowPrice = rowsBelowSpot.size;
   } else {
     for (const cell of collectHistoricalCells(
       engine,
@@ -465,7 +539,17 @@ export function paintMinimalStableBookmapFrame(
 
   for (const level of collectLiveLevels(engine, heatmapRenderSnapStep)) {
     if (level.price < minPrice || level.price > maxPrice) continue;
-    if (level.sizeBtc < 0.25) continue;
+    const distFromSpot =
+      spot != null && Number.isFinite(spot) ? Math.abs(level.price - spot) : 0;
+    const isFar = distFromSpot > chartVisibleRangeUsd * 0.35;
+    const minSize = isFar
+      ? level.sizeBtc >= HISTORICAL_SURFACE_FAR_STRONG_MIN_BTC
+        ? 0.15
+        : level.sizeBtc >= HISTORICAL_SURFACE_FAR_LIQUIDITY_MIN_BTC
+          ? 0.3
+          : 0.4
+      : 0.25;
+    if (level.sizeBtc < minSize) continue;
 
     const geom = surfaceBandGeom(level.price, metrics.priceToY, heatmapRenderSnapStep);
     if (geom.yTop + geom.height < HEATMAP_PAD.top - 2) continue;
@@ -564,25 +648,19 @@ export function paintMinimalStableBookmapFrame(
           heatmapRenderSnapStep,
           heatmapPriceBucketSize: engine.bandPrepareMeta.heatmapBucketSize,
           effectiveRenderPriceStep: heatmapRenderSnapStep,
-          priceAxisStep: engine.bandPrepareMeta.labelStep,
+          priceAxisStep,
           domForcedByHeatmapBucket: false,
           visiblePriceMin: minPrice,
           visiblePriceMax: maxPrice,
-          visibleRangeAbovePrice:
-            params.spot != null && Number.isFinite(params.spot)
-              ? Math.max(0, maxPrice - params.spot)
-              : 0,
-          visibleRangeBelowPrice:
-            params.spot != null && Number.isFinite(params.spot)
-              ? Math.max(0, params.spot - minPrice)
-              : 0,
+          visibleRangeAbovePrice,
+          visibleRangeBelowPrice,
           renderedPriceRows: renderedRows.size,
-          domRowCount: Math.max(0, Math.floor((maxPrice - minPrice) / domLadderStep) + 1),
+          domRowCount: Math.max(0, Math.floor(chartVisibleRangeUsd / domLadderStep) + 1),
           heatmapRowsAlignedToDom: Array.from(renderedRows).every(
-            (price) => Math.abs(domAlignedPrice(price, heatmapRenderSnapStep) - price) < 0.000_001,
+            (price) => Math.abs(renderSnapPrice(price, heatmapRenderSnapStep) - price) < 0.000_001,
           ),
           skippedRowsDueToRange: renderSkips.clippedPrice,
-          priceRoundingModeUsedByHeatmap: "nearest-dom-bucket",
+          priceRoundingModeUsedByHeatmap: "nearest-storage-bucket",
           priceRoundingModeUsedByDomCob: "nearest-dom-bucket",
           renderCellCountPerFrame: result.visibleHeatmapCells,
           renderSkippedCells: renderSkips,
@@ -627,6 +705,44 @@ export function paintMinimalStableBookmapFrame(
     }
   }
 
+  if (import.meta.env.DEV && BOOKMAP_ZOOM_RANGE_ALIGNMENT_DIAG) {
+    const now = Date.now();
+    if (now - lastZoomRangeAlignmentDiagMs >= 2_000) {
+      lastZoomRangeAlignmentDiagMs = now;
+      console.debug("[BOOKMAP_ZOOM_RANGE_ALIGNMENT_DIAG]", {
+        selectedDepthMode:
+          Math.abs(selectedDepthValue - 1000) <= 120 ? "local" : "manual",
+        selectedDepthValue,
+        chartVisiblePriceMin: minPrice,
+        chartVisiblePriceMax: maxPrice,
+        chartVisibleRangeUsd,
+        visibleRangeAbovePrice,
+        visibleRangeBelowPrice,
+        maxAllowedZoomOutRangeUsd,
+        currentVerticalZoomFactor,
+        domLadderStep,
+        heatmapStorageBucketStep,
+        heatmapRenderStep: heatmapRenderSnapStep,
+        priceAxisStep,
+        depthDataRangeMin,
+        depthDataRangeMax,
+        historicalCellsInVisibleRange,
+        historicalCellsRendered: result.visibleHeatmapCells,
+        offPriceCellsRendered,
+        farLiquidityLevelsRendered,
+        nearPriceCellsRendered,
+        renderedRowsAbovePrice,
+        renderedRowsBelowPrice,
+        heatmapRowsPerDomRow:
+          domLadderStep > 0 ? domLadderStep / heatmapRenderSnapStep : 1,
+        skippedCellsByReason: renderSkips,
+        domForcedByHeatmapBucket: false,
+        rendererPath: "bookmapMinimalStableRenderer.surface",
+        timestamp: now,
+      });
+    }
+  }
+
   if (import.meta.env.DEV && BOOKMAP_DOM_LADDER_ALIGNMENT_DIAG) {
     const now = Date.now();
     if (now - lastDomLadderAlignmentDiagMs >= 2_000) {
@@ -660,7 +776,7 @@ export function paintMinimalStableBookmapFrame(
         domRowsWithoutLiquidity: Math.max(0, domRowsRendered - heatmapRowsRendered),
         heatmapRowsRendered,
         heatmapRowsAlignedToDom: Array.from(renderedRows).every(
-          (price) => Math.abs(domAlignedPrice(price, heatmapRenderSnapStep) - price) < 0.000_001,
+          (price) => Math.abs(renderSnapPrice(price, heatmapRenderSnapStep) - price) < 0.000_001,
         ),
         offPriceLevelsRendered,
         skippedLevelsByReason: renderSkips,

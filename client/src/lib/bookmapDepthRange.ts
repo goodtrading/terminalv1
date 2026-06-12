@@ -1,6 +1,10 @@
 import type { BookLevel } from "@/types/bookmapState";
 import type { PriceRange } from "@/components/flows/bookmapViewportUtils";
-import { BOOKMAP_MICROSCALPING_RANGE_MAX_USD } from "@/lib/bookmapEngineConfig";
+import {
+  BOOKMAP_LOCAL_DEPTH_MAX_SPAN_RATIO,
+  BOOKMAP_MICROSCALPING_RANGE_MAX_USD,
+  HISTORICAL_SURFACE_PRICE_BUCKET_USD,
+} from "@/lib/bookmapEngineConfig";
 import { chooseDomBucketSize } from "@/lib/bookmapPriceScaleUtils";
 
 /** Vertical depth presets (half-span in USD for band modes). */
@@ -44,7 +48,7 @@ const BAND_HALF_SPAN: Partial<Record<DepthRangePreset, number>> = {
 export function maxSpanRatioForDepthPreset(preset: DepthRangePreset): number {
   switch (preset) {
     case "local":
-      return 0.12;
+      return BOOKMAP_LOCAL_DEPTH_MAX_SPAN_RATIO;
     case "2.5k":
       return 0.18;
     case "5k":
@@ -102,7 +106,7 @@ export type VerticalScaleMetrics = {
   domLadderStep: number;
   /** Fine internal step for historical heatmap cell storage. */
   heatmapStorageBucketStep: number;
-  /** Visual snap step — aligns heatmap rows to DOM ladder (equals domLadderStep). */
+  /** Visual heatmap row step — fine storage step, not DOM ladder. */
   heatmapRenderSnapStep: number;
   /** Price axis label spacing. */
   priceAxisStep: number;
@@ -115,7 +119,7 @@ export type VerticalScaleMetrics = {
 };
 
 /**
- * Resolve independent ladder steps: DOM authority, fine heatmap storage, render snap to DOM.
+ * Resolve independent ladder steps: DOM authority, fine heatmap storage, fine render snap.
  */
 export function resolveBookmapLadderSteps(
   visibleRange: number,
@@ -148,7 +152,10 @@ export function resolveBookmapLadderSteps(
   }
 
   const domLadderStep = chooseDomBucketSize(visibleRange, chartHeight);
-  const heatmapRenderSnapStep = domLadderStep;
+  const heatmapRenderSnapStep = Math.min(
+    heatmapStorageBucketStep,
+    HISTORICAL_SURFACE_PRICE_BUCKET_USD,
+  );
 
   return {
     verticalMode,

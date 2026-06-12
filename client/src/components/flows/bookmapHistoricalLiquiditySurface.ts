@@ -1,9 +1,12 @@
 import {
+  BOOKMAP_DEPTH_DATA_RANGE_PADDING_PCT,
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG,
   BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_V1,
   HISTORICAL_SURFACE_CACHE_KEY_PREFIX,
   HISTORICAL_SURFACE_CACHE_SAVE_MS,
+  HISTORICAL_SURFACE_FAR_LIQUIDITY_MIN_BTC,
+  HISTORICAL_SURFACE_FAR_STRONG_MIN_BTC,
   HISTORICAL_SURFACE_INITIAL_BACKFILL_MS,
   HISTORICAL_SURFACE_MAX_GAP_FILL_MS,
   HISTORICAL_SURFACE_MAX_ACTIVE_LEVELS,
@@ -326,8 +329,8 @@ function selectLevels(
   midPrice: number | null | undefined,
 ): LiveDomBookLevel[] {
   const range = maxPrice - minPrice;
-  const expandedMin = minPrice - range * 0.55;
-  const expandedMax = maxPrice + range * 0.55;
+  const expandedMin = minPrice - range * BOOKMAP_DEPTH_DATA_RANGE_PADDING_PCT;
+  const expandedMax = maxPrice + range * BOOKMAP_DEPTH_DATA_RANGE_PADDING_PCT;
   const filtered = levels.filter(
     (level) =>
       level.size >= HISTORICAL_SURFACE_MIN_SIZE_BTC &&
@@ -339,12 +342,18 @@ function selectLevels(
     .sort((a, b) => {
       const aNear = Math.abs(a.price - mid);
       const bNear = Math.abs(b.price - mid);
-      const aNearPct = mid > 0 ? (aNear / mid) * 100 : 100;
-      const bNearPct = mid > 0 ? (bNear / mid) * 100 : 100;
+      const aFar = aNear > range * 0.35;
+      const bFar = bNear > range * 0.35;
       const aScore =
-        Math.log1p(a.size) * 22_000 + Math.max(0, 5 - aNearPct) * 1_000 - aNear * 0.4;
+        Math.log1p(a.size) * 20_000 +
+        (a.size >= HISTORICAL_SURFACE_FAR_STRONG_MIN_BTC ? 28_000 : a.size >= 5 ? 9_000 : 0) +
+        (aFar && a.size >= HISTORICAL_SURFACE_FAR_LIQUIDITY_MIN_BTC ? 12_000 : 0) -
+        aNear * 0.06;
       const bScore =
-        Math.log1p(b.size) * 22_000 + Math.max(0, 5 - bNearPct) * 1_000 - bNear * 0.4;
+        Math.log1p(b.size) * 20_000 +
+        (b.size >= HISTORICAL_SURFACE_FAR_STRONG_MIN_BTC ? 28_000 : b.size >= 5 ? 9_000 : 0) +
+        (bFar && b.size >= HISTORICAL_SURFACE_FAR_LIQUIDITY_MIN_BTC ? 12_000 : 0) -
+        bNear * 0.06;
       return bScore - aScore;
     })
     .slice(0, HISTORICAL_SURFACE_MAX_ACTIVE_LEVELS);
@@ -480,9 +489,10 @@ function buildDiag(
     ? sizes[Math.floor((sizes.length - 1) / 2)] ?? 0
     : 0;
   const effectivePriceStep = heatmapRenderSnapStep;
-  const rowsAlignedToDom = Array.from(priceSet).every(
+  const rowsAlignedToRenderStep = Array.from(priceSet).every(
     (price) =>
-      Math.abs(Math.round(price / domLadderStep) * domLadderStep - price) < 0.000_001,
+      Math.abs(Math.round(price / heatmapRenderSnapStep) * heatmapRenderSnapStep - price) <
+      0.000_001,
   );
   return {
     enabled: BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_V1,
@@ -526,8 +536,8 @@ function buildDiag(
       mid != null && Number.isFinite(mid) ? Math.max(0, maxPrice - mid) : 0,
     visibleRangeBelowPrice:
       mid != null && Number.isFinite(mid) ? Math.max(0, mid - minPrice) : 0,
-    heatmapRowsAlignedToDom: rowsAlignedToDom,
-    priceRoundingModeUsedByHeatmap: "nearest-dom-bucket",
+    heatmapRowsAlignedToDom: rowsAlignedToRenderStep,
+    priceRoundingModeUsedByHeatmap: "nearest-storage-bucket",
     priceRoundingModeUsedByDomCob: "nearest-dom-bucket",
     skippedEmptyLevels: Math.max(0, sourceLevelCount - selectedLevelCount),
     inactiveLevelCount,

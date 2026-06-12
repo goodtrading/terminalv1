@@ -99,7 +99,7 @@ export function zoomPriceRange(
   const { minPrice, maxPrice } = range;
   const newMin = anchorPrice - (anchorPrice - minPrice) * zoomFactor;
   const newMax = anchorPrice + (maxPrice - anchorPrice) * zoomFactor;
-  return clampPriceRange({ minPrice: newMin, maxPrice: newMax }, spot);
+  return { minPrice: newMin, maxPrice: newMax };
 }
 
 export function panPriceRange(
