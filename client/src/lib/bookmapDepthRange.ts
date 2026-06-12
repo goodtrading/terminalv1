@@ -1,5 +1,9 @@
 import type { BookLevel } from "@/types/bookmapState";
 import type { PriceRange } from "@/components/flows/bookmapViewportUtils";
+import {
+  BOOKMAP_DOM_HEATMAP_LADDER_LOCK_V1,
+  BOOKMAP_MICROSCALPING_RANGE_MAX_USD,
+} from "@/lib/bookmapEngineConfig";
 import { pickNiceStepAtLeast } from "@/lib/bookmapPriceScaleUtils";
 
 /** Vertical depth presets (half-span in USD for band modes). */
@@ -89,7 +93,7 @@ export function depthPresetToLegacyViewMode(
 }
 
 export function inferVerticalCompressionMode(visibleRange: number): VerticalCompressionMode {
-  if (visibleRange <= 1_500) return "micro";
+  if (visibleRange <= BOOKMAP_MICROSCALPING_RANGE_MAX_USD) return "micro";
   if (visibleRange <= 8_000) return "intraday";
   if (visibleRange <= 25_000) return "macro";
   return "fullDepth";
@@ -121,10 +125,9 @@ export function chooseVerticalBucketSizes(
     case "micro":
       labelStep = visibleRange <= 800 ? 25 : 50;
       heatmapBucketSize = visibleRange <= 800 ? 10 : 25;
-      domBucketSize = Math.max(
-        heatmapBucketSize,
-        pickNiceStepAtLeast(dollarsPerPx * 14),
-      );
+      domBucketSize = BOOKMAP_DOM_HEATMAP_LADDER_LOCK_V1
+        ? heatmapBucketSize
+        : Math.max(heatmapBucketSize, pickNiceStepAtLeast(dollarsPerPx * 14));
       break;
     case "intraday":
       labelStep = visibleRange <= 4_000 ? 100 : 250;
