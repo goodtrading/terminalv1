@@ -385,6 +385,37 @@ export type DomValueMappingDiag = {
   suspiciousMirroredValues: number;
 };
 
+export type DomPriceAlignmentDiag = {
+  enabled: boolean;
+  selectedDomSource: string;
+  symbol: string;
+  venue: string;
+  chartVisiblePriceMin: number;
+  chartVisiblePriceMax: number;
+  chartPriceRangeUsd: number;
+  priceToYSource: string;
+  domUsesSharedPriceScale: boolean;
+  domHasIndependentScroll: boolean;
+  domUsesRowIndexY: boolean;
+  rawBidLevelsTotal: number;
+  rawAskLevelsTotal: number;
+  visibleBidLevelsRendered: number;
+  visibleAskLevelsRendered: number;
+  levelsOutsideChartRange: number;
+  bidAskLinesY: { bid: number | null; ask: number | null };
+  nearestDomBidY: number | null;
+  nearestDomAskY: number | null;
+  maxAlignmentErrorPx: number;
+  syntheticRowsCreated: number;
+  extraPriceColumnEnabled: boolean;
+  chartRangeControlsDomVisibility: boolean;
+  heatmapBucketControlsDom: boolean;
+  localDepthControlsDomRows: boolean;
+  svpCreatesDomRows: boolean;
+  collapsedVisualGroups: number;
+  aggregatedBecausePixelCollision: number;
+};
+
 export type DomScaffoldResult = {
   rows: DomLadderRow[];
   stats: DomScaffoldStats;
@@ -1655,6 +1686,266 @@ export type RawDomLadderResult = DomScaffoldResult & {
   stabilityDiag: RawDomStabilityDiag;
   sourceDiag: BinanceRawDomSourceDiag;
 };
+
+export type PriceAlignedRawDomResult = DomScaffoldResult & {
+  alignmentDiag: DomPriceAlignmentDiag;
+};
+
+let lastDomPriceAlignmentDiagMs = 0;
+
+function emitDomPriceAlignmentDiag(diag: DomPriceAlignmentDiag): void {
+  if (!import.meta.env.DEV) return;
+  const now = Date.now();
+  if (now - lastDomPriceAlignmentDiagMs < 2_000) return;
+  lastDomPriceAlignmentDiagMs = now;
+  console.debug("[BOOKMAP_DOM_PRICE_ALIGNMENT_DIAG]", diag);
+}
+
+function logDomPriceDesync(params: {
+  price: number;
+  renderedY: number;
+  expectedY: number;
+  errorPx: number;
+}): void {
+  if (!import.meta.env.DEV) return;
+  console.warn("[BOOKMAP_DOM_PRICE_DESYNC]", params);
+}
+
+export function logDomIndependentScrollRegression(params: {
+  enabled: boolean;
+  reason: string;
+}): void {
+  if (!import.meta.env.DEV || !params.enabled) return;
+  console.warn("[BOOKMAP_DOM_INDEPENDENT_SCROLL_REGRESSION]", params);
+}
+
+export function buildPriceAlignedRawDomRows(params: {
+  bids?: OrderbookLevel[];
+  asks?: OrderbookLevel[];
+  spot: number | null;
+  priceRange: PriceRange;
+  plotHeight: number;
+  priceToY: (price: number) => number;
+  showDomNumbers?: boolean;
+  majorWallBtc?: number;
+  selectedDomSource?: string;
+  feedVenue?: string;
+  market?: string;
+  mode?: string;
+}): PriceAlignedRawDomResult {
+  const showDomNumbers = params.showDomNumbers !== false;
+  const majorWallBtc = params.majorWallBtc ?? HEATMAP_MAJOR_WALL_BTC;
+  const rawBids = params.bids ?? [];
+  const rawAsks = params.asks ?? [];
+  const minPrice = params.priceRange.minPrice;
+  const maxPrice = params.priceRange.maxPrice;
+  const inChartRange = (price: number) => price >= minPrice && price <= maxPrice;
+  const yBandPx = 8;
+
+  type Slot = {
+    price: number;
+    ySum: number;
+    samples: number;
+    bidSize: number;
+    askSize: number;
+    bidLevels: number;
+    askLevels: number;
+    hasBidSource: boolean;
+    hasAskSource: boolean;
+  };
+
+  const slots = new Map<number, Slot>();
+  let levelsOutsideChartRange = 0;
+  let visibleBidLevelsRendered = 0;
+  let visibleAskLevelsRendered = 0;
+  let maxAlignmentErrorPx = 0;
+
+  const ingest = (level: OrderbookLevel, side: "bid" | "ask") => {
+    const price = Number(level.price);
+    const size = Number(level.sizeBtc);
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(size) || size <= 0) return;
+    if (!inChartRange(price)) {
+      levelsOutsideChartRange += 1;
+      return;
+    }
+    const expectedY = params.priceToY(price);
+    if (!Number.isFinite(expectedY)) return;
+    const key = Math.round(expectedY / yBandPx);
+    const slot = slots.get(key) ?? {
+      price,
+      ySum: 0,
+      samples: 0,
+      bidSize: 0,
+      askSize: 0,
+      bidLevels: 0,
+      askLevels: 0,
+      hasBidSource: false,
+      hasAskSource: false,
+    };
+    slot.ySum += expectedY;
+    slot.samples += 1;
+    if (side === "bid") {
+      slot.bidSize += size;
+      slot.bidLevels += 1;
+      slot.hasBidSource = true;
+      visibleBidLevelsRendered += 1;
+    } else {
+      slot.askSize += size;
+      slot.askLevels += 1;
+      slot.hasAskSource = true;
+      visibleAskLevelsRendered += 1;
+    }
+    if (Math.abs(price - (params.spot ?? price)) < Math.abs(slot.price - (params.spot ?? slot.price))) {
+      slot.price = price;
+    }
+    slots.set(key, slot);
+  };
+
+  for (const level of rawBids) ingest(level, "bid");
+  for (const level of rawAsks) ingest(level, "ask");
+
+  const sortedSlots = Array.from(slots.values()).sort(
+    (a, b) => b.ySum / Math.max(1, b.samples) - a.ySum / Math.max(1, a.samples),
+  );
+
+  let maxBid = 0;
+  let maxAsk = 0;
+  let maxCob = 0;
+  for (const slot of sortedSlots) {
+    maxBid = Math.max(maxBid, slot.bidSize);
+    maxAsk = Math.max(maxAsk, slot.askSize);
+    maxCob = Math.max(maxCob, slot.bidSize + slot.askSize);
+  }
+
+  let svpRunning = 0;
+  let liveRows = 0;
+  let rowsWithBidLiquidity = 0;
+  let rowsWithAskLiquidity = 0;
+  const rows: DomLadderRow[] = sortedSlots.map((slot) => {
+    const y = slot.ySum / Math.max(1, slot.samples);
+    const expectedY = params.priceToY(slot.price);
+    const errorPx = Math.abs(y - expectedY);
+    maxAlignmentErrorPx = Math.max(maxAlignmentErrorPx, errorPx);
+    if (errorPx > 1) {
+      logDomPriceDesync({ price: slot.price, renderedY: y, expectedY, errorPx });
+    }
+    const bidSize = slot.bidSize;
+    const askSize = slot.askSize;
+    const hasLiveBid = bidSize > 0;
+    const hasLiveAsk = askSize > 0;
+    const cobSize = bidSize + askSize;
+    svpRunning += cobSize;
+    if (hasLiveBid) {
+      liveRows += 1;
+      rowsWithBidLiquidity += 1;
+    }
+    if (hasLiveAsk) {
+      liveRows += 1;
+      rowsWithAskLiquidity += 1;
+    }
+    const isSpotBucket =
+      params.spot != null && Number.isFinite(params.spot)
+        ? Math.abs(slot.price - params.spot) <= BOOKMAP_BTCUSDT_TICK_SIZE
+        : false;
+    return {
+      price: slot.price,
+      bidSize,
+      askSize,
+      bidState: hasLiveBid ? "live" : "none",
+      askState: hasLiveAsk ? "live" : "none",
+      bidLastKnownSize: 0,
+      askLastKnownSize: 0,
+      cobSize,
+      svpCumulative: svpRunning,
+      y,
+      bucketHeight: yBandPx,
+      barHeight: Math.max(5, yBandPx - 1),
+      isSpotBucket,
+      showLabel: false,
+      showTick: false,
+      showDomText: showDomNumbers && cobSize > 0,
+      isMajorWall: cobSize >= majorWallBtc,
+      bidBarPct: maxBid > 0 ? (bidSize / maxBid) * 100 : 0,
+      askBarPct: maxAsk > 0 ? (askSize / maxAsk) * 100 : 0,
+      cobBarPct: maxCob > 0 ? (cobSize / maxCob) * 100 : 0,
+      hasLiveBid,
+      hasLiveAsk,
+      hasHistoricalWall: false,
+      wallSize: 0,
+      wallSide: null,
+      wallTier: null,
+      wallIsStale: false,
+    };
+  });
+
+  const nearestBid = rows.find((row) => row.hasLiveBid) ?? null;
+  const nearestAsk = rows.find((row) => row.hasLiveAsk) ?? null;
+  const bestBid = rawBids.find((level) => level.sizeBtc > 0) ?? null;
+  const bestAsk = rawAsks.find((level) => level.sizeBtc > 0) ?? null;
+  const collapsedVisualGroups = rows.filter(
+    (row) => row.hasLiveBid && row.hasLiveAsk,
+  ).length;
+  const aggregatedBecausePixelCollision = sortedSlots.reduce(
+    (sum, slot) => sum + Math.max(0, slot.samples - 1),
+    0,
+  );
+
+  const alignmentDiag: DomPriceAlignmentDiag = {
+    enabled: true,
+    selectedDomSource: params.selectedDomSource ?? "spot",
+    symbol: params.market ?? "BTCUSDT",
+    venue: params.feedVenue ?? "binance_spot",
+    chartVisiblePriceMin: minPrice,
+    chartVisiblePriceMax: maxPrice,
+    chartPriceRangeUsd: maxPrice - minPrice,
+    priceToYSource: "BookmapPriceScale.priceToY",
+    domUsesSharedPriceScale: true,
+    domHasIndependentScroll: false,
+    domUsesRowIndexY: false,
+    rawBidLevelsTotal: rawBids.length,
+    rawAskLevelsTotal: rawAsks.length,
+    visibleBidLevelsRendered,
+    visibleAskLevelsRendered,
+    levelsOutsideChartRange,
+    bidAskLinesY: {
+      bid: bestBid && inChartRange(bestBid.price) ? params.priceToY(bestBid.price) : null,
+      ask: bestAsk && inChartRange(bestAsk.price) ? params.priceToY(bestAsk.price) : null,
+    },
+    nearestDomBidY: nearestBid?.y ?? null,
+    nearestDomAskY: nearestAsk?.y ?? null,
+    maxAlignmentErrorPx,
+    syntheticRowsCreated: 0,
+    extraPriceColumnEnabled: false,
+    chartRangeControlsDomVisibility: true,
+    heatmapBucketControlsDom: false,
+    localDepthControlsDomRows: false,
+    svpCreatesDomRows: false,
+    collapsedVisualGroups,
+    aggregatedBecausePixelCollision,
+  };
+
+  emitDomPriceAlignmentDiag(alignmentDiag);
+
+  return {
+    rows,
+    stats: {
+      ladderRows: rows.length,
+      liveRows,
+      lastKnownRows: 0,
+      wallRows: 0,
+      expectedDomRowCount: rows.length,
+      zeroLiquidityRows: 0,
+      rowsWithBidLiquidity,
+      rowsWithAskLiquidity,
+      rawBidLevelsCount: rawBids.length,
+      rawAskLevelsCount: rawAsks.length,
+      aggregatedBidLevelsCount: aggregatedBecausePixelCollision,
+      aggregatedAskLevelsCount: aggregatedBecausePixelCollision,
+      domUsesContinuousLadder: false,
+    },
+    alignmentDiag,
+  };
+}
 
 /**
  * STEP 1.6.4 — Strict Binance Spot raw DOM: rows ONLY from live bid/ask arrays.
