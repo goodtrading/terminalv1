@@ -332,3 +332,30 @@ export const LIMIT_ORDER_DOMINANT_SIZE_BTC = 100;
 export const LIMIT_ORDER_MAX_TRACKED_LEVELS = 2_000;
 export const LIMIT_ORDER_PERSISTENT_MS = 8_000;
 export const LIMIT_ORDER_TOUCH_PCT = 0.08;
+
+/**
+ * B.reset — Canonical heatmap: single visual grammar for historical + live.
+ * Takes priority over surface/lifecycle render paths when active.
+ */
+export const BOOKMAP_CANONICAL_HEATMAP_V1 = true;
+
+/** DEV-only canonical heatmap diagnostics (throttled 2s). */
+export const BOOKMAP_CANONICAL_HEATMAP_DIAG = true;
+
+export const CANONICAL_HISTORICAL_MAX_DRAW = 14_000;
+export const CANONICAL_LIVE_MAX_PER_SIDE = 200;
+export const CANONICAL_MACRO_MIN_SIZE_BTC = 1;
+export const CANONICAL_MICRO_MIN_SIZE_BTC = 0.5;
+export const CANONICAL_FAR_DISTANCE_ALPHA_MUL = 0.84;
+export const CANONICAL_WALL_SIZE_BTC = 20;
+export const CANONICAL_DOMINANT_SIZE_BTC = 100;
+
+/** DEV audit: why the old right-side looked enlarged vs historical. */
+export const CANONICAL_LEGACY_RIGHT_SIDE_MISMATCH_CAUSE =
+  "bookmapSurfaceRenderer stacked three right-side passes per level: " +
+  "drawLiveDepthSurface/drawLifecycleLiveSurface used a wide overlap column " +
+  "(dataEndTime - BOOKMAP_TEXTURE_SAMPLER_MS*2 → dataEndTime, colW ≫ 1 bucket), " +
+  "drawLiveProjectionSurface/drawLifecycleLiveProjection added a second dual-layer fill " +
+  "(edgeW 14% + body 86% at higher alpha), and drawImportantWalls/drawLifecycleWalls " +
+  "added glow bands at height*1.22 plus a third full-width projection rect — while " +
+  "historical cells used single BOOKMAP_ENGINE_BUCKET_MS-wide rects at bodyAlpha only.";

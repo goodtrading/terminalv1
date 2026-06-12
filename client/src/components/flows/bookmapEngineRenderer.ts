@@ -17,6 +17,7 @@ import {
   BOOKMAP_MACRO_DOM_DEPTH_COVERAGE_V1,
   BOOKMAP_ANCHORED_WALL_VISUAL_INTEGRATION_V1,
   BOOKMAP_SURFACE_RENDERER_V1,
+  BOOKMAP_CANONICAL_HEATMAP_V1,
   ANCHORED_WALL_BASE_ALPHA_MUL,
   ANCHORED_WALL_CORE_ALPHA_MUL,
   ANCHORED_WALL_GLOW_ALPHA_MUL,
@@ -214,6 +215,10 @@ import {
   drawSurfaceRendererWatermark,
   paintBookmapSurfaceRendererFrame,
 } from "./bookmapSurfaceRenderer";
+import {
+  drawCanonicalHeatmapWatermark,
+  paintBookmapCanonicalHeatmapFrame,
+} from "./bookmapCanonicalHeatmap";
 import type { ExecutionRailLength } from "@/components/terminal/bookmap/bookmapSettings";
 import type { PassiveConfluenceLevel } from "./bookmapConfluence";
 import type { BookmapLayerAudit } from "./bookmapLayerAudit";
@@ -1618,7 +1623,7 @@ function emitRenderPathProofDiag(
 }
 
 function drawRenderPathProofWatermark(ctx: CanvasRenderingContext2D): void {
-  if (BOOKMAP_SURFACE_RENDERER_V1) return;
+  if (BOOKMAP_CANONICAL_HEATMAP_V1 || BOOKMAP_SURFACE_RENDERER_V1) return;
   if (!import.meta.env.DEV || !BOOKMAP_RENDER_PATH_PROOF_DIAG) return;
   ctx.save();
   ctx.font = "bold 11px ui-monospace, monospace";
@@ -4196,29 +4201,7 @@ export function paintBookmapEngineHeatmapFrame(
 
   const crosshairMetrics = metricsForCrosshair(metrics);
 
-  if (BOOKMAP_SURFACE_RENDERER_V1) {
-    paintBookmapSurfaceRendererFrame(
-      ctx,
-      {
-        width: w,
-        height: h,
-        minPrice,
-        maxPrice,
-        spot,
-        engine,
-        timeViewport,
-        visualSettings: params.visualSettings,
-        domBucketSize: Math.max(1, params.domBucketSize ?? params.heatmapBucketSize),
-      },
-      {
-        plotW: metrics.plotW,
-        plotH: metrics.plotH,
-        priceToY: params.priceToY,
-        timeToX: metrics.timeToX,
-        domBucketSize: metrics.domBucketSize,
-      },
-    );
-
+  const renderCanonicalOrSurfaceOverlays = () => {
     if (
       params.showHistoricalBboPath === true &&
       params.bboHistoryPoints &&
@@ -4313,7 +4296,59 @@ export function paintBookmapEngineHeatmapFrame(
     if (params.crosshair) {
       renderCrosshair(ctx, w, h, params.crosshair, crosshairMetrics);
     }
+  };
 
+  if (BOOKMAP_CANONICAL_HEATMAP_V1) {
+    paintBookmapCanonicalHeatmapFrame(
+      ctx,
+      {
+        width: w,
+        height: h,
+        minPrice,
+        maxPrice,
+        spot,
+        engine,
+        timeViewport,
+        visualSettings: params.visualSettings,
+        domBucketSize: Math.max(1, params.domBucketSize ?? params.heatmapBucketSize),
+      },
+      {
+        plotW: metrics.plotW,
+        plotH: metrics.plotH,
+        priceToY: params.priceToY,
+        timeToX: metrics.timeToX,
+        domBucketSize: metrics.domBucketSize,
+      },
+    );
+    renderCanonicalOrSurfaceOverlays();
+    drawCanonicalHeatmapWatermark(ctx);
+    return;
+  }
+
+  if (BOOKMAP_SURFACE_RENDERER_V1) {
+    paintBookmapSurfaceRendererFrame(
+      ctx,
+      {
+        width: w,
+        height: h,
+        minPrice,
+        maxPrice,
+        spot,
+        engine,
+        timeViewport,
+        visualSettings: params.visualSettings,
+        domBucketSize: Math.max(1, params.domBucketSize ?? params.heatmapBucketSize),
+      },
+      {
+        plotW: metrics.plotW,
+        plotH: metrics.plotH,
+        priceToY: params.priceToY,
+        timeToX: metrics.timeToX,
+        domBucketSize: metrics.domBucketSize,
+      },
+    );
+
+    renderCanonicalOrSurfaceOverlays();
     drawSurfaceRendererWatermark(ctx);
     return;
   }
