@@ -4,6 +4,7 @@ import {
   BOOKMAP_DOM_FULL_DEPTH_DIAG,
   BOOKMAP_DOM_MAX_SCAFFOLD_ROWS,
   BOOKMAP_BINANCE_RAW_DOM_SOURCE_DIAG,
+  BOOKMAP_DOM_VALUE_MAPPING_DIAG,
   BOOKMAP_FULL_RAW_DOM_LADDER_DIAG,
   BOOKMAP_RAW_DOM_ROW_HEIGHT_PX,
   BOOKMAP_RAW_DOM_STABILITY_DIAG,
@@ -349,6 +350,34 @@ export type BinanceRawDomSourceDiag = {
   followMode: boolean;
   scrollTop: number | null;
   scrollTargetIndex: number | null;
+};
+
+export type DomValueMappingDiag = {
+  selectedDomSource: string;
+  symbol: string;
+  feedVenue: string;
+  rawBidsReceived: number;
+  rawAsksReceived: number;
+  visibleDomRows: number;
+  bidRowsMatched: number;
+  askRowsMatched: number;
+  cobRowsMatched: number;
+  svpRowsMatched: number;
+  unmatchedVisibleRows: number;
+  exactPriceMatches: number;
+  roundedPriceMatches: number;
+  bucketedPriceMatches: number;
+  syntheticValuesCreated: number;
+  extraPriceColumnEnabled: false;
+  rawTableModeEnabled: false;
+  bidAskFromRealBook: boolean;
+  cobFromRealBook: boolean;
+  svpCreatesRows: false;
+  priceMappingStep: number;
+  first10VisibleRowPrices: number[];
+  first10MatchedBidRows: Array<{ price: number; size: number }>;
+  first10MatchedAskRows: Array<{ price: number; size: number }>;
+  suspiciousFarPriceAttached: boolean;
 };
 
 export type DomScaffoldResult = {
@@ -1226,6 +1255,7 @@ let lastDomFullDepthDiagMs = 0;
 let lastFullRawDomLadderDiagMs = 0;
 let lastRawDomStabilityDiagMs = 0;
 let lastBinanceRawDomSourceDiagMs = 0;
+let lastDomValueMappingDiagMs = 0;
 
 export function emitDomFullDepthDiag(diag: DomFullDepthDiag): void {
   if (!import.meta.env.DEV || !BOOKMAP_DOM_FULL_DEPTH_DIAG) return;
@@ -1331,6 +1361,249 @@ export function emitBinanceRawDomSourceDiag(diag: BinanceRawDomSourceDiag): void
   if (now - lastBinanceRawDomSourceDiagMs < 2_000) return;
   lastBinanceRawDomSourceDiagMs = now;
   console.debug("[BOOKMAP_BINANCE_RAW_DOM_SOURCE_DIAG]", diag);
+}
+
+function logInvalidDomSyntheticValue(
+  price: number,
+  side: "bid" | "ask" | "cob",
+  displayed: number,
+  reason: string,
+): void {
+  if (!import.meta.env.DEV) return;
+  console.warn("[BOOKMAP_DOM_INVALID_SYNTHETIC_VALUE]", {
+    price,
+    side,
+    displayed,
+    reason,
+  });
+}
+
+export function logExtraPriceColumnRegression(present: boolean): void {
+  if (!import.meta.env.DEV || !present) return;
+  console.warn("[BOOKMAP_DOM_EXTRA_PRICE_COLUMN_REGRESSION]", {
+    present: true,
+    message: "DOM/COB panel must not render a separate raw PRICE column",
+  });
+}
+
+function buildExactDepthByPrice(levels: OrderbookLevel[]): Map<number, number> {
+  const map = new Map<number, number>();
+  for (const level of levels) {
+    const price = Number(level.price);
+    const size = Number(level.sizeBtc);
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(size) || size <= 0) {
+      continue;
+    }
+    map.set(price, (map.get(price) ?? 0) + size);
+  }
+  return map;
+}
+
+function expectedMappedSizeAtRow(
+  rowPrice: number,
+  exactMap: Map<number, number>,
+  bucketMap: Map<number, number>,
+): { size: number; matchKind: "exact" | "bucket" | "none" } {
+  const exact = exactMap.get(rowPrice);
+  if (exact != null && exact > 0) {
+    return { size: exact, matchKind: "exact" };
+  }
+  const bucket = bucketMap.get(rowPrice) ?? 0;
+  if (bucket > 0) {
+    return { size: bucket, matchKind: "bucket" };
+  }
+  return { size: 0, matchKind: "none" };
+}
+
+export function emitDomValueMappingDiag(diag: DomValueMappingDiag): void {
+  if (!import.meta.env.DEV || !BOOKMAP_DOM_VALUE_MAPPING_DIAG) return;
+  const now = Date.now();
+  if (now - lastDomValueMappingDiagMs < 2_000) return;
+  lastDomValueMappingDiagMs = now;
+  console.debug("[BOOKMAP_DOM_VALUE_MAPPING_DIAG]", diag);
+}
+
+/**
+ * STEP 1.6.5 — Map raw Binance Spot depth onto the existing chart-aligned DOM scaffold.
+ * No separate raw price column or scroll table; COB/BID/ASK/SVP attach to ladder rows.
+ */
+export function buildMappedDomLadderRows(params: {
+  bids: OrderbookLevel[];
+  asks: OrderbookLevel[];
+  spot: number | null;
+  priceRange: PriceRange;
+  priceStep: number;
+  plotHeight: number;
+  priceToY?: (price: number) => number;
+  majorWallBtc?: number;
+  showDomNumbers?: boolean;
+  walls?: DomWallEntry[];
+  depthPreset?: DepthRangePreset;
+  selectedDomSource?: string;
+  feedVenue?: string;
+  symbol?: string;
+  tickSize?: number;
+}): DomScaffoldResult & { mappingDiag: DomValueMappingDiag } {
+  const tickSize = params.tickSize ?? BOOKMAP_BTCUSDT_TICK_SIZE;
+  const priceStep = Math.max(tickSize, params.priceStep);
+  const rawBids = params.bids ?? [];
+  const rawAsks = params.asks ?? [];
+
+  const result = buildScaffoldedDomRows({
+    bids: rawBids,
+    asks: rawAsks,
+    walls: params.walls,
+    spot: params.spot,
+    priceRange: params.priceRange,
+    priceStep,
+    plotHeight: params.plotHeight,
+    priceToY: params.priceToY,
+    majorWallBtc: params.majorWallBtc,
+    showDomNumbers: params.showDomNumbers,
+    depthPreset: params.depthPreset,
+  });
+
+  const exactBidByPrice = buildExactDepthByPrice(rawBids);
+  const exactAskByPrice = buildExactDepthByPrice(rawAsks);
+  const bucketBids = aggregateLevelsByPriceStep(rawBids, priceStep);
+  const bucketAsks = aggregateLevelsByPriceStep(rawAsks, priceStep);
+
+  let bidRowsMatched = 0;
+  let askRowsMatched = 0;
+  let cobRowsMatched = 0;
+  let svpRowsMatched = 0;
+  let unmatchedVisibleRows = 0;
+  let exactPriceMatches = 0;
+  let bucketedPriceMatches = 0;
+  let syntheticValuesCreated = 0;
+  const first10MatchedBidRows: Array<{ price: number; size: number }> = [];
+  const first10MatchedAskRows: Array<{ price: number; size: number }> = [];
+  let suspiciousFarPriceAttached = false;
+  const spotPrice =
+    params.spot != null && Number.isFinite(params.spot) ? params.spot : null;
+
+  for (const row of result.rows) {
+    const bidExpected = expectedMappedSizeAtRow(row.price, exactBidByPrice, bucketBids);
+    const askExpected = expectedMappedSizeAtRow(row.price, exactAskByPrice, bucketAsks);
+
+    if (bidExpected.matchKind === "exact") exactPriceMatches++;
+    else if (bidExpected.matchKind === "bucket") bucketedPriceMatches++;
+    if (askExpected.matchKind === "exact") exactPriceMatches++;
+    else if (askExpected.matchKind === "bucket") bucketedPriceMatches++;
+
+    const bidLive = row.bidState === "live" && row.bidSize > 0;
+    const askLive = row.askState === "live" && row.askSize > 0;
+
+    if (bidLive) {
+      if (Math.abs(row.bidSize - bidExpected.size) > 1e-8) {
+        syntheticValuesCreated++;
+        logInvalidDomSyntheticValue(
+          row.price,
+          "bid",
+          row.bidSize,
+          "live_bid_not_traceable_to_raw_book",
+        );
+      } else {
+        bidRowsMatched++;
+        if (first10MatchedBidRows.length < 10) {
+          first10MatchedBidRows.push({ price: row.price, size: row.bidSize });
+        }
+      }
+    }
+
+    if (askLive) {
+      if (Math.abs(row.askSize - askExpected.size) > 1e-8) {
+        syntheticValuesCreated++;
+        logInvalidDomSyntheticValue(
+          row.price,
+          "ask",
+          row.askSize,
+          "live_ask_not_traceable_to_raw_book",
+        );
+      } else {
+        askRowsMatched++;
+        if (first10MatchedAskRows.length < 10) {
+          first10MatchedAskRows.push({ price: row.price, size: row.askSize });
+        }
+      }
+    }
+
+    const expectedCob = bidExpected.size + askExpected.size;
+    if (row.cobSize > 0) {
+      if (Math.abs(row.cobSize - expectedCob) > 1e-8 && bidLive && askLive) {
+        syntheticValuesCreated++;
+        logInvalidDomSyntheticValue(
+          row.price,
+          "cob",
+          row.cobSize,
+          "cob_not_sum_of_mapped_bid_ask",
+        );
+      } else if (row.cobSize > 0 && expectedCob > 0) {
+        cobRowsMatched++;
+      }
+    }
+
+    if (row.svpCumulative > 0) svpRowsMatched++;
+
+    if (
+      row.bidSize <= 0 &&
+      row.askSize <= 0 &&
+      row.cobSize <= 0 &&
+      !row.hasHistoricalWall
+    ) {
+      unmatchedVisibleRows++;
+    }
+
+    if (
+      spotPrice != null &&
+      (bidLive || askLive) &&
+      Math.abs(row.price - spotPrice) > 8_000
+    ) {
+      const rawNearRow =
+        [...exactBidByPrice.keys(), ...exactAskByPrice.keys()].some(
+          (p) => Math.abs(p - row.price) <= priceStep,
+        ) ||
+        bucketBids.has(row.price) ||
+        bucketAsks.has(row.price);
+      if (!rawNearRow) {
+        suspiciousFarPriceAttached = true;
+      }
+    }
+  }
+
+  const mappingDiag: DomValueMappingDiag = {
+    selectedDomSource: params.selectedDomSource ?? "spot",
+    symbol: params.symbol ?? "BTCUSDT",
+    feedVenue: params.feedVenue ?? "binance_spot",
+    rawBidsReceived: rawBids.length,
+    rawAsksReceived: rawAsks.length,
+    visibleDomRows: result.rows.length,
+    bidRowsMatched,
+    askRowsMatched,
+    cobRowsMatched,
+    svpRowsMatched,
+    unmatchedVisibleRows,
+    exactPriceMatches,
+    roundedPriceMatches: 0,
+    bucketedPriceMatches,
+    syntheticValuesCreated,
+    extraPriceColumnEnabled: false,
+    rawTableModeEnabled: false,
+    bidAskFromRealBook: syntheticValuesCreated === 0,
+    cobFromRealBook: syntheticValuesCreated === 0,
+    svpCreatesRows: false,
+    priceMappingStep: priceStep,
+    first10VisibleRowPrices: result.rows.slice(0, 10).map((r) => r.price),
+    first10MatchedBidRows,
+    first10MatchedAskRows,
+    suspiciousFarPriceAttached,
+  };
+
+  if (import.meta.env.DEV) {
+    emitDomValueMappingDiag(mappingDiag);
+  }
+
+  return { ...result, mappingDiag };
 }
 
 function logInvalidSyntheticRow(price: number, reason: string, source: string): void {
