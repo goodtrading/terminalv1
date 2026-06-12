@@ -30,6 +30,12 @@ export function getInternalApiBaseUrl(): string {
   return `http://127.0.0.1:${port}`;
 }
 
+/** Known production frontends — merged with CORS_ALLOWED_ORIGINS and RAILWAY_PUBLIC_DOMAIN. */
+const PRODUCTION_CORS_DEFAULTS = [
+  "https://terminalv1-production.up.railway.app",
+  "https://app-movil-production-5e55.up.railway.app",
+];
+
 export function getAllowedCorsOrigins(): string[] {
   const fromEnv = (process.env.CORS_ALLOWED_ORIGINS ?? "")
     .split(",")
@@ -37,7 +43,7 @@ export function getAllowedCorsOrigins(): string[] {
     .filter(Boolean);
 
   if (isProduction) {
-    const origins = new Set<string>(fromEnv);
+    const origins = new Set<string>([...PRODUCTION_CORS_DEFAULTS, ...fromEnv]);
     const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
     if (railwayDomain) {
       origins.add(`https://${railwayDomain}`);

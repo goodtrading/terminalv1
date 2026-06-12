@@ -4,6 +4,7 @@ import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
 import cors from "cors";
+import { getAllowedCorsOrigins } from "./lib/runtimeEnv";
 import { recordEndpointTiming } from "./lib/performanceMonitor";
 import {
   getAllowedCorsOrigins,
@@ -95,6 +96,7 @@ if (isProduction && allowedOrigins.length === 0) {
     "[cors] No production origins configured. Set CORS_ALLOWED_ORIGINS and/or deploy on Railway (RAILWAY_PUBLIC_DOMAIN).",
   );
 }
+console.log("[BOOT] CORS allowed origins:", allowedOrigins.length);
 
 const corsOptions = {
   origin(origin: string | undefined, callback: (err: Error | null, allow: boolean) => void) {
