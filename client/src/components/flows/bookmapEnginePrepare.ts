@@ -160,6 +160,12 @@ import {
   type MacroDomCoverageDiagStats,
   type WallAnchoringDiagStats,
 } from "./bookmapWallAnchoring";
+import {
+  updateHistoricalLiquiditySurface,
+  type ActiveRestingLiquidityLevel,
+  type HistoricalLiquiditySurfaceCell,
+  type HistoricalLiquiditySurfaceDiag,
+} from "./bookmapHistoricalLiquiditySurface";
 
 /** P7.2 — granular historical limit-order texture (not merged into bands). */
 export const BOOKMAP_TEXTURE_MODE_ENABLED = true;
@@ -397,6 +403,10 @@ export type PreparedEngineRenderData = {
   macroDomCoverageDiag?: MacroDomCoverageDiagStats;
   /** B.6 — full current DOM book levels used in prepare (same source as lateral panel). */
   currentDomBookLevels?: LiveDomBookLevel[];
+  /** STEP 1 — stateful priceLevel x timeBucket historical liquidity surface. */
+  historicalSurfaceCells?: HistoricalLiquiditySurfaceCell[];
+  activeRestingLiquidityLevels?: ActiveRestingLiquidityLevel[];
+  historicalSurfaceDiag?: HistoricalLiquiditySurfaceDiag;
 };
 
 export type MicroScalpVisualContext = {
@@ -2397,6 +2407,17 @@ export function prepareEngineRenderData(
     options?.liveDomBook,
     options?.liveDomTimestamp,
   );
+  const historicalSurface = updateHistoricalLiquiditySurface({
+    state,
+    levels: bookLevels,
+    sourceKey: `${state.exchange}:${state.market ?? "spot"}:${state.symbol}`,
+    priceBucketSize: Math.max(1, heatmapBucketSize || domBucketSize || 1),
+    visibleStartTime: dataEndTime - BOOKMAP_HISTORY_RETENTION_MS,
+    visibleEndTime: dataEndTime + BOOKMAP_ENGINE_BUCKET_MS,
+    minPrice,
+    maxPrice,
+    midPrice: spotPrice ?? null,
+  });
 
   const bestBid =
     state.bids.find((b) => b.size > 0 && !b.stale)?.price ?? null;
@@ -2473,6 +2494,9 @@ export function prepareEngineRenderData(
     wallAnchoringDiag: wallAnchorLayer.wallAnchoringDiag,
     macroDomCoverageDiag: wallAnchorLayer.macroDomCoverageDiag,
     currentDomBookLevels: bookLevels,
+    historicalSurfaceCells: historicalSurface.cells,
+    activeRestingLiquidityLevels: historicalSurface.activeLevels,
+    historicalSurfaceDiag: historicalSurface.diag,
   };
 }
 

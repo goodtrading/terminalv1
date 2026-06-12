@@ -5,6 +5,7 @@
 import {
   BOOKMAP_CLEAN_BASELINE_DIAG,
   BOOKMAP_ENGINE_BUCKET_MS,
+  BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG,
   BOOKMAP_MINIMAL_STABLE_RENDERER_V1,
 } from "@/lib/bookmapEngineConfig";
 import {
@@ -19,6 +20,7 @@ import {
   type PreparedEngineTextureCell,
   type PreparedLiveProjectionLevel,
 } from "./bookmapEnginePrepare";
+import type { HistoricalLiquiditySurfaceCell } from "./bookmapHistoricalLiquiditySurface";
 
 export type MinimalStablePlotMetrics = {
   plotW: number;
@@ -45,6 +47,8 @@ export type MinimalStableRenderResult = {
 
 type BandGeom = { yTop: number; height: number };
 
+let lastHistoricalSurfaceRenderDiagMs = 0;
+
 function bandGeom(
   price: number,
   priceToY: (p: number) => number,
@@ -66,6 +70,23 @@ function thermalFromSize(sizeBtc: number): {
     intensity,
     rgb: intensityToPassiveLiquidityRgb(intensity),
     alpha: 0.22 + intensity * 0.52,
+  };
+}
+
+function thermalFromSurfaceCell(cell: HistoricalLiquiditySurfaceCell): {
+  rgb: [number, number, number];
+  alpha: number;
+  intensity: number;
+} {
+  const intensity = Math.max(cell.intensity, Math.min(1, cell.maxSize / 120));
+  const persistenceBoost = Math.min(0.16, cell.persistenceMs / 90_000);
+  const weakFloor = cell.maxSize < 5 ? 0.1 : 0.16;
+  const alpha =
+    Math.max(weakFloor, 0.12 + intensity * 0.46 + persistenceBoost) * cell.decay;
+  return {
+    intensity,
+    rgb: intensityToPassiveLiquidityRgb(intensity),
+    alpha,
   };
 }
 
@@ -117,6 +138,22 @@ function collectHistoricalCells(
       isMajor: false,
       maxSizeInBucket: c.maxSizeInBucket,
     }));
+}
+
+function collectHistoricalSurfaceCells(
+  engine: PreparedEngineRenderData,
+  dataEndTime: number,
+  minPrice: number,
+  maxPrice: number,
+  visibleStart: number,
+  visibleEnd: number,
+): HistoricalLiquiditySurfaceCell[] {
+  return (engine.historicalSurfaceCells ?? []).filter((cell) => {
+    const end = cell.timeBucket + BOOKMAP_ENGINE_BUCKET_MS;
+    if (end < visibleStart || cell.timeBucket > visibleEnd) return false;
+    if (cell.timeBucket >= dataEndTime + BOOKMAP_ENGINE_BUCKET_MS) return false;
+    return cell.price >= minPrice && cell.price <= maxPrice && cell.maxSize > 0;
+  });
 }
 
 function collectLiveLevels(engine: PreparedEngineRenderData): PreparedLiveProjectionLevel[] {
@@ -174,31 +211,74 @@ export function paintMinimalStableBookmapFrame(
   const opacity = params.visualSettings?.heatmap.opacity ?? 1;
   const bucketW = bucketWidthPx(dataEndTime - BOOKMAP_ENGINE_BUCKET_MS, metrics.timeToX);
 
-  for (const cell of collectHistoricalCells(
+  const surfaceCells = collectHistoricalSurfaceCells(
     engine,
     dataEndTime,
     minPrice,
     maxPrice,
     timeViewport.visibleStartTime,
     timeViewport.visibleEndTime,
-  )) {
-    const size = cell.maxSizeInBucket;
-    const vi = cell.intensity ?? Math.min(1, size / 50);
-    if (vi < 0.03 && size < 0.5) continue;
+  );
 
-    const geom = bandGeom(cell.price, metrics.priceToY, metrics.domBucketSize);
-    if (geom.yTop + geom.height < HEATMAP_PAD.top - 2) continue;
-    if (geom.yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
+  if (surfaceCells.length > 0) {
+    for (const cell of surfaceCells) {
+      const geom = bandGeom(cell.price, metrics.priceToY, metrics.domBucketSize);
+      if (geom.yTop + geom.height < HEATMAP_PAD.top - 2) continue;
+      if (geom.yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
 
-    const x0 = metrics.timeToX(cell.timeBucket);
-    if (x0 >= dataEdgeX) continue;
-    let w = bucketWidthPx(cell.timeBucket, metrics.timeToX);
-    w = Math.min(w, Math.max(1, dataEdgeX - x0));
+      const x0 = metrics.timeToX(cell.timeBucket);
+      if (x0 >= dataEdgeX) continue;
+      const w = Math.min(
+        bucketW,
+        Math.max(1, dataEdgeX - x0),
+        Math.max(1, bucketWidthPx(cell.timeBucket, metrics.timeToX)),
+      );
 
-    const thermal = thermalFromSize(size);
-    const rgb = intensityToPassiveLiquidityRgb(Math.max(vi, thermal.intensity * 0.85));
-    fillBand(ctx, x0, w, geom, rgb, thermal.alpha * opacity * 0.75);
-    result.visibleHeatmapCells += 1;
+      const thermal = thermalFromSurfaceCell(cell);
+      fillBand(ctx, x0, w, geom, thermal.rgb, thermal.alpha * opacity * 0.78);
+      result.visibleHeatmapCells += 1;
+    }
+  } else {
+    for (const cell of collectHistoricalCells(
+      engine,
+      dataEndTime,
+      minPrice,
+      maxPrice,
+      timeViewport.visibleStartTime,
+      timeViewport.visibleEndTime,
+    )) {
+      const size = cell.maxSizeInBucket;
+      const vi = cell.intensity ?? Math.min(1, size / 50);
+      if (vi < 0.03 && size < 0.5) continue;
+
+      const geom = bandGeom(cell.price, metrics.priceToY, metrics.domBucketSize);
+      if (geom.yTop + geom.height < HEATMAP_PAD.top - 2) continue;
+      if (geom.yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
+
+      const x0 = metrics.timeToX(cell.timeBucket);
+      if (x0 >= dataEdgeX) continue;
+      let w = bucketWidthPx(cell.timeBucket, metrics.timeToX);
+      w = Math.min(w, Math.max(1, dataEdgeX - x0));
+
+      const thermal = thermalFromSize(size);
+      const rgb = intensityToPassiveLiquidityRgb(Math.max(vi, thermal.intensity * 0.85));
+      fillBand(ctx, x0, w, geom, rgb, thermal.alpha * opacity * 0.75);
+      result.visibleHeatmapCells += 1;
+    }
+  }
+
+  if (engine.historicalSurfaceDiag) {
+    engine.historicalSurfaceDiag.renderCellCountPerFrame = result.visibleHeatmapCells;
+    if (import.meta.env.DEV && BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG) {
+      const now = Date.now();
+      if (now - lastHistoricalSurfaceRenderDiagMs >= 2_000) {
+        lastHistoricalSurfaceRenderDiagMs = now;
+        console.debug("[BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_RENDER]", {
+          ...engine.historicalSurfaceDiag,
+          renderCellCountPerFrame: result.visibleHeatmapCells,
+        });
+      }
+    }
   }
 
   const projX1 = metrics.timeToX(timeViewport.visibleEndTime);

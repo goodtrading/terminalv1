@@ -307,6 +307,22 @@ export const BOOKMAP_MINIMAL_STABLE_RENDERER_V1 = true;
 export const BOOKMAP_CLEAN_BASELINE_DIAG = true;
 
 /**
+ * STEP 1 — Desktop historical liquidity surface.
+ * Stateful priceLevel x timeBucket matrix fed from active DOM snapshots.
+ */
+export const BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_V1 = true;
+
+/** DEV-only historical surface diagnostics (throttled 2s). */
+export const BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG = true;
+
+export const HISTORICAL_SURFACE_RETENTION_MS = 90 * 60 * 1000;
+export const HISTORICAL_SURFACE_MAX_CELLS = 28_000;
+export const HISTORICAL_SURFACE_MAX_ACTIVE_LEVELS = 2_400;
+export const HISTORICAL_SURFACE_MIN_SIZE_BTC = 0.25;
+export const HISTORICAL_SURFACE_CACHE_SAVE_MS = 5_000;
+export const HISTORICAL_SURFACE_CACHE_KEY_PREFIX = "goodtrading.bookmap.historicalSurface.v1";
+
+/**
  * B.5 — Clean surface renderer bypassing experimental visual pipeline.
  */
 export const BOOKMAP_SURFACE_RENDERER_V1 = false;
