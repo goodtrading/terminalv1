@@ -361,6 +361,10 @@ export type DomValueMappingDiag = {
   visibleDomRows: number;
   bidRowsMatched: number;
   askRowsMatched: number;
+  rowsWithBidOnly: number;
+  rowsWithAskOnly: number;
+  rowsWithBoth: number;
+  rowsWithNoBidNoAsk: number;
   cobRowsMatched: number;
   svpRowsMatched: number;
   unmatchedVisibleRows: number;
@@ -378,6 +382,7 @@ export type DomValueMappingDiag = {
   first10MatchedBidRows: Array<{ price: number; size: number }>;
   first10MatchedAskRows: Array<{ price: number; size: number }>;
   suspiciousFarPriceAttached: boolean;
+  suspiciousMirroredValues: number;
 };
 
 export type DomScaffoldResult = {
@@ -1376,6 +1381,12 @@ function logInvalidDomSyntheticValue(
     displayed,
     reason,
   });
+  console.warn("[BOOKMAP_DOM_VALUE_WITHOUT_BOOK_LEVEL]", {
+    price,
+    side,
+    displayed,
+    reason,
+  });
 }
 
 export function logExtraPriceColumnRegression(present: boolean): void {
@@ -1473,6 +1484,10 @@ export function buildMappedDomLadderRows(params: {
   let cobRowsMatched = 0;
   let svpRowsMatched = 0;
   let unmatchedVisibleRows = 0;
+  let rowsWithBidOnly = 0;
+  let rowsWithAskOnly = 0;
+  let rowsWithBoth = 0;
+  let rowsWithNoBidNoAsk = 0;
   let exactPriceMatches = 0;
   let bucketedPriceMatches = 0;
   let syntheticValuesCreated = 0;
@@ -1493,6 +1508,10 @@ export function buildMappedDomLadderRows(params: {
 
     const bidLive = row.bidState === "live" && row.bidSize > 0;
     const askLive = row.askState === "live" && row.askSize > 0;
+    if (bidLive && askLive) rowsWithBoth++;
+    else if (bidLive) rowsWithBidOnly++;
+    else if (askLive) rowsWithAskOnly++;
+    else rowsWithNoBidNoAsk++;
 
     if (bidLive) {
       if (Math.abs(row.bidSize - bidExpected.size) > 1e-8) {
@@ -1580,6 +1599,10 @@ export function buildMappedDomLadderRows(params: {
     visibleDomRows: result.rows.length,
     bidRowsMatched,
     askRowsMatched,
+    rowsWithBidOnly,
+    rowsWithAskOnly,
+    rowsWithBoth,
+    rowsWithNoBidNoAsk,
     cobRowsMatched,
     svpRowsMatched,
     unmatchedVisibleRows,
@@ -1597,6 +1620,7 @@ export function buildMappedDomLadderRows(params: {
     first10MatchedBidRows,
     first10MatchedAskRows,
     suspiciousFarPriceAttached,
+    suspiciousMirroredValues: 0,
   };
 
   if (import.meta.env.DEV) {
@@ -1609,6 +1633,8 @@ export function buildMappedDomLadderRows(params: {
 function logInvalidSyntheticRow(price: number, reason: string, source: string): void {
   if (!import.meta.env.DEV) return;
   console.warn("[BOOKMAP_RAW_DOM_INVALID_SYNTHETIC_ROW]", { price, reason, source });
+  console.warn("[BOOKMAP_RAW_DOM_INVALID_ROW_SOURCE]", { price, reason, source });
+  console.warn("[BOOKMAP_RAW_DOM_SYNTHETIC_ZERO_ROW]", { price, reason, source });
 }
 
 function logSuspiciousPriceGrid(
@@ -1763,6 +1789,9 @@ export function buildRawDomLadderRows(params: {
   let rawBidRows = 0;
   let rawAskRows = 0;
   let rowsWithNoBidNoAsk = 0;
+  let rowsWithBidOnly = 0;
+  let rowsWithAskOnly = 0;
+  let rowsWithBoth = 0;
 
   const rows: DomLadderRow[] = sortedSlots.map((slot, index) => {
     const bidSize = slot.bidSize;
@@ -1775,6 +1804,9 @@ export function buildRawDomLadderRows(params: {
       rowsWithNoBidNoAsk++;
       logInvalidSyntheticRow(slot.price, "no_bid_no_ask", "strict_binance_raw_dom");
     }
+    if (hasLiveBid && hasLiveAsk) rowsWithBoth++;
+    else if (hasLiveBid) rowsWithBidOnly++;
+    else if (hasLiveAsk) rowsWithAskOnly++;
     if (hasLiveBid) {
       rawBidRows++;
       rowsWithBidLiquidity++;
@@ -1985,11 +2017,50 @@ export function buildRawDomLadderRows(params: {
     scrollOffset: scrollTop,
     centerRowIndex,
   };
+  const mappingDiag: DomValueMappingDiag = {
+    selectedDomSource: params.selectedDomSource ?? "spot",
+    symbol: params.market ?? "BTCUSDT",
+    feedVenue: params.feedVenue ?? "binance_spot",
+    rawBidsReceived,
+    rawAsksReceived,
+    visibleDomRows: rows.length,
+    bidRowsMatched: rawBidRows,
+    askRowsMatched: rawAskRows,
+    rowsWithBidOnly,
+    rowsWithAskOnly,
+    rowsWithBoth,
+    rowsWithNoBidNoAsk,
+    cobRowsMatched: rows.filter((r) => r.cobSize > 0).length,
+    svpRowsMatched: rows.filter((r) => r.svpCumulative > 0).length,
+    unmatchedVisibleRows: rowsWithNoBidNoAsk,
+    exactPriceMatches: rawBidRows + rawAskRows,
+    roundedPriceMatches: 0,
+    bucketedPriceMatches: 0,
+    syntheticValuesCreated: rowsWithNoBidNoAsk,
+    extraPriceColumnEnabled: false,
+    rawTableModeEnabled: false,
+    bidAskFromRealBook: rowsWithNoBidNoAsk === 0,
+    cobFromRealBook: rowsWithNoBidNoAsk === 0,
+    svpCreatesRows: false,
+    priceMappingStep: tickSize,
+    first10VisibleRowPrices: rows.slice(0, 10).map((r) => r.price),
+    first10MatchedBidRows: rows
+      .filter((r) => r.hasLiveBid)
+      .slice(0, 10)
+      .map((r) => ({ price: r.price, size: r.bidSize })),
+    first10MatchedAskRows: rows
+      .filter((r) => r.hasLiveAsk)
+      .slice(0, 10)
+      .map((r) => ({ price: r.price, size: r.askSize })),
+    suspiciousFarPriceAttached: false,
+    suspiciousMirroredValues: rowsWithBoth,
+  };
 
   if (import.meta.env.DEV) {
     emitFullRawDomLadderDiag(rawDiag);
     emitRawDomStabilityDiag(stabilityDiag);
     emitBinanceRawDomSourceDiag(sourceDiag);
+    emitDomValueMappingDiag(mappingDiag);
   }
 
   return {

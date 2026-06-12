@@ -22,6 +22,7 @@ import {
   type DesktopBookmapInputLevel,
 } from "@/lib/desktopBookmapHeatmapEngine";
 import {
+  BOOKMAP_BTCUSDT_TICK_SIZE,
   BOOKMAP_DESKTOP_DOM_RAW_DEPTH_LIMIT,
   useDesktopFullRawDomLadder,
 } from "@/lib/bookmapEngineConfig";
@@ -84,6 +85,20 @@ type BinanceCombinedMessage = {
 type DesktopFeedStatus = "loading" | "live" | "error" | "empty" | "offline";
 type DesktopOrderbookMode = "reconstructed" | "fallback-depth20";
 
+type DesktopBookLevel = {
+  price: number;
+  priceKey: string;
+  sizeBtc: number;
+  side: "bid" | "ask";
+  firstSeenTs: number;
+  lastUpdateTs: number;
+  previousSize: number;
+  peakSize: number;
+  updateCount: number;
+  isActive: boolean;
+  lastKnownUpdateId?: number | null;
+};
+
 export const desktopBookmapFeedEnabled =
   import.meta.env.VITE_PLATFORM === "desktop" &&
   import.meta.env.VITE_HEATMAP_ENABLED === "true";
@@ -99,7 +114,7 @@ function parseBookEntry(raw: unknown): { price: number; priceKey: string; sizeBt
   const sizeBtc = Number.parseFloat(typeof raw[1] === "string" ? raw[1] : String(raw[1]));
   if (!Number.isFinite(price) || price <= 0) return null;
   if (!Number.isFinite(sizeBtc) || sizeBtc < 0) return null;
-  const priceKey = price.toFixed(2);
+  const priceKey = priceKeyRaw;
   return { price, priceKey, sizeBtc };
 }
 
@@ -117,29 +132,119 @@ function parseLevels(rows: unknown[] | undefined, side: "bid" | "ask"): Orderboo
   return levels;
 }
 
-function replaceBookSideFromRows(book: Map<string, { price: number; priceKey: string; sizeBtc: number }>, rows: unknown[] | undefined): void {
-  book.clear();
+function logLargeLevelDisappearance(params: {
+  price: number;
+  side: "bid" | "ask";
+  previousSize: number;
+  lastUpdateTs: number;
+  currentTime: number;
+  lastKnownUpdateId?: number | null;
+  reason: string;
+}): void {
+  if (!import.meta.env.DEV) return;
+  console.warn("[BOOKMAP_DOM_LEVEL_DISAPPEARED_WITHOUT_DELETE]", params);
+}
+
+function replaceBookSideFromRows(
+  book: Map<string, DesktopBookLevel>,
+  rows: unknown[] | undefined,
+  side: "bid" | "ask",
+  now: number,
+  lastKnownUpdateId: number | null,
+  reason: string,
+): { inserted: number; updated: number; deleted: number; largeDisappeared: number } {
+  const next = new Map<string, DesktopBookLevel>();
+  let inserted = 0;
+  let updated = 0;
+  let deleted = 0;
+  let largeDisappeared = 0;
   for (const row of rows ?? []) {
     const entry = parseBookEntry(row);
     if (!entry || entry.sizeBtc <= 0) continue;
-    book.set(entry.priceKey, entry);
+    const prev = book.get(entry.priceKey);
+    if (prev) updated++;
+    else inserted++;
+    next.set(entry.priceKey, {
+      price: entry.price,
+      priceKey: entry.priceKey,
+      sizeBtc: entry.sizeBtc,
+      side,
+      firstSeenTs: prev?.firstSeenTs ?? now,
+      lastUpdateTs: now,
+      previousSize: prev?.sizeBtc ?? 0,
+      peakSize: Math.max(prev?.peakSize ?? 0, entry.sizeBtc),
+      updateCount: (prev?.updateCount ?? 0) + 1,
+      isActive: true,
+      lastKnownUpdateId,
+    });
   }
+  for (const [priceKey, prev] of book.entries()) {
+    if (next.has(priceKey)) continue;
+    deleted++;
+    if (prev.sizeBtc >= HEATMAP_MAJOR_WALL_BTC) {
+      largeDisappeared++;
+      logLargeLevelDisappearance({
+        price: prev.price,
+        side: prev.side,
+        previousSize: prev.sizeBtc,
+        lastUpdateTs: prev.lastUpdateTs,
+        currentTime: now,
+        lastKnownUpdateId,
+        reason,
+      });
+    }
+  }
+  book.clear();
+  for (const [priceKey, level] of next.entries()) book.set(priceKey, level);
+  return { inserted, updated, deleted, largeDisappeared };
 }
 
-function applyBookSideUpdates(book: Map<string, { price: number; priceKey: string; sizeBtc: number }>, rows: unknown[] | undefined): void {
+function applyBookSideUpdates(
+  book: Map<string, DesktopBookLevel>,
+  rows: unknown[] | undefined,
+  side: "bid" | "ask",
+  now: number,
+  lastKnownUpdateId: number | null,
+): { inserted: number; updated: number; deleted: number; largeDisappeared: number } {
+  let inserted = 0;
+  let updated = 0;
+  let deleted = 0;
+  let largeDisappeared = 0;
   for (const row of rows ?? []) {
     const entry = parseBookEntry(row);
     if (!entry) continue;
+    const prev = book.get(entry.priceKey);
     if (entry.sizeBtc === 0) {
-      book.delete(entry.priceKey);
+      if (prev) {
+        deleted++;
+        if (prev.sizeBtc >= HEATMAP_MAJOR_WALL_BTC) {
+          largeDisappeared++;
+        }
+        book.delete(entry.priceKey);
+      }
     } else {
-      book.set(entry.priceKey, entry);
+      if (prev) updated++;
+      else inserted++;
+      book.set(entry.priceKey, {
+        price: entry.price,
+        priceKey: entry.priceKey,
+        sizeBtc: entry.sizeBtc,
+        side,
+        firstSeenTs: prev?.firstSeenTs ?? now,
+        lastUpdateTs: now,
+        previousSize: prev?.sizeBtc ?? 0,
+        peakSize: Math.max(prev?.peakSize ?? 0, entry.sizeBtc),
+        updateCount: (prev?.updateCount ?? 0) + 1,
+        isActive: true,
+        lastKnownUpdateId,
+      });
     }
   }
+  return { inserted, updated, deleted, largeDisappeared };
 }
 
 function visibleBookSide(
-  book: Map<string, { price: number; priceKey: string; sizeBtc: number }>,
+  book: Map<string, DesktopBookLevel>,
   side: "bid" | "ask",
   limit: number,
 ): OrderbookLevel[] {
@@ -186,8 +291,8 @@ export function useDesktopBookmapFeed(
     heatmapEngineRef.current.getStats(),
   );
   const lastUpdateRef = useRef<number | null>(null);
-  const rawBidsRef = useRef<Map<string, { price: number; priceKey: string; sizeBtc: number }>>(new Map());
-  const rawAsksRef = useRef<Map<string, { price: number; priceKey: string; sizeBtc: number }>>(new Map());
+  const rawBidsRef = useRef<Map<string, DesktopBookLevel>>(new Map());
+  const rawAsksRef = useRef<Map<string, DesktopBookLevel>>(new Map());
   const rawBidsCountRef = useRef(0);
   const rawAsksCountRef = useRef(0);
   const bidsCountRef = useRef(0);
@@ -198,6 +303,11 @@ export function useDesktopBookmapFeed(
   const messagesReceivedRef = useRef(0);
   const diffMessagesReceivedRef = useRef(0);
   const resyncCountRef = useRef(0);
+  const lastResyncReasonRef = useRef<string | null>(null);
+  const levelsInsertedRef = useRef(0);
+  const levelsUpdatedRef = useRef(0);
+  const levelsDeletedRef = useRef(0);
+  const largeLevelsDisappearedRef = useRef(0);
   const currentModeRef = useRef<DesktopOrderbookMode>("reconstructed");
   const feedStatusRef = useRef<DesktopFeedStatus>(canUseSpotFeed ? "loading" : "offline");
   const connectedRef = useRef(false);
@@ -243,6 +353,18 @@ export function useDesktopBookmapFeed(
     connectedRef.current = connected;
     setTradesStreamConnected(connected);
   }, [cleanSymbol]);
+
+  const trackBookMutation = useCallback((stats: {
+    inserted: number;
+    updated: number;
+    deleted: number;
+    largeDisappeared: number;
+  }) => {
+    levelsInsertedRef.current += stats.inserted;
+    levelsUpdatedRef.current += stats.updated;
+    levelsDeletedRef.current += stats.deleted;
+    largeLevelsDisappearedRef.current += stats.largeDisappeared;
+  }, []);
 
   const diffWsUrl = useMemo(() => {
     const streamSymbol = cleanSymbol.toLowerCase();
@@ -506,6 +628,11 @@ export function useDesktopBookmapFeed(
     messagesReceivedRef.current = 0;
     diffMessagesReceivedRef.current = 0;
     resyncCountRef.current = 0;
+    lastResyncReasonRef.current = null;
+    levelsInsertedRef.current = 0;
+    levelsUpdatedRef.current = 0;
+    levelsDeletedRef.current = 0;
+    largeLevelsDisappearedRef.current = 0;
     currentModeRef.current = "reconstructed";
     connectedRef.current = false;
     setBookmapState(null);
@@ -618,10 +745,27 @@ export function useDesktopBookmapFeed(
       }
 
       try {
-        applyBookSideUpdates(rawBidsRef.current, diff.b);
-        applyBookSideUpdates(rawAsksRef.current, diff.a);
+        const eventTime = Number.isFinite(diff.E) ? Number(diff.E) : Date.now();
+        trackBookMutation(
+          applyBookSideUpdates(
+            rawBidsRef.current,
+            diff.b,
+            "bid",
+            eventTime,
+            finalUpdateId,
+          ),
+        );
+        trackBookMutation(
+          applyBookSideUpdates(
+            rawAsksRef.current,
+            diff.a,
+            "ask",
+            eventTime,
+            finalUpdateId,
+          ),
+        );
         lastUpdateIdRef.current = finalUpdateId;
-        scheduleVisibleBookSnapshot(Number.isFinite(diff.E) ? Number(diff.E) : Date.now());
+        scheduleVisibleBookSnapshot(eventTime);
         return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -676,8 +820,27 @@ export function useDesktopBookmapFeed(
         if (!Number.isFinite(lastUpdateId)) {
           throw new Error("snapshot_missing_lastUpdateId");
         }
-        replaceBookSideFromRows(rawBidsRef.current, snapshot.bids);
-        replaceBookSideFromRows(rawAsksRef.current, snapshot.asks);
+        const now = Date.now();
+        trackBookMutation(
+          replaceBookSideFromRows(
+            rawBidsRef.current,
+            snapshot.bids,
+            "bid",
+            now,
+            lastUpdateId,
+            "snapshot_resync_removed",
+          ),
+        );
+        trackBookMutation(
+          replaceBookSideFromRows(
+            rawAsksRef.current,
+            snapshot.asks,
+            "ask",
+            now,
+            lastUpdateId,
+            "snapshot_resync_removed",
+          ),
+        );
         rawBidsCountRef.current = rawBidsRef.current.size;
         rawAsksCountRef.current = rawAsksRef.current.size;
         lastUpdateIdRef.current = lastUpdateId;
@@ -802,6 +965,7 @@ export function useDesktopBookmapFeed(
     const resyncOrderbook = (reason: string) => {
       if (cancelled) return;
       resyncCountRef.current += 1;
+      lastResyncReasonRef.current = reason;
       void writeDesktopLog("desktop_orderbook_resync", {
         symbol: cleanSymbol,
         reason,
@@ -1002,6 +1166,59 @@ export function useDesktopBookmapFeed(
       };
       if (import.meta.env.DEV) {
         console.debug("[DESKTOP_BOOKMAP_FEED]", payload);
+        const bidLevels = visibleBookSide(rawBidsRef.current, "bid", 10);
+        const askLevels = visibleBookSide(rawAsksRef.current, "ask", 10);
+        const latestRows = rawDomSnapshot
+          ? [...rawDomSnapshot.bids, ...rawDomSnapshot.asks]
+              .sort((a, b) => b.price - a.price)
+              .slice(0, 10)
+          : [];
+        const bestBid = bidLevels[0] ?? null;
+        const bestAsk = askLevels[0] ?? null;
+        const currentPrice =
+          bestBid && bestAsk ? (bestBid.price + bestAsk.price) / 2 : spot;
+        console.debug("[BOOKMAP_STATEFUL_BINANCE_DOM_DIAG]", {
+          enabled: canUseSpotFeed,
+          selectedDomSource: markets.orderbookMarket,
+          symbol: cleanSymbol,
+          venue: "binance_spot",
+          snapshotLoaded: snapshotReadyRef.current,
+          snapshotLastUpdateId: lastUpdateIdRef.current,
+          lastAppliedUpdateId: lastUpdateIdRef.current,
+          updateSequenceHealthy: currentModeRef.current === "reconstructed",
+          resyncCount: resyncCountRef.current,
+          resyncReason: lastResyncReasonRef.current,
+          rawBidLevelsActive: rawBidsRef.current.size,
+          rawAskLevelsActive: rawAsksRef.current.size,
+          domRowsTotal: (rawDomSnapshot?.bids.length ?? 0) + (rawDomSnapshot?.asks.length ?? 0),
+          visibleRowsRendered: (rawDomSnapshot?.bids.length ?? 0) + (rawDomSnapshot?.asks.length ?? 0),
+          bestBidPrice: bestBid?.price ?? null,
+          bestBidSize: bestBid?.sizeBtc ?? null,
+          bestAskPrice: bestAsk?.price ?? null,
+          bestAskSize: bestAsk?.sizeBtc ?? null,
+          first10BidLevels: bidLevels,
+          first10AskLevels: askLevels,
+          first10RenderedRows: latestRows,
+          levelsInserted: levelsInsertedRef.current,
+          levelsUpdated: levelsUpdatedRef.current,
+          levelsDeleted: levelsDeletedRef.current,
+          largeLevelsTracked:
+            Array.from(rawBidsRef.current.values()).filter((l) => l.sizeBtc >= HEATMAP_MAJOR_WALL_BTC).length +
+            Array.from(rawAsksRef.current.values()).filter((l) => l.sizeBtc >= HEATMAP_MAJOR_WALL_BTC).length,
+          largeLevelsDisappearedWithoutDelete: largeLevelsDisappearedRef.current,
+          rowsFromScaffold: false,
+          rowsFromChartRange: false,
+          rowsFromHeatmapBucket: false,
+          rowsFromPriceAxis: false,
+          rowsFromSVP: false,
+          syntheticZeroRowsCreated: 0,
+          followMode: true,
+          scrollTop: null,
+          scrollTargetIndex: null,
+          currentPriceInsideVisibleWindow:
+            currentPrice != null &&
+            latestRows.some((row) => Math.abs(row.price - currentPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE),
+        });
       }
       void writeDesktopLog("desktop_feed_heartbeat", payload);
       const heatmapStats = heatmapStatsRef.current;

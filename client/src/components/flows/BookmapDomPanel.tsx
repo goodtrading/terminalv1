@@ -19,7 +19,7 @@ import {
 } from "./bookmapDomVisual";
 import { BOOKMAP_PLOT_PAD } from "./bookmapViewportUtils";
 import {
-  buildMappedDomLadderRows,
+  buildRawDomLadderRows,
   buildScaffoldedDomRows,
   formatBookmapPrice,
   formatDomSize,
@@ -358,7 +358,9 @@ export function BookmapDomPanel({
   feedVenue = "binance_spot",
 }: BookmapDomPanelProps) {
   const plotRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [plotHeight, setPlotHeight] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
   const useRawBinanceMapping = useDesktopFullRawDomLadder();
   const domFlags = getDomDisplayFlags(panelWidth);
   const { layout: columnLayout, showNumbers: widthAllowsNumbers, showSvp } = domFlags;
@@ -382,6 +384,12 @@ export function BookmapDomPanel({
   }, []);
 
   const { priceRange, domBucketSize, priceToY } = scale;
+  const rawDomMode =
+    useRawBinanceMapping &&
+    !engineMode &&
+    selectedDomSource === "spot" &&
+    Boolean(snapshot?.bids?.length || snapshot?.asks?.length);
+  const rawViewportHeight = Math.max(0, plotHeight - 64);
 
   const ladderResult = useMemo(() => {
     if (plotHeight < 20) {
@@ -405,26 +413,20 @@ export function BookmapDomPanel({
       };
     }
 
-    if (
-      useRawBinanceMapping &&
-      !engineMode &&
-      selectedDomSource === "spot" &&
-      (snapshot?.bids?.length || snapshot?.asks?.length)
-    ) {
-      return buildMappedDomLadderRows({
+    if (rawDomMode) {
+      return buildRawDomLadderRows({
         bids: snapshot!.bids ?? [],
         asks: snapshot!.asks ?? [],
         spot,
-        priceRange,
-        priceStep: domBucketSize,
-        plotHeight,
-        priceToY,
         showDomNumbers: showNumbers,
-        walls: wallEntries,
-        depthPreset: scale.depthRangePreset,
         selectedDomSource,
         feedVenue,
-        symbol: market,
+        market,
+        mode: marketMode,
+        followMode,
+        viewportHeight: rawViewportHeight,
+        scrollTop,
+        centerPrice: spot,
       });
     }
 
@@ -445,6 +447,7 @@ export function BookmapDomPanel({
     });
   }, [
     useRawBinanceMapping,
+    rawDomMode,
     selectedDomSource,
     engineMode,
     snapshot,
@@ -461,10 +464,38 @@ export function BookmapDomPanel({
     scale.depthRangePreset,
     feedVenue,
     market,
+    marketMode,
+    followMode,
+    rawViewportHeight,
+    scrollTop,
   ]);
 
   const { rows, stats } = ladderResult;
-  const renderRows = rows;
+  const rawScrollTargetIndex =
+    rawDomMode && "rawDiag" in ladderResult ? ladderResult.rawDiag.centerRowIndex : null;
+  const rawRowHeight =
+    rawDomMode && rows[0]?.bucketHeight ? rows[0].bucketHeight : 0;
+  const renderRows = useMemo(() => {
+    if (!rawDomMode || rawRowHeight <= 0 || rawViewportHeight <= 0) return rows;
+    const overscan = 6;
+    const start = Math.max(0, Math.floor(scrollTop / rawRowHeight) - overscan);
+    const count = Math.ceil(rawViewportHeight / rawRowHeight) + overscan * 2;
+    return rows.slice(start, start + count);
+  }, [rawDomMode, rawRowHeight, rawViewportHeight, rows, scrollTop]);
+
+  useEffect(() => {
+    if (!rawDomMode || !followMode || rawScrollTargetIndex == null || rawRowHeight <= 0) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const target = Math.max(
+      0,
+      rawScrollTargetIndex * rawRowHeight - Math.max(0, el.clientHeight - rawRowHeight) / 2,
+    );
+    if (Math.abs(el.scrollTop - target) > rawRowHeight) {
+      el.scrollTop = target;
+      setScrollTop(target);
+    }
+  }, [rawDomMode, followMode, rawScrollTargetIndex, rawRowHeight, rows.length]);
 
   const maxBidSize = useMemo(
     () => Math.max(...rows.map((r) => r.bidSize), 1e-9),
@@ -547,6 +578,7 @@ export function BookmapDomPanel({
     followMode,
     bestBidPrice,
     bestAskPrice,
+    rawDomMode,
   ]);
 
   const renderDomRow = (row: DomLadderRow) => {
@@ -671,6 +703,22 @@ export function BookmapDomPanel({
       {stats.ladderRows === 0 ? (
         <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-[12px] font-mono text-slate-500">
           {plotHeight < 20 ? "…" : !snapshot?.bids?.length && !snapshot?.asks?.length ? "Waiting for book…" : "No ladder rows"}
+        </div>
+      ) : rawDomMode ? (
+        <div
+          ref={scrollRef}
+          className="absolute left-0 right-0 bottom-0 overflow-y-auto overflow-x-hidden"
+          style={{ top: 62 }}
+          onScroll={(event) => {
+            if (!followMode) setScrollTop(event.currentTarget.scrollTop);
+          }}
+        >
+          <div
+            className="relative min-w-0"
+            style={{ height: Math.max(rawViewportHeight, rows.length * Math.max(1, rawRowHeight)) }}
+          >
+            {renderRows.map((row) => renderDomRow(row))}
+          </div>
         </div>
       ) : (
         renderRows.map((row) => renderDomRow(row))
