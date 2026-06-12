@@ -38,7 +38,7 @@ import {
   MAJOR_WALL_BTC,
   type ImportantLiquidityLevel,
 } from "./importantLiquidityLevels";
-import { useDesktopFullRawDomLadder } from "@/lib/bookmapEngineConfig";
+import { useDesktopFullRawDomLadder, BOOKMAP_DOM_DENSE_ROW_THRESHOLD, BOOKMAP_DOM_MAX_COB_BAR_ALPHA, BOOKMAP_DOM_MAX_SVP_BAR_ALPHA, BOOKMAP_DOM_MAX_SVP_BAR_WIDTH_PCT } from "@/lib/bookmapEngineConfig";
 import type { BookmapViewMode } from "./bookmapViewMode";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
 
@@ -63,13 +63,17 @@ export type BookmapDomPanelProps = {
   feedVenue?: string;
 };
 
-function domBarWidthPct(size: number, maxSideSize: number): number {
+function domBarWidthPct(
+  size: number,
+  maxSideSize: number,
+  maxWidthPct = DOM_MAX_BAR_WIDTH_PCT,
+): number {
   if (size <= 0 || !Number.isFinite(size)) return 0;
   const maxRef = Math.max(maxSideSize, 1e-9);
   const normalized = size / maxRef;
   return Math.max(
     DOM_MIN_BAR_WIDTH_PCT,
-    Math.min(DOM_MAX_BAR_WIDTH_PCT, normalized * 100),
+    Math.min(maxWidthPct, normalized * 100),
   );
 }
 
@@ -77,13 +81,15 @@ function domBarAlpha(
   size: number,
   maxSideSize: number,
   liquidityState: DomLiquidityState,
+  maxAlpha = 0.92,
+  alphaScale = 1,
 ): number {
   const maxRef = Math.max(maxSideSize, 1e-9);
   const normalized = Math.max(0, Math.min(1, size / maxRef));
-  let alpha = 0.55 + normalized * 0.35;
+  let alpha = (0.55 + normalized * 0.35) * alphaScale;
   if (liquidityState === "lastKnown") alpha *= 0.65;
   if (liquidityState === "wall") alpha *= 0.75;
-  return Math.min(0.92, alpha);
+  return Math.min(maxAlpha, alpha);
 }
 
 function histWallLabel(wall: DomWallEntry): string {
@@ -141,7 +147,10 @@ function DomValueText({
         DOM_FONT_CLASS,
         isLastKnown && "opacity-[0.78]",
       )}
-      style={{ color: isLastKnown ? DOM_TEXT_DIM : DOM_TEXT_PRIMARY }}
+      style={{
+        color: isLastKnown ? DOM_TEXT_DIM : DOM_TEXT_PRIMARY,
+        textShadow: "0 0 3px rgb(0,0,0), 0 1px 2px rgb(0,0,0)",
+      }}
     >
       {formatDomCellSize(size, state)}
       {showLkSuffix && isLastKnown && (
@@ -156,26 +165,34 @@ function DomBarCell({
   maxSideSize,
   rgb,
   showText,
+  showBar = true,
   liquidityState = "live",
   showLkSuffix = true,
+  maxAlpha,
+  maxWidthPct,
+  barAlphaScale = 1,
 }: {
   size: number;
   maxSideSize: number;
   rgb: readonly [number, number, number];
   showText: boolean;
+  showBar?: boolean;
   liquidityState?: DomLiquidityState;
   showLkSuffix?: boolean;
+  maxAlpha?: number;
+  maxWidthPct?: number;
+  barAlphaScale?: number;
 }) {
   const hasSize = size > 0;
-  const widthPct = domBarWidthPct(size, maxSideSize);
-  const alpha = domBarAlpha(size, maxSideSize, liquidityState);
+  const widthPct = domBarWidthPct(size, maxSideSize, maxWidthPct);
+  const alpha = domBarAlpha(size, maxSideSize, liquidityState, maxAlpha, barAlphaScale);
   const [r, g, b] = rgb;
 
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden px-0.5">
-      {hasSize && (
+      {hasSize && showBar && (
         <div
-          className="absolute inset-y-[2px] rounded-[2px]"
+          className="absolute inset-y-[2px] z-[1] rounded-[2px]"
           style={{
             width: `max(${DOM_MIN_BAR_PX}px, ${widthPct}%)`,
             left: "50%",
@@ -195,28 +212,42 @@ function DomSvpCell({
   svpValue,
   maxSvp,
   showText,
+  showBar = false,
+  maxAlpha = BOOKMAP_DOM_MAX_SVP_BAR_ALPHA,
+  maxWidthPct = BOOKMAP_DOM_MAX_SVP_BAR_WIDTH_PCT,
 }: {
   svpValue: number;
   maxSvp: number;
   showText: boolean;
+  showBar?: boolean;
+  maxAlpha?: number;
+  maxWidthPct?: number;
 }) {
   const hasValue = svpValue > 0;
-  const widthPct = domBarWidthPct(svpValue, maxSvp);
+  const widthPct = domBarWidthPct(svpValue, maxSvp, maxWidthPct);
+
+  if (!hasValue || (!showBar && !showText)) return null;
 
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden px-0.5">
-      {hasValue && (
+      {hasValue && showBar && (
         <div
-          className="absolute inset-y-[2px] rounded-[2px] bg-slate-600/35"
+          className="absolute inset-y-[2px] z-[1] rounded-[2px]"
           style={{
             width: `max(${DOM_MIN_BAR_PX}px, ${widthPct}%)`,
             left: "50%",
             transform: "translateX(-50%)",
+            backgroundColor: `rgba(71, 85, 105, ${maxAlpha})`,
           }}
         />
       )}
       {showText && hasValue && (
-        <span className={cn("relative z-[2]", DOM_FONT_CLASS)}>{formatDomSize(svpValue)}</span>
+        <span
+          className={cn("relative z-[2]", DOM_FONT_CLASS)}
+          style={{ textShadow: "0 0 3px rgb(0,0,0), 0 1px 2px rgb(0,0,0)" }}
+        >
+          {formatDomSize(svpValue)}
+        </span>
       )}
     </div>
   );
@@ -283,6 +314,10 @@ function DomRowCells({
   const askText = showText && (row.showAskText ?? row.showDomText);
   const cobText = showText && (row.showCobText ?? row.showDomText);
   const svpText = showText && (row.showSvpText ?? row.showDomText);
+  const barAlphaScale = row.barAlphaScale ?? 1;
+  const showCobBar = row.showCobBar ?? cobAbs > 0;
+  const showSvpBar = row.showSvpBar ?? false;
+  const svpBarValue = row.svpBarSize ?? row.svpCumulative;
 
   if (layout === "bid-ask") {
     return (
@@ -292,14 +327,18 @@ function DomRowCells({
           maxSideSize={maxBidSize}
           rgb={DOM_BID_RGB}
           showText={bidText}
+          showBar={row.bidSize > 0}
           liquidityState={row.bidState}
+          barAlphaScale={barAlphaScale}
         />
         <DomBarCell
           size={row.askSize}
           maxSideSize={maxAskSize}
           rgb={DOM_ASK_RGB}
           showText={askText}
+          showBar={row.askSize > 0}
           liquidityState={row.askState}
+          barAlphaScale={barAlphaScale}
         />
       </>
     );
@@ -312,6 +351,9 @@ function DomRowCells({
         maxSideSize={maxCobSize}
         rgb={DOM_COB_RGB}
         showText={cobText && cobAbs > 0}
+        showBar={showCobBar && cobAbs > 0}
+        maxAlpha={BOOKMAP_DOM_MAX_COB_BAR_ALPHA}
+        barAlphaScale={barAlphaScale}
         liquidityState="live"
         showLkSuffix={false}
       />
@@ -320,20 +362,27 @@ function DomRowCells({
         maxSideSize={maxBidSize}
         rgb={DOM_BID_RGB}
         showText={bidText}
+        showBar={row.bidSize > 0}
         liquidityState={row.bidState}
+        barAlphaScale={barAlphaScale}
       />
       <DomBarCell
         size={row.askSize}
         maxSideSize={maxAskSize}
         rgb={DOM_ASK_RGB}
         showText={askText}
+        showBar={row.askSize > 0}
         liquidityState={row.askState}
+        barAlphaScale={barAlphaScale}
       />
       {showSvp && layout === "full" && (
         <DomSvpCell
-          svpValue={row.svpCumulative}
+          svpValue={svpBarValue}
           maxSvp={maxSvpSize}
           showText={svpText}
+          showBar={showSvpBar}
+          maxAlpha={BOOKMAP_DOM_MAX_SVP_BAR_ALPHA}
+          maxWidthPct={BOOKMAP_DOM_MAX_SVP_BAR_WIDTH_PCT}
         />
       )}
     </>
@@ -485,9 +534,10 @@ export function BookmapDomPanel({
     [rows],
   );
   const maxSvpSize = useMemo(
-    () => Math.max(...rows.map((r) => r.svpCumulative), 1e-9),
+    () => Math.max(...rows.map((r) => r.svpBarSize ?? r.svpCumulative), 1e-9),
     [rows],
   );
+  const denseDomRows = stats.ladderRows >= BOOKMAP_DOM_DENSE_ROW_THRESHOLD;
 
   const bestBidPrice = useMemo(() => {
     const withBid = rows.filter((r) => r.hasLiveBid);
@@ -581,7 +631,7 @@ export function BookmapDomPanel({
         className={cn(
           wallOnly ? "flex" : gridClass,
           "pointer-events-none absolute left-0 right-0 z-10",
-          "border-b border-slate-800/25",
+          !denseDomRows && "border-b border-slate-800/25",
           !hasLiquidity && !row.isSpotBucket && "opacity-45",
           row.isSpotBucket &&
             "z-[15] bg-amber-500/[0.12] border-amber-500/30",

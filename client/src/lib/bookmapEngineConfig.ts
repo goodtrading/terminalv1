@@ -424,6 +424,30 @@ export const BOOKMAP_DOM_INDIVIDUAL_MIN_GAP_PX = 3;
 /** Minimum BTC size for a visible level to require visual representation. */
 export const BOOKMAP_DOM_MIN_VISUAL_SIZE_BTC = 0;
 
+/** DEV-only gray DOM panel regression diagnostics (throttled 2s). */
+export const BOOKMAP_DOM_GRAY_PANEL_REGRESSION_DIAG = true;
+
+/** Minimum readable numeric labels per BID/ASK column in dense DOM. */
+export const BOOKMAP_DOM_MIN_READABLE_LABELS_PER_SIDE = 12;
+
+/** Maximum readable numeric labels per BID/ASK column. */
+export const BOOKMAP_DOM_MAX_READABLE_LABELS_PER_SIDE = 24;
+
+/** Row count above which DOM uses subtle bar rendering. */
+export const BOOKMAP_DOM_DENSE_ROW_THRESHOLD = 80;
+
+/** Max opacity for COB background bars without a label. */
+export const BOOKMAP_DOM_MAX_COB_BAR_ALPHA = 0.3;
+
+/** Max opacity for SVP profile bars. */
+export const BOOKMAP_DOM_MAX_SVP_BAR_ALPHA = 0.2;
+
+/** Max width (% of cell) for SVP profile bars. */
+export const BOOKMAP_DOM_MAX_SVP_BAR_WIDTH_PCT = 40;
+
+/** Alpha multiplier for bid/ask bars without numeric labels. */
+export const BOOKMAP_DOM_SUBTLE_BAR_ALPHA_SCALE = 0.38;
+
 export function isDesktopBookmapRuntime(): boolean {
   return import.meta.env.VITE_PLATFORM === "desktop";
 }
