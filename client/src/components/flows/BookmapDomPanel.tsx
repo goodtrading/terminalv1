@@ -54,8 +54,6 @@ export type BookmapDomPanelProps = {
   showPlotBoundsDebug?: boolean;
 };
 
-const VIEWPORT_ROW_MARGIN_PX = 6;
-
 function domBarWidthPct(size: number, maxSideSize: number): number {
   if (size <= 0 || !Number.isFinite(size)) return 0;
   const maxRef = Math.max(maxSideSize, 1e-9);
@@ -386,6 +384,7 @@ export function BookmapDomPanel({
       plotHeight,
       priceToY,
       showDomNumbers: showNumbers,
+      depthPreset: scale.depthRangePreset,
     });
   }, [
     engineMode,
@@ -400,13 +399,11 @@ export function BookmapDomPanel({
     plotHeight,
     priceToY,
     showNumbers,
+    scale.depthRangePreset,
   ]);
 
-  const viewportRows = useMemo(() => {
-    const yMin = BOOKMAP_PLOT_PAD.top - VIEWPORT_ROW_MARGIN_PX;
-    const yMax = plotHeight - BOOKMAP_PLOT_PAD.bottom + VIEWPORT_ROW_MARGIN_PX;
-    return rows.filter((row) => row.y >= yMin && row.y <= yMax);
-  }, [rows, plotHeight]);
+  /** Continuous ladder — render full scaffold; do not filter to liquidity-only rows. */
+  const renderRows = rows;
 
   const maxBidSize = useMemo(
     () => Math.max(...rows.map((r) => r.bidSize), 1e-9),
@@ -470,12 +467,12 @@ export function BookmapDomPanel({
     if (!import.meta.env.DEV) return;
     console.debug("[DOM_SCAFFOLD]", {
       ...stats,
-      viewportRendered: viewportRows.length,
+      viewportRendered: renderRows.length,
       rangeMin: priceRange.minPrice,
       rangeMax: priceRange.maxPrice,
       domBucketSize,
     });
-  }, [stats, viewportRows.length, priceRange, domBucketSize]);
+  }, [stats, renderRows.length, priceRange, domBucketSize]);
 
   return (
     <div
@@ -489,7 +486,12 @@ export function BookmapDomPanel({
           </div>
           {import.meta.env.DEV && stats.ladderRows > 0 && (
             <div className="text-[9px] font-mono text-slate-600 tabular-nums">
-              rows {stats.ladderRows} · live {stats.liveRows} · LK {stats.lastKnownRows}
+              rows {stats.ladderRows}
+              {stats.expectedDomRowCount > 0 && stats.expectedDomRowCount !== stats.ladderRows
+                ? ` / ${stats.expectedDomRowCount} exp`
+                : ""}
+              {" · "}live {stats.liveRows} · LK {stats.lastKnownRows} · empty{" "}
+              {stats.zeroLiquidityRows}
               {!showNumbers ? " · nums off" : ""}
             </div>
           )}
@@ -536,8 +538,8 @@ export function BookmapDomPanel({
           {plotHeight < 20 ? "…" : "No ladder rows"}
         </div>
       ) : (
-        viewportRows.map((row) => {
-          const hasDisplay =
+        renderRows.map((row) => {
+          const hasLiquidity =
             row.bidSize > 0 || row.askSize > 0 || row.hasHistoricalWall;
           const wallOnly =
             row.hasHistoricalWall &&
@@ -550,8 +552,8 @@ export function BookmapDomPanel({
             bestBidPrice != null && row.price === bestBidPrice && row.hasLiveBid;
           const isBestAsk =
             bestAskPrice != null && row.price === bestAskPrice && row.hasLiveAsk;
-          const top = row.y - row.barHeight / 2;
-          const h = Math.max(20, row.barHeight);
+          const h = Math.max(3, Math.min(22, row.barHeight));
+          const top = row.y - h / 2;
 
           return (
             <div
@@ -560,6 +562,7 @@ export function BookmapDomPanel({
                 wallOnly ? "flex" : gridClass,
                 "pointer-events-none absolute left-0 right-0 z-10",
                 "border-b border-slate-800/25",
+                !hasLiquidity && !row.isSpotBucket && "opacity-45",
                 row.isSpotBucket &&
                   "z-[15] bg-amber-500/[0.12] border-amber-500/30",
                 isBestBid && !row.isSpotBucket && "bg-emerald-950/20",

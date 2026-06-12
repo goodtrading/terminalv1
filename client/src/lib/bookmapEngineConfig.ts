@@ -360,6 +360,21 @@ export const HISTORICAL_SURFACE_FAR_LIQUIDITY_MIN_BTC = 0.5;
 /** Strong far liquidity threshold for visibility boost during render. */
 export const HISTORICAL_SURFACE_FAR_STRONG_MIN_BTC = 8;
 
+/** STEP 1.6 — DEV-only DOM full-depth ladder diagnostics (throttled 2s). */
+export const BOOKMAP_DOM_FULL_DEPTH_DIAG = true;
+
+/** Target vertical px per DOM row when building continuous local ladder. */
+export const BOOKMAP_DOM_TARGET_ROW_HEIGHT_PX = 16;
+
+/** Minimum scaffold rows for micro/local depth (Local ±1000 ≈ 40 rows at 50 USD). */
+export const BOOKMAP_DOM_LOCAL_MIN_ROW_COUNT = 32;
+
+/** Max DOM ladder step in micro/local mode — prevents 100 USD buckets on ±1000. */
+export const BOOKMAP_DOM_MICRO_MAX_LADDER_STEP = 50;
+
+/** Hard cap on scaffold rows (safety); adaptive to panel height in practice. */
+export const BOOKMAP_DOM_MAX_SCAFFOLD_ROWS = 240;
+
 /**
  * B.5 — Clean surface renderer bypassing experimental visual pipeline.
  */

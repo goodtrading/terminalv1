@@ -47,7 +47,7 @@ export function chooseNicePriceStep(
   return nearestNiceStep(targetStep);
 }
 
-function pickNiceStepAtMost(maxStep: number): number {
+export function pickNiceStepAtMost(maxStep: number): number {
   let chosen = NICE_PRICE_STEPS[0] as number;
   for (const step of NICE_PRICE_STEPS) {
     if (step <= maxStep) chosen = step;

@@ -1,11 +1,14 @@
 import type { BookLevel } from "@/types/bookmapState";
 import type { PriceRange } from "@/components/flows/bookmapViewportUtils";
 import {
+  BOOKMAP_DOM_LOCAL_MIN_ROW_COUNT,
+  BOOKMAP_DOM_MICRO_MAX_LADDER_STEP,
+  BOOKMAP_DOM_TARGET_ROW_HEIGHT_PX,
   BOOKMAP_LOCAL_DEPTH_MAX_SPAN_RATIO,
   BOOKMAP_MICROSCALPING_RANGE_MAX_USD,
   HISTORICAL_SURFACE_PRICE_BUCKET_USD,
 } from "@/lib/bookmapEngineConfig";
-import { chooseDomBucketSize } from "@/lib/bookmapPriceScaleUtils";
+import { chooseDomBucketSize, pickNiceStepAtMost } from "@/lib/bookmapPriceScaleUtils";
 
 /** Vertical depth presets (half-span in USD for band modes). */
 export type DepthRangePreset =
@@ -119,6 +122,29 @@ export type VerticalScaleMetrics = {
 };
 
 /**
+ * DOM ladder step — independent from heatmap buckets.
+ * Micro/local ranges use finer steps so Local ±1000 yields a continuous ladder.
+ */
+export function resolveDomLadderStep(
+  visibleRange: number,
+  chartHeight: number,
+  verticalMode: VerticalCompressionMode,
+): number {
+  const autoStep = chooseDomBucketSize(visibleRange, chartHeight);
+  if (verticalMode !== "micro" && visibleRange > BOOKMAP_MICROSCALPING_RANGE_MAX_USD) {
+    return autoStep;
+  }
+
+  const targetRows = Math.max(
+    BOOKMAP_DOM_LOCAL_MIN_ROW_COUNT,
+    Math.floor(chartHeight / BOOKMAP_DOM_TARGET_ROW_HEIGHT_PX),
+  );
+  const stepFromRowTarget = visibleRange / Math.max(1, targetRows - 1);
+  const capped = Math.min(autoStep, pickNiceStepAtMost(stepFromRowTarget));
+  return Math.max(5, Math.min(capped, BOOKMAP_DOM_MICRO_MAX_LADDER_STEP));
+}
+
+/**
  * Resolve independent ladder steps: DOM authority, fine heatmap storage, fine render snap.
  */
 export function resolveBookmapLadderSteps(
@@ -151,7 +177,7 @@ export function resolveBookmapLadderSteps(
       break;
   }
 
-  const domLadderStep = chooseDomBucketSize(visibleRange, chartHeight);
+  const domLadderStep = resolveDomLadderStep(visibleRange, chartHeight, verticalMode);
   const heatmapRenderSnapStep = Math.min(
     heatmapStorageBucketStep,
     HISTORICAL_SURFACE_PRICE_BUCKET_USD,

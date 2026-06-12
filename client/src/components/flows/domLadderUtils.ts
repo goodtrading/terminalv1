@@ -1,5 +1,10 @@
 import type { OrderbookLevel } from "./liquidityHeatmapUtils";
 import {
+  BOOKMAP_DOM_FULL_DEPTH_DIAG,
+  BOOKMAP_DOM_MAX_SCAFFOLD_ROWS,
+} from "@/lib/bookmapEngineConfig";
+import type { DepthRangePreset } from "@/lib/bookmapDepthRange";
+import {
   filterHeatmapForRender,
   filterLevelsByPrice,
   HEATMAP_MAJOR_WALL_BTC,
@@ -196,6 +201,51 @@ export type DomScaffoldStats = {
   liveRows: number;
   lastKnownRows: number;
   wallRows: number;
+  expectedDomRowCount: number;
+  zeroLiquidityRows: number;
+  rowsWithBidLiquidity: number;
+  rowsWithAskLiquidity: number;
+  rawBidLevelsCount: number;
+  rawAskLevelsCount: number;
+  aggregatedBidLevelsCount: number;
+  aggregatedAskLevelsCount: number;
+  domUsesContinuousLadder: boolean;
+};
+
+export type DomFullDepthDiag = {
+  selectedDepthMode: string;
+  selectedDepthValue: number;
+  spotPrice: number | null;
+  domRangeMin: number;
+  domRangeMax: number;
+  domRangeUsd: number;
+  domLadderStep: number;
+  expectedDomRowCount: number;
+  actualDomRowCount: number;
+  missingDomRowCount: number;
+  rawBidLevelsCount: number;
+  rawAskLevelsCount: number;
+  aggregatedBidLevelsCount: number;
+  aggregatedAskLevelsCount: number;
+  rowsWithBidLiquidity: number;
+  rowsWithAskLiquidity: number;
+  zeroLiquidityRowsRendered: number;
+  rowsSkippedByReason: {
+    clippedViewport: number;
+    zeroHidden: number;
+    tooWeak: number;
+    outsideRange: number;
+    rowCap: number;
+    virtualized: number;
+  };
+  skippedBecauseZero: number;
+  skippedBecauseTooWeak: number;
+  skippedBecauseOutsideRange: number;
+  skippedBecauseRowCap: number;
+  skippedBecauseVirtualized: number;
+  maxDomRowsCap: number;
+  domUsesContinuousLadder: boolean;
+  domForcedByHeatmapBucket: boolean;
 };
 
 export type DomScaffoldResult = {
@@ -308,9 +358,10 @@ export function getBucketHeightPx(
   return Math.abs(y2 - y1);
 }
 
-export function clampBarHeight(bucketHeight: number): number {
-  if (!Number.isFinite(bucketHeight) || bucketHeight <= 0) return 20;
-  return Math.max(20, Math.min(26, bucketHeight));
+export function clampBarHeight(bucketHeight: number, denseLadder = false): number {
+  if (!Number.isFinite(bucketHeight) || bucketHeight <= 0) return denseLadder ? 5 : 20;
+  if (denseLadder) return Math.max(3, Math.min(16, bucketHeight * 0.92));
+  return Math.max(8, Math.min(26, bucketHeight));
 }
 
 /** @deprecated Use getBucketHeightPx — kept for callers that expect the name. */
@@ -373,6 +424,7 @@ export function buildLadderPricesFromRange(
 
   for (let p = startPrice; p >= endPrice; p -= step) {
     prices.push(p);
+    if (prices.length >= BOOKMAP_DOM_MAX_SCAFFOLD_ROWS) break;
   }
 
   return prices;
@@ -1067,6 +1119,16 @@ function engineLevelsFromSnapshot(
   return [...map(bids, "bid"), ...map(asks, "ask")];
 }
 
+let lastDomFullDepthDiagMs = 0;
+
+export function emitDomFullDepthDiag(diag: DomFullDepthDiag): void {
+  if (!import.meta.env.DEV || !BOOKMAP_DOM_FULL_DEPTH_DIAG) return;
+  const now = Date.now();
+  if (now - lastDomFullDepthDiagMs < 2_000) return;
+  lastDomFullDepthDiagMs = now;
+  console.debug("[BOOKMAP_DOM_FULL_DEPTH_DIAG]", diag);
+}
+
 /**
  * Full visible-range DOM scaffold: one row per domBucket (max→min).
  * Live, last-known, and historical wall layers overlay separately.
@@ -1088,17 +1150,35 @@ export function buildScaffoldedDomRows(params: {
   priceToY?: (price: number) => number;
   majorWallBtc?: number;
   showDomNumbers?: boolean;
+  depthPreset?: DepthRangePreset;
 }): DomScaffoldResult {
-  const empty: DomScaffoldResult = {
-    rows: [],
-    stats: { ladderRows: 0, liveRows: 0, lastKnownRows: 0, wallRows: 0 },
+  const emptyStats: DomScaffoldStats = {
+    ladderRows: 0,
+    liveRows: 0,
+    lastKnownRows: 0,
+    wallRows: 0,
+    expectedDomRowCount: 0,
+    zeroLiquidityRows: 0,
+    rowsWithBidLiquidity: 0,
+    rowsWithAskLiquidity: 0,
+    rawBidLevelsCount: 0,
+    rawAskLevelsCount: 0,
+    aggregatedBidLevelsCount: 0,
+    aggregatedAskLevelsCount: 0,
+    domUsesContinuousLadder: true,
   };
+  const empty: DomScaffoldResult = { rows: [], stats: emptyStats };
   const { priceRange, priceStep, plotHeight } = params;
   if (plotHeight < 20) return empty;
 
   const step = Math.max(1, priceStep);
   const scaffoldPrices = buildLadderPricesFromRange(priceRange, step);
   if (!scaffoldPrices.length) return empty;
+
+  const expectedDomRowCount = scaffoldPrices.length;
+  const denseLadder = scaffoldPrices.length > plotHeight / 14;
+  const rawBidLevelsCount = params.engineBook?.bids.length ?? params.bids?.length ?? params.engineBids?.length ?? 0;
+  const rawAskLevelsCount = params.engineBook?.asks.length ?? params.asks?.length ?? params.engineAsks?.length ?? 0;
 
   const engineLevels: DomEngineBookLevel[] = params.engineBook
     ? mergeEngineBookLevels(params.engineBook)
@@ -1146,6 +1226,9 @@ export function buildScaffoldedDomRows(params: {
   let liveRows = 0;
   let lastKnownRows = 0;
   let wallRows = 0;
+  let zeroLiquidityRows = 0;
+  let rowsWithBidLiquidity = 0;
+  let rowsWithAskLiquidity = 0;
 
   const rows: DomLadderRow[] = scaffoldPrices.map((price, index) => {
     const depthBucket = depthMap.buckets.get(price);
@@ -1166,6 +1249,9 @@ export function buildScaffoldedDomRows(params: {
     const cobSize = bidSize + askSize;
     if (hasLiveBid || hasLiveAsk) liveRows++;
     if (hasLastKnownBid || hasLastKnownAsk) lastKnownRows++;
+    if (bidSize > 0) rowsWithBidLiquidity++;
+    if (askSize > 0) rowsWithAskLiquidity++;
+    if (bidSize <= 0 && askSize <= 0 && !hasWallBid && !hasWallAsk) zeroLiquidityRows++;
 
     const wallSlot = wallsMap.get(price);
     let wallBid = wallSlot?.bid;
@@ -1212,7 +1298,7 @@ export function buildScaffoldedDomRows(params: {
     const y = resolveY(price);
     const yBelow = resolveY(price - step);
     const bucketHeight = Math.abs(yBelow - y);
-    const barHeight = clampBarHeight(bucketHeight);
+    const barHeight = clampBarHeight(bucketHeight, denseLadder);
     const isSpotBucket = spotBucket != null && price === spotBucket;
     const isMajorWall =
       cobSize >= majorWallBtc ||
@@ -1227,7 +1313,7 @@ export function buildScaffoldedDomRows(params: {
       isSpotBucket ||
       hasHistoricalWall;
     const showDomText =
-      showDomNumbers && (bidSize > 0 || askSize > 0 || cobSize > 0);
+      showDomNumbers && (bidSize > 0 || askSize > 0 || cobSize > 0 || isSpotBucket);
     const showTick = bucketHeight >= MIN_TICK_GAP_PX && !showLabel;
 
     return {
@@ -1284,13 +1370,65 @@ export function buildScaffoldedDomRows(params: {
       lastKnownBuckets: depthMap.stats.lastKnownBuckets,
       wallBuckets: depthMap.stats.wallBuckets,
       engineLevelCount: engineLevels.length,
+      expectedDomRowCount,
+      denseLadder,
       sampleBuckets,
+    });
+
+    emitDomFullDepthDiag({
+      selectedDepthMode: params.depthPreset ?? "local",
+      selectedDepthValue: Math.round((priceRange.maxPrice - priceRange.minPrice) / 2),
+      spotPrice: params.spot,
+      domRangeMin: priceRange.minPrice,
+      domRangeMax: priceRange.maxPrice,
+      domRangeUsd: priceRange.maxPrice - priceRange.minPrice,
+      domLadderStep: step,
+      expectedDomRowCount,
+      actualDomRowCount: rows.length,
+      missingDomRowCount: Math.max(0, expectedDomRowCount - rows.length),
+      rawBidLevelsCount,
+      rawAskLevelsCount,
+      aggregatedBidLevelsCount: depthMap.stats.bucketCount,
+      aggregatedAskLevelsCount: depthMap.stats.bucketCount,
+      rowsWithBidLiquidity,
+      rowsWithAskLiquidity,
+      zeroLiquidityRowsRendered: zeroLiquidityRows,
+      rowsSkippedByReason: {
+        clippedViewport: 0,
+        zeroHidden: 0,
+        tooWeak: 0,
+        outsideRange: 0,
+        rowCap: Math.max(0, expectedDomRowCount - rows.length),
+        virtualized: 0,
+      },
+      skippedBecauseZero: 0,
+      skippedBecauseTooWeak: 0,
+      skippedBecauseOutsideRange: 0,
+      skippedBecauseRowCap: Math.max(0, expectedDomRowCount - rows.length),
+      skippedBecauseVirtualized: 0,
+      maxDomRowsCap: BOOKMAP_DOM_MAX_SCAFFOLD_ROWS,
+      domUsesContinuousLadder: true,
+      domForcedByHeatmapBucket: false,
     });
   }
 
   return {
     rows,
-    stats: { ladderRows: rows.length, liveRows, lastKnownRows, wallRows },
+    stats: {
+      ladderRows: rows.length,
+      liveRows,
+      lastKnownRows,
+      wallRows,
+      expectedDomRowCount,
+      zeroLiquidityRows,
+      rowsWithBidLiquidity,
+      rowsWithAskLiquidity,
+      rawBidLevelsCount,
+      rawAskLevelsCount,
+      aggregatedBidLevelsCount: depthMap.stats.bucketCount,
+      aggregatedAskLevelsCount: depthMap.stats.bucketCount,
+      domUsesContinuousLadder: true,
+    },
   };
 }
 
