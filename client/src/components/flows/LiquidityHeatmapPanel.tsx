@@ -46,6 +46,7 @@ import {
   TRADE_DOT_COLOR_MODE,
   USE_BOOKMAP_ENGINE,
   BOOKMAP_MATRIX_AUDIT_DIAG,
+  useDesktopFullRawDomLadder,
 } from "@/lib/bookmapEngineConfig";
 import { buildRawHeatmapMatrixDiag } from "@/lib/bookmapMatrixAudit";
 import {
@@ -869,6 +870,7 @@ export function LiquidityHeatmapPanel({
   const engineRequested = USE_BOOKMAP_ENGINE;
   const legacyDebugEnabled = LEGACY_DEBUG_ALLOWED;
   const useEngineRenderer = Boolean(engineRequested && hasRenderableHeatmap);
+  const desktopRawDom = useDesktopFullRawDomLadder();
 
   const usingCachedBookmapState = usingCachedPrimary;
 
@@ -4203,9 +4205,9 @@ export function LiquidityHeatmapPanel({
           />
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             <BookmapDomPanel
-              engineMode={useEngineRenderer}
+              engineMode={useEngineRenderer && !desktopRawDom}
               engineBook={engineBookForDom}
-              snapshot={useEngineRenderer ? undefined : latest}
+              snapshot={desktopRawDom ? latestLegacy : (useEngineRenderer ? undefined : latest)}
               spot={spot}
               scale={priceScale}
               panelWidth={safeDomWidth}

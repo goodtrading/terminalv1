@@ -393,6 +393,9 @@ export const BOOKMAP_RAW_DOM_ROW_HEIGHT_PX = 18;
 /** DEV-only full raw DOM ladder diagnostics (throttled 2s). */
 export const BOOKMAP_FULL_RAW_DOM_LADDER_DIAG = true;
 
+/** DEV-only raw DOM stability diagnostics (throttled 2s). */
+export const BOOKMAP_RAW_DOM_STABILITY_DIAG = true;
+
 export function isDesktopBookmapRuntime(): boolean {
   return import.meta.env.VITE_PLATFORM === "desktop";
 }

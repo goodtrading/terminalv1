@@ -270,6 +270,8 @@ export function useDesktopBookmapFeed(
       asks: snapshot.asks.length,
     },
     heatmapDepth?: { bids: OrderbookLevel[]; asks: OrderbookLevel[] },
+    /** When set, heatmap/live projection uses this subset; DOM snapshot keeps full `snapshot`. */
+    engineVisibleBook?: { bids: OrderbookLevel[]; asks: OrderbookLevel[] },
   ) => {
     snapshotsRef.current = [...snapshotsRef.current, snapshot].slice(-MAX_LIQUIDITY_SNAPSHOTS);
     setSnapshotCount(snapshotsRef.current.length);
@@ -316,14 +318,16 @@ export function useDesktopBookmapFeed(
       sizeBtc: level.sizeBtc,
       side: level.side,
     });
+    const visibleBidsSource = engineVisibleBook?.bids ?? snapshot.bids;
+    const visibleAsksSource = engineVisibleBook?.asks ?? snapshot.asks;
     const heatmapResult = heatmapEngineRef.current.ingest({
       symbol: cleanSymbol,
       ts: snapshot.ts,
       midPrice,
       bids: (heatmapDepth?.bids ?? snapshot.bids).map(toInputLevel),
       asks: (heatmapDepth?.asks ?? snapshot.asks).map(toInputLevel),
-      visibleBids: snapshot.bids.map(toInputLevel),
-      visibleAsks: snapshot.asks.map(toInputLevel),
+      visibleBids: visibleBidsSource.map(toInputLevel),
+      visibleAsks: visibleAsksSource.map(toInputLevel),
     });
     heatmapStatsRef.current = heatmapResult.stats;
     setBookmapState(heatmapResult.state);
@@ -391,18 +395,25 @@ export function useDesktopBookmapFeed(
     const domDepthLimit = useDesktopFullRawDomLadder()
       ? BOOKMAP_DESKTOP_DOM_RAW_DEPTH_LIMIT
       : DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT;
-    const bids = depthBids.slice(0, domDepthLimit);
-    const asks = depthAsks.slice(0, domDepthLimit);
+    const domBids = depthBids.slice(0, domDepthLimit);
+    const domAsks = depthAsks.slice(0, domDepthLimit);
+    const engineVisibleBook = useDesktopFullRawDomLadder()
+      ? {
+          bids: depthBids.slice(0, DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT),
+          asks: depthAsks.slice(0, DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT),
+        }
+      : undefined;
     rawBidsCountRef.current = rawBidsRef.current.size;
     rawAsksCountRef.current = rawAsksRef.current.size;
-    if (!bids.length || !asks.length) {
+    if (!domBids.length || !domAsks.length) {
       updateFeedStatusFromCurrent((status) => (status === "live" ? "live" : "empty"));
       return;
     }
     publishBookmapSnapshot(
-      { ts, bids, asks },
+      { ts, bids: domBids, asks: domAsks },
       { bids: rawBidsRef.current.size, asks: rawAsksRef.current.size },
       { bids: depthBids, asks: depthAsks },
+      engineVisibleBook,
     );
   }, [publishBookmapSnapshot, updateFeedStatusFromCurrent]);
 

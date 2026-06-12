@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   getDomDisplayFlags,
@@ -361,6 +361,7 @@ export function BookmapDomPanel({
   const [scrollBodyHeight, setScrollBodyHeight] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const userScrolledRef = useRef(false);
+  const prevFollowModeRef = useRef(followMode);
   const isRawDomLadder = useDesktopFullRawDomLadder();
   const domFlags = getDomDisplayFlags(panelWidth);
   const { layout: columnLayout, showNumbers: widthAllowsNumbers, showSvp } = domFlags;
@@ -369,36 +370,67 @@ export function BookmapDomPanel({
   const gridClass = getDomGridClass(columnLayout);
 
   useEffect(() => {
-    const el = isRawDomLadder ? scrollRef.current : plotRef.current;
-    if (!el) return;
-
-    const sync = () => {
-      if (isRawDomLadder) setScrollBodyHeight(el.clientHeight);
-      else setPlotHeight(el.clientHeight);
-    };
-    const ro = new ResizeObserver(sync);
-    ro.observe(el);
-    sync();
-    return () => ro.disconnect();
-  }, [isRawDomLadder]);
+    const outer = plotRef.current;
+    if (!outer) return;
+    const syncOuter = () => setPlotHeight(outer.clientHeight);
+    const roOuter = new ResizeObserver(syncOuter);
+    roOuter.observe(outer);
+    syncOuter();
+    return () => roOuter.disconnect();
+  }, []);
 
   useEffect(() => {
-    if (!isRawDomLadder) {
-      const el = plotRef.current;
-      if (!el) return;
-      const sync = () => setPlotHeight(el.clientHeight);
-      const ro = new ResizeObserver(sync);
-      ro.observe(el);
-      sync();
-      return () => ro.disconnect();
-    }
+    if (!isRawDomLadder) return;
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+    const syncScroll = () => setScrollBodyHeight(scrollEl.clientHeight);
+    const roScroll = new ResizeObserver(syncScroll);
+    roScroll.observe(scrollEl);
+    syncScroll();
+    return () => roScroll.disconnect();
   }, [isRawDomLadder]);
 
   const { priceRange, domBucketSize, priceToY } = scale;
 
+  const rawSnapshotBids = snapshot?.bids;
+  const rawSnapshotAsks = snapshot?.asks;
+
   const ladderResult = useMemo(() => {
-    const effectiveHeight = isRawDomLadder ? scrollBodyHeight : plotHeight;
-    if (effectiveHeight < 20) {
+    if (isRawDomLadder) {
+      if (!rawSnapshotBids?.length && !rawSnapshotAsks?.length) {
+        return {
+          rows: [] as DomLadderRow[],
+          stats: {
+            ladderRows: 0,
+            liveRows: 0,
+            lastKnownRows: 0,
+            wallRows: 0,
+            expectedDomRowCount: 0,
+            zeroLiquidityRows: 0,
+            rowsWithBidLiquidity: 0,
+            rowsWithAskLiquidity: 0,
+            rawBidLevelsCount: 0,
+            rawAskLevelsCount: 0,
+            aggregatedBidLevelsCount: 0,
+            aggregatedAskLevelsCount: 0,
+            domUsesContinuousLadder: false,
+          },
+        };
+      }
+      return buildRawDomLadderRows({
+        bids: rawSnapshotBids,
+        asks: rawSnapshotAsks,
+        spot,
+        showDomNumbers: showNumbers,
+        market,
+        mode: marketMode,
+        followMode,
+        viewportHeight: scrollBodyHeight,
+        scrollTop,
+      });
+    }
+
+    if (plotHeight < 20) {
       return {
         rows: [] as DomLadderRow[],
         stats: {
@@ -414,28 +446,11 @@ export function BookmapDomPanel({
           rawAskLevelsCount: 0,
           aggregatedBidLevelsCount: 0,
           aggregatedAskLevelsCount: 0,
-          domUsesContinuousLadder: !isRawDomLadder,
+          domUsesContinuousLadder: true,
         },
       };
     }
-    if (isRawDomLadder) {
-      return buildRawDomLadderRows({
-        bids: engineMode ? undefined : snapshot?.bids,
-        asks: engineMode ? undefined : snapshot?.asks,
-        engineBook: engineMode ? engineBook : undefined,
-        engineBids: engineMode ? undefined : engineBids,
-        engineAsks: engineMode ? undefined : engineAsks,
-        walls: wallEntries,
-        spot,
-        showDomNumbers: showNumbers,
-        market,
-        mode: marketMode,
-        followMode,
-        viewportHeight: scrollBodyHeight,
-        scrollTop,
-        depthPreset: scale.depthRangePreset,
-      });
-    }
+
     return buildScaffoldedDomRows({
       bids: engineMode ? undefined : snapshot?.bids,
       asks: engineMode ? undefined : snapshot?.asks,
@@ -453,6 +468,8 @@ export function BookmapDomPanel({
     });
   }, [
     isRawDomLadder,
+    rawSnapshotBids,
+    rawSnapshotAsks,
     engineMode,
     snapshot,
     engineBook,
@@ -464,7 +481,6 @@ export function BookmapDomPanel({
     domBucketSize,
     plotHeight,
     scrollBodyHeight,
-    scrollTop,
     priceToY,
     showNumbers,
     scale.depthRangePreset,
@@ -474,8 +490,6 @@ export function BookmapDomPanel({
   ]);
 
   const { rows, stats } = ladderResult;
-
-  /** Continuous ladder — render full scaffold; do not filter to liquidity-only rows. */
   const renderRows = rows;
 
   const maxBidSize = useMemo(
@@ -507,6 +521,28 @@ export function BookmapDomPanel({
     return withAsk.reduce((best, r) => (r.price < best ? r.price : best), withAsk[0]!.price);
   }, [rows]);
 
+  const followPrice = useMemo(() => {
+    if (spot != null && Number.isFinite(spot)) return spot;
+    if (bestBidPrice != null && bestAskPrice != null) {
+      return (bestBidPrice + bestAskPrice) / 2;
+    }
+    return bestBidPrice ?? bestAskPrice ?? null;
+  }, [spot, bestBidPrice, bestAskPrice]);
+
+  const centerRowIndex = useMemo(() => {
+    if (!rows.length || followPrice == null) return 0;
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < rows.length; i++) {
+      const d = Math.abs(rows[i]!.price - followPrice);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }, [rows, followPrice]);
+
   const highlightPrices = useMemo(() => {
     if (!importantLevels?.length) return null as ReadonlySet<number> | null;
     const s = new Set<number>();
@@ -529,32 +565,31 @@ export function BookmapDomPanel({
     if (!showImportantStrip || !importantLevels?.length) {
       return { wallsAbove: [] as ImportantLiquidityLevel[], wallsBelow: [] as ImportantLiquidityLevel[] };
     }
+    const rangeMin = isRawDomLadder
+      ? (rows.length ? rows[rows.length - 1]!.price : priceRange.minPrice)
+      : priceRange.minPrice;
+    const rangeMax = isRawDomLadder
+      ? (rows.length ? rows[0]!.price : priceRange.maxPrice)
+      : priceRange.maxPrice;
     const { above, below } = getOffRangeImportantLevels(
       importantLevels,
-      priceRange.minPrice,
-      priceRange.maxPrice,
+      rangeMin,
+      rangeMax,
     );
     return {
       wallsAbove: above.filter((l) => l.kind !== "FAR_WALL" || l.sizeBtc >= MAJOR_WALL_BTC).slice(0, 4),
       wallsBelow: below.filter((l) => l.kind !== "FAR_WALL" || l.sizeBtc >= MAJOR_WALL_BTC).slice(0, 4),
     };
-  }, [importantLevels, priceRange, showImportantStrip]);
-
-  const centerRowIndex = useMemo(() => {
-    if (!rows.length || spot == null || !Number.isFinite(spot)) return 0;
-    let bestIdx = 0;
-    let bestDist = Infinity;
-    for (let i = 0; i < rows.length; i++) {
-      const d = Math.abs(rows[i]!.price - spot);
-      if (d < bestDist) {
-        bestDist = d;
-        bestIdx = i;
-      }
-    }
-    return bestIdx;
-  }, [rows, spot]);
+  }, [importantLevels, isRawDomLadder, rows, priceRange, showImportantStrip]);
 
   useEffect(() => {
+    if (followMode && !prevFollowModeRef.current) {
+      userScrolledRef.current = false;
+    }
+    prevFollowModeRef.current = followMode;
+  }, [followMode]);
+
+  useLayoutEffect(() => {
     if (!isRawDomLadder || !followMode || userScrolledRef.current) return;
     const el = scrollRef.current;
     if (!el || rows.length === 0 || scrollBodyHeight < 20) return;
@@ -564,18 +599,31 @@ export function BookmapDomPanel({
       BOOKMAP_RAW_DOM_ROW_HEIGHT_PX / 2;
     el.scrollTop = Math.max(0, targetTop);
     setScrollTop(el.scrollTop);
-  }, [isRawDomLadder, followMode, centerRowIndex, rows.length, scrollBodyHeight, spot]);
+  }, [
+    isRawDomLadder,
+    followMode,
+    centerRowIndex,
+    rows.length,
+    scrollBodyHeight,
+    followPrice,
+  ]);
 
   useEffect(() => {
-    if (followMode) userScrolledRef.current = false;
-  }, [followMode]);
+    if (!import.meta.env.DEV || isRawDomLadder) return;
+    console.debug("[DOM_SCAFFOLD]", {
+      ...stats,
+      viewportRendered: renderRows.length,
+      rangeMin: priceRange.minPrice,
+      rangeMax: priceRange.maxPrice,
+      domBucketSize,
+    });
+  }, [stats, renderRows.length, priceRange, domBucketSize, isRawDomLadder]);
 
   const renderDomRow = (
     row: DomLadderRow,
     layoutMode: "absolute" | "scroll",
   ) => {
-    const hasLiquidity =
-      row.bidSize > 0 || row.askSize > 0 || row.hasHistoricalWall;
+    const hasLiquidity = row.bidSize > 0 || row.askSize > 0 || row.hasHistoricalWall;
     const wallOnly =
       row.hasHistoricalWall &&
       row.bidSize <= 0 &&
@@ -598,7 +646,7 @@ export function BookmapDomPanel({
 
     return (
       <div
-        key={row.price}
+        key={`${row.price}`}
         className={cn(
           wallOnly ? "flex" : gridClass,
           layoutMode === "absolute" && "pointer-events-none absolute left-0 right-0 z-10",
@@ -648,10 +696,7 @@ export function BookmapDomPanel({
             {stats.rawBidLevelsCount > 0 || stats.rawAskLevelsCount > 0
               ? ` · bids ${stats.rawBidLevelsCount} · asks ${stats.rawAskLevelsCount}`
               : ""}
-            {stats.expectedDomRowCount > 0 && stats.expectedDomRowCount !== stats.ladderRows
-              ? ` / ${stats.expectedDomRowCount} exp`
-              : ""}
-            {" · "}live {stats.liveRows} · LK {stats.lastKnownRows}
+            {" · "}live {stats.liveRows}
             {!showNumbers ? " · nums off" : ""}
             {isRawDomLadder && followMode ? " · follow" : ""}
           </div>
@@ -670,17 +715,6 @@ export function BookmapDomPanel({
       )}
     </>
   );
-
-  useEffect(() => {
-    if (!import.meta.env.DEV || isRawDomLadder) return;
-    console.debug("[DOM_SCAFFOLD]", {
-      ...stats,
-      viewportRendered: renderRows.length,
-      rangeMin: priceRange.minPrice,
-      rangeMax: priceRange.maxPrice,
-      domBucketSize,
-    });
-  }, [stats, renderRows.length, priceRange, domBucketSize, isRawDomLadder]);
 
   if (isRawDomLadder) {
     return (
@@ -701,7 +735,7 @@ export function BookmapDomPanel({
         >
           {stats.ladderRows === 0 ? (
             <div className="flex h-full items-center justify-center p-4 text-center text-[12px] font-mono text-slate-500">
-              {scrollBodyHeight < 20 ? "…" : "No ladder rows"}
+              {!rawSnapshotBids?.length && !rawSnapshotAsks?.length ? "Waiting for book…" : "No ladder rows"}
             </div>
           ) : (
             renderRows.map((row) => renderDomRow(row, "scroll"))

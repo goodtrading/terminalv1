@@ -5,6 +5,7 @@ import {
   BOOKMAP_DOM_MAX_SCAFFOLD_ROWS,
   BOOKMAP_FULL_RAW_DOM_LADDER_DIAG,
   BOOKMAP_RAW_DOM_ROW_HEIGHT_PX,
+  BOOKMAP_RAW_DOM_STABILITY_DIAG,
   useDesktopFullRawDomLadder,
 } from "@/lib/bookmapEngineConfig";
 import type { DepthRangePreset } from "@/lib/bookmapDepthRange";
@@ -281,6 +282,34 @@ export type FullRawDomLadderDiag = {
   followMode: boolean;
   scrollOffset: number | null;
   centerRowIndex: number | null;
+};
+
+export type RawDomStabilityDiag = {
+  rawModeEnabled: boolean;
+  rawBidLevelsReceived: number;
+  rawAskLevelsReceived: number;
+  rawBidRows: number;
+  rawAskRows: number;
+  mergedRawRows: number;
+  syntheticRowsCreated: number;
+  zeroOnlyRowsCreated: number;
+  rowsFromChartRange: number;
+  rowsFromHeatmapBucket: number;
+  rowsFromLocalDepth: number;
+  rowsVisibleInViewport: number;
+  currentPrice: number | null;
+  nearestRowToCurrentPrice: number | null;
+  currentPriceVisible: boolean;
+  followMode: boolean;
+  scrollTop: number | null;
+  scrollTargetIndex: number | null;
+  minRawPrice: number | null;
+  maxRawPrice: number | null;
+  renderedMinPrice: number | null;
+  renderedMaxPrice: number | null;
+  invalidRowsDropped: number;
+  duplicateRowsDropped: number;
+  grayOverlayDetectedOrSource: string | null;
 };
 
 export type DomScaffoldResult = {
@@ -1156,6 +1185,7 @@ function engineLevelsFromSnapshot(
 
 let lastDomFullDepthDiagMs = 0;
 let lastFullRawDomLadderDiagMs = 0;
+let lastRawDomStabilityDiagMs = 0;
 
 export function emitDomFullDepthDiag(diag: DomFullDepthDiag): void {
   if (!import.meta.env.DEV || !BOOKMAP_DOM_FULL_DEPTH_DIAG) return;
@@ -1173,6 +1203,14 @@ export function emitFullRawDomLadderDiag(diag: FullRawDomLadderDiag): void {
   console.debug("[BOOKMAP_FULL_RAW_DOM_LADDER_DIAG]", diag);
 }
 
+export function emitRawDomStabilityDiag(diag: RawDomStabilityDiag): void {
+  if (!import.meta.env.DEV || !BOOKMAP_RAW_DOM_STABILITY_DIAG) return;
+  const now = Date.now();
+  if (now - lastRawDomStabilityDiagMs < 2_000) return;
+  lastRawDomStabilityDiagMs = now;
+  console.debug("[BOOKMAP_RAW_DOM_STABILITY_DIAG]", diag);
+}
+
 function resolveEngineLevelDisplay(level: DomEngineBookLevel): DomDepthSideDisplay {
   const bucket = emptyDomDepthBucket(level.price);
   applyLevelToDomDepthBucket(bucket, level);
@@ -1184,9 +1222,10 @@ function ingestSideLevel(
   level: DomEngineBookLevel,
 ): void {
   if (!Number.isFinite(level.price) || level.price <= 0) return;
+  if (level.size <= 0) return;
   const prev = map.get(level.price);
   if (!prev) {
-    map.set(level.price, { ...level });
+    map.set(level.price, { ...level, stale: false });
     return;
   }
   const size = Math.max(prev.size, level.size);
@@ -1196,51 +1235,40 @@ function ingestSideLevel(
     side: level.side,
     size,
     maxSeenSize,
-    stale: size <= 0 ? prev.stale && level.stale : false,
+    stale: false,
     isImportant: prev.isImportant || level.isImportant,
     isStructural: prev.isStructural || level.isStructural,
     isMajor: prev.isMajor || level.isMajor,
   });
 }
 
-function aggregateDomWallsByExactPrice(
-  walls: DomWallEntry[],
-): Map<number, DomBucketWalls> {
-  const byPrice = new Map<number, DomBucketWalls>();
-  for (const wall of walls) {
-    const price = wall.price;
-    if (!Number.isFinite(price) || price <= 0) continue;
-    const slot = byPrice.get(price) ?? {};
-    if (wall.side === "bid") slot.bid = { ...wall, bucketedPrice: price, price };
-    else slot.ask = { ...wall, bucketedPrice: price, price };
-    byPrice.set(price, slot);
-  }
-  return byPrice;
-}
-
 function snapshotToEngineSide(
   levels: OrderbookLevel[],
   side: "bid" | "ask",
 ): DomEngineBookLevel[] {
-  return levels.map((l) => ({
-    price: l.price,
-    size: l.sizeBtc,
-    side,
-    maxSeenSize: l.sizeBtc,
-    stale: false,
-  }));
+  return levels
+    .filter((l) => l.sizeBtc > 0 && Number.isFinite(l.price) && l.price > 0)
+    .map((l) => ({
+      price: l.price,
+      size: l.sizeBtc,
+      side,
+      maxSeenSize: l.sizeBtc,
+      stale: false,
+    }));
 }
 
 export type RawDomLadderResult = DomScaffoldResult & {
   rawDiag: FullRawDomLadderDiag;
+  stabilityDiag: RawDomStabilityDiag;
 };
 
 /**
- * STEP 1.6.2 — Full raw DOM ladder: one row per exact feed price level (no bucket aggregation).
+ * STEP 1.6.2/1.6.3 — Full raw DOM ladder: one row per exact live feed price level.
  */
 export function buildRawDomLadderRows(params: {
   bids?: OrderbookLevel[];
   asks?: OrderbookLevel[];
+  /** Ignored in raw mode — use snapshot bids/asks with exact exchange prices. */
   engineBook?: DomEngineBook;
   engineBids?: DomEngineBookLevel[];
   engineAsks?: DomEngineBookLevel[];
@@ -1254,7 +1282,8 @@ export function buildRawDomLadderRows(params: {
   followMode?: boolean;
   viewportHeight?: number;
   scrollTop?: number;
-  depthPreset?: DepthRangePreset;
+  centerPrice?: number | null;
+  scrollTargetIndex?: number | null;
 }): RawDomLadderResult {
   const emptyStats: DomScaffoldStats = {
     ladderRows: 0,
@@ -1279,56 +1308,53 @@ export function buildRawDomLadderRows(params: {
 
   const bidMap = new Map<number, DomEngineBookLevel>();
   const askMap = new Map<number, DomEngineBookLevel>();
+  let invalidRowsDropped = 0;
+  let duplicateRowsDropped = 0;
 
-  if (params.engineBook) {
-    for (const level of params.engineBook.bids) ingestSideLevel(bidMap, level);
-    for (const level of params.engineBook.asks) ingestSideLevel(askMap, level);
-  } else if (params.engineBids != null || params.engineAsks != null) {
-    for (const level of params.engineBids ?? []) ingestSideLevel(bidMap, level);
-    for (const level of params.engineAsks ?? []) ingestSideLevel(askMap, level);
-  } else {
-    for (const level of snapshotToEngineSide(params.bids ?? [], "bid")) {
-      ingestSideLevel(bidMap, level);
-    }
-    for (const level of snapshotToEngineSide(params.asks ?? [], "ask")) {
-      ingestSideLevel(askMap, level);
-    }
+  for (const level of snapshotToEngineSide(params.bids ?? [], "bid")) {
+    if (bidMap.has(level.price)) duplicateRowsDropped++;
+    ingestSideLevel(bidMap, level);
+  }
+  for (const level of snapshotToEngineSide(params.asks ?? [], "ask")) {
+    if (askMap.has(level.price)) duplicateRowsDropped++;
+    ingestSideLevel(askMap, level);
   }
 
   const rawBidLevelsReceived = bidMap.size;
   const rawAskLevelsReceived = askMap.size;
 
-  const wallsMap = aggregateDomWallsByExactPrice(params.walls ?? []);
-  const priceSet = new Set<number>([...bidMap.keys(), ...askMap.keys(), ...wallsMap.keys()]);
-  const prices = Array.from(priceSet).sort((a, b) => b - a);
+  const prices = Array.from(
+    new Set<number>([...bidMap.keys(), ...askMap.keys()]),
+  ).sort((a, b) => b - a);
+
+  const minRawPrice = prices.length ? prices[prices.length - 1]! : null;
+  const maxRawPrice = prices.length ? prices[0]! : null;
 
   let maxBid = 0;
   let maxAsk = 0;
   let maxCob = 0;
   for (const price of prices) {
-    const bidResolved = bidMap.has(price)
-      ? resolveEngineLevelDisplay(bidMap.get(price)!)
-      : { size: 0, state: "none" as const, lastKnownSize: 0, wallSize: 0, tier: "none" as const };
-    const askResolved = askMap.has(price)
-      ? resolveEngineLevelDisplay(askMap.get(price)!)
-      : { size: 0, state: "none" as const, lastKnownSize: 0, wallSize: 0, tier: "none" as const };
-    maxBid = Math.max(maxBid, bidResolved.size);
-    maxAsk = Math.max(maxAsk, askResolved.size);
-    maxCob = Math.max(maxCob, bidResolved.size + askResolved.size);
+    const bidSize = bidMap.get(price)?.size ?? 0;
+    const askSize = askMap.get(price)?.size ?? 0;
+    maxBid = Math.max(maxBid, bidSize);
+    maxAsk = Math.max(maxAsk, askSize);
+    maxCob = Math.max(maxCob, bidSize + askSize);
   }
 
   const spotPrice =
     params.spot != null && Number.isFinite(params.spot) ? params.spot : null;
+  const centerPrice =
+    params.centerPrice != null && Number.isFinite(params.centerPrice)
+      ? params.centerPrice
+      : spotPrice;
 
   let svpRunning = 0;
   let liveRows = 0;
-  let lastKnownRows = 0;
-  let wallRows = 0;
-  let zeroLiquidityRows = 0;
   let rowsWithBidLiquidity = 0;
   let rowsWithAskLiquidity = 0;
-  let rawBidLevelsRendered = 0;
-  let rawAskLevelsRendered = 0;
+  let rawBidRows = 0;
+  let rawAskRows = 0;
+  let zeroOnlyRowsCreated = 0;
 
   const lastIndex = prices.length - 1;
   const labelEvery = Math.max(1, Math.floor(prices.length / 40));
@@ -1336,103 +1362,47 @@ export function buildRawDomLadderRows(params: {
   const rows: DomLadderRow[] = prices.map((price, index) => {
     const bidLevel = bidMap.get(price);
     const askLevel = askMap.get(price);
-    const bidResolved = bidLevel
-      ? resolveEngineLevelDisplay(bidLevel)
-      : { size: 0, state: "none" as const, lastKnownSize: 0, wallSize: 0, tier: "none" as const };
-    const askResolved = askLevel
-      ? resolveEngineLevelDisplay(askLevel)
-      : { size: 0, state: "none" as const, lastKnownSize: 0, wallSize: 0, tier: "none" as const };
-
-    const bidSize = bidResolved.size;
-    const askSize = askResolved.size;
-    const bidState = bidResolved.state;
-    const askState = askResolved.state;
-    const hasLiveBid = bidState === "live";
-    const hasLiveAsk = askState === "live";
-    const hasLastKnownBid =
-      bidState === "lastKnown" || bidResolved.lastKnownSize > 0;
-    const hasLastKnownAsk =
-      askState === "lastKnown" || askResolved.lastKnownSize > 0;
-    const hasWallBid = bidState === "wall";
-    const hasWallAsk = askState === "wall";
+    const bidSize = bidLevel?.size ?? 0;
+    const askSize = askLevel?.size ?? 0;
+    const hasLiveBid = bidSize > 0 && bidLevel != null;
+    const hasLiveAsk = askSize > 0 && askLevel != null;
     const cobSize = bidSize + askSize;
 
-    if (bidLevel) rawBidLevelsRendered++;
-    if (askLevel) rawAskLevelsRendered++;
-    if (hasLiveBid || hasLiveAsk) liveRows++;
-    if (hasLastKnownBid || hasLastKnownAsk) lastKnownRows++;
-    if (bidSize > 0) rowsWithBidLiquidity++;
-    if (askSize > 0) rowsWithAskLiquidity++;
-    if (bidSize <= 0 && askSize <= 0 && !hasWallBid && !hasWallAsk) zeroLiquidityRows++;
-
-    const wallSlot = wallsMap.get(price);
-    let wallBid = wallSlot?.bid;
-    let wallAsk = wallSlot?.ask;
-    if (hasWallBid && !wallBid && bidResolved.tier !== "none") {
-      const tier = domWallTierToEntryTier(bidResolved.tier);
-      if (tier) {
-        wallBid = {
-          price,
-          bucketedPrice: price,
-          side: "bid",
-          wallSize: bidResolved.wallSize,
-          wallTier: tier,
-          wallIsStale: true,
-        };
-      }
+    if (hasLiveBid) {
+      rawBidRows++;
+      rowsWithBidLiquidity++;
+      liveRows++;
     }
-    if (hasWallAsk && !wallAsk && askResolved.tier !== "none") {
-      const tier = domWallTierToEntryTier(askResolved.tier);
-      if (tier) {
-        wallAsk = {
-          price,
-          bucketedPrice: price,
-          side: "ask",
-          wallSize: askResolved.wallSize,
-          wallTier: tier,
-          wallIsStale: true,
-        };
-      }
+    if (hasLiveAsk) {
+      rawAskRows++;
+      rowsWithAskLiquidity++;
+      liveRows++;
     }
-    const hasHistoricalWall =
-      wallBid != null || wallAsk != null || hasWallBid || hasWallAsk;
-    if (hasHistoricalWall || hasWallBid || hasWallAsk) wallRows++;
-
-    const primaryWall =
-      wallBid && wallAsk
-        ? WALL_TIER_RANK[wallBid.wallTier] >= WALL_TIER_RANK[wallAsk.wallTier]
-          ? wallBid
-          : wallAsk
-        : wallBid ?? wallAsk;
+    if (!hasLiveBid && !hasLiveAsk) zeroOnlyRowsCreated++;
 
     svpRunning += cobSize;
 
     const y = index * rowHeight + rowHeight / 2;
     const isSpotBucket =
-      spotPrice != null && Math.abs(price - spotPrice) <= tickSize / 2;
-    const isMajorWall =
-      cobSize >= majorWallBtc ||
-      wallBid?.wallTier === "major" ||
-      wallAsk?.wallTier === "major" ||
-      (primaryWall?.wallSize ?? 0) >= majorWallBtc;
+      centerPrice != null && Math.abs(price - centerPrice) <= tickSize / 2;
+    const isMajorWall = cobSize >= majorWallBtc;
     const onLabelGrid = index % labelEvery === 0;
     const showLabel =
       index === 0 ||
       index === lastIndex ||
       onLabelGrid ||
-      isSpotBucket ||
-      hasHistoricalWall;
+      isSpotBucket;
     const showDomText =
-      showDomNumbers && (bidSize > 0 || askSize > 0 || cobSize > 0 || isSpotBucket);
+      showDomNumbers && (bidSize > 0 || askSize > 0 || isSpotBucket);
 
     return {
       price,
       bidSize,
       askSize,
-      bidState,
-      askState,
-      bidLastKnownSize: bidResolved.lastKnownSize,
-      askLastKnownSize: askResolved.lastKnownSize,
+      bidState: hasLiveBid ? ("live" as const) : ("none" as const),
+      askState: hasLiveAsk ? ("live" as const) : ("none" as const),
+      bidLastKnownSize: 0,
+      askLastKnownSize: 0,
       cobSize,
       svpCumulative: svpRunning,
       y,
@@ -1448,13 +1418,11 @@ export function buildRawDomLadderRows(params: {
       cobBarPct: maxCob > 0 ? (cobSize / maxCob) * 100 : 0,
       hasLiveBid,
       hasLiveAsk,
-      hasHistoricalWall,
-      wallSize: primaryWall?.wallSize ?? 0,
-      wallSide: primaryWall?.side ?? null,
-      wallTier: primaryWall?.wallTier ?? null,
-      wallIsStale: primaryWall?.wallIsStale ?? false,
-      wallBid,
-      wallAsk,
+      hasHistoricalWall: false,
+      wallSize: 0,
+      wallSide: null,
+      wallTier: null,
+      wallIsStale: false,
     };
   });
 
@@ -1466,11 +1434,11 @@ export function buildRawDomLadderRows(params: {
       : rows.length;
   const hiddenBecauseVirtualized = Math.max(0, rows.length - visibleDomViewportRows);
 
-  let centerRowIndex: number | null = null;
-  if (spotPrice != null && rows.length > 0) {
+  let centerRowIndex: number | null = params.scrollTargetIndex ?? null;
+  if (centerRowIndex == null && centerPrice != null && rows.length > 0) {
     let bestDist = Infinity;
     for (let i = 0; i < rows.length; i++) {
-      const d = Math.abs(rows[i]!.price - spotPrice);
+      const d = Math.abs(rows[i]!.price - centerPrice);
       if (d < bestDist) {
         bestDist = d;
         centerRowIndex = i;
@@ -1478,14 +1446,60 @@ export function buildRawDomLadderRows(params: {
     }
   }
 
-  const minRenderedPrice = prices.length ? prices[prices.length - 1]! : null;
-  const maxRenderedPrice = prices.length ? prices[0]! : null;
+  const minRenderedPrice = minRawPrice;
+  const maxRenderedPrice = maxRawPrice;
+  const nearestRowToCurrentPrice =
+    centerRowIndex != null && rows[centerRowIndex]
+      ? rows[centerRowIndex]!.price
+      : null;
   const currentPriceInsideDom =
-    spotPrice != null &&
+    centerPrice != null &&
     minRenderedPrice != null &&
     maxRenderedPrice != null &&
-    spotPrice >= minRenderedPrice &&
-    spotPrice <= maxRenderedPrice;
+    centerPrice >= minRenderedPrice &&
+    centerPrice <= maxRenderedPrice;
+
+  const firstVisibleIndex =
+    viewportHeight > 0 ? Math.floor(scrollTop / rowHeight) : 0;
+  const lastVisibleIndex =
+    viewportHeight > 0
+      ? Math.min(rows.length - 1, Math.ceil((scrollTop + viewportHeight) / rowHeight))
+      : rows.length - 1;
+  const currentPriceVisible =
+    centerRowIndex != null &&
+    centerRowIndex >= firstVisibleIndex &&
+    centerRowIndex <= lastVisibleIndex;
+
+  const stabilityDiag: RawDomStabilityDiag = {
+    rawModeEnabled: useDesktopFullRawDomLadder(),
+    rawBidLevelsReceived,
+    rawAskLevelsReceived,
+    rawBidRows,
+    rawAskRows,
+    mergedRawRows: rows.length,
+    syntheticRowsCreated: 0,
+    zeroOnlyRowsCreated,
+    rowsFromChartRange: 0,
+    rowsFromHeatmapBucket: 0,
+    rowsFromLocalDepth: 0,
+    rowsVisibleInViewport: visibleDomViewportRows,
+    currentPrice: centerPrice,
+    nearestRowToCurrentPrice,
+    currentPriceVisible,
+    followMode: params.followMode ?? false,
+    scrollTop,
+    scrollTargetIndex: centerRowIndex,
+    minRawPrice,
+    maxRawPrice,
+    renderedMinPrice: minRenderedPrice,
+    renderedMaxPrice: maxRenderedPrice,
+    invalidRowsDropped,
+    duplicateRowsDropped,
+    grayOverlayDetectedOrSource:
+      rawBidLevelsReceived > 100
+        ? "feed_visible_depth_split_restored"
+        : null,
+  };
 
   const rawDiag: FullRawDomLadderDiag = {
     featureEnabled: useDesktopFullRawDomLadder(),
@@ -1493,8 +1507,8 @@ export function buildRawDomLadderRows(params: {
     mode: params.mode ?? "spot",
     rawBidLevelsReceived,
     rawAskLevelsReceived,
-    rawBidLevelsRendered,
-    rawAskLevelsRendered,
+    rawBidLevelsRendered: rawBidRows,
+    rawAskLevelsRendered: rawAskRows,
     totalRawLevelsRendered: rows.length,
     domRowsTotal: rows.length,
     visibleDomViewportRows,
@@ -1503,7 +1517,7 @@ export function buildRawDomLadderRows(params: {
     skippedBecauseRowCap: 0,
     skippedBecauseTooWeak: 0,
     skippedBecauseOutsideRange: 0,
-    skippedBecauseZero: 0,
+    skippedBecauseZero: zeroOnlyRowsCreated,
     aggregationEnabled: false,
     domUsesRawPrices: true,
     domUsesHeatmapBucket: false,
@@ -1520,6 +1534,7 @@ export function buildRawDomLadderRows(params: {
 
   if (import.meta.env.DEV) {
     emitFullRawDomLadderDiag(rawDiag);
+    emitRawDomStabilityDiag(stabilityDiag);
   }
 
   return {
@@ -1527,10 +1542,10 @@ export function buildRawDomLadderRows(params: {
     stats: {
       ladderRows: rows.length,
       liveRows,
-      lastKnownRows,
-      wallRows,
+      lastKnownRows: 0,
+      wallRows: 0,
       expectedDomRowCount: rows.length,
-      zeroLiquidityRows,
+      zeroLiquidityRows: zeroOnlyRowsCreated,
       rowsWithBidLiquidity,
       rowsWithAskLiquidity,
       rawBidLevelsCount: rawBidLevelsReceived,
@@ -1540,6 +1555,7 @@ export function buildRawDomLadderRows(params: {
       domUsesContinuousLadder: false,
     },
     rawDiag,
+    stabilityDiag,
   };
 }
 
