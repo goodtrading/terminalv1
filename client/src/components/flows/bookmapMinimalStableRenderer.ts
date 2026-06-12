@@ -28,6 +28,7 @@ import {
   type PreparedLiveProjectionLevel,
 } from "./bookmapEnginePrepare";
 import type { HistoricalLiquiditySurfaceCell } from "./bookmapHistoricalLiquiditySurface";
+import { bucketPrice as bucketDomPrice } from "./domLadderUtils";
 
 export type MinimalStablePlotMetrics = {
   plotW: number;
@@ -55,6 +56,10 @@ export type MinimalStableRenderResult = {
 type BandGeom = { yTop: number; height: number };
 
 let lastHistoricalSurfaceRenderDiagMs = 0;
+
+function domAlignedPrice(price: number, domBucketSize: number): number {
+  return bucketDomPrice(price, Math.max(1, domBucketSize || 1));
+}
 
 function bandGeom(
   price: number,
@@ -243,21 +248,27 @@ function collectHistoricalSurfaceCells(
   maxPrice: number,
   visibleStart: number,
   visibleEnd: number,
+  domBucketSize: number,
 ): HistoricalLiquiditySurfaceCell[] {
   return (engine.historicalSurfaceCells ?? []).filter((cell) => {
     const end = cell.timeBucket + BOOKMAP_ENGINE_BUCKET_MS;
     if (end < visibleStart || cell.timeBucket > visibleEnd) return false;
     if (cell.timeBucket >= dataEndTime + BOOKMAP_ENGINE_BUCKET_MS) return false;
-    return cell.price >= minPrice && cell.price <= maxPrice && cell.maxSize > 0;
+    const rowPrice = domAlignedPrice(cell.price, domBucketSize);
+    return rowPrice >= minPrice && rowPrice <= maxPrice && cell.maxSize > 0;
   });
 }
 
-function collectLiveLevels(engine: PreparedEngineRenderData): PreparedLiveProjectionLevel[] {
+function collectLiveLevels(
+  engine: PreparedEngineRenderData,
+  domBucketSize: number,
+): PreparedLiveProjectionLevel[] {
   const map = new Map<string, PreparedLiveProjectionLevel>();
   const add = (level: PreparedLiveProjectionLevel) => {
-    const key = `${level.side}:${level.price}`;
+    const rowPrice = domAlignedPrice(level.price, domBucketSize);
+    const key = `${level.side}:${rowPrice}`;
     const prev = map.get(key);
-    if (!prev || level.sizeBtc > prev.sizeBtc) map.set(key, level);
+    if (!prev || level.sizeBtc > prev.sizeBtc) map.set(key, { ...level, price: rowPrice });
   };
   for (const level of [
     ...(engine.activeDomBands ?? []),
@@ -306,6 +317,7 @@ export function paintMinimalStableBookmapFrame(
   if (!BOOKMAP_MINIMAL_STABLE_RENDERER_V1) return result;
 
   const { engine, timeViewport, minPrice, maxPrice } = params;
+  const domBucketSize = Math.max(1, metrics.domBucketSize || 1);
   const dataEndTime = timeViewport.dataEndTime;
   const dataEdgeX = metrics.timeToX(dataEndTime);
   const opacity = params.visualSettings?.heatmap.opacity ?? 1;
@@ -351,11 +363,15 @@ export function paintMinimalStableBookmapFrame(
     maxPrice,
     timeViewport.visibleStartTime,
     timeViewport.visibleEndTime,
+    domBucketSize,
   );
 
   if (surfaceCells.length > 0) {
     for (const cell of surfaceCells) {
-      const geom = surfaceBandGeom(cell.price, metrics.priceToY);
+      const rowPrice = domAlignedPrice(cell.price, domBucketSize);
+      const renderCell =
+        rowPrice === cell.price ? cell : { ...cell, price: rowPrice };
+      const geom = surfaceBandGeom(rowPrice, metrics.priceToY);
       if (geom.yTop + geom.height < HEATMAP_PAD.top - 2) {
         renderSkips.clippedPrice += 1;
         continue;
@@ -375,17 +391,17 @@ export function paintMinimalStableBookmapFrame(
         Math.max(1, dataEdgeX - x0),
       );
 
-      const thermal = thermalFromSurfaceCell(cell);
+      const thermal = thermalFromSurfaceCell(renderCell);
       const alpha = thermal.alpha * opacity * 0.88;
       if (alpha <= 0.004) {
         renderSkips.tinyAlpha += 1;
         continue;
       }
-      const texture = fillTexturedSurfaceCell(ctx, cell, x0, w, geom, thermal.rgb, alpha);
+      const texture = fillTexturedSurfaceCell(ctx, renderCell, x0, w, geom, thermal.rgb, alpha);
       microcellFragmentCount += texture.fragments;
-      const rowSamples = rowAlphaSamples.get(cell.price) ?? [];
+      const rowSamples = rowAlphaSamples.get(rowPrice) ?? [];
       rowSamples.push(...texture.varianceSamples);
-      rowAlphaSamples.set(cell.price, rowSamples);
+      rowAlphaSamples.set(rowPrice, rowSamples);
       widthStats.min = Math.min(widthStats.min, w);
       widthStats.max = Math.max(widthStats.max, w);
       widthStats.sum += w;
@@ -399,7 +415,7 @@ export function paintMinimalStableBookmapFrame(
       else renderedTiers.strong += 1;
       if (cell.coldStartSeeded) coldStartCellsRendered += 1;
       else liveCellsRendered += 1;
-      renderedRows.add(cell.price);
+      renderedRows.add(rowPrice);
       renderedBuckets.add(cell.timeBucket);
       result.visibleHeatmapCells += 1;
     }
@@ -438,7 +454,7 @@ export function paintMinimalStableBookmapFrame(
     projX1 - dataEdgeX >= 2 &&
     timeViewport.visibleEndTime > dataEndTime + BOOKMAP_LIVE_PROJECTION_MIN_GAP_MS;
 
-  for (const level of collectLiveLevels(engine)) {
+  for (const level of collectLiveLevels(engine, domBucketSize)) {
     if (level.price < minPrice || level.price > maxPrice) continue;
     if (level.sizeBtc < 0.25) continue;
 
@@ -534,6 +550,24 @@ export function paintMinimalStableBookmapFrame(
           ...engine.historicalSurfaceDiag,
           rendererPathActuallyUsed: "bookmapMinimalStableRenderer.surface",
           visibleHistoricalCellCount: surfaceCells.length,
+          domLadderTickSize: domBucketSize,
+          heatmapPriceBucketSize: engine.bandPrepareMeta.heatmapBucketSize,
+          effectiveRenderPriceStep: domBucketSize,
+          priceAxisStep: engine.bandPrepareMeta.labelStep,
+          visiblePriceMin: minPrice,
+          visiblePriceMax: maxPrice,
+          visibleRangeAbovePrice:
+            params.spot != null && Number.isFinite(params.spot) ? Math.max(0, maxPrice - params.spot) : 0,
+          visibleRangeBelowPrice:
+            params.spot != null && Number.isFinite(params.spot) ? Math.max(0, params.spot - minPrice) : 0,
+          renderedPriceRows: renderedRows.size,
+          domRowCount: Math.max(0, Math.floor((maxPrice - minPrice) / domBucketSize) + 1),
+          heatmapRowsAlignedToDom: Array.from(renderedRows).every(
+            (price) => Math.abs(domAlignedPrice(price, domBucketSize) - price) < 0.000_001,
+          ),
+          skippedRowsDueToRange: renderSkips.clippedPrice,
+          priceRoundingModeUsedByHeatmap: "nearest-dom-bucket",
+          priceRoundingModeUsedByDomCob: "nearest-dom-bucket",
           renderCellCountPerFrame: result.visibleHeatmapCells,
           renderSkippedCells: renderSkips,
           averageRenderedCellWidthPx:
