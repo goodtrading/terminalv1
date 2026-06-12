@@ -334,7 +334,7 @@ export const LIMIT_ORDER_PERSISTENT_MS = 8_000;
 export const LIMIT_ORDER_TOUCH_PCT = 0.08;
 
 /**
- * B.reset — Canonical heatmap: single visual grammar for historical + live.
+ * B.reset / B.rebuild.1 — Canonical heatmap: single visual grammar for historical + live.
  * Takes priority over surface/lifecycle render paths when active.
  */
 export const BOOKMAP_CANONICAL_HEATMAP_V1 = true;

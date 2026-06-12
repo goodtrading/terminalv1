@@ -3,6 +3,7 @@
  */
 
 import {
+  BOOKMAP_CANONICAL_HEATMAP_V1,
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1,
   BOOKMAP_SURFACE_RENDERER_DIAG,
@@ -136,6 +137,7 @@ function emitSurfaceRendererDiag(): void {
 }
 
 export function drawSurfaceRendererWatermark(ctx: CanvasRenderingContext2D): void {
+  if (BOOKMAP_CANONICAL_HEATMAP_V1) return;
   if (!import.meta.env.DEV || !BOOKMAP_SURFACE_RENDERER_DIAG) return;
   ctx.save();
   ctx.font = "bold 11px ui-monospace, monospace";

@@ -1,13 +1,12 @@
 /**
- * B.reset — Canonical Bookmap heatmap renderer.
- * Single visual grammar for historical matrix, live DOM, and anchored walls.
+ * B.rebuild.1 — Canonical Bookmap heatmap foundation.
+ * Single geometry + single visual mapping for historical, live, and walls.
  */
 
 import {
   BOOKMAP_CANONICAL_HEATMAP_DIAG,
   BOOKMAP_CANONICAL_HEATMAP_V1,
   BOOKMAP_ENGINE_BUCKET_MS,
-  BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1,
   CANONICAL_DOMINANT_SIZE_BTC,
   CANONICAL_FAR_DISTANCE_ALPHA_MUL,
   CANONICAL_HISTORICAL_MAX_DRAW,
@@ -34,33 +33,25 @@ import {
   type PreparedEngineTextureCell,
 } from "./bookmapEnginePrepare";
 import { isWallTier, type HeatmapBand } from "./bookmapBandTypes";
-import {
-  resolveLifecycleThermalSize,
-  resolveLifecycleVisualAlpha,
-  updateLimitOrderLifecycleEngine,
-  type LimitOrderLifecycleLevel,
-  type LimitOrderLifecycleState,
-} from "./bookmapLimitOrderLifecycle";
 
 export type CanonicalHeatLayer = "historical" | "live" | "projection" | "wall";
 
-export type CanonicalBandGeometry = {
+export type CanonicalPriceBandGeometry = {
   yTop: number;
   bandHeightPx: number;
   bandInsetPx: number;
 };
 
-export type CanonicalLevelVisual = {
+export type CanonicalLiquidityVisual = {
   thermalTier: SurfaceThermalTier;
-  rgb: [number, number, number];
-  bodyAlpha: number;
-  glowAlpha: number;
-  coreAlpha: number;
+  color: [number, number, number];
+  alpha: number;
   bandHeightPx: number;
-  bandInsetPx: number;
+  coreHeightPx: number;
+  glowHeightPx: number;
   shouldDrawCore: boolean;
-  shouldProjectLive: boolean;
-  distanceFade: number;
+  shouldDrawGlow: boolean;
+  distanceAlphaMul: number;
 };
 
 export type CanonicalHeatmapDiagStats = {
@@ -69,16 +60,20 @@ export type CanonicalHeatmapDiagStats = {
   historicalLevelsDrawn: number;
   liveLevelsInput: number;
   liveLevelsDrawn: number;
-  anchoredWallsDrawn: number;
-  macroFarLevelsDrawn: number;
+  wallLevelsDrawn: number;
+  macroDomLevelsDrawn: number;
+  weakLevelsDrawn: number;
+  mediumLevelsDrawn: number;
+  strongLevelsDrawn: number;
+  extremeLevelsDrawn: number;
   avgHistoricalBandHeightPx: number;
   avgLiveBandHeightPx: number;
   maxHistoricalBandHeightPx: number;
   maxLiveBandHeightPx: number;
   liveHistoricalHeightMismatchCount: number;
-  dominantLevelsDrawn: number;
-  mediumLevelsDrawn: number;
-  weakLevelsDrawn: number;
+  liveHistoricalAlphaMismatchCount: number;
+  visiblePriceMin: number;
+  visiblePriceMax: number;
   zoomRegime: BookmapZoomRegime;
   legacyMismatchCause: string;
   timestamp: number;
@@ -108,9 +103,6 @@ type CanonicalLiveLevel = {
   side: "bid" | "ask";
   price: number;
   sizeBtc: number;
-  isLive: boolean;
-  lifecycleState?: LimitOrderLifecycleState;
-  firstSeenTime?: number;
   isWall: boolean;
 };
 
@@ -120,16 +112,20 @@ let lastCanonicalDiag: CanonicalHeatmapDiagStats = {
   historicalLevelsDrawn: 0,
   liveLevelsInput: 0,
   liveLevelsDrawn: 0,
-  anchoredWallsDrawn: 0,
-  macroFarLevelsDrawn: 0,
+  wallLevelsDrawn: 0,
+  macroDomLevelsDrawn: 0,
+  weakLevelsDrawn: 0,
+  mediumLevelsDrawn: 0,
+  strongLevelsDrawn: 0,
+  extremeLevelsDrawn: 0,
   avgHistoricalBandHeightPx: 0,
   avgLiveBandHeightPx: 0,
   maxHistoricalBandHeightPx: 0,
   maxLiveBandHeightPx: 0,
   liveHistoricalHeightMismatchCount: 0,
-  dominantLevelsDrawn: 0,
-  mediumLevelsDrawn: 0,
-  weakLevelsDrawn: 0,
+  liveHistoricalAlphaMismatchCount: 0,
+  visiblePriceMin: 0,
+  visiblePriceMax: 0,
   zoomRegime: "macro",
   legacyMismatchCause: CANONICAL_LEGACY_RIGHT_SIDE_MISMATCH_CAUSE,
   timestamp: 0,
@@ -138,13 +134,14 @@ let lastCanonicalDiag: CanonicalHeatmapDiagStats = {
 let lastCanonicalDiagLogMs = 0;
 
 const heightByPriceLayer = new Map<string, number>();
+const alphaByPriceLayer = new Map<string, number>();
 
 function pctFromMid(price: number, mid: number | null): number {
   if (mid == null || mid <= 0) return 50;
   return (Math.abs(price - mid) / mid) * 100;
 }
 
-function distanceFadeMul(pct: number, regime: BookmapZoomRegime): number {
+function distanceAlphaMul(pct: number, regime: BookmapZoomRegime): number {
   if (regime !== "macro") {
     if (pct > 8) return 0.58;
     if (pct > 4) return 0.74;
@@ -156,12 +153,12 @@ function distanceFadeMul(pct: number, regime: BookmapZoomRegime): number {
   return 1;
 }
 
-/** Shared band geometry — same height/inset for historical and live. */
-export function resolveCanonicalBandGeometry(
+/** B.rebuild.1 — single price-band geometry for historical, live, and walls. */
+export function resolveCanonicalPriceBandGeometry(
   price: number,
   priceToY: (price: number) => number,
   domBucketSize: number,
-): CanonicalBandGeometry {
+): CanonicalPriceBandGeometry {
   const half = Math.max(1, domBucketSize * 0.5);
   const yTop = priceToY(price + half);
   const yBot = priceToY(price - half);
@@ -170,54 +167,54 @@ export function resolveCanonicalBandGeometry(
   return { yTop: Math.min(yTop, yBot), bandHeightPx, bandInsetPx };
 }
 
-/** Single visual mapping for historical, live, projection, and walls. */
-export function resolveCanonicalHeatLevelVisual(
+/** @deprecated alias */
+export const resolveCanonicalBandGeometry = resolveCanonicalPriceBandGeometry;
+
+/** B.rebuild.1 — single size→visual mapping for all layers. */
+export function resolveCanonicalLiquidityVisual(
   sizeBtc: number,
   opts: {
     layer: CanonicalHeatLayer;
     regime: BookmapZoomRegime;
     distancePct: number;
     heatmapOpacity: number;
+    geometry: CanonicalPriceBandGeometry;
     isWall?: boolean;
-    lifecycleState?: LimitOrderLifecycleState;
     intensityHint?: number;
   },
-): CanonicalLevelVisual {
+): CanonicalLiquidityVisual {
   const thermal =
     opts.intensityHint != null
       ? resolveSurfaceHistoricalThermal(opts.intensityHint, sizeBtc)
       : resolveSurfaceThermalFromSize(sizeBtc);
 
-  const distanceFade = distanceFadeMul(opts.distancePct, opts.regime);
-  let bodyAlpha = thermal.alpha * distanceFade * opts.heatmapOpacity;
+  const distanceAlphaMulValue = distanceAlphaMul(opts.distancePct, opts.regime);
+  const alpha = Math.min(
+    0.86,
+    Math.max(0.08, thermal.alpha * distanceAlphaMulValue * opts.heatmapOpacity),
+  );
 
-  if (opts.lifecycleState === "pulling") bodyAlpha *= 0.58;
-  else if (opts.lifecycleState === "fading") bodyAlpha *= 0.42;
-  else if (opts.lifecycleState === "new") bodyAlpha *= 0.72;
-  else if (opts.lifecycleState === "reinforced") bodyAlpha *= 1.06;
-
-  const isDominant = sizeBtc >= CANONICAL_DOMINANT_SIZE_BTC;
   const isWall = opts.isWall === true || sizeBtc >= CANONICAL_WALL_SIZE_BTC;
-  const shouldDrawCore = isWall && (isDominant || opts.lifecycleState === "reinforced");
-  const shouldProjectLive =
-    opts.layer === "projection" ||
-    (opts.layer === "live" && opts.lifecycleState !== "pulling" && opts.lifecycleState !== "fading");
+  const isDominant = sizeBtc >= CANONICAL_DOMINANT_SIZE_BTC;
+  const bodyH = Math.max(1, opts.geometry.bandHeightPx - opts.geometry.bandInsetPx * 2);
+  const shouldDrawCore = isWall && (isDominant || sizeBtc >= CANONICAL_WALL_SIZE_BTC * 2.5);
+  const shouldDrawGlow = false;
 
-  bodyAlpha = Math.min(0.88, Math.max(0.08, bodyAlpha));
-  const glowAlpha = bodyAlpha * (isWall ? 0.28 : 0.18);
-  const coreAlpha = shouldDrawCore ? bodyAlpha * 0.82 : 0;
+  const coreHeightPx = shouldDrawCore ? Math.min(bodyH, bodyH * 0.42) : 0;
+  const glowHeightPx = bodyH;
+
+  void opts.layer;
 
   return {
     thermalTier: thermal.tier,
-    rgb: thermal.rgb,
-    bodyAlpha,
-    glowAlpha,
-    coreAlpha,
-    bandHeightPx: 0,
-    bandInsetPx: 0,
+    color: thermal.rgb,
+    alpha,
+    bandHeightPx: bodyH,
+    coreHeightPx,
+    glowHeightPx,
     shouldDrawCore,
-    shouldProjectLive,
-    distanceFade,
+    shouldDrawGlow,
+    distanceAlphaMul: distanceAlphaMulValue,
   };
 }
 
@@ -235,58 +232,62 @@ function fillRgba(
   ctx.fillRect(x, y, w, h);
 }
 
-function recordBandHeight(
+function recordDrawMetrics(
   price: number,
   layer: "historical" | "live",
   height: number,
+  alpha: number,
   diag: CanonicalHeatmapDiagStats,
 ): void {
-  const key = `${price}:${layer}`;
-  heightByPriceLayer.set(key, height);
+  heightByPriceLayer.set(`${price}:${layer}`, height);
+  alphaByPriceLayer.set(`${price}:${layer}`, alpha);
+
   if (layer === "historical") {
     diag.maxHistoricalBandHeightPx = Math.max(diag.maxHistoricalBandHeightPx, height);
   } else {
     diag.maxLiveBandHeightPx = Math.max(diag.maxLiveBandHeightPx, height);
   }
-  const other = heightByPriceLayer.get(`${price}:${layer === "historical" ? "live" : "historical"}`);
-  if (other != null && Math.abs(other - height) > 0.5) {
+
+  const otherLayer = layer === "historical" ? "live" : "historical";
+  const otherH = heightByPriceLayer.get(`${price}:${otherLayer}`);
+  const otherA = alphaByPriceLayer.get(`${price}:${otherLayer}`);
+  if (otherH != null && Math.abs(otherH - height) > 0.5) {
     diag.liveHistoricalHeightMismatchCount += 1;
+  }
+  if (otherA != null && Math.abs(otherA - alpha) > 0.12) {
+    diag.liveHistoricalAlphaMismatchCount += 1;
   }
 }
 
-function bucketWidthPx(
-  timeMs: number,
-  timeToX: (t: number) => number,
-): number {
+function bucketWidthPx(timeMs: number, timeToX: (t: number) => number): number {
   return Math.max(1, timeToX(timeMs + BOOKMAP_ENGINE_BUCKET_MS) - timeToX(timeMs));
 }
 
-function drawCanonicalBand(
+function drawCanonicalLevel(
   ctx: CanvasRenderingContext2D,
   x: number,
   w: number,
-  geom: CanonicalBandGeometry,
-  visual: CanonicalLevelVisual,
+  geom: CanonicalPriceBandGeometry,
+  visual: CanonicalLiquidityVisual,
   layer: "historical" | "live",
   price: number,
   diag: CanonicalHeatmapDiagStats,
 ): void {
   const y = geom.yTop + geom.bandInsetPx;
-  const h = Math.max(1, geom.bandHeightPx - geom.bandInsetPx * 2);
-  recordBandHeight(price, layer, h, diag);
+  const h = visual.bandHeightPx;
+  recordDrawMetrics(price, layer, h, visual.alpha, diag);
+  fillRgba(ctx, x, w, y, h, visual.color, visual.alpha);
 
-  fillRgba(ctx, x, w, y, h, visual.rgb, visual.bodyAlpha);
-  if (visual.shouldDrawCore && w >= 2) {
-    const coreH = h * 0.42;
-    const coreY = y + (h - coreH) * 0.5;
+  if (visual.shouldDrawCore && visual.coreHeightPx > 0 && w >= 2) {
+    const coreY = y + (h - visual.coreHeightPx) * 0.5;
     fillRgba(
       ctx,
-      x + w * 0.12,
-      Math.max(1, w * 0.52),
+      x + w * 0.15,
+      Math.max(1, w * 0.5),
       coreY,
-      coreH,
-      visual.rgb,
-      visual.coreAlpha,
+      visual.coreHeightPx,
+      visual.color,
+      visual.alpha * 0.85,
     );
   }
 }
@@ -308,8 +309,7 @@ function collectHistoricalCells(
       return c.price >= minPrice && c.price <= maxPrice;
     });
   }
-  const raw = engine.restingLiquidityRawCells ?? [];
-  return raw
+  return (engine.restingLiquidityRawCells ?? [])
     .filter((c) => {
       if (c.timeBucket >= dataEndTime) return false;
       if (c.timeBucket < visibleStart || c.timeBucket > visibleEnd) return false;
@@ -329,27 +329,10 @@ function collectHistoricalCells(
 
 function collectCanonicalLiveLevels(
   engine: PreparedEngineRenderData,
-  lifecycleLevels: LimitOrderLifecycleLevel[],
   minPrice: number,
   maxPrice: number,
   minSize: number,
 ): CanonicalLiveLevel[] {
-  if (BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1 && lifecycleLevels.length > 0) {
-    return lifecycleLevels
-      .filter((l) => l.price >= minPrice && l.price <= maxPrice)
-      .filter((l) => l.isLive || l.state === "fading")
-      .filter((l) => resolveLifecycleThermalSize(l) >= minSize * 0.85)
-      .map((l) => ({
-        side: l.side,
-        price: l.price,
-        sizeBtc: resolveLifecycleThermalSize(l),
-        isLive: l.isLive,
-        lifecycleState: l.state,
-        firstSeenTime: l.firstSeenTime,
-        isWall: l.isWall,
-      }));
-  }
-
   const map = new Map<string, CanonicalLiveLevel>();
   const add = (side: "bid" | "ask", price: number, sizeBtc: number) => {
     if (price < minPrice || price > maxPrice || sizeBtc < minSize) return;
@@ -360,7 +343,6 @@ function collectCanonicalLiveLevels(
         side,
         price,
         sizeBtc,
-        isLive: true,
         isWall: sizeBtc >= CANONICAL_WALL_SIZE_BTC,
       });
     }
@@ -368,6 +350,12 @@ function collectCanonicalLiveLevels(
 
   for (const row of engine.currentDomBookLevels ?? []) {
     add(row.side, row.price, row.size);
+  }
+  const sel = engine.liveDomSelection;
+  if (sel) {
+    for (const level of [...sel.levels, ...sel.activeDomBands]) {
+      add(level.side, level.price, level.sizeBtc);
+    }
   }
   for (const level of [
     ...(engine.activeDomBands ?? []),
@@ -386,19 +374,38 @@ function collectCanonicalLiveLevels(
 function recordTier(tier: SurfaceThermalTier, diag: CanonicalHeatmapDiagStats): void {
   if (tier === "very_weak" || tier === "weak") diag.weakLevelsDrawn += 1;
   else if (tier === "medium") diag.mediumLevelsDrawn += 1;
-  else if (tier === "strong" || tier === "extreme") diag.dominantLevelsDrawn += 1;
+  else if (tier === "strong") diag.strongLevelsDrawn += 1;
+  else if (tier === "extreme") diag.extremeLevelsDrawn += 1;
 }
 
-function emitCanonicalDiag(): void {
+function emitCanonicalDiag(diag: CanonicalHeatmapDiagStats): void {
   if (!import.meta.env.DEV || !BOOKMAP_CANONICAL_HEATMAP_DIAG) return;
   const now = Date.now();
   if (now - lastCanonicalDiagLogMs < 2_000) return;
   lastCanonicalDiagLogMs = now;
-  console.debug("[BOOKMAP_CANONICAL_HEATMAP_V1_DIAG]", { ...lastCanonicalDiag });
-  if (lastCanonicalDiag.liveHistoricalHeightMismatchCount > 0) {
-    console.debug("[BOOKMAP_CANONICAL_HEATMAP_V1_MISMATCH]", {
+
+  console.debug("[BOOKMAP_CANONICAL_HEATMAP_V1_DIAG]", { ...diag });
+
+  const hRatio =
+    diag.avgHistoricalBandHeightPx > 0
+      ? diag.avgLiveBandHeightPx / diag.avgHistoricalBandHeightPx
+      : 1;
+  if (hRatio > 1.1 || hRatio < 0.9) {
+    console.warn("[BOOKMAP_CANONICAL_HEATMAP_V1_HEIGHT_MISMATCH]", {
+      avgHistoricalBandHeightPx: diag.avgHistoricalBandHeightPx,
+      avgLiveBandHeightPx: diag.avgLiveBandHeightPx,
+      ratio: hRatio,
       cause: CANONICAL_LEGACY_RIGHT_SIDE_MISMATCH_CAUSE,
-      liveHistoricalHeightMismatchCount: lastCanonicalDiag.liveHistoricalHeightMismatchCount,
+      fix:
+        "Unified resolveCanonicalPriceBandGeometry + resolveCanonicalLiquidityVisual; " +
+        "live uses one bucket-width seam + bucket-tiled projection with same band height.",
+    });
+  }
+  if (diag.liveHistoricalHeightMismatchCount > 0 || diag.liveHistoricalAlphaMismatchCount > 0) {
+    console.debug("[BOOKMAP_CANONICAL_HEATMAP_V1_MISMATCH]", {
+      liveHistoricalHeightMismatchCount: diag.liveHistoricalHeightMismatchCount,
+      liveHistoricalAlphaMismatchCount: diag.liveHistoricalAlphaMismatchCount,
+      legacyCause: CANONICAL_LEGACY_RIGHT_SIDE_MISMATCH_CAUSE,
     });
   }
 }
@@ -423,6 +430,7 @@ export function paintBookmapCanonicalHeatmapFrame(
   metrics: CanonicalPlotMetrics,
 ): CanonicalHeatmapDiagStats {
   heightByPriceLayer.clear();
+  alphaByPriceLayer.clear();
 
   if (!BOOKMAP_CANONICAL_HEATMAP_V1) {
     return { ...lastCanonicalDiag, canonicalRendererActive: false };
@@ -445,25 +453,30 @@ export function paintBookmapCanonicalHeatmapFrame(
     historicalLevelsDrawn: 0,
     liveLevelsInput: 0,
     liveLevelsDrawn: 0,
-    anchoredWallsDrawn: 0,
-    macroFarLevelsDrawn: 0,
+    wallLevelsDrawn: 0,
+    macroDomLevelsDrawn: 0,
+    weakLevelsDrawn: 0,
+    mediumLevelsDrawn: 0,
+    strongLevelsDrawn: 0,
+    extremeLevelsDrawn: 0,
     avgHistoricalBandHeightPx: 0,
     avgLiveBandHeightPx: 0,
     maxHistoricalBandHeightPx: 0,
     maxLiveBandHeightPx: 0,
     liveHistoricalHeightMismatchCount: 0,
-    dominantLevelsDrawn: 0,
-    mediumLevelsDrawn: 0,
-    weakLevelsDrawn: 0,
+    liveHistoricalAlphaMismatchCount: 0,
+    visiblePriceMin: minPrice,
+    visiblePriceMax: maxPrice,
     zoomRegime: regime,
     legacyMismatchCause: CANONICAL_LEGACY_RIGHT_SIDE_MISMATCH_CAUSE,
     timestamp: Date.now(),
   };
 
   let histHeightSum = 0;
+  let histHeightCount = 0;
   let liveHeightSum = 0;
+  let liveHeightCount = 0;
 
-  // ── Layer 1: Historical matrix ──
   const historicalInput = collectHistoricalCells(
     engine,
     dataEndTime,
@@ -485,7 +498,7 @@ export function paintBookmapCanonicalHeatmapFrame(
     const vi = cell.intensity ?? 0;
     if (vi < 0.04 && cell.maxSizeInBucket < 0.5) continue;
 
-    const geom = resolveCanonicalBandGeometry(
+    const geom = resolveCanonicalPriceBandGeometry(
       cell.price,
       metrics.priceToY,
       metrics.domBucketSize,
@@ -498,73 +511,39 @@ export function paintBookmapCanonicalHeatmapFrame(
     let w = bucketWidthPx(cell.timeBucket, metrics.timeToX);
     w = Math.min(w, Math.max(1, dataEdgeX - x0));
 
-    const visual = resolveCanonicalHeatLevelVisual(cell.maxSizeInBucket, {
+    const visual = resolveCanonicalLiquidityVisual(cell.maxSizeInBucket, {
       layer: "historical",
       regime,
       distancePct: pctFromMid(cell.price, params.spot),
       heatmapOpacity,
+      geometry: geom,
       intensityHint: vi,
     });
-    visual.bandHeightPx = geom.bandHeightPx;
-    visual.bandInsetPx = geom.bandInsetPx;
     recordTier(visual.thermalTier, diag);
-    drawCanonicalBand(ctx, x0, w, geom, visual, "historical", cell.price, diag);
-    histHeightSum += geom.bandHeightPx;
+    drawCanonicalLevel(ctx, x0, w, geom, visual, "historical", cell.price, diag);
+    histHeightSum += visual.bandHeightPx;
+    histHeightCount += 1;
     diag.historicalLevelsDrawn += 1;
-
-    if (regime === "macro" && pctFromMid(cell.price, params.spot) > 6) {
-      diag.macroFarLevelsDrawn += 1;
-    }
   }
 
-  // Lifecycle update (behaviour) — visual still canonical
-  const lifecycleLevels = BOOKMAP_LIMIT_ORDER_LIFECYCLE_V1
-    ? updateLimitOrderLifecycleEngine({
-        engine,
-        minPrice,
-        maxPrice,
-        spot: params.spot,
-        bestBid: engine.liveDomSelection?.bestBid ?? null,
-        bestAsk: engine.liveDomSelection?.bestAsk ?? null,
-        dataEndTime,
-        now: Date.now(),
-        regime,
-        priceBucketUsd: params.domBucketSize,
-      })
-    : [];
-
-  const liveLevels = collectCanonicalLiveLevels(
-    engine,
-    lifecycleLevels,
-    minPrice,
-    maxPrice,
-    minSize,
-  );
+  const liveLevels = collectCanonicalLiveLevels(engine, minPrice, maxPrice, minSize);
   diag.liveLevelsInput = liveLevels.length;
+
+  const projX0 = dataEdgeX;
+  const projX1 = metrics.timeToX(visibleEnd);
+  const hasProjection =
+    projX1 - projX0 >= 2 &&
+    visibleEnd > dataEndTime + BOOKMAP_LIVE_PROJECTION_MIN_GAP_MS;
 
   const livePriceKeys = new Set<string>();
 
-  // ── Layer 2+3: Live continuation (single pass, bucket grammar) ──
-  const projEnd = visibleEnd;
-  const projX0 = dataEdgeX;
-  const projX1 = metrics.timeToX(projEnd);
-  const projW = Math.max(0, projX1 - projX0);
-  const hasProjection = projW >= 2 && projEnd > dataEndTime + BOOKMAP_LIVE_PROJECTION_MIN_GAP_MS;
-
   for (const level of liveLevels) {
-    if (level.lifecycleState === "stale") continue;
     if (regime !== "macro") {
       const pct = pctFromMid(level.price, params.spot);
-      if (
-        pct > 8 &&
-        level.sizeBtc < CANONICAL_WALL_SIZE_BTC &&
-        !level.isWall
-      ) {
-        continue;
-      }
+      if (pct > 8 && level.sizeBtc < CANONICAL_WALL_SIZE_BTC) continue;
     }
 
-    const geom = resolveCanonicalBandGeometry(
+    const geom = resolveCanonicalPriceBandGeometry(
       level.price,
       metrics.priceToY,
       metrics.domBucketSize,
@@ -573,157 +552,127 @@ export function paintBookmapCanonicalHeatmapFrame(
     if (geom.yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
 
     const distPct = pctFromMid(level.price, params.spot);
-    if (regime === "macro" && distPct > 6 && level.sizeBtc >= minSize) {
-      diag.macroFarLevelsDrawn += 1;
+    if (regime === "macro" && distPct > 3 && level.sizeBtc >= minSize) {
+      diag.macroDomLevelsDrawn += 1;
     }
 
-    // Fading trail: bucket-tiled historical footprint (same geometry as matrix)
-    if (level.lifecycleState === "fading" && level.firstSeenTime != null) {
-      const trailStart = Math.max(visibleStart, level.firstSeenTime);
-      for (
-        let t = trailStart;
-        t < dataEndTime;
-        t += BOOKMAP_ENGINE_BUCKET_MS
-      ) {
-        const x = metrics.timeToX(t);
-        if (x >= dataEdgeX) break;
-        const w = Math.min(bucketWidthPx(t, metrics.timeToX), dataEdgeX - x);
-        const visual = resolveCanonicalHeatLevelVisual(level.sizeBtc, {
-          layer: "historical",
-          regime,
-          distancePct: distPct,
-          heatmapOpacity,
-          lifecycleState: "fading",
-          isWall: level.isWall,
-        });
-        drawCanonicalBand(ctx, x, w, geom, visual, "historical", level.price, diag);
-        diag.historicalLevelsDrawn += 1;
-      }
-      continue;
-    }
-
-    if (!level.isLive) continue;
-
-    const liveVisual = resolveCanonicalHeatLevelVisual(level.sizeBtc, {
+    const liveVisual = resolveCanonicalLiquidityVisual(level.sizeBtc, {
       layer: "live",
       regime,
       distancePct: distPct,
       heatmapOpacity,
-      lifecycleState: level.lifecycleState,
+      geometry: geom,
       isWall: level.isWall,
     });
     recordTier(liveVisual.thermalTier, diag);
 
-    // Data-edge seam: exactly ONE bucket wide (matches historical cell width)
     const edgeBucketStart = dataEndTime - BOOKMAP_ENGINE_BUCKET_MS;
     const edgeX = metrics.timeToX(edgeBucketStart);
     const edgeW = Math.min(bucketW, Math.max(1, dataEdgeX - edgeX));
-    drawCanonicalBand(ctx, edgeX, edgeW, geom, liveVisual, "live", level.price, diag);
+    drawCanonicalLevel(ctx, edgeX, edgeW, geom, liveVisual, "live", level.price, diag);
     livePriceKeys.add(`${level.side}:${level.price}`);
-    liveHeightSum += geom.bandHeightPx;
+    liveHeightSum += liveVisual.bandHeightPx;
+    liveHeightCount += 1;
     diag.liveLevelsDrawn += 1;
 
-    // Projection: same band height/alpha, tiled by bucket width (no dual-layer fattening)
-    if (hasProjection && liveVisual.shouldProjectLive) {
-      const projVisual = resolveCanonicalHeatLevelVisual(level.sizeBtc, {
+    if (hasProjection) {
+      const projVisual = resolveCanonicalLiquidityVisual(level.sizeBtc, {
         layer: "projection",
         regime,
         distancePct: distPct,
         heatmapOpacity,
-        lifecycleState: level.lifecycleState,
+        geometry: geom,
         isWall: level.isWall,
       });
       for (let x = projX0; x < projX1; x += bucketW) {
         const w = Math.min(bucketW, projX1 - x);
-        drawCanonicalBand(ctx, x, w, geom, projVisual, "live", level.price, diag);
+        drawCanonicalLevel(ctx, x, w, geom, projVisual, "live", level.price, diag);
       }
     }
   }
 
-  // ── Layer 2: Anchored important walls (single grammar) ──
-  const wallKeys = new Set<string>();
-  const wallEntries: Array<{
-    price: number;
-    side: "bid" | "ask";
-    size: number;
-    isLive: boolean;
-  }> = [];
-
+  const wallSeen = new Set<string>();
   for (const w of engine.walls ?? []) {
-    if (w.maxSeenSize >= CANONICAL_WALL_SIZE_BTC) {
-      wallEntries.push({
-        price: w.price,
-        side: w.side,
-        size: w.maxSeenSize,
-        isLive: !w.stale,
-      });
-    }
-  }
-  for (const b of engine.bands ?? []) {
-    if (isWallTier(b.tier) || b.maxSize >= CANONICAL_WALL_SIZE_BTC) {
-      wallEntries.push({
-        price: b.price,
-        side: b.side,
-        size: b.maxSize,
-        isLive: true,
-      });
-    }
-  }
+    if (w.maxSeenSize < CANONICAL_WALL_SIZE_BTC) continue;
+    const key = `${w.side}:${w.price}`;
+    if (wallSeen.has(key) || livePriceKeys.has(key)) continue;
+    wallSeen.add(key);
 
-  for (const wall of wallEntries) {
-    const key = `${wall.side}:${wall.price}`;
-    if (wallKeys.has(key)) continue;
-    wallKeys.add(key);
-    if (livePriceKeys.has(key)) continue;
-
-    const geom = resolveCanonicalBandGeometry(
-      wall.price,
+    const geom = resolveCanonicalPriceBandGeometry(
+      w.price,
       metrics.priceToY,
       metrics.domBucketSize,
     );
     if (geom.yTop + geom.bandHeightPx < HEATMAP_PAD.top - 2) continue;
 
-    const distPct = pctFromMid(wall.price, params.spot);
-    const wallVisual = resolveCanonicalHeatLevelVisual(wall.size, {
+    const wallVisual = resolveCanonicalLiquidityVisual(w.maxSeenSize, {
       layer: "wall",
       regime,
-      distancePct: distPct,
+      distancePct: pctFromMid(w.price, params.spot),
       heatmapOpacity,
+      geometry: geom,
       isWall: true,
     });
+    recordTier(wallVisual.thermalTier, diag);
 
     const histStart = metrics.timeToX(visibleStart);
     const histW = Math.max(1, dataEdgeX - histStart);
-    drawCanonicalBand(
-      ctx,
-      histStart,
-      histW,
-      geom,
-      wallVisual,
-      "historical",
-      wall.price,
-      diag,
-    );
+    drawCanonicalLevel(ctx, histStart, histW, geom, wallVisual, "historical", w.price, diag);
 
-    if (wall.isLive && hasProjection) {
+    if (hasProjection) {
       for (let x = projX0; x < projX1; x += bucketW) {
-        const w = Math.min(bucketW, projX1 - x);
-        drawCanonicalBand(ctx, x, w, geom, wallVisual, "live", wall.price, diag);
+        const bw = Math.min(bucketW, projX1 - x);
+        drawCanonicalLevel(ctx, x, bw, geom, wallVisual, "live", w.price, diag);
       }
     }
-    diag.anchoredWallsDrawn += 1;
+    diag.wallLevelsDrawn += 1;
   }
 
-  if (diag.historicalLevelsDrawn > 0) {
-    diag.avgHistoricalBandHeightPx = histHeightSum / diag.historicalLevelsDrawn;
+  for (const b of engine.bands ?? []) {
+    if (!isWallTier(b.tier) && b.maxSize < CANONICAL_WALL_SIZE_BTC) continue;
+    const key = `${b.side}:${b.price}`;
+    if (wallSeen.has(key) || livePriceKeys.has(key)) continue;
+    wallSeen.add(key);
+
+    const geom = resolveCanonicalPriceBandGeometry(
+      b.price,
+      metrics.priceToY,
+      metrics.domBucketSize,
+    );
+    if (geom.yTop + geom.bandHeightPx < HEATMAP_PAD.top - 2) continue;
+
+    const wallVisual = resolveCanonicalLiquidityVisual(b.maxSize, {
+      layer: "wall",
+      regime,
+      distancePct: pctFromMid(b.price, params.spot),
+      heatmapOpacity,
+      geometry: geom,
+      isWall: true,
+    });
+    recordTier(wallVisual.thermalTier, diag);
+
+    const histStart = metrics.timeToX(visibleStart);
+    const histW = Math.max(1, dataEdgeX - histStart);
+    drawCanonicalLevel(ctx, histStart, histW, geom, wallVisual, "historical", b.price, diag);
+
+    if (hasProjection) {
+      for (let x = projX0; x < projX1; x += bucketW) {
+        const bw = Math.min(bucketW, projX1 - x);
+        drawCanonicalLevel(ctx, x, bw, geom, wallVisual, "live", b.price, diag);
+      }
+    }
+    diag.wallLevelsDrawn += 1;
   }
-  if (diag.liveLevelsDrawn > 0) {
-    diag.avgLiveBandHeightPx = liveHeightSum / diag.liveLevelsDrawn;
+
+  if (histHeightCount > 0) {
+    diag.avgHistoricalBandHeightPx = histHeightSum / histHeightCount;
+  }
+  if (liveHeightCount > 0) {
+    diag.avgLiveBandHeightPx = liveHeightSum / liveHeightCount;
   }
 
   lastCanonicalDiag = diag;
-  emitCanonicalDiag();
-  void visibleEnd;
+  emitCanonicalDiag(diag);
   return diag;
 }
 
