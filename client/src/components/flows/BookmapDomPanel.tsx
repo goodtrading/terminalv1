@@ -19,6 +19,7 @@ import {
 } from "./bookmapDomVisual";
 import { BOOKMAP_PLOT_PAD } from "./bookmapViewportUtils";
 import {
+  buildRawDomLadderRows,
   buildScaffoldedDomRows,
   formatBookmapPrice,
   formatDomSize,
@@ -36,7 +37,12 @@ import {
   MAJOR_WALL_BTC,
   type ImportantLiquidityLevel,
 } from "./importantLiquidityLevels";
+import {
+  BOOKMAP_RAW_DOM_ROW_HEIGHT_PX,
+  useDesktopFullRawDomLadder,
+} from "@/lib/bookmapEngineConfig";
 import type { BookmapViewMode } from "./bookmapViewMode";
+import type { BookmapMarketSource } from "@shared/bookmapMarket";
 
 export type BookmapDomPanelProps = {
   snapshot?: LiquiditySnapshot | undefined;
@@ -52,6 +58,9 @@ export type BookmapDomPanelProps = {
   wallEntries?: DomWallEntry[];
   showImportantStrip?: boolean;
   showPlotBoundsDebug?: boolean;
+  followMode?: boolean;
+  marketMode?: BookmapMarketSource | "both";
+  market?: string;
 };
 
 function domBarWidthPct(size: number, maxSideSize: number): number {
@@ -342,9 +351,17 @@ export function BookmapDomPanel({
   wallEntries,
   showImportantStrip = false,
   showPlotBoundsDebug = false,
+  followMode = false,
+  marketMode = "spot",
+  market = "BTCUSDT",
 }: BookmapDomPanelProps) {
   const plotRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [plotHeight, setPlotHeight] = useState(0);
+  const [scrollBodyHeight, setScrollBodyHeight] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const userScrolledRef = useRef(false);
+  const isRawDomLadder = useDesktopFullRawDomLadder();
   const domFlags = getDomDisplayFlags(panelWidth);
   const { layout: columnLayout, showNumbers: widthAllowsNumbers, showSvp } = domFlags;
   const isLocalMode = viewMode === "local";
@@ -352,24 +369,72 @@ export function BookmapDomPanel({
   const gridClass = getDomGridClass(columnLayout);
 
   useEffect(() => {
-    const el = plotRef.current;
+    const el = isRawDomLadder ? scrollRef.current : plotRef.current;
     if (!el) return;
 
-    const sync = () => setPlotHeight(el.clientHeight);
+    const sync = () => {
+      if (isRawDomLadder) setScrollBodyHeight(el.clientHeight);
+      else setPlotHeight(el.clientHeight);
+    };
     const ro = new ResizeObserver(sync);
     ro.observe(el);
     sync();
     return () => ro.disconnect();
-  }, []);
+  }, [isRawDomLadder]);
+
+  useEffect(() => {
+    if (!isRawDomLadder) {
+      const el = plotRef.current;
+      if (!el) return;
+      const sync = () => setPlotHeight(el.clientHeight);
+      const ro = new ResizeObserver(sync);
+      ro.observe(el);
+      sync();
+      return () => ro.disconnect();
+    }
+  }, [isRawDomLadder]);
 
   const { priceRange, domBucketSize, priceToY } = scale;
 
-  const { rows, stats } = useMemo(() => {
-    if (plotHeight < 20) {
+  const ladderResult = useMemo(() => {
+    const effectiveHeight = isRawDomLadder ? scrollBodyHeight : plotHeight;
+    if (effectiveHeight < 20) {
       return {
         rows: [] as DomLadderRow[],
-        stats: { ladderRows: 0, liveRows: 0, lastKnownRows: 0, wallRows: 0 },
+        stats: {
+          ladderRows: 0,
+          liveRows: 0,
+          lastKnownRows: 0,
+          wallRows: 0,
+          expectedDomRowCount: 0,
+          zeroLiquidityRows: 0,
+          rowsWithBidLiquidity: 0,
+          rowsWithAskLiquidity: 0,
+          rawBidLevelsCount: 0,
+          rawAskLevelsCount: 0,
+          aggregatedBidLevelsCount: 0,
+          aggregatedAskLevelsCount: 0,
+          domUsesContinuousLadder: !isRawDomLadder,
+        },
       };
+    }
+    if (isRawDomLadder) {
+      return buildRawDomLadderRows({
+        bids: engineMode ? undefined : snapshot?.bids,
+        asks: engineMode ? undefined : snapshot?.asks,
+        engineBook: engineMode ? engineBook : undefined,
+        engineBids: engineMode ? undefined : engineBids,
+        engineAsks: engineMode ? undefined : engineAsks,
+        walls: wallEntries,
+        spot,
+        showDomNumbers: showNumbers,
+        market,
+        mode: marketMode,
+        followMode,
+        viewportHeight: scrollBodyHeight,
+        scrollTop,
+        depthPreset: scale.depthRangePreset,
+      });
     }
     return buildScaffoldedDomRows({
       bids: engineMode ? undefined : snapshot?.bids,
@@ -387,6 +452,7 @@ export function BookmapDomPanel({
       depthPreset: scale.depthRangePreset,
     });
   }, [
+    isRawDomLadder,
     engineMode,
     snapshot,
     engineBook,
@@ -397,10 +463,17 @@ export function BookmapDomPanel({
     priceRange,
     domBucketSize,
     plotHeight,
+    scrollBodyHeight,
+    scrollTop,
     priceToY,
     showNumbers,
     scale.depthRangePreset,
+    market,
+    marketMode,
+    followMode,
   ]);
+
+  const { rows, stats } = ladderResult;
 
   /** Continuous ladder — render full scaffold; do not filter to liquidity-only rows. */
   const renderRows = rows;
@@ -438,6 +511,10 @@ export function BookmapDomPanel({
     if (!importantLevels?.length) return null as ReadonlySet<number> | null;
     const s = new Set<number>();
     for (const l of importantLevels) {
+      if (isRawDomLadder) {
+        s.add(l.price);
+        continue;
+      }
       if (l.price < priceRange.minPrice || l.price > priceRange.maxPrice) continue;
       if (l.kind === "MAJOR_WALL" || l.sizeBtc >= MAJOR_WALL_BTC) {
         s.add(bucketPrice(l.price, domBucketSize));
@@ -446,7 +523,7 @@ export function BookmapDomPanel({
       }
     }
     return s;
-  }, [importantLevels, priceRange.minPrice, priceRange.maxPrice, domBucketSize]);
+  }, [importantLevels, isRawDomLadder, priceRange.minPrice, priceRange.maxPrice, domBucketSize]);
 
   const { wallsAbove, wallsBelow } = useMemo(() => {
     if (!showImportantStrip || !importantLevels?.length) {
@@ -463,8 +540,139 @@ export function BookmapDomPanel({
     };
   }, [importantLevels, priceRange, showImportantStrip]);
 
+  const centerRowIndex = useMemo(() => {
+    if (!rows.length || spot == null || !Number.isFinite(spot)) return 0;
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < rows.length; i++) {
+      const d = Math.abs(rows[i]!.price - spot);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }, [rows, spot]);
+
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!isRawDomLadder || !followMode || userScrolledRef.current) return;
+    const el = scrollRef.current;
+    if (!el || rows.length === 0 || scrollBodyHeight < 20) return;
+    const targetTop =
+      centerRowIndex * BOOKMAP_RAW_DOM_ROW_HEIGHT_PX -
+      scrollBodyHeight / 2 +
+      BOOKMAP_RAW_DOM_ROW_HEIGHT_PX / 2;
+    el.scrollTop = Math.max(0, targetTop);
+    setScrollTop(el.scrollTop);
+  }, [isRawDomLadder, followMode, centerRowIndex, rows.length, scrollBodyHeight, spot]);
+
+  useEffect(() => {
+    if (followMode) userScrolledRef.current = false;
+  }, [followMode]);
+
+  const renderDomRow = (
+    row: DomLadderRow,
+    layoutMode: "absolute" | "scroll",
+  ) => {
+    const hasLiquidity =
+      row.bidSize > 0 || row.askSize > 0 || row.hasHistoricalWall;
+    const wallOnly =
+      row.hasHistoricalWall &&
+      row.bidSize <= 0 &&
+      row.askSize <= 0 &&
+      row.bidState !== "wall" &&
+      row.askState !== "wall";
+    const importantHighlight = Boolean(highlightPrices?.has(row.price));
+    const isBestBid =
+      bestBidPrice != null && row.price === bestBidPrice && row.hasLiveBid;
+    const isBestAsk =
+      bestAskPrice != null && row.price === bestAskPrice && row.hasLiveAsk;
+    const h =
+      layoutMode === "scroll"
+        ? BOOKMAP_RAW_DOM_ROW_HEIGHT_PX
+        : Math.max(3, Math.min(22, row.barHeight));
+    const rowStyle =
+      layoutMode === "scroll"
+        ? { height: h }
+        : { top: row.y - h / 2, height: h };
+
+    return (
+      <div
+        key={row.price}
+        className={cn(
+          wallOnly ? "flex" : gridClass,
+          layoutMode === "absolute" && "pointer-events-none absolute left-0 right-0 z-10",
+          layoutMode === "scroll" && "relative shrink-0",
+          "border-b border-slate-800/25",
+          !hasLiquidity && !row.isSpotBucket && "opacity-45",
+          row.isSpotBucket &&
+            "z-[15] bg-amber-500/[0.12] border-amber-500/30",
+          isBestBid && !row.isSpotBucket && "bg-emerald-950/20",
+          isBestAsk && !row.isSpotBucket && "bg-red-950/15",
+          importantHighlight &&
+            !row.isSpotBucket &&
+            !isBestBid &&
+            !isBestAsk &&
+            "bg-slate-800/15",
+        )}
+        style={rowStyle}
+      >
+        {wallOnly ? (
+          <DomWallMarker row={row} />
+        ) : (
+          <DomRowCells
+            row={row}
+            layout={columnLayout}
+            showText={showNumbers}
+            showSvp={showSvp}
+            maxBidSize={maxBidSize}
+            maxAskSize={maxAskSize}
+            maxCobSize={maxCobSize}
+            maxSvpSize={maxSvpSize}
+          />
+        )}
+      </div>
+    );
+  };
+
+  const domHeaderBlock = (
+    <>
+      <div className="px-2 py-1.5">
+        <div className="text-[11px] font-mono font-bold uppercase tracking-widest text-slate-300">
+          DOM / COB
+        </div>
+        {import.meta.env.DEV && stats.ladderRows > 0 && (
+          <div className="text-[9px] font-mono text-slate-600 tabular-nums">
+            {isRawDomLadder ? "raw " : ""}
+            rows {stats.ladderRows}
+            {stats.rawBidLevelsCount > 0 || stats.rawAskLevelsCount > 0
+              ? ` · bids ${stats.rawBidLevelsCount} · asks ${stats.rawAskLevelsCount}`
+              : ""}
+            {stats.expectedDomRowCount > 0 && stats.expectedDomRowCount !== stats.ladderRows
+              ? ` / ${stats.expectedDomRowCount} exp`
+              : ""}
+            {" · "}live {stats.liveRows} · LK {stats.lastKnownRows}
+            {!showNumbers ? " · nums off" : ""}
+            {isRawDomLadder && followMode ? " · follow" : ""}
+          </div>
+        )}
+      </div>
+      <DomHeader layout={columnLayout} showSvp={showSvp} />
+      {showImportantStrip && wallsAbove.length > 0 && (
+        <div className="pointer-events-none border-t border-slate-700/30 px-2 py-1 text-[10px] font-mono text-red-300/90">
+          <div className="mb-0.5 font-semibold uppercase tracking-wide">Ask walls above</div>
+          {wallsAbove.map((l) => (
+            <div key={`a_${l.price}_${l.kind}`}>
+              {formatBookmapPrice(l.price)} · {formatDomSize(l.sizeBtc)} BTC
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || isRawDomLadder) return;
     console.debug("[DOM_SCAFFOLD]", {
       ...stats,
       viewportRendered: renderRows.length,
@@ -472,7 +680,46 @@ export function BookmapDomPanel({
       rangeMax: priceRange.maxPrice,
       domBucketSize,
     });
-  }, [stats, renderRows.length, priceRange, domBucketSize]);
+  }, [stats, renderRows.length, priceRange, domBucketSize, isRawDomLadder]);
+
+  if (isRawDomLadder) {
+    return (
+      <div
+        ref={plotRef}
+        className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#080d14]"
+      >
+        <div className="shrink-0 border-b border-slate-700/40 bg-[#0a1018]/98">
+          {domHeaderBlock}
+        </div>
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-[#080d14]"
+          onScroll={(event) => {
+            userScrolledRef.current = true;
+            setScrollTop(event.currentTarget.scrollTop);
+          }}
+        >
+          {stats.ladderRows === 0 ? (
+            <div className="flex h-full items-center justify-center p-4 text-center text-[12px] font-mono text-slate-500">
+              {scrollBodyHeight < 20 ? "…" : "No ladder rows"}
+            </div>
+          ) : (
+            renderRows.map((row) => renderDomRow(row, "scroll"))
+          )}
+        </div>
+        {showImportantStrip && wallsBelow.length > 0 && (
+          <div className="pointer-events-none shrink-0 border-t border-slate-700/40 bg-[#0a1018]/95 px-2 py-1 text-[10px] font-mono text-emerald-300/90">
+            <div className="mb-0.5 font-semibold uppercase tracking-wide">Bid walls below</div>
+            {wallsBelow.map((l) => (
+              <div key={`b_${l.price}_${l.kind}`}>
+                {formatBookmapPrice(l.price)} · {formatDomSize(l.sizeBtc)} BTC
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -480,33 +727,7 @@ export function BookmapDomPanel({
       className="relative h-full min-h-0 w-full flex-1 overflow-hidden bg-[#080d14]"
     >
       <div className="pointer-events-none absolute top-0 left-0 right-0 z-20 border-b border-slate-700/40 bg-[#0a1018]/98">
-        <div className="px-2 py-1.5">
-          <div className="text-[11px] font-mono font-bold uppercase tracking-widest text-slate-300">
-            DOM / COB
-          </div>
-          {import.meta.env.DEV && stats.ladderRows > 0 && (
-            <div className="text-[9px] font-mono text-slate-600 tabular-nums">
-              rows {stats.ladderRows}
-              {stats.expectedDomRowCount > 0 && stats.expectedDomRowCount !== stats.ladderRows
-                ? ` / ${stats.expectedDomRowCount} exp`
-                : ""}
-              {" · "}live {stats.liveRows} · LK {stats.lastKnownRows} · empty{" "}
-              {stats.zeroLiquidityRows}
-              {!showNumbers ? " · nums off" : ""}
-            </div>
-          )}
-        </div>
-        <DomHeader layout={columnLayout} showSvp={showSvp} />
-        {showImportantStrip && wallsAbove.length > 0 && (
-          <div className="pointer-events-none border-t border-slate-700/30 px-2 py-1 text-[10px] font-mono text-red-300/90">
-            <div className="mb-0.5 font-semibold uppercase tracking-wide">Ask walls above</div>
-            {wallsAbove.map((l) => (
-              <div key={`a_${l.price}_${l.kind}`}>
-                {formatBookmapPrice(l.price)} · {formatDomSize(l.sizeBtc)} BTC
-              </div>
-            ))}
-          </div>
-        )}
+        {domHeaderBlock}
       </div>
 
       {showPlotBoundsDebug && plotHeight > 0 && (
@@ -538,60 +759,7 @@ export function BookmapDomPanel({
           {plotHeight < 20 ? "…" : "No ladder rows"}
         </div>
       ) : (
-        renderRows.map((row) => {
-          const hasLiquidity =
-            row.bidSize > 0 || row.askSize > 0 || row.hasHistoricalWall;
-          const wallOnly =
-            row.hasHistoricalWall &&
-            row.bidSize <= 0 &&
-            row.askSize <= 0 &&
-            row.bidState !== "wall" &&
-            row.askState !== "wall";
-          const importantHighlight = Boolean(highlightPrices?.has(row.price));
-          const isBestBid =
-            bestBidPrice != null && row.price === bestBidPrice && row.hasLiveBid;
-          const isBestAsk =
-            bestAskPrice != null && row.price === bestAskPrice && row.hasLiveAsk;
-          const h = Math.max(3, Math.min(22, row.barHeight));
-          const top = row.y - h / 2;
-
-          return (
-            <div
-              key={row.price}
-              className={cn(
-                wallOnly ? "flex" : gridClass,
-                "pointer-events-none absolute left-0 right-0 z-10",
-                "border-b border-slate-800/25",
-                !hasLiquidity && !row.isSpotBucket && "opacity-45",
-                row.isSpotBucket &&
-                  "z-[15] bg-amber-500/[0.12] border-amber-500/30",
-                isBestBid && !row.isSpotBucket && "bg-emerald-950/20",
-                isBestAsk && !row.isSpotBucket && "bg-red-950/15",
-                importantHighlight &&
-                  !row.isSpotBucket &&
-                  !isBestBid &&
-                  !isBestAsk &&
-                  "bg-slate-800/15",
-              )}
-              style={{ top, height: h }}
-            >
-              {wallOnly ? (
-                <DomWallMarker row={row} />
-              ) : (
-                <DomRowCells
-                  row={row}
-                  layout={columnLayout}
-                  showText={showNumbers}
-                  showSvp={showSvp}
-                  maxBidSize={maxBidSize}
-                  maxAskSize={maxAskSize}
-                  maxCobSize={maxCobSize}
-                  maxSvpSize={maxSvpSize}
-                />
-              )}
-            </div>
-          );
-        })
+        renderRows.map((row) => renderDomRow(row, "absolute"))
       )}
     </div>
   );

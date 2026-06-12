@@ -376,6 +376,32 @@ export const BOOKMAP_DOM_MICRO_MAX_LADDER_STEP = 50;
 export const BOOKMAP_DOM_MAX_SCAFFOLD_ROWS = 240;
 
 /**
+ * STEP 1.6.2 — Desktop full raw DOM/COB ladder (no default bucket aggregation).
+ * Desktop-only: use exact exchange price levels + scroll/virtualization.
+ */
+export const BOOKMAP_DESKTOP_FULL_RAW_DOM_LADDER_V1 = true;
+
+/** Max raw bid/ask levels passed from desktop feed into DOM (matches Binance depth limit). */
+export const BOOKMAP_DESKTOP_DOM_RAW_DEPTH_LIMIT = 1_000;
+
+/** Binance BTCUSDT spot price tick (USD). */
+export const BOOKMAP_BTCUSDT_TICK_SIZE = 0.01;
+
+/** Fixed row height (px) for raw DOM scroll ladder. */
+export const BOOKMAP_RAW_DOM_ROW_HEIGHT_PX = 18;
+
+/** DEV-only full raw DOM ladder diagnostics (throttled 2s). */
+export const BOOKMAP_FULL_RAW_DOM_LADDER_DIAG = true;
+
+export function isDesktopBookmapRuntime(): boolean {
+  return import.meta.env.VITE_PLATFORM === "desktop";
+}
+
+export function useDesktopFullRawDomLadder(): boolean {
+  return isDesktopBookmapRuntime() && BOOKMAP_DESKTOP_FULL_RAW_DOM_LADDER_V1;
+}
+
+/**
  * B.5 — Clean surface renderer bypassing experimental visual pipeline.
  */
 export const BOOKMAP_SURFACE_RENDERER_V1 = false;

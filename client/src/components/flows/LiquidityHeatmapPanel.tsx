@@ -4213,6 +4213,9 @@ export function LiquidityHeatmapPanel({
               importantLevels={importantLevels}
               wallEntries={domWallEntries}
               showImportantStrip={showDomImportantStrip}
+              followMode={ladderAutoCenter}
+              marketMode={sourceMode}
+              market={symbol}
             />
           </div>
           <div

@@ -1,7 +1,11 @@
 import type { OrderbookLevel } from "./liquidityHeatmapUtils";
 import {
+  BOOKMAP_BTCUSDT_TICK_SIZE,
   BOOKMAP_DOM_FULL_DEPTH_DIAG,
   BOOKMAP_DOM_MAX_SCAFFOLD_ROWS,
+  BOOKMAP_FULL_RAW_DOM_LADDER_DIAG,
+  BOOKMAP_RAW_DOM_ROW_HEIGHT_PX,
+  useDesktopFullRawDomLadder,
 } from "@/lib/bookmapEngineConfig";
 import type { DepthRangePreset } from "@/lib/bookmapDepthRange";
 import {
@@ -246,6 +250,37 @@ export type DomFullDepthDiag = {
   maxDomRowsCap: number;
   domUsesContinuousLadder: boolean;
   domForcedByHeatmapBucket: boolean;
+};
+
+export type FullRawDomLadderDiag = {
+  featureEnabled: boolean;
+  market: string;
+  mode: string;
+  rawBidLevelsReceived: number;
+  rawAskLevelsReceived: number;
+  rawBidLevelsRendered: number;
+  rawAskLevelsRendered: number;
+  totalRawLevelsRendered: number;
+  domRowsTotal: number;
+  visibleDomViewportRows: number;
+  hiddenBecauseVirtualized: number;
+  skippedBecauseAggregation: number;
+  skippedBecauseRowCap: number;
+  skippedBecauseTooWeak: number;
+  skippedBecauseOutsideRange: number;
+  skippedBecauseZero: number;
+  aggregationEnabled: boolean;
+  domUsesRawPrices: boolean;
+  domUsesHeatmapBucket: boolean;
+  domUsesChartRange: boolean;
+  domUsesPriceAxisStep: boolean;
+  tickSize: number;
+  minRenderedPrice: number | null;
+  maxRenderedPrice: number | null;
+  currentPriceInsideDom: boolean;
+  followMode: boolean;
+  scrollOffset: number | null;
+  centerRowIndex: number | null;
 };
 
 export type DomScaffoldResult = {
@@ -1120,6 +1155,7 @@ function engineLevelsFromSnapshot(
 }
 
 let lastDomFullDepthDiagMs = 0;
+let lastFullRawDomLadderDiagMs = 0;
 
 export function emitDomFullDepthDiag(diag: DomFullDepthDiag): void {
   if (!import.meta.env.DEV || !BOOKMAP_DOM_FULL_DEPTH_DIAG) return;
@@ -1127,6 +1163,384 @@ export function emitDomFullDepthDiag(diag: DomFullDepthDiag): void {
   if (now - lastDomFullDepthDiagMs < 2_000) return;
   lastDomFullDepthDiagMs = now;
   console.debug("[BOOKMAP_DOM_FULL_DEPTH_DIAG]", diag);
+}
+
+export function emitFullRawDomLadderDiag(diag: FullRawDomLadderDiag): void {
+  if (!import.meta.env.DEV || !BOOKMAP_FULL_RAW_DOM_LADDER_DIAG) return;
+  const now = Date.now();
+  if (now - lastFullRawDomLadderDiagMs < 2_000) return;
+  lastFullRawDomLadderDiagMs = now;
+  console.debug("[BOOKMAP_FULL_RAW_DOM_LADDER_DIAG]", diag);
+}
+
+function resolveEngineLevelDisplay(level: DomEngineBookLevel): DomDepthSideDisplay {
+  const bucket = emptyDomDepthBucket(level.price);
+  applyLevelToDomDepthBucket(bucket, level);
+  return resolveDomDepthSideDisplay(bucket, level.side);
+}
+
+function ingestSideLevel(
+  map: Map<number, DomEngineBookLevel>,
+  level: DomEngineBookLevel,
+): void {
+  if (!Number.isFinite(level.price) || level.price <= 0) return;
+  const prev = map.get(level.price);
+  if (!prev) {
+    map.set(level.price, { ...level });
+    return;
+  }
+  const size = Math.max(prev.size, level.size);
+  const maxSeenSize = Math.max(prev.maxSeenSize, level.maxSeenSize);
+  map.set(level.price, {
+    price: level.price,
+    side: level.side,
+    size,
+    maxSeenSize,
+    stale: size <= 0 ? prev.stale && level.stale : false,
+    isImportant: prev.isImportant || level.isImportant,
+    isStructural: prev.isStructural || level.isStructural,
+    isMajor: prev.isMajor || level.isMajor,
+  });
+}
+
+function aggregateDomWallsByExactPrice(
+  walls: DomWallEntry[],
+): Map<number, DomBucketWalls> {
+  const byPrice = new Map<number, DomBucketWalls>();
+  for (const wall of walls) {
+    const price = wall.price;
+    if (!Number.isFinite(price) || price <= 0) continue;
+    const slot = byPrice.get(price) ?? {};
+    if (wall.side === "bid") slot.bid = { ...wall, bucketedPrice: price, price };
+    else slot.ask = { ...wall, bucketedPrice: price, price };
+    byPrice.set(price, slot);
+  }
+  return byPrice;
+}
+
+function snapshotToEngineSide(
+  levels: OrderbookLevel[],
+  side: "bid" | "ask",
+): DomEngineBookLevel[] {
+  return levels.map((l) => ({
+    price: l.price,
+    size: l.sizeBtc,
+    side,
+    maxSeenSize: l.sizeBtc,
+    stale: false,
+  }));
+}
+
+export type RawDomLadderResult = DomScaffoldResult & {
+  rawDiag: FullRawDomLadderDiag;
+};
+
+/**
+ * STEP 1.6.2 — Full raw DOM ladder: one row per exact feed price level (no bucket aggregation).
+ */
+export function buildRawDomLadderRows(params: {
+  bids?: OrderbookLevel[];
+  asks?: OrderbookLevel[];
+  engineBook?: DomEngineBook;
+  engineBids?: DomEngineBookLevel[];
+  engineAsks?: DomEngineBookLevel[];
+  walls?: DomWallEntry[];
+  spot: number | null;
+  showDomNumbers?: boolean;
+  majorWallBtc?: number;
+  tickSize?: number;
+  market?: string;
+  mode?: string;
+  followMode?: boolean;
+  viewportHeight?: number;
+  scrollTop?: number;
+  depthPreset?: DepthRangePreset;
+}): RawDomLadderResult {
+  const emptyStats: DomScaffoldStats = {
+    ladderRows: 0,
+    liveRows: 0,
+    lastKnownRows: 0,
+    wallRows: 0,
+    expectedDomRowCount: 0,
+    zeroLiquidityRows: 0,
+    rowsWithBidLiquidity: 0,
+    rowsWithAskLiquidity: 0,
+    rawBidLevelsCount: 0,
+    rawAskLevelsCount: 0,
+    aggregatedBidLevelsCount: 0,
+    aggregatedAskLevelsCount: 0,
+    domUsesContinuousLadder: false,
+  };
+
+  const tickSize = params.tickSize ?? BOOKMAP_BTCUSDT_TICK_SIZE;
+  const majorWallBtc = params.majorWallBtc ?? HEATMAP_MAJOR_WALL_BTC;
+  const showDomNumbers = params.showDomNumbers !== false;
+  const rowHeight = BOOKMAP_RAW_DOM_ROW_HEIGHT_PX;
+
+  const bidMap = new Map<number, DomEngineBookLevel>();
+  const askMap = new Map<number, DomEngineBookLevel>();
+
+  if (params.engineBook) {
+    for (const level of params.engineBook.bids) ingestSideLevel(bidMap, level);
+    for (const level of params.engineBook.asks) ingestSideLevel(askMap, level);
+  } else if (params.engineBids != null || params.engineAsks != null) {
+    for (const level of params.engineBids ?? []) ingestSideLevel(bidMap, level);
+    for (const level of params.engineAsks ?? []) ingestSideLevel(askMap, level);
+  } else {
+    for (const level of snapshotToEngineSide(params.bids ?? [], "bid")) {
+      ingestSideLevel(bidMap, level);
+    }
+    for (const level of snapshotToEngineSide(params.asks ?? [], "ask")) {
+      ingestSideLevel(askMap, level);
+    }
+  }
+
+  const rawBidLevelsReceived = bidMap.size;
+  const rawAskLevelsReceived = askMap.size;
+
+  const wallsMap = aggregateDomWallsByExactPrice(params.walls ?? []);
+  const priceSet = new Set<number>([...bidMap.keys(), ...askMap.keys(), ...wallsMap.keys()]);
+  const prices = Array.from(priceSet).sort((a, b) => b - a);
+
+  let maxBid = 0;
+  let maxAsk = 0;
+  let maxCob = 0;
+  for (const price of prices) {
+    const bidResolved = bidMap.has(price)
+      ? resolveEngineLevelDisplay(bidMap.get(price)!)
+      : { size: 0, state: "none" as const, lastKnownSize: 0, wallSize: 0, tier: "none" as const };
+    const askResolved = askMap.has(price)
+      ? resolveEngineLevelDisplay(askMap.get(price)!)
+      : { size: 0, state: "none" as const, lastKnownSize: 0, wallSize: 0, tier: "none" as const };
+    maxBid = Math.max(maxBid, bidResolved.size);
+    maxAsk = Math.max(maxAsk, askResolved.size);
+    maxCob = Math.max(maxCob, bidResolved.size + askResolved.size);
+  }
+
+  const spotPrice =
+    params.spot != null && Number.isFinite(params.spot) ? params.spot : null;
+
+  let svpRunning = 0;
+  let liveRows = 0;
+  let lastKnownRows = 0;
+  let wallRows = 0;
+  let zeroLiquidityRows = 0;
+  let rowsWithBidLiquidity = 0;
+  let rowsWithAskLiquidity = 0;
+  let rawBidLevelsRendered = 0;
+  let rawAskLevelsRendered = 0;
+
+  const lastIndex = prices.length - 1;
+  const labelEvery = Math.max(1, Math.floor(prices.length / 40));
+
+  const rows: DomLadderRow[] = prices.map((price, index) => {
+    const bidLevel = bidMap.get(price);
+    const askLevel = askMap.get(price);
+    const bidResolved = bidLevel
+      ? resolveEngineLevelDisplay(bidLevel)
+      : { size: 0, state: "none" as const, lastKnownSize: 0, wallSize: 0, tier: "none" as const };
+    const askResolved = askLevel
+      ? resolveEngineLevelDisplay(askLevel)
+      : { size: 0, state: "none" as const, lastKnownSize: 0, wallSize: 0, tier: "none" as const };
+
+    const bidSize = bidResolved.size;
+    const askSize = askResolved.size;
+    const bidState = bidResolved.state;
+    const askState = askResolved.state;
+    const hasLiveBid = bidState === "live";
+    const hasLiveAsk = askState === "live";
+    const hasLastKnownBid =
+      bidState === "lastKnown" || bidResolved.lastKnownSize > 0;
+    const hasLastKnownAsk =
+      askState === "lastKnown" || askResolved.lastKnownSize > 0;
+    const hasWallBid = bidState === "wall";
+    const hasWallAsk = askState === "wall";
+    const cobSize = bidSize + askSize;
+
+    if (bidLevel) rawBidLevelsRendered++;
+    if (askLevel) rawAskLevelsRendered++;
+    if (hasLiveBid || hasLiveAsk) liveRows++;
+    if (hasLastKnownBid || hasLastKnownAsk) lastKnownRows++;
+    if (bidSize > 0) rowsWithBidLiquidity++;
+    if (askSize > 0) rowsWithAskLiquidity++;
+    if (bidSize <= 0 && askSize <= 0 && !hasWallBid && !hasWallAsk) zeroLiquidityRows++;
+
+    const wallSlot = wallsMap.get(price);
+    let wallBid = wallSlot?.bid;
+    let wallAsk = wallSlot?.ask;
+    if (hasWallBid && !wallBid && bidResolved.tier !== "none") {
+      const tier = domWallTierToEntryTier(bidResolved.tier);
+      if (tier) {
+        wallBid = {
+          price,
+          bucketedPrice: price,
+          side: "bid",
+          wallSize: bidResolved.wallSize,
+          wallTier: tier,
+          wallIsStale: true,
+        };
+      }
+    }
+    if (hasWallAsk && !wallAsk && askResolved.tier !== "none") {
+      const tier = domWallTierToEntryTier(askResolved.tier);
+      if (tier) {
+        wallAsk = {
+          price,
+          bucketedPrice: price,
+          side: "ask",
+          wallSize: askResolved.wallSize,
+          wallTier: tier,
+          wallIsStale: true,
+        };
+      }
+    }
+    const hasHistoricalWall =
+      wallBid != null || wallAsk != null || hasWallBid || hasWallAsk;
+    if (hasHistoricalWall || hasWallBid || hasWallAsk) wallRows++;
+
+    const primaryWall =
+      wallBid && wallAsk
+        ? WALL_TIER_RANK[wallBid.wallTier] >= WALL_TIER_RANK[wallAsk.wallTier]
+          ? wallBid
+          : wallAsk
+        : wallBid ?? wallAsk;
+
+    svpRunning += cobSize;
+
+    const y = index * rowHeight + rowHeight / 2;
+    const isSpotBucket =
+      spotPrice != null && Math.abs(price - spotPrice) <= tickSize / 2;
+    const isMajorWall =
+      cobSize >= majorWallBtc ||
+      wallBid?.wallTier === "major" ||
+      wallAsk?.wallTier === "major" ||
+      (primaryWall?.wallSize ?? 0) >= majorWallBtc;
+    const onLabelGrid = index % labelEvery === 0;
+    const showLabel =
+      index === 0 ||
+      index === lastIndex ||
+      onLabelGrid ||
+      isSpotBucket ||
+      hasHistoricalWall;
+    const showDomText =
+      showDomNumbers && (bidSize > 0 || askSize > 0 || cobSize > 0 || isSpotBucket);
+
+    return {
+      price,
+      bidSize,
+      askSize,
+      bidState,
+      askState,
+      bidLastKnownSize: bidResolved.lastKnownSize,
+      askLastKnownSize: askResolved.lastKnownSize,
+      cobSize,
+      svpCumulative: svpRunning,
+      y,
+      bucketHeight: rowHeight,
+      barHeight: rowHeight,
+      isSpotBucket,
+      showLabel,
+      showTick: false,
+      showDomText,
+      isMajorWall,
+      bidBarPct: maxBid > 0 ? (bidSize / maxBid) * 100 : 0,
+      askBarPct: maxAsk > 0 ? (askSize / maxAsk) * 100 : 0,
+      cobBarPct: maxCob > 0 ? (cobSize / maxCob) * 100 : 0,
+      hasLiveBid,
+      hasLiveAsk,
+      hasHistoricalWall,
+      wallSize: primaryWall?.wallSize ?? 0,
+      wallSide: primaryWall?.side ?? null,
+      wallTier: primaryWall?.wallTier ?? null,
+      wallIsStale: primaryWall?.wallIsStale ?? false,
+      wallBid,
+      wallAsk,
+    };
+  });
+
+  const viewportHeight = params.viewportHeight ?? 0;
+  const scrollTop = params.scrollTop ?? 0;
+  const visibleDomViewportRows =
+    viewportHeight > 0
+      ? Math.min(rows.length, Math.ceil(viewportHeight / rowHeight) + 1)
+      : rows.length;
+  const hiddenBecauseVirtualized = Math.max(0, rows.length - visibleDomViewportRows);
+
+  let centerRowIndex: number | null = null;
+  if (spotPrice != null && rows.length > 0) {
+    let bestDist = Infinity;
+    for (let i = 0; i < rows.length; i++) {
+      const d = Math.abs(rows[i]!.price - spotPrice);
+      if (d < bestDist) {
+        bestDist = d;
+        centerRowIndex = i;
+      }
+    }
+  }
+
+  const minRenderedPrice = prices.length ? prices[prices.length - 1]! : null;
+  const maxRenderedPrice = prices.length ? prices[0]! : null;
+  const currentPriceInsideDom =
+    spotPrice != null &&
+    minRenderedPrice != null &&
+    maxRenderedPrice != null &&
+    spotPrice >= minRenderedPrice &&
+    spotPrice <= maxRenderedPrice;
+
+  const rawDiag: FullRawDomLadderDiag = {
+    featureEnabled: useDesktopFullRawDomLadder(),
+    market: params.market ?? "BTCUSDT",
+    mode: params.mode ?? "spot",
+    rawBidLevelsReceived,
+    rawAskLevelsReceived,
+    rawBidLevelsRendered,
+    rawAskLevelsRendered,
+    totalRawLevelsRendered: rows.length,
+    domRowsTotal: rows.length,
+    visibleDomViewportRows,
+    hiddenBecauseVirtualized,
+    skippedBecauseAggregation: 0,
+    skippedBecauseRowCap: 0,
+    skippedBecauseTooWeak: 0,
+    skippedBecauseOutsideRange: 0,
+    skippedBecauseZero: 0,
+    aggregationEnabled: false,
+    domUsesRawPrices: true,
+    domUsesHeatmapBucket: false,
+    domUsesChartRange: false,
+    domUsesPriceAxisStep: false,
+    tickSize,
+    minRenderedPrice,
+    maxRenderedPrice,
+    currentPriceInsideDom,
+    followMode: params.followMode ?? false,
+    scrollOffset: scrollTop,
+    centerRowIndex,
+  };
+
+  if (import.meta.env.DEV) {
+    emitFullRawDomLadderDiag(rawDiag);
+  }
+
+  return {
+    rows,
+    stats: {
+      ladderRows: rows.length,
+      liveRows,
+      lastKnownRows,
+      wallRows,
+      expectedDomRowCount: rows.length,
+      zeroLiquidityRows,
+      rowsWithBidLiquidity,
+      rowsWithAskLiquidity,
+      rawBidLevelsCount: rawBidLevelsReceived,
+      rawAskLevelsCount: rawAskLevelsReceived,
+      aggregatedBidLevelsCount: 0,
+      aggregatedAskLevelsCount: 0,
+      domUsesContinuousLadder: false,
+    },
+    rawDiag,
+  };
 }
 
 /**

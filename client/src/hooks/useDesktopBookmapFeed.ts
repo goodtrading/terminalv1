@@ -21,6 +21,10 @@ import {
   type DesktopBookmapHeatmapStats,
   type DesktopBookmapInputLevel,
 } from "@/lib/desktopBookmapHeatmapEngine";
+import {
+  BOOKMAP_DESKTOP_DOM_RAW_DEPTH_LIMIT,
+  useDesktopFullRawDomLadder,
+} from "@/lib/bookmapEngineConfig";
 import { publishDesktopFeedDiagnostics } from "@/lib/desktopDiagnostics";
 import { registerDesktopFeedReconnectHandler } from "@/lib/desktopFeedControl";
 
@@ -384,8 +388,11 @@ export function useDesktopBookmapFeed(
       "ask",
       DESKTOP_BOOKMAP_DEPTH_LIMIT,
     );
-    const bids = depthBids.slice(0, DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT);
-    const asks = depthAsks.slice(0, DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT);
+    const domDepthLimit = useDesktopFullRawDomLadder()
+      ? BOOKMAP_DESKTOP_DOM_RAW_DEPTH_LIMIT
+      : DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT;
+    const bids = depthBids.slice(0, domDepthLimit);
+    const asks = depthAsks.slice(0, domDepthLimit);
     rawBidsCountRef.current = rawBidsRef.current.size;
     rawAsksCountRef.current = rawAsksRef.current.size;
     if (!bids.length || !asks.length) {
@@ -958,7 +965,9 @@ export function useDesktopBookmapFeed(
       const payload = {
         symbol: cleanSymbol,
         bookDepthLimit: DESKTOP_BOOKMAP_DEPTH_LIMIT,
-        visibleDepthLimit: DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT,
+        visibleDepthLimit: useDesktopFullRawDomLadder()
+          ? BOOKMAP_DESKTOP_DOM_RAW_DEPTH_LIMIT
+          : DESKTOP_BOOKMAP_VISIBLE_DEPTH_LIMIT,
         rawBidsCount: rawBidsCountRef.current,
         rawAsksCount: rawAsksCountRef.current,
         visibleBidsCount: bidsCountRef.current,
