@@ -4,10 +4,13 @@ import {
   BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_V1,
   HISTORICAL_SURFACE_CACHE_KEY_PREFIX,
   HISTORICAL_SURFACE_CACHE_SAVE_MS,
+  HISTORICAL_SURFACE_INITIAL_BACKFILL_MS,
+  HISTORICAL_SURFACE_MAX_GAP_FILL_MS,
   HISTORICAL_SURFACE_MAX_ACTIVE_LEVELS,
   HISTORICAL_SURFACE_MAX_CELLS,
   HISTORICAL_SURFACE_MIN_SIZE_BTC,
   HISTORICAL_SURFACE_RETENTION_MS,
+  HISTORICAL_SURFACE_RENDER_MIN_INTENSITY,
 } from "@/lib/bookmapEngineConfig";
 import type { BookmapState } from "@/types/bookmapState";
 import type { LiveDomBookLevel } from "./bookmapLiveDomPriority";
@@ -45,11 +48,22 @@ export type ActiveRestingLiquidityLevel = {
 };
 
 export type HistoricalLiquiditySurfaceDiag = {
+  enabled: boolean;
+  rendererPath: string;
   visibleBucketCount: number;
   visiblePriceLevels: number;
   activeHistoricalCells: number;
   activeRestingLevels: number;
   maxLiquidityInViewport: number;
+  minLiquidityInViewport: number;
+  medianLiquidityInViewport: number;
+  intensityThreshold: number;
+  skippedCellsTooOld: number;
+  skippedCellsTooNew: number;
+  skippedCellsOutOfPrice: number;
+  skippedCellsBelowSize: number;
+  selectedLevelCount: number;
+  sourceLevelCount: number;
   cacheBucketCount: number;
   cacheMemoryEstimate: number;
   renderCellCountPerFrame: number;
@@ -126,10 +140,21 @@ function cacheKey(sourceKey: string): string {
 function emptyDiag(sourceKey: string): HistoricalLiquiditySurfaceDiag {
   return {
     visibleBucketCount: 0,
+    enabled: false,
+    rendererPath: "minimal-stable-historical-surface",
     visiblePriceLevels: 0,
     activeHistoricalCells: 0,
     activeRestingLevels: 0,
     maxLiquidityInViewport: 0,
+    minLiquidityInViewport: 0,
+    medianLiquidityInViewport: 0,
+    intensityThreshold: HISTORICAL_SURFACE_RENDER_MIN_INTENSITY,
+    skippedCellsTooOld: 0,
+    skippedCellsTooNew: 0,
+    skippedCellsOutOfPrice: 0,
+    skippedCellsBelowSize: 0,
+    selectedLevelCount: 0,
+    sourceLevelCount: 0,
     cacheBucketCount: 0,
     cacheMemoryEstimate: 0,
     renderCellCountPerFrame: 0,
@@ -211,8 +236,11 @@ function estimateBytes(store: SurfaceStore): number {
 function computeIntensity(size: number, peakSize: number, persistenceMs: number): number {
   const sizeScore = Math.log1p(Math.max(0, size)) / Math.log1p(120);
   const peakScore = Math.log1p(Math.max(0, peakSize)) / Math.log1p(180);
-  const persistenceScore = Math.min(0.22, persistenceMs / 60_000);
-  return Math.max(0.015, Math.min(1, sizeScore * 0.7 + peakScore * 0.2 + persistenceScore));
+  const persistenceScore = Math.min(0.28, persistenceMs / 90_000);
+  return Math.max(
+    HISTORICAL_SURFACE_RENDER_MIN_INTENSITY,
+    Math.min(1, sizeScore * 0.74 + peakScore * 0.18 + persistenceScore),
+  );
 }
 
 function selectLevels(
@@ -222,8 +250,8 @@ function selectLevels(
   midPrice: number | null | undefined,
 ): LiveDomBookLevel[] {
   const range = maxPrice - minPrice;
-  const expandedMin = minPrice - range * 0.12;
-  const expandedMax = maxPrice + range * 0.12;
+  const expandedMin = minPrice - range * 0.3;
+  const expandedMax = maxPrice + range * 0.3;
   const filtered = levels.filter(
     (level) =>
       level.size >= HISTORICAL_SURFACE_MIN_SIZE_BTC &&
@@ -235,11 +263,52 @@ function selectLevels(
     .sort((a, b) => {
       const aNear = Math.abs(a.price - mid);
       const bNear = Math.abs(b.price - mid);
-      const aScore = a.size * 10_000 - aNear;
-      const bScore = b.size * 10_000 - bNear;
+      const aNearPct = mid > 0 ? (aNear / mid) * 100 : 100;
+      const bNearPct = mid > 0 ? (bNear / mid) * 100 : 100;
+      const aScore = Math.log1p(a.size) * 20_000 + Math.max(0, 3 - aNearPct) * 3_000 - aNear;
+      const bScore = Math.log1p(b.size) * 20_000 + Math.max(0, 3 - bNearPct) * 3_000 - bNear;
       return bScore - aScore;
     })
     .slice(0, HISTORICAL_SURFACE_MAX_ACTIVE_LEVELS);
+}
+
+function writeSurfaceCell(params: {
+  store: SurfaceStore;
+  timeBucket: number;
+  price: number;
+  side: "bid" | "ask";
+  size: number;
+  previousSize: number;
+  peakSize: number;
+  firstSeenTs: number;
+  lastSeenTs: number;
+}): void {
+  const cKey = cellKey(params.timeBucket, params.price);
+  const existing = params.store.cells.get(cKey);
+  const bidSize = params.side === "bid" ? params.size : existing?.bidSize ?? 0;
+  const askSize = params.side === "ask" ? params.size : existing?.askSize ?? 0;
+  const maxSize = Math.max(existing?.maxSize ?? 0, bidSize, askSize, params.peakSize);
+  const currentSize = Math.max(bidSize, askSize);
+  const firstCellTs = existing?.firstSeenTs ?? params.firstSeenTs;
+  const persistenceMs = Math.max(0, params.lastSeenTs - params.firstSeenTs);
+  params.store.cells.set(cKey, {
+    timeBucket: params.timeBucket,
+    price: params.price,
+    side: bidSize >= askSize ? "bid" : "ask",
+    bidSize,
+    askSize,
+    maxSize,
+    firstSeenTs: firstCellTs,
+    lastSeenTs: params.lastSeenTs,
+    persistenceMs: Math.max(persistenceMs, params.lastSeenTs - firstCellTs),
+    stale: false,
+    decay: 1,
+    currentSize,
+    previousSize: params.previousSize,
+    peakSize: params.peakSize,
+    intensity: computeIntensity(currentSize, params.peakSize, persistenceMs),
+    sizeDelta: currentSize - params.previousSize,
+  });
 }
 
 function pruneStore(store: SurfaceStore, now: number): number {
@@ -273,21 +342,48 @@ function buildDiag(
   cells: HistoricalLiquiditySurfaceCell[],
   store: SurfaceStore,
   evictedCells: number,
+  skips: {
+    tooOld: number;
+    tooNew: number;
+    outOfPrice: number;
+    belowSize: number;
+  },
+  selectedLevelCount: number,
+  sourceLevelCount: number,
 ): HistoricalLiquiditySurfaceDiag {
   const bucketSet = new Set<number>();
   const priceSet = new Set<number>();
   let maxLiquidity = 0;
+  let minLiquidity = Number.POSITIVE_INFINITY;
+  const sizes: number[] = [];
   for (const cell of cells) {
     bucketSet.add(cell.timeBucket);
     priceSet.add(cell.price);
     maxLiquidity = Math.max(maxLiquidity, cell.maxSize);
+    minLiquidity = Math.min(minLiquidity, cell.maxSize);
+    sizes.push(cell.maxSize);
   }
+  sizes.sort((a, b) => a - b);
+  const medianLiquidity = sizes.length
+    ? sizes[Math.floor((sizes.length - 1) / 2)] ?? 0
+    : 0;
   return {
+    enabled: BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_V1,
+    rendererPath: "minimal-stable-historical-surface",
     visibleBucketCount: bucketSet.size,
     visiblePriceLevels: priceSet.size,
     activeHistoricalCells: cells.length,
     activeRestingLevels: store.active.size,
     maxLiquidityInViewport: maxLiquidity,
+    minLiquidityInViewport: Number.isFinite(minLiquidity) ? minLiquidity : 0,
+    medianLiquidityInViewport: medianLiquidity,
+    intensityThreshold: HISTORICAL_SURFACE_RENDER_MIN_INTENSITY,
+    skippedCellsTooOld: skips.tooOld,
+    skippedCellsTooNew: skips.tooNew,
+    skippedCellsOutOfPrice: skips.outOfPrice,
+    skippedCellsBelowSize: skips.belowSize,
+    selectedLevelCount,
+    sourceLevelCount,
     cacheBucketCount: new Set(Array.from(store.cells.values()).map((c) => c.timeBucket)).size,
     cacheMemoryEstimate: estimateBytes(store),
     renderCellCountPerFrame: 0,
@@ -325,6 +421,7 @@ export function updateHistoricalLiquiditySurface(
     params.midPrice,
   );
   const seenActive = new Set<string>();
+  const isColdStart = store.cells.size === 0;
 
   for (const level of selected) {
     const price = bucketPrice(level.price, params.priceBucketSize);
@@ -349,31 +446,29 @@ export function updateHistoricalLiquiditySurface(
     };
     store.active.set(key, active);
 
-    const cKey = cellKey(timeBucket, price);
-    const existing = store.cells.get(cKey);
-    const bidSize = level.side === "bid" ? level.size : existing?.bidSize ?? 0;
-    const askSize = level.side === "ask" ? level.size : existing?.askSize ?? 0;
-    const maxSize = Math.max(existing?.maxSize ?? 0, bidSize, askSize, peakSize);
-    const currentSize = Math.max(bidSize, askSize);
-    const firstCellTs = existing?.firstSeenTs ?? firstSeenTs;
-    store.cells.set(cKey, {
-      timeBucket,
-      price,
-      side: bidSize >= askSize ? "bid" : "ask",
-      bidSize,
-      askSize,
-      maxSize,
-      firstSeenTs: firstCellTs,
-      lastSeenTs: now,
-      persistenceMs: Math.max(persistenceMs, now - firstCellTs),
-      stale: false,
-      decay: 1,
-      currentSize,
-      previousSize,
-      peakSize,
-      intensity: computeIntensity(currentSize, peakSize, persistenceMs),
-      sizeDelta: currentSize - previousSize,
-    });
+    const previousBucket = prev
+      ? roundBucket(prev.lastUpdateTs, BOOKMAP_ENGINE_BUCKET_MS)
+      : roundBucket(now - HISTORICAL_SURFACE_INITIAL_BACKFILL_MS, BOOKMAP_ENGINE_BUCKET_MS);
+    const maxBackfillStart = isColdStart
+      ? now - HISTORICAL_SURFACE_INITIAL_BACKFILL_MS
+      : now - HISTORICAL_SURFACE_MAX_GAP_FILL_MS;
+    const startBucket = Math.max(
+      roundBucket(maxBackfillStart, BOOKMAP_ENGINE_BUCKET_MS),
+      Math.min(previousBucket + BOOKMAP_ENGINE_BUCKET_MS, timeBucket),
+    );
+    for (let bucket = startBucket; bucket <= timeBucket; bucket += BOOKMAP_ENGINE_BUCKET_MS) {
+      writeSurfaceCell({
+        store,
+        timeBucket: bucket,
+        price,
+        side: level.side,
+        size: level.size,
+        previousSize,
+        peakSize,
+        firstSeenTs,
+        lastSeenTs: now,
+      });
+    }
   }
 
   for (const [key, active] of Array.from(store.active.entries())) {
@@ -388,14 +483,37 @@ export function updateHistoricalLiquiditySurface(
   }
 
   const evictedCells = pruneStore(store, now);
+  const skips = {
+    tooOld: 0,
+    tooNew: 0,
+    outOfPrice: 0,
+    belowSize: 0,
+  };
   const visibleCells = Array.from(store.cells.values()).filter((cell) => {
     const end = cell.timeBucket + BOOKMAP_ENGINE_BUCKET_MS;
-    if (end < params.visibleStartTime || cell.timeBucket > params.visibleEndTime) return false;
-    if (cell.price < params.minPrice || cell.price > params.maxPrice) return false;
+    if (end < params.visibleStartTime) {
+      skips.tooOld += 1;
+      return false;
+    }
+    if (cell.timeBucket > params.visibleEndTime) {
+      skips.tooNew += 1;
+      return false;
+    }
+    if (cell.price < params.minPrice || cell.price > params.maxPrice) {
+      skips.outOfPrice += 1;
+      return false;
+    }
     const age = now - cell.lastSeenTs;
     cell.stale = age > BOOKMAP_ENGINE_BUCKET_MS * 6;
     cell.decay = cell.stale ? Math.max(0.18, 1 - age / HISTORICAL_SURFACE_RETENTION_MS) : 1;
-    return cell.maxSize >= HISTORICAL_SURFACE_MIN_SIZE_BTC;
+    if (
+      cell.maxSize < HISTORICAL_SURFACE_MIN_SIZE_BTC ||
+      cell.intensity < HISTORICAL_SURFACE_RENDER_MIN_INTENSITY
+    ) {
+      skips.belowSize += 1;
+      return false;
+    }
+    return true;
   });
 
   visibleCells.sort((a, b) => {
@@ -404,7 +522,15 @@ export function updateHistoricalLiquiditySurface(
     return bScore - aScore;
   });
   const cells = visibleCells.slice(0, HISTORICAL_SURFACE_MAX_CELLS);
-  const diag = buildDiag(sourceKey, cells, store, evictedCells);
+  const diag = buildDiag(
+    sourceKey,
+    cells,
+    store,
+    evictedCells,
+    skips,
+    selected.length,
+    params.levels.length,
+  );
   emitDiag(diag);
   saveStore(sourceKey, store, now);
 

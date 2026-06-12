@@ -7,6 +7,7 @@ import {
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG,
   BOOKMAP_MINIMAL_STABLE_RENDERER_V1,
+  HISTORICAL_SURFACE_MIN_CELL_WIDTH_MS,
 } from "@/lib/bookmapEngineConfig";
 import {
   intensityToPassiveLiquidityRgb,
@@ -79,10 +80,10 @@ function thermalFromSurfaceCell(cell: HistoricalLiquiditySurfaceCell): {
   intensity: number;
 } {
   const intensity = Math.max(cell.intensity, Math.min(1, cell.maxSize / 120));
-  const persistenceBoost = Math.min(0.16, cell.persistenceMs / 90_000);
-  const weakFloor = cell.maxSize < 5 ? 0.1 : 0.16;
+  const persistenceBoost = Math.min(0.2, cell.persistenceMs / 90_000);
+  const weakFloor = cell.maxSize < 1 ? 0.12 : cell.maxSize < 5 ? 0.16 : 0.2;
   const alpha =
-    Math.max(weakFloor, 0.12 + intensity * 0.46 + persistenceBoost) * cell.decay;
+    Math.max(weakFloor, 0.15 + intensity * 0.5 + persistenceBoost) * cell.decay;
   return {
     intensity,
     rgb: intensityToPassiveLiquidityRgb(intensity),
@@ -92,6 +93,14 @@ function thermalFromSurfaceCell(cell: HistoricalLiquiditySurfaceCell): {
 
 function bucketWidthPx(timeMs: number, timeToX: (t: number) => number): number {
   return Math.max(1, timeToX(timeMs + BOOKMAP_ENGINE_BUCKET_MS) - timeToX(timeMs));
+}
+
+function minSurfaceCellWidthPx(timeMs: number, timeToX: (t: number) => number): number {
+  return Math.max(
+    bucketWidthPx(timeMs, timeToX),
+    timeToX(timeMs + HISTORICAL_SURFACE_MIN_CELL_WIDTH_MS) - timeToX(timeMs),
+    1,
+  );
 }
 
 function fillBand(
@@ -185,10 +194,14 @@ export function drawMinimalStableWatermark(ctx: CanvasRenderingContext2D): void 
   ctx.strokeStyle = "rgba(0, 0, 0, 0.65)";
   ctx.lineWidth = 3;
   const x = HEATMAP_PAD.left + 6;
-  const y = HEATMAP_PAD.top + 14;
+  let y = HEATMAP_PAD.top + 14;
   ctx.fillStyle = "rgba(148, 163, 184, 0.92)";
   ctx.strokeText("MINIMAL STABLE BOOKMAP V1 ACTIVE", x, y);
   ctx.fillText("MINIMAL STABLE BOOKMAP V1 ACTIVE", x, y);
+  y += 14;
+  ctx.fillStyle = "rgba(34, 211, 238, 0.94)";
+  ctx.strokeText("HISTORICAL LIQUIDITY SURFACE V1 ACTIVE", x, y);
+  ctx.fillText("HISTORICAL LIQUIDITY SURFACE V1 ACTIVE", x, y);
   ctx.restore();
 }
 
@@ -210,6 +223,11 @@ export function paintMinimalStableBookmapFrame(
   const dataEdgeX = metrics.timeToX(dataEndTime);
   const opacity = params.visualSettings?.heatmap.opacity ?? 1;
   const bucketW = bucketWidthPx(dataEndTime - BOOKMAP_ENGINE_BUCKET_MS, metrics.timeToX);
+  const renderSkips = {
+    clippedTime: 0,
+    clippedPrice: 0,
+    tinyAlpha: 0,
+  };
 
   const surfaceCells = collectHistoricalSurfaceCells(
     engine,
@@ -223,19 +241,32 @@ export function paintMinimalStableBookmapFrame(
   if (surfaceCells.length > 0) {
     for (const cell of surfaceCells) {
       const geom = bandGeom(cell.price, metrics.priceToY, metrics.domBucketSize);
-      if (geom.yTop + geom.height < HEATMAP_PAD.top - 2) continue;
-      if (geom.yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
+      if (geom.yTop + geom.height < HEATMAP_PAD.top - 2) {
+        renderSkips.clippedPrice += 1;
+        continue;
+      }
+      if (geom.yTop > HEATMAP_PAD.top + metrics.plotH + 2) {
+        renderSkips.clippedPrice += 1;
+        continue;
+      }
 
       const x0 = metrics.timeToX(cell.timeBucket);
-      if (x0 >= dataEdgeX) continue;
+      if (x0 >= dataEdgeX) {
+        renderSkips.clippedTime += 1;
+        continue;
+      }
       const w = Math.min(
-        bucketW,
+        minSurfaceCellWidthPx(cell.timeBucket, metrics.timeToX),
         Math.max(1, dataEdgeX - x0),
-        Math.max(1, bucketWidthPx(cell.timeBucket, metrics.timeToX)),
       );
 
       const thermal = thermalFromSurfaceCell(cell);
-      fillBand(ctx, x0, w, geom, thermal.rgb, thermal.alpha * opacity * 0.78);
+      const alpha = thermal.alpha * opacity * 0.88;
+      if (alpha <= 0.004) {
+        renderSkips.tinyAlpha += 1;
+        continue;
+      }
+      fillBand(ctx, x0, w, geom, thermal.rgb, alpha);
       result.visibleHeatmapCells += 1;
     }
   } else {
@@ -275,7 +306,10 @@ export function paintMinimalStableBookmapFrame(
         lastHistoricalSurfaceRenderDiagMs = now;
         console.debug("[BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_RENDER]", {
           ...engine.historicalSurfaceDiag,
+          rendererPathActuallyUsed: "bookmapMinimalStableRenderer.surface",
+          visibleHistoricalCellCount: surfaceCells.length,
           renderCellCountPerFrame: result.visibleHeatmapCells,
+          renderSkippedCells: renderSkips,
         });
       }
     }
