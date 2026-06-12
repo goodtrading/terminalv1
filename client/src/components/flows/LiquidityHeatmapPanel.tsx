@@ -797,6 +797,7 @@ export function LiquidityHeatmapPanel({
     tradeMarket: activeTradeMarket,
     orderbookMarket: activeDomMarket,
   });
+  const rawDomSnapshot = desktopFeed.enabled ? desktopFeed.rawDomSnapshot : null;
 
   const primaryHeatmapState = desktopFeed.enabled
     ? desktopFeed.bookmapState
@@ -4207,7 +4208,15 @@ export function LiquidityHeatmapPanel({
             <BookmapDomPanel
               engineMode={useEngineRenderer && !desktopRawDom}
               engineBook={engineBookForDom}
-              snapshot={desktopRawDom ? latestLegacy : (useEngineRenderer ? undefined : latest)}
+              snapshot={
+                desktopRawDom && activeDomMarket === "spot"
+                  ? (rawDomSnapshot ?? latestLegacy)
+                  : desktopRawDom
+                    ? latestLegacy
+                    : useEngineRenderer
+                      ? undefined
+                      : latest
+              }
               spot={spot}
               scale={priceScale}
               panelWidth={safeDomWidth}
@@ -4218,6 +4227,8 @@ export function LiquidityHeatmapPanel({
               followMode={ladderAutoCenter}
               marketMode={sourceMode}
               market={symbol}
+              selectedDomSource={activeDomMarket}
+              feedVenue={desktopFeed.enabled ? "binance_spot" : "remote"}
             />
           </div>
           <div

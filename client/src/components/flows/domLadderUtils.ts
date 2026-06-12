@@ -3,6 +3,7 @@ import {
   BOOKMAP_BTCUSDT_TICK_SIZE,
   BOOKMAP_DOM_FULL_DEPTH_DIAG,
   BOOKMAP_DOM_MAX_SCAFFOLD_ROWS,
+  BOOKMAP_BINANCE_RAW_DOM_SOURCE_DIAG,
   BOOKMAP_FULL_RAW_DOM_LADDER_DIAG,
   BOOKMAP_RAW_DOM_ROW_HEIGHT_PX,
   BOOKMAP_RAW_DOM_STABILITY_DIAG,
@@ -199,6 +200,8 @@ export type DomLadderRow = {
   wallIsStale: boolean;
   wallBid?: DomWallEntry;
   wallAsk?: DomWallEntry;
+  /** Exact exchange price label for raw Binance DOM rows. */
+  priceLabel?: string;
 };
 
 export type DomScaffoldStats = {
@@ -310,6 +313,42 @@ export type RawDomStabilityDiag = {
   invalidRowsDropped: number;
   duplicateRowsDropped: number;
   grayOverlayDetectedOrSource: string | null;
+};
+
+export type BinanceRawDomSourceDiag = {
+  enabled: boolean;
+  selectedDomSource: string;
+  selectedMarketMode: string;
+  symbol: string;
+  feedVenue: string;
+  rawBidsReceived: number;
+  rawAsksReceived: number;
+  rawBidsAfterZeroFilter: number;
+  rawAsksAfterZeroFilter: number;
+  rawRowsBuilt: number;
+  visibleRowsRendered: number;
+  bestBidPrice: number | null;
+  bestAskPrice: number | null;
+  first10BidPrices: number[];
+  first10AskPrices: number[];
+  first10RenderedPrices: number[];
+  minRawBidPrice: number | null;
+  maxRawBidPrice: number | null;
+  minRawAskPrice: number | null;
+  maxRawAskPrice: number | null;
+  usesScaffoldRows: boolean;
+  usesChartRange: boolean;
+  usesHeatmapBucket: boolean;
+  usesPriceAxisStep: boolean;
+  usesChooseDomBucketSize: boolean;
+  syntheticZeroRowsCreated: number;
+  rowsWithNoBidNoAsk: number;
+  roundedRowsDetected: number;
+  suspiciousLargePriceStepDetected: boolean;
+  currentPriceInsideRenderedWindow: boolean;
+  followMode: boolean;
+  scrollTop: number | null;
+  scrollTargetIndex: number | null;
 };
 
 export type DomScaffoldResult = {
@@ -1186,6 +1225,7 @@ function engineLevelsFromSnapshot(
 let lastDomFullDepthDiagMs = 0;
 let lastFullRawDomLadderDiagMs = 0;
 let lastRawDomStabilityDiagMs = 0;
+let lastBinanceRawDomSourceDiagMs = 0;
 
 export function emitDomFullDepthDiag(diag: DomFullDepthDiag): void {
   if (!import.meta.env.DEV || !BOOKMAP_DOM_FULL_DEPTH_DIAG) return;
@@ -1257,28 +1297,80 @@ function snapshotToEngineSide(
     }));
 }
 
+export function formatRawBinanceDomPrice(
+  price: number,
+  tickSize = BOOKMAP_BTCUSDT_TICK_SIZE,
+): string {
+  if (!Number.isFinite(price)) return "—";
+  const decimals = tickSize >= 1 ? 0 : Math.max(0, Math.ceil(-Math.log10(tickSize)));
+  return price.toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function normalizeRawDomPriceKey(price: number, tickSize = BOOKMAP_BTCUSDT_TICK_SIZE): string {
+  const decimals = tickSize >= 1 ? 0 : Math.max(0, Math.ceil(-Math.log10(tickSize)));
+  return price.toFixed(decimals);
+}
+
+function isSuspiciousRoundGrid(prices: number[], minGap = 250): boolean {
+  if (prices.length < 4) return false;
+  const sample = prices.slice(0, Math.min(12, prices.length));
+  let roundGaps = 0;
+  for (let i = 1; i < sample.length; i++) {
+    const gap = Math.abs(sample[i - 1]! - sample[i]!);
+    if (gap >= minGap && gap % 50 === 0) roundGaps++;
+  }
+  return roundGaps >= 3;
+}
+
+export function emitBinanceRawDomSourceDiag(diag: BinanceRawDomSourceDiag): void {
+  if (!import.meta.env.DEV || !BOOKMAP_BINANCE_RAW_DOM_SOURCE_DIAG) return;
+  const now = Date.now();
+  if (now - lastBinanceRawDomSourceDiagMs < 2_000) return;
+  lastBinanceRawDomSourceDiagMs = now;
+  console.debug("[BOOKMAP_BINANCE_RAW_DOM_SOURCE_DIAG]", diag);
+}
+
+function logInvalidSyntheticRow(price: number, reason: string, source: string): void {
+  if (!import.meta.env.DEV) return;
+  console.warn("[BOOKMAP_RAW_DOM_INVALID_SYNTHETIC_ROW]", { price, reason, source });
+}
+
+function logSuspiciousPriceGrid(
+  samplePrices: number[],
+  medianGap: number,
+  reason: string,
+): void {
+  if (!import.meta.env.DEV) return;
+  console.warn("[BOOKMAP_RAW_DOM_SUSPICIOUS_PRICE_GRID]", {
+    samplePrices,
+    medianGap,
+    reason,
+  });
+}
+
 export type RawDomLadderResult = DomScaffoldResult & {
   rawDiag: FullRawDomLadderDiag;
   stabilityDiag: RawDomStabilityDiag;
+  sourceDiag: BinanceRawDomSourceDiag;
 };
 
 /**
- * STEP 1.6.2/1.6.3 — Full raw DOM ladder: one row per exact live feed price level.
+ * STEP 1.6.4 — Strict Binance Spot raw DOM: rows ONLY from live bid/ask arrays.
  */
 export function buildRawDomLadderRows(params: {
   bids?: OrderbookLevel[];
   asks?: OrderbookLevel[];
-  /** Ignored in raw mode — use snapshot bids/asks with exact exchange prices. */
-  engineBook?: DomEngineBook;
-  engineBids?: DomEngineBookLevel[];
-  engineAsks?: DomEngineBookLevel[];
-  walls?: DomWallEntry[];
   spot: number | null;
   showDomNumbers?: boolean;
   majorWallBtc?: number;
   tickSize?: number;
   market?: string;
   mode?: string;
+  selectedDomSource?: string;
+  feedVenue?: string;
   followMode?: boolean;
   viewportHeight?: number;
   scrollTop?: number;
@@ -1306,39 +1398,80 @@ export function buildRawDomLadderRows(params: {
   const showDomNumbers = params.showDomNumbers !== false;
   const rowHeight = BOOKMAP_RAW_DOM_ROW_HEIGHT_PX;
 
-  const bidMap = new Map<number, DomEngineBookLevel>();
-  const askMap = new Map<number, DomEngineBookLevel>();
-  let invalidRowsDropped = 0;
+  type RawRowSlot = {
+    price: number;
+    priceLabel: string;
+    bidSize: number;
+    askSize: number;
+    hasBidSource: boolean;
+    hasAskSource: boolean;
+  };
+
+  const rawRowsByPrice = new Map<string, RawRowSlot>();
   let duplicateRowsDropped = 0;
+  let invalidRowsDropped = 0;
 
-  for (const level of snapshotToEngineSide(params.bids ?? [], "bid")) {
-    if (bidMap.has(level.price)) duplicateRowsDropped++;
-    ingestSideLevel(bidMap, level);
-  }
-  for (const level of snapshotToEngineSide(params.asks ?? [], "ask")) {
-    if (askMap.has(level.price)) duplicateRowsDropped++;
-    ingestSideLevel(askMap, level);
-  }
+  const ingestRawLevel = (level: OrderbookLevel, side: "bid" | "ask") => {
+    if (!Number.isFinite(level.price) || level.price <= 0) {
+      invalidRowsDropped++;
+      return;
+    }
+    if (!Number.isFinite(level.sizeBtc) || level.sizeBtc <= 0) {
+      invalidRowsDropped++;
+      return;
+    }
+    const priceKey = normalizeRawDomPriceKey(level.price, tickSize);
+    const existing = rawRowsByPrice.get(priceKey);
+    if (existing) {
+      duplicateRowsDropped++;
+      if (side === "bid") {
+        existing.bidSize = level.sizeBtc;
+        existing.hasBidSource = true;
+      } else {
+        existing.askSize = level.sizeBtc;
+        existing.hasAskSource = true;
+      }
+      return;
+    }
+    rawRowsByPrice.set(priceKey, {
+      price: level.price,
+      priceLabel: formatRawBinanceDomPrice(level.price, tickSize),
+      bidSize: side === "bid" ? level.sizeBtc : 0,
+      askSize: side === "ask" ? level.sizeBtc : 0,
+      hasBidSource: side === "bid",
+      hasAskSource: side === "ask",
+    });
+  };
 
-  const rawBidLevelsReceived = bidMap.size;
-  const rawAskLevelsReceived = askMap.size;
+  const rawBidsReceived = params.bids?.length ?? 0;
+  const rawAsksReceived = params.asks?.length ?? 0;
+  for (const level of params.bids ?? []) ingestRawLevel(level, "bid");
+  for (const level of params.asks ?? []) ingestRawLevel(level, "ask");
 
-  const prices = Array.from(
-    new Set<number>([...bidMap.keys(), ...askMap.keys()]),
-  ).sort((a, b) => b - a);
+  const rawBidLevelsReceived = [...rawRowsByPrice.values()].filter((r) => r.hasBidSource).length;
+  const rawAskLevelsReceived = [...rawRowsByPrice.values()].filter((r) => r.hasAskSource).length;
 
-  const minRawPrice = prices.length ? prices[prices.length - 1]! : null;
-  const maxRawPrice = prices.length ? prices[0]! : null;
+  const sortedSlots = [...rawRowsByPrice.values()]
+    .filter((slot) => slot.bidSize > 0 || slot.askSize > 0)
+    .sort((a, b) => b.price - a.price);
+
+  const bidPrices = sortedSlots.filter((s) => s.bidSize > 0).map((s) => s.price);
+  const askPrices = sortedSlots.filter((s) => s.askSize > 0).map((s) => s.price);
+  const bestBidPrice = bidPrices.length ? Math.max(...bidPrices) : null;
+  const bestAskPrice = askPrices.length ? Math.min(...askPrices) : null;
+
+  const minRawBidPrice = bidPrices.length ? Math.min(...bidPrices) : null;
+  const maxRawBidPrice = bidPrices.length ? Math.max(...bidPrices) : null;
+  const minRawAskPrice = askPrices.length ? Math.min(...askPrices) : null;
+  const maxRawAskPrice = askPrices.length ? Math.max(...askPrices) : null;
 
   let maxBid = 0;
   let maxAsk = 0;
   let maxCob = 0;
-  for (const price of prices) {
-    const bidSize = bidMap.get(price)?.size ?? 0;
-    const askSize = askMap.get(price)?.size ?? 0;
-    maxBid = Math.max(maxBid, bidSize);
-    maxAsk = Math.max(maxAsk, askSize);
-    maxCob = Math.max(maxCob, bidSize + askSize);
+  for (const slot of sortedSlots) {
+    maxBid = Math.max(maxBid, slot.bidSize);
+    maxAsk = Math.max(maxAsk, slot.askSize);
+    maxCob = Math.max(maxCob, slot.bidSize + slot.askSize);
   }
 
   const spotPrice =
@@ -1346,7 +1479,9 @@ export function buildRawDomLadderRows(params: {
   const centerPrice =
     params.centerPrice != null && Number.isFinite(params.centerPrice)
       ? params.centerPrice
-      : spotPrice;
+      : bestBidPrice != null && bestAskPrice != null
+        ? (bestBidPrice + bestAskPrice) / 2
+        : spotPrice ?? bestBidPrice ?? bestAskPrice;
 
   let svpRunning = 0;
   let liveRows = 0;
@@ -1354,20 +1489,19 @@ export function buildRawDomLadderRows(params: {
   let rowsWithAskLiquidity = 0;
   let rawBidRows = 0;
   let rawAskRows = 0;
-  let zeroOnlyRowsCreated = 0;
+  let rowsWithNoBidNoAsk = 0;
 
-  const lastIndex = prices.length - 1;
-  const labelEvery = Math.max(1, Math.floor(prices.length / 40));
-
-  const rows: DomLadderRow[] = prices.map((price, index) => {
-    const bidLevel = bidMap.get(price);
-    const askLevel = askMap.get(price);
-    const bidSize = bidLevel?.size ?? 0;
-    const askSize = askLevel?.size ?? 0;
-    const hasLiveBid = bidSize > 0 && bidLevel != null;
-    const hasLiveAsk = askSize > 0 && askLevel != null;
+  const rows: DomLadderRow[] = sortedSlots.map((slot, index) => {
+    const bidSize = slot.bidSize;
+    const askSize = slot.askSize;
+    const hasLiveBid = bidSize > 0;
+    const hasLiveAsk = askSize > 0;
     const cobSize = bidSize + askSize;
 
+    if (!hasLiveBid && !hasLiveAsk) {
+      rowsWithNoBidNoAsk++;
+      logInvalidSyntheticRow(slot.price, "no_bid_no_ask", "strict_binance_raw_dom");
+    }
     if (hasLiveBid) {
       rawBidRows++;
       rowsWithBidLiquidity++;
@@ -1378,25 +1512,17 @@ export function buildRawDomLadderRows(params: {
       rowsWithAskLiquidity++;
       liveRows++;
     }
-    if (!hasLiveBid && !hasLiveAsk) zeroOnlyRowsCreated++;
 
     svpRunning += cobSize;
 
-    const y = index * rowHeight + rowHeight / 2;
     const isSpotBucket =
-      centerPrice != null && Math.abs(price - centerPrice) <= tickSize / 2;
-    const isMajorWall = cobSize >= majorWallBtc;
-    const onLabelGrid = index % labelEvery === 0;
-    const showLabel =
-      index === 0 ||
-      index === lastIndex ||
-      onLabelGrid ||
-      isSpotBucket;
-    const showDomText =
-      showDomNumbers && (bidSize > 0 || askSize > 0 || isSpotBucket);
+      centerPrice != null && Math.abs(slot.price - centerPrice) <= tickSize;
+    const isBestBid = bestBidPrice != null && slot.price === bestBidPrice && hasLiveBid;
+    const isBestAsk = bestAskPrice != null && slot.price === bestAskPrice && hasLiveAsk;
 
     return {
-      price,
+      price: slot.price,
+      priceLabel: slot.priceLabel,
       bidSize,
       askSize,
       bidState: hasLiveBid ? ("live" as const) : ("none" as const),
@@ -1405,14 +1531,14 @@ export function buildRawDomLadderRows(params: {
       askLastKnownSize: 0,
       cobSize,
       svpCumulative: svpRunning,
-      y,
+      y: index * rowHeight + rowHeight / 2,
       bucketHeight: rowHeight,
       barHeight: rowHeight,
-      isSpotBucket,
-      showLabel,
+      isSpotBucket: isSpotBucket || isBestBid || isBestAsk,
+      showLabel: true,
       showTick: false,
-      showDomText,
-      isMajorWall,
+      showDomText: showDomNumbers && (hasLiveBid || hasLiveAsk),
+      isMajorWall: cobSize >= majorWallBtc,
       bidBarPct: maxBid > 0 ? (bidSize / maxBid) * 100 : 0,
       askBarPct: maxAsk > 0 ? (askSize / maxAsk) * 100 : 0,
       cobBarPct: maxCob > 0 ? (cobSize / maxCob) * 100 : 0,
@@ -1425,6 +1551,28 @@ export function buildRawDomLadderRows(params: {
       wallIsStale: false,
     };
   });
+
+  const renderedPrices = rows.map((r) => r.price);
+  const suspiciousLargePriceStepDetected = isSuspiciousRoundGrid(renderedPrices);
+  if (suspiciousLargePriceStepDetected && renderedPrices.length >= 4) {
+    const gaps: number[] = [];
+    for (let i = 1; i < Math.min(12, renderedPrices.length); i++) {
+      gaps.push(Math.abs(renderedPrices[i - 1]! - renderedPrices[i]!));
+    }
+    gaps.sort((a, b) => a - b);
+    const medianGap = gaps[Math.floor(gaps.length / 2)] ?? 0;
+    logSuspiciousPriceGrid(
+      renderedPrices.slice(0, 10),
+      medianGap,
+      "rendered_dom_prices_have_large_round_gaps",
+    );
+  }
+
+  for (const row of rows) {
+    if (row.bidSize <= 0 && row.askSize <= 0) {
+      logInvalidSyntheticRow(row.price, "zero_only_row_rendered", "strict_binance_raw_dom");
+    }
+  }
 
   const viewportHeight = params.viewportHeight ?? 0;
   const scrollTop = params.scrollTop ?? 0;
@@ -1446,8 +1594,8 @@ export function buildRawDomLadderRows(params: {
     }
   }
 
-  const minRenderedPrice = minRawPrice;
-  const maxRenderedPrice = maxRawPrice;
+  const minRenderedPrice = renderedPrices.length ? renderedPrices[renderedPrices.length - 1]! : null;
+  const maxRenderedPrice = renderedPrices.length ? renderedPrices[0]! : null;
   const nearestRowToCurrentPrice =
     centerRowIndex != null && rows[centerRowIndex]
       ? rows[centerRowIndex]!.price
@@ -1470,6 +1618,42 @@ export function buildRawDomLadderRows(params: {
     centerRowIndex >= firstVisibleIndex &&
     centerRowIndex <= lastVisibleIndex;
 
+  const sourceDiag: BinanceRawDomSourceDiag = {
+    enabled: useDesktopFullRawDomLadder(),
+    selectedDomSource: params.selectedDomSource ?? "spot",
+    selectedMarketMode: params.mode ?? "spot",
+    symbol: params.market ?? "BTCUSDT",
+    feedVenue: params.feedVenue ?? "binance_spot",
+    rawBidsReceived,
+    rawAsksReceived,
+    rawBidsAfterZeroFilter: rawBidLevelsReceived,
+    rawAsksAfterZeroFilter: rawAskLevelsReceived,
+    rawRowsBuilt: rows.length,
+    visibleRowsRendered: visibleDomViewportRows,
+    bestBidPrice,
+    bestAskPrice,
+    first10BidPrices: bidPrices.slice(0, 10),
+    first10AskPrices: askPrices.slice(0, 10),
+    first10RenderedPrices: renderedPrices.slice(0, 10),
+    minRawBidPrice,
+    maxRawBidPrice,
+    minRawAskPrice,
+    maxRawAskPrice,
+    usesScaffoldRows: false,
+    usesChartRange: false,
+    usesHeatmapBucket: false,
+    usesPriceAxisStep: false,
+    usesChooseDomBucketSize: false,
+    syntheticZeroRowsCreated: rowsWithNoBidNoAsk,
+    rowsWithNoBidNoAsk,
+    roundedRowsDetected: 0,
+    suspiciousLargePriceStepDetected,
+    currentPriceInsideRenderedWindow: currentPriceInsideDom,
+    followMode: params.followMode ?? false,
+    scrollTop,
+    scrollTargetIndex: centerRowIndex,
+  };
+
   const stabilityDiag: RawDomStabilityDiag = {
     rawModeEnabled: useDesktopFullRawDomLadder(),
     rawBidLevelsReceived,
@@ -1478,7 +1662,7 @@ export function buildRawDomLadderRows(params: {
     rawAskRows,
     mergedRawRows: rows.length,
     syntheticRowsCreated: 0,
-    zeroOnlyRowsCreated,
+    zeroOnlyRowsCreated: rowsWithNoBidNoAsk,
     rowsFromChartRange: 0,
     rowsFromHeatmapBucket: 0,
     rowsFromLocalDepth: 0,
@@ -1489,16 +1673,13 @@ export function buildRawDomLadderRows(params: {
     followMode: params.followMode ?? false,
     scrollTop,
     scrollTargetIndex: centerRowIndex,
-    minRawPrice,
-    maxRawPrice,
+    minRawPrice: minRenderedPrice,
+    maxRawPrice: maxRenderedPrice,
     renderedMinPrice: minRenderedPrice,
     renderedMaxPrice: maxRenderedPrice,
     invalidRowsDropped,
     duplicateRowsDropped,
-    grayOverlayDetectedOrSource:
-      rawBidLevelsReceived > 100
-        ? "feed_visible_depth_split_restored"
-        : null,
+    grayOverlayDetectedOrSource: null,
   };
 
   const rawDiag: FullRawDomLadderDiag = {
@@ -1517,7 +1698,7 @@ export function buildRawDomLadderRows(params: {
     skippedBecauseRowCap: 0,
     skippedBecauseTooWeak: 0,
     skippedBecauseOutsideRange: 0,
-    skippedBecauseZero: zeroOnlyRowsCreated,
+    skippedBecauseZero: rowsWithNoBidNoAsk,
     aggregationEnabled: false,
     domUsesRawPrices: true,
     domUsesHeatmapBucket: false,
@@ -1535,6 +1716,7 @@ export function buildRawDomLadderRows(params: {
   if (import.meta.env.DEV) {
     emitFullRawDomLadderDiag(rawDiag);
     emitRawDomStabilityDiag(stabilityDiag);
+    emitBinanceRawDomSourceDiag(sourceDiag);
   }
 
   return {
@@ -1545,7 +1727,7 @@ export function buildRawDomLadderRows(params: {
       lastKnownRows: 0,
       wallRows: 0,
       expectedDomRowCount: rows.length,
-      zeroLiquidityRows: zeroOnlyRowsCreated,
+      zeroLiquidityRows: rowsWithNoBidNoAsk,
       rowsWithBidLiquidity,
       rowsWithAskLiquidity,
       rawBidLevelsCount: rawBidLevelsReceived,
@@ -1556,6 +1738,7 @@ export function buildRawDomLadderRows(params: {
     },
     rawDiag,
     stabilityDiag,
+    sourceDiag,
   };
 }
 

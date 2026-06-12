@@ -396,6 +396,9 @@ export const BOOKMAP_FULL_RAW_DOM_LADDER_DIAG = true;
 /** DEV-only raw DOM stability diagnostics (throttled 2s). */
 export const BOOKMAP_RAW_DOM_STABILITY_DIAG = true;
 
+/** DEV-only strict Binance Spot raw DOM source diagnostics (throttled 2s). */
+export const BOOKMAP_BINANCE_RAW_DOM_SOURCE_DIAG = true;
+
 export function isDesktopBookmapRuntime(): boolean {
   return import.meta.env.VITE_PLATFORM === "desktop";
 }

@@ -23,6 +23,7 @@ import {
   buildScaffoldedDomRows,
   formatBookmapPrice,
   formatDomSize,
+  formatRawBinanceDomPrice,
   bucketPrice,
   type DomEngineBook,
   type DomEngineBookLevel,
@@ -61,6 +62,8 @@ export type BookmapDomPanelProps = {
   followMode?: boolean;
   marketMode?: BookmapMarketSource | "both";
   market?: string;
+  selectedDomSource?: BookmapMarketSource;
+  feedVenue?: string;
 };
 
 function domBarWidthPct(size: number, maxSideSize: number): number {
@@ -354,6 +357,8 @@ export function BookmapDomPanel({
   followMode = false,
   marketMode = "spot",
   market = "BTCUSDT",
+  selectedDomSource = "spot",
+  feedVenue = "binance_spot",
 }: BookmapDomPanelProps) {
   const plotRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -424,9 +429,10 @@ export function BookmapDomPanel({
         showDomNumbers: showNumbers,
         market,
         mode: marketMode,
+        selectedDomSource,
+        feedVenue,
         followMode,
         viewportHeight: scrollBodyHeight,
-        scrollTop,
       });
     }
 
@@ -487,6 +493,8 @@ export function BookmapDomPanel({
     market,
     marketMode,
     followMode,
+    selectedDomSource,
+    feedVenue,
   ]);
 
   const { rows, stats } = ladderResult;
@@ -648,7 +656,11 @@ export function BookmapDomPanel({
       <div
         key={`${row.price}`}
         className={cn(
-          wallOnly ? "flex" : gridClass,
+          layoutMode === "scroll"
+            ? "grid grid-cols-[minmax(74px,auto)_minmax(72px,1fr)_minmax(90px,1fr)_minmax(90px,1fr)_minmax(76px,1fr)] gap-0"
+            : wallOnly
+              ? "flex"
+              : gridClass,
           layoutMode === "absolute" && "pointer-events-none absolute left-0 right-0 z-10",
           layoutMode === "scroll" && "relative shrink-0",
           "border-b border-slate-800/25",
@@ -665,8 +677,32 @@ export function BookmapDomPanel({
         )}
         style={rowStyle}
       >
+        {layoutMode === "scroll" && (
+          <div className="flex items-center justify-end border-r border-slate-800/30 px-1">
+            <span
+              className={cn(
+                DOM_FONT_CLASS,
+                "text-[11px] tabular-nums",
+                row.isSpotBucket ? "text-amber-200" : "text-slate-400",
+              )}
+            >
+              {row.priceLabel ?? formatRawBinanceDomPrice(row.price)}
+            </span>
+          </div>
+        )}
         {wallOnly ? (
           <DomWallMarker row={row} />
+        ) : layoutMode === "scroll" ? (
+          <DomRowCells
+            row={row}
+            layout="full"
+            showText={showNumbers}
+            showSvp={showSvp}
+            maxBidSize={maxBidSize}
+            maxAskSize={maxAskSize}
+            maxCobSize={maxCobSize}
+            maxSvpSize={maxSvpSize}
+          />
         ) : (
           <DomRowCells
             row={row}
@@ -685,24 +721,49 @@ export function BookmapDomPanel({
 
   const domHeaderBlock = (
     <>
-      <div className="px-2 py-1.5">
-        <div className="text-[11px] font-mono font-bold uppercase tracking-widest text-slate-300">
-          DOM / COB
-        </div>
-        {import.meta.env.DEV && stats.ladderRows > 0 && (
-          <div className="text-[9px] font-mono text-slate-600 tabular-nums">
-            {isRawDomLadder ? "raw " : ""}
-            rows {stats.ladderRows}
-            {stats.rawBidLevelsCount > 0 || stats.rawAskLevelsCount > 0
-              ? ` · bids ${stats.rawBidLevelsCount} · asks ${stats.rawAskLevelsCount}`
-              : ""}
-            {" · "}live {stats.liveRows}
-            {!showNumbers ? " · nums off" : ""}
-            {isRawDomLadder && followMode ? " · follow" : ""}
+      {isRawDomLadder && (
+        <div className="shrink-0 border-b border-slate-700/40 bg-[#0a1018]/98">
+          <div className="px-2 py-1.5">
+            <div className="text-[11px] font-mono font-bold uppercase tracking-widest text-slate-300">
+              DOM / COB · Binance Spot Raw
+            </div>
+            {import.meta.env.DEV && stats.ladderRows > 0 && (
+              <div className="text-[9px] font-mono text-slate-600 tabular-nums">
+                raw rows {stats.ladderRows}
+                {stats.rawBidLevelsCount > 0 || stats.rawAskLevelsCount > 0
+                  ? ` · bids ${stats.rawBidLevelsCount} · asks ${stats.rawAskLevelsCount}`
+                  : ""}
+                {" · "}live {stats.liveRows}
+                {followMode ? " · follow" : ""}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <DomHeader layout={columnLayout} showSvp={showSvp} />
+          <div className="grid grid-cols-[minmax(74px,auto)_minmax(72px,1fr)_minmax(90px,1fr)_minmax(90px,1fr)_minmax(76px,1fr)] gap-0 border-b border-slate-700/50 bg-[#0a1018] px-0.5 py-1 text-[10px] font-mono uppercase tracking-wide text-slate-500">
+            <span className="px-1 text-right">Price</span>
+            <span className="text-center">COB</span>
+            <span className="text-center text-emerald-500">Bid</span>
+            <span className="text-center text-red-500">Ask</span>
+            {showSvp && <span className="text-center">SVP</span>}
+          </div>
+        </div>
+      )}
+      {!isRawDomLadder && (
+        <>
+          <div className="px-2 py-1.5">
+            <div className="text-[11px] font-mono font-bold uppercase tracking-widest text-slate-300">
+              DOM / COB
+            </div>
+            {import.meta.env.DEV && stats.ladderRows > 0 && (
+              <div className="text-[9px] font-mono text-slate-600 tabular-nums">
+                rows {stats.ladderRows}
+                {" · "}live {stats.liveRows}
+                {!showNumbers ? " · nums off" : ""}
+              </div>
+            )}
+          </div>
+          <DomHeader layout={columnLayout} showSvp={showSvp} />
+        </>
+      )}
       {showImportantStrip && wallsAbove.length > 0 && (
         <div className="pointer-events-none border-t border-slate-700/30 px-2 py-1 text-[10px] font-mono text-red-300/90">
           <div className="mb-0.5 font-semibold uppercase tracking-wide">Ask walls above</div>

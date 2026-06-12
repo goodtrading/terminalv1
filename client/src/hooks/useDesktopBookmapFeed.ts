@@ -92,22 +92,21 @@ function sanitizeSymbol(symbol: string): string {
   return symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || "BTCUSDT";
 }
 
-function parseLevel(raw: unknown, side: "bid" | "ask"): OrderbookLevel | null {
+function parseBookEntry(raw: unknown): { price: number; priceKey: string; sizeBtc: number } | null {
   if (!Array.isArray(raw) || raw.length < 2) return null;
-  const price = Number(raw[0]);
-  const sizeBtc = Number(raw[1]);
-  if (!Number.isFinite(price) || price <= 0) return null;
-  if (!Number.isFinite(sizeBtc) || sizeBtc <= 0) return null;
-  return { price, sizeBtc, side };
-}
-
-function parseBookEntry(raw: unknown): { price: number; sizeBtc: number } | null {
-  if (!Array.isArray(raw) || raw.length < 2) return null;
-  const price = Number(raw[0]);
-  const sizeBtc = Number(raw[1]);
+  const priceKeyRaw = typeof raw[0] === "string" ? raw[0].trim() : String(raw[0]);
+  const price = Number.parseFloat(priceKeyRaw);
+  const sizeBtc = Number.parseFloat(typeof raw[1] === "string" ? raw[1] : String(raw[1]));
   if (!Number.isFinite(price) || price <= 0) return null;
   if (!Number.isFinite(sizeBtc) || sizeBtc < 0) return null;
-  return { price, sizeBtc };
+  const priceKey = price.toFixed(2);
+  return { price, priceKey, sizeBtc };
+}
+
+function parseLevel(raw: unknown, side: "bid" | "ask"): OrderbookLevel | null {
+  const entry = parseBookEntry(raw);
+  if (!entry || entry.sizeBtc <= 0) return null;
+  return { price: entry.price, sizeBtc: entry.sizeBtc, side };
 }
 
 function parseLevels(rows: unknown[] | undefined, side: "bid" | "ask"): OrderbookLevel[] {
@@ -118,36 +117,37 @@ function parseLevels(rows: unknown[] | undefined, side: "bid" | "ask"): Orderboo
   return levels;
 }
 
-function replaceBookSideFromRows(book: Map<number, number>, rows: unknown[] | undefined): void {
+function replaceBookSideFromRows(book: Map<string, { price: number; priceKey: string; sizeBtc: number }>, rows: unknown[] | undefined): void {
   book.clear();
   for (const row of rows ?? []) {
     const entry = parseBookEntry(row);
     if (!entry || entry.sizeBtc <= 0) continue;
-    book.set(entry.price, entry.sizeBtc);
+    book.set(entry.priceKey, entry);
   }
 }
 
-function applyBookSideUpdates(book: Map<number, number>, rows: unknown[] | undefined): void {
+function applyBookSideUpdates(book: Map<string, { price: number; priceKey: string; sizeBtc: number }>, rows: unknown[] | undefined): void {
   for (const row of rows ?? []) {
     const entry = parseBookEntry(row);
     if (!entry) continue;
     if (entry.sizeBtc === 0) {
-      book.delete(entry.price);
+      book.delete(entry.priceKey);
     } else {
-      book.set(entry.price, entry.sizeBtc);
+      book.set(entry.priceKey, entry);
     }
   }
 }
 
 function visibleBookSide(
-  book: Map<number, number>,
+  book: Map<string, { price: number; priceKey: string; sizeBtc: number }>,
   side: "bid" | "ask",
   limit: number,
 ): OrderbookLevel[] {
-  return Array.from(book.entries())
-    .sort(([priceA], [priceB]) => (side === "bid" ? priceB - priceA : priceA - priceB))
+  return Array.from(book.values())
+    .filter((entry) => entry.sizeBtc > 0)
+    .sort((a, b) => (side === "bid" ? b.price - a.price : a.price - b.price))
     .slice(0, limit)
-    .map(([price, sizeBtc]) => ({ price, sizeBtc, side }));
+    .map((entry) => ({ price: entry.price, sizeBtc: entry.sizeBtc, side }));
 }
 
 function tradeDedupeKey(trade: HeatmapTrade): string {
@@ -186,8 +186,8 @@ export function useDesktopBookmapFeed(
     heatmapEngineRef.current.getStats(),
   );
   const lastUpdateRef = useRef<number | null>(null);
-  const rawBidsRef = useRef<Map<number, number>>(new Map());
-  const rawAsksRef = useRef<Map<number, number>>(new Map());
+  const rawBidsRef = useRef<Map<string, { price: number; priceKey: string; sizeBtc: number }>>(new Map());
+  const rawAsksRef = useRef<Map<string, { price: number; priceKey: string; sizeBtc: number }>>(new Map());
   const rawBidsCountRef = useRef(0);
   const rawAsksCountRef = useRef(0);
   const bidsCountRef = useRef(0);
@@ -208,6 +208,7 @@ export function useDesktopBookmapFeed(
   const reconnectCountRef = useRef(0);
 
   const [bookmapState, setBookmapState] = useState<BookmapState | null>(null);
+  const [rawDomSnapshot, setRawDomSnapshot] = useState<LiquiditySnapshot | null>(null);
   const [snapshotCount, setSnapshotCount] = useState(0);
   const [feedStatus, setFeedStatus] = useState<DesktopFeedStatus>(
     canUseSpotFeed ? "loading" : "offline",
@@ -331,6 +332,11 @@ export function useDesktopBookmapFeed(
     });
     heatmapStatsRef.current = heatmapResult.stats;
     setBookmapState(heatmapResult.state);
+    setRawDomSnapshot({
+      ts: snapshot.ts,
+      bids: snapshot.bids.map((level) => ({ ...level })),
+      asks: snapshot.asks.map((level) => ({ ...level })),
+    });
     publishDesktopFeedDiagnostics({
       provider: currentModeRef.current === "fallback-depth20" ? "Binance Spot depth20" : "Binance Spot local book",
       symbol: cleanSymbol,
@@ -486,6 +492,7 @@ export function useDesktopBookmapFeed(
     seenTradeKeysRef.current = new Set();
     rawBidsRef.current = new Map();
     rawAsksRef.current = new Map();
+    setRawDomSnapshot(null);
     heatmapEngineRef.current.reset();
     heatmapStatsRef.current = heatmapEngineRef.current.getStats();
     lastHeatmapCacheAtRef.current = 0;
@@ -569,6 +576,7 @@ export function useDesktopBookmapFeed(
     const resetLocalBook = () => {
       rawBidsRef.current = new Map();
       rawAsksRef.current = new Map();
+      setRawDomSnapshot(null);
       rawBidsCountRef.current = 0;
       rawAsksCountRef.current = 0;
       bidsCountRef.current = 0;
@@ -1056,6 +1064,7 @@ export function useDesktopBookmapFeed(
   return {
     enabled: canUseSpotFeed,
     bookmapState,
+    rawDomSnapshot,
     query,
     getSnapshots,
     snapshotCount,
