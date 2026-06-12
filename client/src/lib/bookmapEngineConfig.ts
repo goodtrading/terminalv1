@@ -376,8 +376,8 @@ export const BOOKMAP_DOM_MICRO_MAX_LADDER_STEP = 50;
 export const BOOKMAP_DOM_MICRO_COLLISION_BAND_PX = 2;
 export const BOOKMAP_DOM_MACRO_COLLISION_BAND_PX = 7;
 export const BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD = 500;
-export const BOOKMAP_DOM_MICRO_MIN_LABEL_SPACING_PX = 15;
-export const BOOKMAP_DOM_MICRO_MAX_LABELS_PER_COLUMN = 30;
+export const BOOKMAP_DOM_MICRO_MIN_LABEL_SPACING_PX = 22;
+export const BOOKMAP_DOM_MICRO_MAX_LABELS_PER_COLUMN = 24;
 
 /** Hard cap on scaffold rows (safety); adaptive to panel height in practice. */
 export const BOOKMAP_DOM_MAX_SCAFFOLD_ROWS = 240;
@@ -408,6 +408,21 @@ export const BOOKMAP_BINANCE_RAW_DOM_SOURCE_DIAG = true;
 
 /** DEV-only DOM value mapping diagnostics (throttled 2s). */
 export const BOOKMAP_DOM_VALUE_MAPPING_DIAG = true;
+
+/** DEV-only full DOM visibility diagnostics (throttled 2s). */
+export const BOOKMAP_DOM_FULL_VISIBILITY_DIAG = true;
+
+/** Pixels-per-dollar above which DOM renders individual raw levels. */
+export const BOOKMAP_DOM_INDIVIDUAL_PPD_THRESHOLD = 0.18;
+
+/** Pixels-per-dollar above which DOM uses hybrid (all bars, selective labels). */
+export const BOOKMAP_DOM_HYBRID_PPD_THRESHOLD = 0.04;
+
+/** Minimum adjacent raw-level gap (px) to force individual DOM mode. */
+export const BOOKMAP_DOM_INDIVIDUAL_MIN_GAP_PX = 3;
+
+/** Minimum BTC size for a visible level to require visual representation. */
+export const BOOKMAP_DOM_MIN_VISUAL_SIZE_BTC = 0;
 
 export function isDesktopBookmapRuntime(): boolean {
   return import.meta.env.VITE_PLATFORM === "desktop";

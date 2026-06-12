@@ -627,6 +627,22 @@ export function BookmapDomPanel({
               : ""}
             {" · "}live {stats.liveRows}
             {useRawBinanceMapping && selectedDomSource === "spot" ? " · spot map" : ""}
+            {"fullVisibilityDiag" in ladderResult &&
+            ladderResult.fullVisibilityDiag &&
+            ladderResult.fullVisibilityDiag.enabled ? (
+              <>
+                {" · "}
+                vis {ladderResult.fullVisibilityDiag.visibleBidLevelsInsidePriceRange}/
+                {ladderResult.fullVisibilityDiag.visibleAskLevelsInsidePriceRange}
+                {" · "}
+                {ladderResult.fullVisibilityDiag.renderMode}
+                {" · "}
+                bars {ladderResult.fullVisibilityDiag.bidBarsRendered}/
+                {ladderResult.fullVisibilityDiag.askBarsRendered}
+                {" · "}
+                hidden {ladderResult.fullVisibilityDiag.hiddenLevelsWithNoVisualRepresentation}
+              </>
+            ) : null}
             {followMode ? " · follow" : ""}
             {!showNumbers ? " · nums off" : ""}
           </div>
