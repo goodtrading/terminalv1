@@ -79,8 +79,11 @@ export type HistoricalLiquiditySurfaceDiag = {
   visiblePriceLevelsBelowPrice: number;
   domLadderTickSize: number;
   heatmapPriceBucketSize: number;
+  heatmapStorageBucketStep: number;
+  heatmapRenderSnapStep: number;
   effectiveRenderPriceStep: number;
   priceAxisStep: number;
+  domForcedByHeatmapBucket: boolean;
   visiblePriceMin: number;
   visiblePriceMax: number;
   visibleRangeAbovePrice: number;
@@ -117,7 +120,10 @@ type UpdateHistoricalLiquiditySurfaceParams = {
   state: BookmapState;
   levels: LiveDomBookLevel[];
   sourceKey: string;
+  /** Fine storage bucket (e.g. 2.5 USD) — not the DOM ladder step. */
   priceBucketSize: number;
+  domLadderStep: number;
+  heatmapRenderSnapStep: number;
   heatmapBucketSize: number;
   priceAxisStep: number;
   visibleStartTime: number;
@@ -195,8 +201,11 @@ function emptyDiag(sourceKey: string): HistoricalLiquiditySurfaceDiag {
     visiblePriceLevelsBelowPrice: 0,
     domLadderTickSize: 0,
     heatmapPriceBucketSize: 0,
+    heatmapStorageBucketStep: 0,
+    heatmapRenderSnapStep: 0,
     effectiveRenderPriceStep: 0,
     priceAxisStep: 0,
+    domForcedByHeatmapBucket: false,
     visiblePriceMin: 0,
     visiblePriceMax: 0,
     visibleRangeAbovePrice: 0,
@@ -431,6 +440,8 @@ function buildDiag(
   sourceLevelCount: number,
   midPrice: number | null | undefined,
   originalPriceBucketSize: number,
+  domLadderStep: number,
+  heatmapRenderSnapStep: number,
   heatmapPriceBucketSize: number,
   priceAxisStep: number,
   minPrice: number,
@@ -468,12 +479,10 @@ function buildDiag(
   const medianLiquidity = sizes.length
     ? sizes[Math.floor((sizes.length - 1) / 2)] ?? 0
     : 0;
-  const effectivePriceStep =
-    Number.isFinite(originalPriceBucketSize) && originalPriceBucketSize > 0
-      ? originalPriceBucketSize
-      : HISTORICAL_SURFACE_PRICE_BUCKET_USD;
+  const effectivePriceStep = heatmapRenderSnapStep;
   const rowsAlignedToDom = Array.from(priceSet).every(
-    (price) => Math.abs(bucketPrice(price, effectivePriceStep) - price) < 0.000_001,
+    (price) =>
+      Math.abs(Math.round(price / domLadderStep) * domLadderStep - price) < 0.000_001,
   );
   return {
     enabled: BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_V1,
@@ -494,8 +503,8 @@ function buildDiag(
     sourceLevelCount,
     bucketMergeFactor: 1,
     priceLevelMergeFactor:
-      originalPriceBucketSize > 0
-        ? Math.max(1, originalPriceBucketSize / HISTORICAL_SURFACE_PRICE_BUCKET_USD)
+      originalPriceBucketSize > 0 && domLadderStep > 0
+        ? Math.max(1, domLadderStep / originalPriceBucketSize)
         : 1,
     coldStartSeededCellCount,
     liveUpdatedCellCount,
@@ -504,10 +513,13 @@ function buildDiag(
     renderedStrongCells: strong,
     visiblePriceLevelsAbovePrice: abovePriceLevels.size,
     visiblePriceLevelsBelowPrice: belowPriceLevels.size,
-    domLadderTickSize: effectivePriceStep,
+    domLadderTickSize: domLadderStep,
     heatmapPriceBucketSize,
+    heatmapStorageBucketStep: originalPriceBucketSize,
+    heatmapRenderSnapStep,
     effectiveRenderPriceStep: effectivePriceStep,
     priceAxisStep,
+    domForcedByHeatmapBucket: false,
     visiblePriceMin: minPrice,
     visiblePriceMax: maxPrice,
     visibleRangeAbovePrice:
@@ -680,6 +692,8 @@ export function updateHistoricalLiquiditySurface(
     params.levels.length,
     params.midPrice,
     params.priceBucketSize,
+    params.domLadderStep,
+    params.heatmapRenderSnapStep,
     params.heatmapBucketSize,
     params.priceAxisStep,
     params.minPrice,

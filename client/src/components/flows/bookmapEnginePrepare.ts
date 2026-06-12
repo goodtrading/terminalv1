@@ -56,6 +56,7 @@ import {
   WALL_IMPORTANT_BTC,
   WALL_MAJOR_BTC,
   WALL_STRUCTURAL_BTC,
+  HISTORICAL_SURFACE_PRICE_BUCKET_USD,
 } from "@/lib/bookmapEngineConfig";
 import {
   classifyMatrixTierByIntensity,
@@ -2410,11 +2411,13 @@ export function prepareEngineRenderData(
   const historicalSurface = updateHistoricalLiquiditySurface({
     state,
     levels: bookLevels,
-    sourceKey: `${state.exchange}:${state.market ?? "spot"}:${state.symbol}:ladder:${Math.max(
+    sourceKey: `${state.exchange}:${state.market ?? "spot"}:${state.symbol}:dom:${Math.max(
       1,
-      domBucketSize || heatmapBucketSize || 1,
-    )}`,
-    priceBucketSize: Math.max(1, domBucketSize || heatmapBucketSize || 1),
+      domBucketSize || 1,
+    )}:store:${HISTORICAL_SURFACE_PRICE_BUCKET_USD}`,
+    priceBucketSize: HISTORICAL_SURFACE_PRICE_BUCKET_USD,
+    domLadderStep: Math.max(1, domBucketSize || 1),
+    heatmapRenderSnapStep: Math.max(1, domBucketSize || 1),
     heatmapBucketSize: Math.max(1, heatmapBucketSize || 1),
     priceAxisStep: Math.max(1, labelStep || domBucketSize || heatmapBucketSize || 1),
     visibleStartTime: dataEndTime - BOOKMAP_HISTORY_RETENTION_MS,

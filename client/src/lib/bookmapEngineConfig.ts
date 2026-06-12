@@ -334,16 +334,13 @@ export const HISTORICAL_SURFACE_CACHE_SAVE_MS = 5_000;
 export const HISTORICAL_SURFACE_CACHE_KEY_PREFIX = "goodtrading.bookmap.historicalSurface.v1";
 
 /**
- * STEP 1.5 — Microscalping range & tick/ladder alignment.
- * Local ±1000 (2000 USD span) stays in micro compression with finer ladder ticks.
+ * STEP 1.5 / 1.5.1 — Microscalping range ceiling (total USD span treated as micro mode).
+ * Local ±1000 (2000 USD span) stays in micro compression with finer heatmap storage buckets.
  */
 export const BOOKMAP_MICROSCALPING_RANGE_MAX_USD = 3_200;
 
-/** Lock heatmap historical surface + render rows to DOM/COB ladder tick in micro mode. */
-export const BOOKMAP_DOM_HEATMAP_LADDER_LOCK_V1 = true;
-
-/** DEV-only tick/range alignment diagnostics (throttled 2s). */
-export const BOOKMAP_TICK_RANGE_ALIGNMENT_DIAG = true;
+/** DEV-only DOM ladder vs heatmap alignment diagnostics (throttled 2s). */
+export const BOOKMAP_DOM_LADDER_ALIGNMENT_DIAG = true;
 
 /**
  * B.5 — Clean surface renderer bypassing experimental visual pipeline.

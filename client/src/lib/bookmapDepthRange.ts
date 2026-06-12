@@ -1,10 +1,7 @@
 import type { BookLevel } from "@/types/bookmapState";
 import type { PriceRange } from "@/components/flows/bookmapViewportUtils";
-import {
-  BOOKMAP_DOM_HEATMAP_LADDER_LOCK_V1,
-  BOOKMAP_MICROSCALPING_RANGE_MAX_USD,
-} from "@/lib/bookmapEngineConfig";
-import { pickNiceStepAtLeast } from "@/lib/bookmapPriceScaleUtils";
+import { BOOKMAP_MICROSCALPING_RANGE_MAX_USD } from "@/lib/bookmapEngineConfig";
+import { chooseDomBucketSize } from "@/lib/bookmapPriceScaleUtils";
 
 /** Vertical depth presets (half-span in USD for band modes). */
 export type DepthRangePreset =
@@ -101,10 +98,69 @@ export function inferVerticalCompressionMode(visibleRange: number): VerticalComp
 
 export type VerticalScaleMetrics = {
   verticalMode: VerticalCompressionMode;
+  /** DOM/COB ladder row step — source of truth for the price ladder. */
+  domLadderStep: number;
+  /** Fine internal step for historical heatmap cell storage. */
+  heatmapStorageBucketStep: number;
+  /** Visual snap step — aligns heatmap rows to DOM ladder (equals domLadderStep). */
+  heatmapRenderSnapStep: number;
+  /** Price axis label spacing. */
+  priceAxisStep: number;
+  /** @deprecated use priceAxisStep */
   labelStep: number;
+  /** @deprecated use heatmapStorageBucketStep */
   heatmapBucketSize: number;
+  /** @deprecated use domLadderStep */
   domBucketSize: number;
 };
+
+/**
+ * Resolve independent ladder steps: DOM authority, fine heatmap storage, render snap to DOM.
+ */
+export function resolveBookmapLadderSteps(
+  visibleRange: number,
+  chartHeight: number,
+): VerticalScaleMetrics {
+  const verticalMode = inferVerticalCompressionMode(visibleRange);
+
+  let priceAxisStep: number;
+  let heatmapStorageBucketStep: number;
+
+  switch (verticalMode) {
+    case "micro":
+      priceAxisStep = visibleRange <= 800 ? 25 : 50;
+      heatmapStorageBucketStep = visibleRange <= 800 ? 10 : 25;
+      break;
+    case "intraday":
+      priceAxisStep = visibleRange <= 4_000 ? 100 : 250;
+      heatmapStorageBucketStep = visibleRange <= 4_000 ? 50 : 100;
+      break;
+    case "macro":
+      priceAxisStep = visibleRange <= 15_000 ? 500 : 1000;
+      heatmapStorageBucketStep = visibleRange <= 15_000 ? 250 : 500;
+      break;
+    case "fullDepth":
+      priceAxisStep =
+        visibleRange <= 50_000 ? 1000 : visibleRange <= 100_000 ? 2500 : 5000;
+      heatmapStorageBucketStep =
+        visibleRange <= 50_000 ? 500 : visibleRange <= 100_000 ? 1000 : 1000;
+      break;
+  }
+
+  const domLadderStep = chooseDomBucketSize(visibleRange, chartHeight);
+  const heatmapRenderSnapStep = domLadderStep;
+
+  return {
+    verticalMode,
+    domLadderStep,
+    heatmapStorageBucketStep,
+    heatmapRenderSnapStep,
+    priceAxisStep,
+    labelStep: priceAxisStep,
+    heatmapBucketSize: heatmapStorageBucketStep,
+    domBucketSize: domLadderStep,
+  };
+}
 
 /**
  * Bookmap-style vertical compression: coarser buckets and labels as range widens.
@@ -113,51 +169,7 @@ export function chooseVerticalBucketSizes(
   visibleRange: number,
   chartHeight: number,
 ): VerticalScaleMetrics {
-  const mode = inferVerticalCompressionMode(visibleRange);
-  const dollarsPerPx =
-    visibleRange > 0 && chartHeight > 0 ? visibleRange / chartHeight : 50;
-
-  let labelStep: number;
-  let heatmapBucketSize: number;
-  let domBucketSize: number;
-
-  switch (mode) {
-    case "micro":
-      labelStep = visibleRange <= 800 ? 25 : 50;
-      heatmapBucketSize = visibleRange <= 800 ? 10 : 25;
-      domBucketSize = BOOKMAP_DOM_HEATMAP_LADDER_LOCK_V1
-        ? heatmapBucketSize
-        : Math.max(heatmapBucketSize, pickNiceStepAtLeast(dollarsPerPx * 14));
-      break;
-    case "intraday":
-      labelStep = visibleRange <= 4_000 ? 100 : 250;
-      heatmapBucketSize = visibleRange <= 4_000 ? 50 : 100;
-      domBucketSize = Math.max(
-        heatmapBucketSize,
-        pickNiceStepAtLeast(dollarsPerPx * 16),
-      );
-      break;
-    case "macro":
-      labelStep = visibleRange <= 15_000 ? 500 : 1000;
-      heatmapBucketSize = visibleRange <= 15_000 ? 250 : 500;
-      domBucketSize = Math.max(
-        heatmapBucketSize,
-        pickNiceStepAtLeast(dollarsPerPx * 18),
-      );
-      break;
-    case "fullDepth":
-      labelStep =
-        visibleRange <= 50_000 ? 1000 : visibleRange <= 100_000 ? 2500 : 5000;
-      heatmapBucketSize =
-        visibleRange <= 50_000 ? 500 : visibleRange <= 100_000 ? 1000 : 1000;
-      domBucketSize = Math.max(
-        heatmapBucketSize,
-        pickNiceStepAtLeast(dollarsPerPx * 20),
-      );
-      break;
-  }
-
-  return { verticalMode: mode, labelStep, heatmapBucketSize, domBucketSize };
+  return resolveBookmapLadderSteps(visibleRange, chartHeight);
 }
 
 export function isSignificantWall(level: BookLevel): boolean {
