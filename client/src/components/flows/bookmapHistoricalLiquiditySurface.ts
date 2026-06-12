@@ -77,6 +77,8 @@ export type HistoricalLiquiditySurfaceDiag = {
   renderedStrongCells: number;
   visiblePriceLevelsAbovePrice: number;
   visiblePriceLevelsBelowPrice: number;
+  skippedEmptyLevels: number;
+  inactiveLevelCount: number;
   cacheBucketCount: number;
   cacheMemoryEstimate: number;
   renderCellCountPerFrame: number;
@@ -180,6 +182,8 @@ function emptyDiag(sourceKey: string): HistoricalLiquiditySurfaceDiag {
     renderedStrongCells: 0,
     visiblePriceLevelsAbovePrice: 0,
     visiblePriceLevelsBelowPrice: 0,
+    skippedEmptyLevels: 0,
+    inactiveLevelCount: 0,
     cacheBucketCount: 0,
     cacheMemoryEstimate: 0,
     renderCellCountPerFrame: 0,
@@ -276,6 +280,14 @@ function textureModFor(price: number, timeBucket: number, side: "bid" | "ask"): 
   return 0.74 + frac * 0.36;
 }
 
+function shouldSeedColdBucket(price: number, timeBucket: number, side: "bid" | "ask"): boolean {
+  const seed =
+    Math.sin(price * 0.021 + timeBucket * 0.000_113 + (side === "bid" ? 0.3 : 0.9)) *
+    10_000;
+  const frac = seed - Math.floor(seed);
+  return frac > 0.46;
+}
+
 function selectLevels(
   levels: LiveDomBookLevel[],
   minPrice: number,
@@ -328,9 +340,9 @@ function writeSurfaceCell(params: {
   const firstCellTs = existing?.firstSeenTs ?? params.firstSeenTs;
   const persistenceMs = Math.max(0, params.lastSeenTs - params.firstSeenTs);
   const textureMod = textureModFor(params.price, params.timeBucket, params.side);
-  const seedAlpha = params.coldStartSeeded ? 0.48 + textureMod * 0.28 : 1;
+  const seedAlpha = params.coldStartSeeded ? 0.22 : 1;
   const effectiveCurrentSize = currentSize * seedAlpha;
-  const effectivePeakSize = params.peakSize * (params.coldStartSeeded ? Math.min(0.78, seedAlpha) : 1);
+  const effectivePeakSize = params.peakSize * (params.coldStartSeeded ? 0.28 : 1);
   params.store.cells.set(cKey, {
     timeBucket: params.timeBucket,
     price: params.price,
@@ -348,7 +360,7 @@ function writeSurfaceCell(params: {
     currentSize: effectiveCurrentSize,
     previousSize: params.previousSize,
     peakSize: effectivePeakSize,
-    intensity: computeIntensity(effectiveCurrentSize, effectivePeakSize, persistenceMs) * textureMod,
+    intensity: computeIntensity(effectiveCurrentSize, effectivePeakSize, persistenceMs),
     sizeDelta: effectiveCurrentSize - params.previousSize,
     coldStartSeeded: params.coldStartSeeded,
     liveUpdated: !params.coldStartSeeded,
@@ -397,6 +409,7 @@ function buildDiag(
   sourceLevelCount: number,
   midPrice: number | null | undefined,
   originalPriceBucketSize: number,
+  inactiveLevelCount: number,
 ): HistoricalLiquiditySurfaceDiag {
   const bucketSet = new Set<number>();
   const priceSet = new Set<number>();
@@ -458,6 +471,8 @@ function buildDiag(
     renderedStrongCells: strong,
     visiblePriceLevelsAbovePrice: abovePriceLevels.size,
     visiblePriceLevelsBelowPrice: belowPriceLevels.size,
+    skippedEmptyLevels: Math.max(0, sourceLevelCount - selectedLevelCount),
+    inactiveLevelCount,
     cacheBucketCount: new Set(Array.from(store.cells.values()).map((c) => c.timeBucket)).size,
     cacheMemoryEstimate: estimateBytes(store),
     renderCellCountPerFrame: 0,
@@ -496,6 +511,16 @@ export function updateHistoricalLiquiditySurface(
   );
   const seenActive = new Set<string>();
   const isColdStart = store.cells.size === 0;
+  const selectedKeys = new Set(
+    selected.map((level) =>
+      activeKey(level.side, bucketPrice(level.price, params.priceBucketSize)),
+    ),
+  );
+  const inactiveLevelCount = params.levels.reduce((count, level) => {
+    if (level.price < params.minPrice || level.price > params.maxPrice) return count;
+    const key = activeKey(level.side, bucketPrice(level.price, params.priceBucketSize));
+    return selectedKeys.has(key) ? count : count + 1;
+  }, 0);
 
   for (const level of selected) {
     const price = bucketPrice(level.price, params.priceBucketSize);
@@ -532,6 +557,7 @@ export function updateHistoricalLiquiditySurface(
     );
     for (let bucket = startBucket; bucket <= timeBucket; bucket += BOOKMAP_ENGINE_BUCKET_MS) {
       const coldStartSeeded = !prev && bucket < timeBucket;
+      if (coldStartSeeded && !shouldSeedColdBucket(price, bucket, level.side)) continue;
       writeSurfaceCell({
         store,
         timeBucket: bucket,
@@ -608,6 +634,7 @@ export function updateHistoricalLiquiditySurface(
     params.levels.length,
     params.midPrice,
     params.priceBucketSize,
+    inactiveLevelCount,
   );
   emitDiag(diag);
   saveStore(sourceKey, store, now);

@@ -9,6 +9,7 @@ import {
   BOOKMAP_MINIMAL_STABLE_RENDERER_V1,
   HISTORICAL_SURFACE_MIN_CELL_WIDTH_MS,
   HISTORICAL_SURFACE_PERSISTENT_CELL_WIDTH_MS,
+  HISTORICAL_SURFACE_ROW_HEIGHT_USD,
 } from "@/lib/bookmapEngineConfig";
 import {
   intensityToPassiveLiquidityRgb,
@@ -75,6 +76,22 @@ function thermalFromSize(sizeBtc: number): {
   };
 }
 
+function surfaceBandGeom(
+  price: number,
+  priceToY: (p: number) => number,
+): BandGeom {
+  const half = HISTORICAL_SURFACE_ROW_HEIGHT_USD * 0.5;
+  const yTop = priceToY(price + half);
+  const yBot = priceToY(price - half);
+  const rawTop = Math.min(yTop, yBot);
+  const rawHeight = Math.max(1, Math.abs(yBot - yTop));
+  const gap = rawHeight >= 4 ? 1 : rawHeight >= 2 ? 0.5 : 0;
+  return {
+    yTop: rawTop + gap * 0.5,
+    height: Math.max(1, rawHeight - gap),
+  };
+}
+
 function thermalFromSurfaceCell(cell: HistoricalLiquiditySurfaceCell): {
   rgb: [number, number, number];
   alpha: number;
@@ -82,12 +99,11 @@ function thermalFromSurfaceCell(cell: HistoricalLiquiditySurfaceCell): {
 } {
   const intensity = Math.max(cell.intensity, Math.min(1, cell.maxSize / 120));
   const persistenceBoost = Math.min(0.2, cell.persistenceMs / 90_000);
-  const weakFloor = cell.maxSize < 1 ? 0.12 : cell.maxSize < 5 ? 0.16 : 0.2;
-  const textureMod = cell.textureMod ?? 1;
+  const weakFloor = cell.maxSize < 1 ? 0.075 : cell.maxSize < 5 ? 0.105 : 0.145;
   const alpha =
-    Math.max(weakFloor, 0.15 + intensity * 0.5 + persistenceBoost) *
+    Math.max(weakFloor, 0.095 + intensity * 0.38 + persistenceBoost * 0.45) *
     cell.decay *
-    Math.min(1.08, textureMod);
+    (cell.coldStartSeeded ? 0.52 : 1);
   return {
     intensity,
     rgb: intensityToPassiveLiquidityRgb(intensity),
@@ -112,12 +128,12 @@ function surfaceCellWidthPx(
     timeToX(cell.timeBucket + HISTORICAL_SURFACE_PERSISTENT_CELL_WIDTH_MS) -
     timeToX(cell.timeBucket);
   if (cell.coldStartSeeded) {
-    return Math.max(raw, baseMin * (0.5 + textureMod * 0.22), 1);
+    return Math.max(raw, baseMin * (0.38 + textureMod * 0.12), 1);
   }
   if (cell.persistenceMs > 30_000 && cell.intensity >= 0.28) {
     return Math.max(raw, persistentMin, 1);
   }
-  return Math.max(raw, baseMin * (0.8 + textureMod * 0.18), 1);
+  return Math.max(raw, baseMin * (0.62 + textureMod * 0.12), 1);
 }
 
 function fillBand(
@@ -251,11 +267,23 @@ export function paintMinimalStableBookmapFrame(
     sum: 0,
     count: 0,
   };
+  const heightStats = {
+    min: Number.POSITIVE_INFINITY,
+    max: 0,
+    sum: 0,
+    count: 0,
+  };
   const renderedTiers = {
     weak: 0,
     medium: 0,
     strong: 0,
   };
+  let coldStartCellsRendered = 0;
+  let liveCellsRendered = 0;
+  const renderedRows = new Set<number>();
+  const renderedBuckets = new Set<number>();
+  const prevSmoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
 
   const surfaceCells = collectHistoricalSurfaceCells(
     engine,
@@ -268,7 +296,7 @@ export function paintMinimalStableBookmapFrame(
 
   if (surfaceCells.length > 0) {
     for (const cell of surfaceCells) {
-      const geom = bandGeom(cell.price, metrics.priceToY, metrics.domBucketSize);
+      const geom = surfaceBandGeom(cell.price, metrics.priceToY);
       if (geom.yTop + geom.height < HEATMAP_PAD.top - 2) {
         renderSkips.clippedPrice += 1;
         continue;
@@ -299,9 +327,17 @@ export function paintMinimalStableBookmapFrame(
       widthStats.max = Math.max(widthStats.max, w);
       widthStats.sum += w;
       widthStats.count += 1;
+      heightStats.min = Math.min(heightStats.min, geom.height);
+      heightStats.max = Math.max(heightStats.max, geom.height);
+      heightStats.sum += geom.height;
+      heightStats.count += 1;
       if (cell.intensity < 0.12) renderedTiers.weak += 1;
       else if (cell.intensity < 0.38) renderedTiers.medium += 1;
       else renderedTiers.strong += 1;
+      if (cell.coldStartSeeded) coldStartCellsRendered += 1;
+      else liveCellsRendered += 1;
+      renderedRows.add(cell.price);
+      renderedBuckets.add(cell.timeBucket);
       result.visibleHeatmapCells += 1;
     }
   } else {
@@ -332,6 +368,7 @@ export function paintMinimalStableBookmapFrame(
       result.visibleHeatmapCells += 1;
     }
   }
+  ctx.imageSmoothingEnabled = prevSmoothing;
 
   if (engine.historicalSurfaceDiag) {
     engine.historicalSurfaceDiag.renderCellCountPerFrame = result.visibleHeatmapCells;
@@ -349,8 +386,27 @@ export function paintMinimalStableBookmapFrame(
             widthStats.count > 0 ? widthStats.sum / widthStats.count : 0,
           minRenderedCellWidthPx: Number.isFinite(widthStats.min) ? widthStats.min : 0,
           maxRenderedCellWidthPx: widthStats.max,
+          averageRenderedCellHeightPx:
+            heightStats.count > 0 ? heightStats.sum / heightStats.count : 0,
+          minRenderedCellHeightPx: Number.isFinite(heightStats.min) ? heightStats.min : 0,
+          maxRenderedCellHeightPx: heightStats.max,
           bucketMergeFactor: engine.historicalSurfaceDiag.bucketMergeFactor,
           priceLevelMergeFactor: engine.historicalSurfaceDiag.priceLevelMergeFactor,
+          priceLevelsCollapsedPerRow: 1,
+          timeBucketsStretchedPerCell:
+            widthStats.count > 0
+              ? (widthStats.sum / widthStats.count) /
+                Math.max(1, bucketWidthPx(dataEndTime - BOOKMAP_ENGINE_BUCKET_MS, metrics.timeToX))
+              : 0,
+          smoothingEnabled: false,
+          alphaAccumulationMode: "single-rect-source-over",
+          coldStartCellsRendered,
+          realLiveCellsRendered: liveCellsRendered,
+          renderedDarkGapCount:
+            engine.historicalSurfaceDiag.inactiveLevelCount +
+            Math.max(0, engine.historicalSurfaceDiag.visiblePriceLevels - renderedRows.size),
+          inactiveLevelCount: engine.historicalSurfaceDiag.inactiveLevelCount,
+          renderedTimeBucketCount: renderedBuckets.size,
           renderedCellsByIntensityTier: renderedTiers,
         });
       }
