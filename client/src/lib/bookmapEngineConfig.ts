@@ -376,8 +376,8 @@ export const BOOKMAP_DOM_MICRO_MAX_LADDER_STEP = 50;
 export const BOOKMAP_DOM_MICRO_COLLISION_BAND_PX = 2;
 export const BOOKMAP_DOM_MACRO_COLLISION_BAND_PX = 7;
 export const BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD = 500;
-export const BOOKMAP_DOM_MICRO_MIN_LABEL_SPACING_PX = 8;
-export const BOOKMAP_DOM_MICRO_MAX_LABELS_PER_COLUMN = 44;
+export const BOOKMAP_DOM_MICRO_MIN_LABEL_SPACING_PX = 15;
+export const BOOKMAP_DOM_MICRO_MAX_LABELS_PER_COLUMN = 30;
 
 /** Hard cap on scaffold rows (safety); adaptive to panel height in practice. */
 export const BOOKMAP_DOM_MAX_SCAFFOLD_ROWS = 240;

@@ -2094,7 +2094,7 @@ export function buildPriceAlignedRawDomRows(params: {
       const group = groups[candidate.index]!;
       const mandatory =
         group.containsBest ||
-        group.size >= visibleMaxLiquidity * (microModeActive ? 0.52 : 0.72);
+        (!microModeActive && group.size >= visibleMaxLiquidity * 0.72);
       const nearPricePriority =
         microModeActive && group.nearSpotDistance <= BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD;
       const collides = acceptedLabelYs.some((y) => Math.abs(y - candidate.y) < labelSpacingPx);
@@ -2121,8 +2121,13 @@ export function buildPriceAlignedRawDomRows(params: {
       index,
       bidText: group.side === "bid" && sideText,
       askText: group.side === "ask" && sideText,
-      cobText: sideText || group.containsBest || group.size >= visibleMaxLiquidity * 0.62,
-      svpText: sideText && group.size >= visibleMaxLiquidity * 0.35,
+      cobText:
+        group.containsBest ||
+        group.size >= visibleMaxLiquidity * (microModeActive ? 0.78 : 0.62),
+      svpText:
+        !microModeActive &&
+        sideText &&
+        group.size >= visibleMaxLiquidity * 0.35,
     };
   });
   const labelsHiddenDueToDensity = rowInputs.filter(
