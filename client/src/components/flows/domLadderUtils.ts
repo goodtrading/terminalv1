@@ -568,6 +568,49 @@ export type DomPriceBandLayoutDiag = {
   maxPriceBandAlignmentErrorPx: number;
 };
 
+export type DomMinorPriceSlot = {
+  slotIndex: number;
+  centerPrice: number;
+  minPrice: number;
+  maxPrice: number;
+  centerY: number;
+  topY: number;
+  bottomY: number;
+  source: "raw" | "visual-bin";
+};
+
+export type DomMinorLadderSlotDiag = {
+  enabled: true;
+  domUsesSharedPriceScale: true;
+  majorPriceLabelCount: number;
+  minorDomSlotCount: number;
+  visibleRawBidLevels: number;
+  visibleRawAskLevels: number;
+  rawLevelsAssignedToExactSlots: number;
+  rawLevelsAssignedToMinorBins: number;
+  rawLevelsCollapsedIntoMajorLabels: 0;
+  microModeActive: boolean;
+  binHeightPx: number;
+  minSlotHeightPx: number;
+  pixelsPerDollar: number;
+  visiblePriceRangeUsd: number;
+  bestBidVisible: boolean;
+  bestAskVisible: boolean;
+  largeLevelsVisible: number;
+  bidSlotsRendered: number;
+  askSlotsRendered: number;
+  cobSlotsRendered: number;
+  svpSlotsRendered: number;
+  bidLabelsRendered: number;
+  askLabelsRendered: number;
+  labelsHiddenButBarsRendered: number;
+  majorLabelBandModeDisabled: true;
+  independentDomScroll: false;
+  extraPriceColumnEnabled: false;
+  syntheticRowsCreated: 0;
+  rawDataMutatedForLayout: false;
+};
+
 export type VisiblePriceBand = {
   labelPrice: number;
   topY: number;
@@ -1898,6 +1941,7 @@ export type PriceAlignedRawDomResult = DomScaffoldResult & {
   lodDiag: DomLodRendererDiag;
   microReadabilityDiag: DomMicroReadabilityDiag;
   priceBandLayoutDiag?: DomPriceBandLayoutDiag;
+  minorLadderSlotDiag?: DomMinorLadderSlotDiag;
 };
 
 let lastDomPriceAlignmentDiagMs = 0;
@@ -2601,7 +2645,7 @@ function findPriceBandForY(
   );
 }
 
-export function buildPriceAlignedRawDomRows(params: {
+function buildMajorLabelBandDomRows(params: {
   bids?: OrderbookLevel[];
   asks?: OrderbookLevel[];
   spot: number | null;
@@ -2617,6 +2661,12 @@ export function buildPriceAlignedRawDomRows(params: {
   mode?: string;
   depthPreset?: DepthRangePreset;
 }): PriceAlignedRawDomResult {
+  if (import.meta.env.DEV) {
+    console.warn("[BOOKMAP_DOM_MAJOR_LABEL_COLLAPSE_REGRESSION]", {
+      reason: "disabled_major_label_band_builder_called",
+      majorLabelBandModeDisabled: false,
+    });
+  }
   const rawBids = params.bids ?? [];
   const rawAsks = params.asks ?? [];
   const showDomNumbers = params.showDomNumbers !== false;
@@ -3103,6 +3153,669 @@ export function buildPriceAlignedRawDomRows(params: {
     lodDiag,
     microReadabilityDiag,
     priceBandLayoutDiag,
+  };
+}
+
+type MinorSlotLevel = {
+  price: number;
+  size: number;
+  y: number;
+  side: "bid" | "ask";
+  exact: boolean;
+};
+
+type MinorSlotAccumulator = {
+  key: string;
+  source: "raw" | "visual-bin";
+  levels: MinorSlotLevel[];
+  bidLevelCount: number;
+  askLevelCount: number;
+  bidSumSize: number;
+  askSumSize: number;
+  bidMaxSize: number;
+  askMaxSize: number;
+  bidMaxPrice: number | null;
+  askMaxPrice: number | null;
+  containsBestBid: boolean;
+  containsBestAsk: boolean;
+};
+
+let lastDomMinorLadderSlotDiagMs = 0;
+
+function emitDomMinorLadderSlotDiag(diag: DomMinorLadderSlotDiag): void {
+  if (!import.meta.env.DEV) return;
+  const now = Date.now();
+  if (now - lastDomMinorLadderSlotDiagMs < 2_000) return;
+  lastDomMinorLadderSlotDiagMs = now;
+  console.debug("[BOOKMAP_DOM_MINOR_LADDER_SLOT_DIAG]", diag);
+}
+
+export function buildPriceAlignedRawDomRows(params: {
+  bids?: OrderbookLevel[];
+  asks?: OrderbookLevel[];
+  spot: number | null;
+  priceRange: PriceRange;
+  plotHeight: number;
+  priceToY: (price: number) => number;
+  majorPriceLabelCount: number;
+  showDomNumbers?: boolean;
+  majorWallBtc?: number;
+  selectedDomSource?: string;
+  feedVenue?: string;
+  market?: string;
+  mode?: string;
+  depthPreset?: DepthRangePreset;
+}): PriceAlignedRawDomResult {
+  const rawBids = params.bids ?? [];
+  const rawAsks = params.asks ?? [];
+  const showDomNumbers = params.showDomNumbers !== false;
+  const majorWallBtc = params.majorWallBtc ?? HEATMAP_MAJOR_WALL_BTC;
+  const minPrice = params.priceRange.minPrice;
+  const maxPrice = params.priceRange.maxPrice;
+  const visiblePriceRangeUsd = Math.max(1e-9, maxPrice - minPrice);
+  const plotTop = BOOKMAP_PLOT_PAD.top;
+  const plotBottom = Math.max(plotTop, params.plotHeight - BOOKMAP_PLOT_PAD.bottom);
+  const plotHeightPx = Math.max(1, plotBottom - plotTop);
+  const pixelsPerDollar = plotHeightPx / visiblePriceRangeUsd;
+  const selectedDepthMode = params.depthPreset ?? "local";
+  const microModeActive =
+    selectedDepthMode === "local" ||
+    visiblePriceRangeUsd <= BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD * 4 ||
+    pixelsPerDollar >= 0.18;
+  const scalpingModeActive =
+    !microModeActive &&
+    (selectedDepthMode === "intraday" || visiblePriceRangeUsd <= 6_000);
+  const minSlotHeightPx = microModeActive ? 8 : scalpingModeActive ? 10 : 14;
+  const binHeightPx = microModeActive ? 9 : scalpingModeActive ? 12 : 18;
+  const textHeightPx = 14;
+  const bestBid = rawBids.reduce<OrderbookLevel | null>((best, level) => {
+    const price = Number(level.price);
+    const size = Number(level.sizeBtc);
+    if (!Number.isFinite(price) || !Number.isFinite(size) || size <= 0) return best;
+    return !best || price > Number(best.price) ? level : best;
+  }, null);
+  const bestAsk = rawAsks.reduce<OrderbookLevel | null>((best, level) => {
+    const price = Number(level.price);
+    const size = Number(level.sizeBtc);
+    if (!Number.isFinite(price) || !Number.isFinite(size) || size <= 0) return best;
+    return !best || price < Number(best.price) ? level : best;
+  }, null);
+  const bestBidPrice = bestBid ? Number(bestBid.price) : null;
+  const bestAskPrice = bestAsk ? Number(bestAsk.price) : null;
+  let levelsOutsideChartRange = 0;
+
+  const visibleLevels: MinorSlotLevel[] = [];
+  const collect = (level: OrderbookLevel, side: "bid" | "ask") => {
+    const price = Number(level.price);
+    const size = Number(level.sizeBtc);
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(size) || size <= 0) return;
+    const y = params.priceToY(price);
+    if (
+      price < minPrice ||
+      price > maxPrice ||
+      !Number.isFinite(y) ||
+      y < plotTop ||
+      y > plotBottom
+    ) {
+      levelsOutsideChartRange += 1;
+      return;
+    }
+    visibleLevels.push({ price, size, y, side, exact: false });
+  };
+  rawBids.forEach((level) => collect(level, "bid"));
+  rawAsks.forEach((level) => collect(level, "ask"));
+  visibleLevels.sort((a, b) => a.y - b.y || a.price - b.price);
+
+  for (let index = 0; index < visibleLevels.length; index += 1) {
+    const level = visibleLevels[index]!;
+    const previous = visibleLevels[index - 1];
+    const next = visibleLevels[index + 1];
+    const previousGap = previous ? Math.abs(level.y - previous.y) : Number.POSITIVE_INFINITY;
+    const nextGap = next ? Math.abs(next.y - level.y) : Number.POSITIVE_INFINITY;
+    level.exact = Math.min(previousGap, nextGap) >= minSlotHeightPx;
+  }
+
+  const slotsByKey = new Map<string, MinorSlotAccumulator>();
+  let rawLevelsAssignedToExactSlots = 0;
+  let rawLevelsAssignedToMinorBins = 0;
+  const assignedLevels = new Set<MinorSlotLevel>();
+
+  for (const level of visibleLevels) {
+    const binIndex = Math.floor((level.y - plotTop) / binHeightPx);
+    const key = level.exact
+      ? `raw:${level.price.toFixed(8)}`
+      : `bin:${binIndex}`;
+    let slot = slotsByKey.get(key);
+    if (!slot) {
+      slot = {
+        key,
+        source: level.exact ? "raw" : "visual-bin",
+        levels: [],
+        bidLevelCount: 0,
+        askLevelCount: 0,
+        bidSumSize: 0,
+        askSumSize: 0,
+        bidMaxSize: 0,
+        askMaxSize: 0,
+        bidMaxPrice: null,
+        askMaxPrice: null,
+        containsBestBid: false,
+        containsBestAsk: false,
+      };
+      slotsByKey.set(key, slot);
+    }
+    slot.levels.push(level);
+    assignedLevels.add(level);
+    if (level.exact) rawLevelsAssignedToExactSlots += 1;
+    else rawLevelsAssignedToMinorBins += 1;
+
+    if (level.side === "bid") {
+      slot.bidLevelCount += 1;
+      slot.bidSumSize += level.size;
+      if (level.size > slot.bidMaxSize) {
+        slot.bidMaxSize = level.size;
+        slot.bidMaxPrice = level.price;
+      }
+      slot.containsBestBid =
+        slot.containsBestBid ||
+        (bestBidPrice != null &&
+          Math.abs(level.price - bestBidPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE);
+    } else {
+      slot.askLevelCount += 1;
+      slot.askSumSize += level.size;
+      if (level.size > slot.askMaxSize) {
+        slot.askMaxSize = level.size;
+        slot.askMaxPrice = level.price;
+      }
+      slot.containsBestAsk =
+        slot.containsBestAsk ||
+        (bestAskPrice != null &&
+          Math.abs(level.price - bestAskPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE);
+    }
+  }
+
+  if (import.meta.env.DEV && assignedLevels.size !== visibleLevels.length) {
+    for (const level of visibleLevels) {
+      if (assignedLevels.has(level)) continue;
+      console.warn("[BOOKMAP_DOM_RAW_LEVEL_NOT_ASSIGNED]", {
+        side: level.side,
+        price: level.price,
+        y: level.y,
+      });
+    }
+  }
+
+  const slotEntries = Array.from(slotsByKey.values())
+    .map((slot) => {
+      const representative =
+        slot.levels.find(
+          (level) =>
+            (level.side === "bid" && slot.containsBestBid) ||
+            (level.side === "ask" && slot.containsBestAsk),
+        ) ??
+        slot.levels.reduce((strongest, level) =>
+          level.size > strongest.size ? level : strongest,
+        );
+      const centerY = params.priceToY(representative.price);
+      const slotHeight = slot.source === "raw" ? minSlotHeightPx : binHeightPx;
+      const halfHeight = slotHeight / 2;
+      const topY = Math.max(plotTop, centerY - halfHeight);
+      const bottomY = Math.min(plotBottom, centerY + halfHeight);
+      const prices = slot.levels.map((level) => level.price);
+      const minorSlot: DomMinorPriceSlot = {
+        slotIndex: 0,
+        centerPrice: representative.price,
+        minPrice: Math.min(...prices),
+        maxPrice: Math.max(...prices),
+        centerY,
+        topY,
+        bottomY,
+        source: slot.source,
+      };
+      return { slot, minorSlot };
+    })
+    .sort((a, b) => a.minorSlot.centerY - b.minorSlot.centerY);
+  slotEntries.forEach((entry, index) => {
+    entry.minorSlot.slotIndex = index;
+  });
+
+  const maxBid = slotEntries.reduce(
+    (max, entry) => Math.max(max, entry.slot.bidSumSize),
+    0,
+  );
+  const maxAsk = slotEntries.reduce(
+    (max, entry) => Math.max(max, entry.slot.askSumSize),
+    0,
+  );
+  const maxCob = slotEntries.reduce(
+    (max, entry) =>
+      Math.max(max, entry.slot.bidSumSize + entry.slot.askSumSize),
+    0,
+  );
+  const visibleMaxLiquidity = Math.max(maxBid, maxAsk, 1e-9);
+  const maxLabelsPerColumn = Math.max(8, Math.floor(plotHeightPx / textHeightPx));
+
+  const chooseLabelSlots = (side: "bid" | "ask"): Set<number> => {
+    const acceptedYs: number[] = [];
+    const selected = new Set<number>();
+    if (!showDomNumbers) return selected;
+    const ranked = slotEntries
+      .map((entry, index) => {
+        const size =
+          side === "bid" ? entry.slot.bidSumSize : entry.slot.askSumSize;
+        const containsBest =
+          side === "bid"
+            ? entry.slot.containsBestBid
+            : entry.slot.containsBestAsk;
+        const nearSpot =
+          params.spot == null
+            ? false
+            : Math.abs(entry.minorSlot.centerPrice - params.spot) <=
+              BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD;
+        return {
+          index,
+          y: entry.minorSlot.centerY,
+          size,
+          containsBest,
+          score:
+            (containsBest ? 10_000_000 : 0) +
+            (nearSpot ? 250_000 : 0) +
+            size * 100,
+        };
+      })
+      .filter((entry) => entry.size > 0)
+      .sort((a, b) => b.score - a.score);
+
+    for (const candidate of ranked) {
+      if (selected.size >= maxLabelsPerColumn) break;
+      const collides = acceptedYs.some(
+        (acceptedY) => Math.abs(acceptedY - candidate.y) < textHeightPx,
+      );
+      if (collides && !candidate.containsBest) continue;
+      selected.add(candidate.index);
+      acceptedYs.push(candidate.y);
+    }
+    return selected;
+  };
+
+  const bidLabelSlots = chooseLabelSlots("bid");
+  const askLabelSlots = chooseLabelSlots("ask");
+  let svpRunning = 0;
+  let maxAlignmentErrorPx = 0;
+
+  const rows: DomLadderRow[] = slotEntries.map((entry, index) => {
+    const { slot, minorSlot } = entry;
+    const bidSize = slot.bidSumSize;
+    const askSize = slot.askSumSize;
+    const cobSize = bidSize + askSize;
+    svpRunning += cobSize;
+    const renderedY = minorSlot.centerY;
+    const expectedY = params.priceToY(minorSlot.centerPrice);
+    const alignmentErrorPx = Math.abs(renderedY - expectedY);
+    maxAlignmentErrorPx = Math.max(maxAlignmentErrorPx, alignmentErrorPx);
+    if (alignmentErrorPx > 1 && import.meta.env.DEV) {
+      console.warn("[BOOKMAP_DOM_PRICE_ALIGNMENT_REGRESSION]", {
+        representativePrice: minorSlot.centerPrice,
+        renderedY,
+        expectedY,
+        errorPx: alignmentErrorPx,
+      });
+    }
+    if (
+      import.meta.env.DEV &&
+      ((bidSize > 0 && slot.bidLevelCount === 0) ||
+        (askSize > 0 && slot.askLevelCount === 0))
+    ) {
+      console.warn("[BOOKMAP_DOM_FAKE_VALUE_REGRESSION]", {
+        representativePrice: minorSlot.centerPrice,
+        bidSize,
+        askSize,
+        bidLevelCount: slot.bidLevelCount,
+        askLevelCount: slot.askLevelCount,
+      });
+    }
+
+    const showBidText = bidLabelSlots.has(index);
+    const showAskText = askLabelSlots.has(index);
+    const showCobText =
+      showDomNumbers &&
+      (slot.containsBestBid ||
+        slot.containsBestAsk ||
+        cobSize >= visibleMaxLiquidity * (microModeActive ? 0.72 : 0.55));
+    const showSvpText =
+      showDomNumbers &&
+      !microModeActive &&
+      (showBidText || showAskText) &&
+      cobSize >= visibleMaxLiquidity * 0.35;
+    const slotHeight = minorSlot.bottomY - minorSlot.topY;
+    const renderedHeight =
+      showBidText || showAskText || showCobText || showSvpText
+        ? Math.max(slotHeight, textHeightPx)
+        : slotHeight;
+    const renderedTopY = Math.max(plotTop, minorSlot.centerY - renderedHeight / 2);
+    const renderedBottomY = Math.min(
+      plotBottom,
+      minorSlot.centerY + renderedHeight / 2,
+    );
+
+    return {
+      price: minorSlot.centerPrice,
+      priceLabel: formatRawBinanceDomPrice(minorSlot.centerPrice),
+      bidSize,
+      askSize,
+      bidState: bidSize > 0 ? "live" : "none",
+      askState: askSize > 0 ? "live" : "none",
+      bidLastKnownSize: 0,
+      askLastKnownSize: 0,
+      cobSize,
+      svpCumulative: svpRunning,
+      y: minorSlot.centerY,
+      bucketHeight: renderedBottomY - renderedTopY,
+      barHeight: renderedBottomY - renderedTopY,
+      bandTopY: renderedTopY,
+      bandBottomY: renderedBottomY,
+      isSpotBucket:
+        params.spot != null &&
+        params.spot >= minorSlot.minPrice &&
+        params.spot <= minorSlot.maxPrice,
+      showLabel: false,
+      showTick: false,
+      showDomText:
+        showBidText || showAskText || showCobText || showSvpText,
+      showBidText,
+      showAskText,
+      showCobText,
+      showSvpText,
+      isMajorWall: cobSize >= majorWallBtc,
+      bidBarPct: maxBid > 0 ? (bidSize / maxBid) * 100 : 0,
+      askBarPct: maxAsk > 0 ? (askSize / maxAsk) * 100 : 0,
+      cobBarPct: maxCob > 0 ? (cobSize / maxCob) * 100 : 0,
+      hasLiveBid: bidSize > 0,
+      hasLiveAsk: askSize > 0,
+      hasHistoricalWall: false,
+      wallSize: 0,
+      wallSide: null,
+      wallTier: null,
+      wallIsStale: false,
+    };
+  });
+
+  const visibleRawBidLevels = visibleLevels.filter(
+    (level) => level.side === "bid",
+  ).length;
+  const visibleRawAskLevels = visibleLevels.filter(
+    (level) => level.side === "ask",
+  ).length;
+  const bidSlotsRendered = rows.filter((row) => row.bidSize > 0).length;
+  const askSlotsRendered = rows.filter((row) => row.askSize > 0).length;
+  const cobSlotsRendered = rows.filter((row) => row.cobSize > 0).length;
+  const svpSlotsRendered = rows.filter((row) => row.svpCumulative > 0).length;
+  const bidLabelsRendered = rows.filter((row) => row.showBidText).length;
+  const askLabelsRendered = rows.filter((row) => row.showAskText).length;
+  const labelsHiddenButBarsRendered = rows.filter(
+    (row) =>
+      row.cobSize > 0 && !row.showBidText && !row.showAskText && !row.showCobText,
+  ).length;
+  const bestBidVisible = slotEntries.some(
+    (entry) => entry.slot.containsBestBid,
+  );
+  const bestAskVisible = slotEntries.some(
+    (entry) => entry.slot.containsBestAsk,
+  );
+  const largeLevelsVisible = rows.filter(
+    (row) => row.cobSize >= visibleMaxLiquidity * 0.52,
+  ).length;
+  const aggregatedBidLevelsCount = slotEntries.reduce(
+    (sum, entry) => sum + Math.max(0, entry.slot.bidLevelCount - 1),
+    0,
+  );
+  const aggregatedAskLevelsCount = slotEntries.reduce(
+    (sum, entry) => sum + Math.max(0, entry.slot.askLevelCount - 1),
+    0,
+  );
+  const averageLevelsPerSlot =
+    slotEntries.length > 0 ? visibleLevels.length / slotEntries.length : 0;
+  const maxLevelsPerSlot = slotEntries.reduce(
+    (max, entry) => Math.max(max, entry.slot.levels.length),
+    0,
+  );
+  const minorLadderSlotDiag: DomMinorLadderSlotDiag = {
+    enabled: true,
+    domUsesSharedPriceScale: true,
+    majorPriceLabelCount: params.majorPriceLabelCount,
+    minorDomSlotCount: slotEntries.length,
+    visibleRawBidLevels,
+    visibleRawAskLevels,
+    rawLevelsAssignedToExactSlots,
+    rawLevelsAssignedToMinorBins,
+    rawLevelsCollapsedIntoMajorLabels: 0,
+    microModeActive,
+    binHeightPx,
+    minSlotHeightPx,
+    pixelsPerDollar,
+    visiblePriceRangeUsd,
+    bestBidVisible,
+    bestAskVisible,
+    largeLevelsVisible,
+    bidSlotsRendered,
+    askSlotsRendered,
+    cobSlotsRendered,
+    svpSlotsRendered,
+    bidLabelsRendered,
+    askLabelsRendered,
+    labelsHiddenButBarsRendered,
+    majorLabelBandModeDisabled: true,
+    independentDomScroll: false,
+    extraPriceColumnEnabled: false,
+    syntheticRowsCreated: 0,
+    rawDataMutatedForLayout: false,
+  };
+  emitDomMinorLadderSlotDiag(minorLadderSlotDiag);
+
+  if (
+    import.meta.env.DEV &&
+    visibleLevels.length >= Math.max(20, params.majorPriceLabelCount * 3) &&
+    slotEntries.length <= params.majorPriceLabelCount + 1
+  ) {
+    console.warn("[BOOKMAP_DOM_MAJOR_LABEL_COLLAPSE_REGRESSION]", {
+      visibleRawLevels: visibleLevels.length,
+      majorPriceLabelCount: params.majorPriceLabelCount,
+      minorDomSlotCount: slotEntries.length,
+    });
+  }
+
+  const alignmentDiag: DomPriceAlignmentDiag = {
+    enabled: true,
+    selectedDomSource: params.selectedDomSource ?? "spot",
+    symbol: params.market ?? "BTCUSDT",
+    venue: params.feedVenue ?? "binance_spot",
+    chartVisiblePriceMin: minPrice,
+    chartVisiblePriceMax: maxPrice,
+    chartPriceRangeUsd: visiblePriceRangeUsd,
+    priceToYSource: "BookmapPriceScale.priceToY",
+    domUsesSharedPriceScale: true,
+    domHasIndependentScroll: false,
+    domUsesRowIndexY: false,
+    rawBidLevelsTotal: rawBids.length,
+    rawAskLevelsTotal: rawAsks.length,
+    visibleBidLevelsRendered: visibleRawBidLevels,
+    visibleAskLevelsRendered: visibleRawAskLevels,
+    levelsOutsideChartRange,
+    bidAskLinesY: {
+      bid: bestBidPrice != null ? params.priceToY(bestBidPrice) : null,
+      ask: bestAskPrice != null ? params.priceToY(bestAskPrice) : null,
+    },
+    nearestDomBidY: rows.find((row) => row.hasLiveBid)?.y ?? null,
+    nearestDomAskY: rows.find((row) => row.hasLiveAsk)?.y ?? null,
+    maxAlignmentErrorPx,
+    syntheticRowsCreated: 0,
+    extraPriceColumnEnabled: false,
+    chartRangeControlsDomVisibility: true,
+    heatmapBucketControlsDom: false,
+    localDepthControlsDomRows: false,
+    svpCreatesDomRows: false,
+    collapsedVisualGroups: 0,
+    aggregatedBecausePixelCollision:
+      aggregatedBidLevelsCount + aggregatedAskLevelsCount,
+  };
+  emitDomPriceAlignmentDiag(alignmentDiag);
+
+  const autoScaleDiag: DomAutoScaleLayoutDiag = {
+    enabled: true,
+    domUsesSharedPriceScale: true,
+    domHasIndependentScroll: false,
+    visiblePriceMin: minPrice,
+    visiblePriceMax: maxPrice,
+    visibleRawBidLevels,
+    visibleRawAskLevels,
+    pixelsPerDollar,
+    minAdjacentLevelDistancePx:
+      visibleLevels.length > 1
+        ? Math.min(
+            ...visibleLevels
+              .slice(1)
+              .map((level, index) =>
+                Math.abs(level.y - visibleLevels[index]!.y),
+              ),
+          )
+        : null,
+    averageAdjacentLevelDistancePx:
+      visibleLevels.length > 1
+        ? visibleLevels
+            .slice(1)
+            .reduce(
+              (sum, level, index) =>
+                sum + Math.abs(level.y - visibleLevels[index]!.y),
+              0,
+            ) /
+          (visibleLevels.length - 1)
+        : null,
+    textHeightPx,
+    fullTextThresholdPx: textHeightPx,
+    collisionGroupsBid: slotEntries.filter(
+      (entry) => entry.slot.bidLevelCount > 1,
+    ).length,
+    collisionGroupsAsk: slotEntries.filter(
+      (entry) => entry.slot.askLevelCount > 1,
+    ).length,
+    collisionGroupsCob: slotEntries.filter(
+      (entry) => entry.slot.levels.length > 1,
+    ).length,
+    collisionGroupsSvp: slotEntries.filter(
+      (entry) => entry.slot.levels.length > 1,
+    ).length,
+    individualLabelsRendered: bidLabelsRendered + askLabelsRendered,
+    groupedLabelsRendered: rows.filter(
+      (row, index) =>
+        row.showDomText && slotEntries[index]!.slot.levels.length > 1,
+    ).length,
+    labelsHiddenDueToDensity: labelsHiddenButBarsRendered,
+    barsRendered: cobSlotsRendered,
+    strongestHiddenValue: rows.reduce(
+      (max, row) =>
+        !row.showDomText ? Math.max(max, row.cobSize) : max,
+      0,
+    ),
+    bestBidVisible,
+    bestAskVisible,
+    maxAlignmentErrorPx,
+    extraPriceColumnEnabled: false,
+    rawDataMutatedForLayout: false,
+  };
+  emitDomAutoScaleLayoutDiag(autoScaleDiag);
+
+  const lodDiag: DomLodRendererDiag = {
+    enabled: true,
+    domUsesSharedPriceScale: true,
+    domHasIndependentScroll: false,
+    extraPriceColumnEnabled: false,
+    rawBidLevelsTotal: rawBids.length,
+    rawAskLevelsTotal: rawAsks.length,
+    visibleRawBidLevels,
+    visibleRawAskLevels,
+    bidVisualGroups: bidSlotsRendered,
+    askVisualGroups: askSlotsRendered,
+    cobVisualGroups: cobSlotsRendered,
+    svpVisualGroups: svpSlotsRendered,
+    bidBarsRendered: bidSlotsRendered,
+    askBarsRendered: askSlotsRendered,
+    cobBarsRendered: cobSlotsRendered,
+    svpBarsRendered: svpSlotsRendered,
+    bidLabelsRendered,
+    askLabelsRendered,
+    cobLabelsRendered: rows.filter((row) => row.showCobText).length,
+    svpLabelsRendered: rows.filter((row) => row.showSvpText).length,
+    labelsHiddenDueToCollision: labelsHiddenButBarsRendered,
+    hiddenLabelsWithBarsStillRendered: labelsHiddenButBarsRendered,
+    strongestBidGroupValue: maxBid,
+    strongestAskGroupValue: maxAsk,
+    bestBidVisible,
+    bestAskVisible,
+    visibleMaxLiquidity,
+    pixelsPerDollar,
+    minCollisionBandPx: binHeightPx,
+    averageLevelsPerVisualGroup: averageLevelsPerSlot,
+    maxLevelsPerVisualGroup: maxLevelsPerSlot,
+    rawDataMutatedForLayout: false,
+    syntheticRowsCreated: 0,
+    valuesCreatedWithoutBookLevel: 0,
+  };
+  emitDomLodRendererDiag(lodDiag);
+
+  const microReadabilityDiag: DomMicroReadabilityDiag = {
+    selectedDepthMode,
+    visiblePriceRangeUsd,
+    pixelsPerDollar,
+    microModeActive,
+    collisionBandPx: binHeightPx,
+    nearPricePriorityUsd: BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD,
+    visibleRawBidLevels,
+    visibleRawAskLevels,
+    individualBidLabelsRendered: bidLabelsRendered,
+    individualAskLabelsRendered: askLabelsRendered,
+    groupedBidLabelsRendered: slotEntries.filter(
+      (entry, index) =>
+        entry.slot.bidLevelCount > 1 && bidLabelSlots.has(index),
+    ).length,
+    groupedAskLabelsRendered: slotEntries.filter(
+      (entry, index) =>
+        entry.slot.askLevelCount > 1 && askLabelSlots.has(index),
+    ).length,
+    bidBarsRendered: bidSlotsRendered,
+    askBarsRendered: askSlotsRendered,
+    labelsHiddenDueToDensity: labelsHiddenButBarsRendered,
+    bestBidVisible,
+    bestAskVisible,
+    largeLevelsVisible,
+    maxLabelsPerColumn,
+    domUsesSharedPriceScale: true,
+    independentDomScroll: false,
+    syntheticRowsCreated: 0,
+  };
+  emitDomMicroReadabilityDiag(microReadabilityDiag);
+
+  return {
+    rows,
+    stats: {
+      ladderRows: rows.length,
+      liveRows: rows.length,
+      lastKnownRows: 0,
+      wallRows: 0,
+      expectedDomRowCount: rows.length,
+      zeroLiquidityRows: 0,
+      rowsWithBidLiquidity: bidSlotsRendered,
+      rowsWithAskLiquidity: askSlotsRendered,
+      rawBidLevelsCount: rawBids.length,
+      rawAskLevelsCount: rawAsks.length,
+      aggregatedBidLevelsCount,
+      aggregatedAskLevelsCount,
+      domUsesContinuousLadder: false,
+    },
+    alignmentDiag,
+    autoScaleDiag,
+    lodDiag,
+    microReadabilityDiag,
+    minorLadderSlotDiag,
   };
 }
 

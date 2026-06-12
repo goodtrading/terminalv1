@@ -20,7 +20,6 @@ import {
 import { BOOKMAP_PLOT_PAD } from "./bookmapViewportUtils";
 import {
   buildPriceAlignedRawDomRows,
-  buildVisiblePriceBands,
   buildScaffoldedDomRows,
   formatBookmapPrice,
   formatDomSize,
@@ -391,16 +390,6 @@ export function BookmapDomPanel({
     !engineMode &&
     selectedDomSource === "spot" &&
     Boolean(snapshot?.bids?.length || snapshot?.asks?.length);
-  const visiblePriceBands = useMemo(
-    () =>
-      buildVisiblePriceBands({
-        labelPrices: scale.labelPrices,
-        plotHeight,
-        priceToY,
-        yToPrice: scale.yToPrice,
-      }),
-    [scale.labelPrices, scale.yToPrice, plotHeight, priceToY],
-  );
 
   const ladderResult = useMemo(() => {
     if (plotHeight < 20) {
@@ -432,7 +421,7 @@ export function BookmapDomPanel({
         priceRange,
         plotHeight,
         priceToY,
-        priceBands: visiblePriceBands,
+        majorPriceLabelCount: scale.labelPrices.length,
         showDomNumbers: showNumbers,
         selectedDomSource,
         feedVenue,
@@ -472,7 +461,7 @@ export function BookmapDomPanel({
     domBucketSize,
     plotHeight,
     priceToY,
-    visiblePriceBands,
+    scale.labelPrices.length,
     showNumbers,
     scale.depthRangePreset,
     feedVenue,
@@ -588,7 +577,7 @@ export function BookmapDomPanel({
 
     return (
       <div
-        key={`${row.price}`}
+        key={`${row.price}_${row.y}`}
         className={cn(
           wallOnly ? "flex" : gridClass,
           "pointer-events-none absolute left-0 right-0 z-10",
