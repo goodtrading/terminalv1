@@ -20,6 +20,7 @@ import {
 import { BOOKMAP_PLOT_PAD } from "./bookmapViewportUtils";
 import {
   buildPriceAlignedRawDomRows,
+  buildVisiblePriceBands,
   buildScaffoldedDomRows,
   formatBookmapPrice,
   formatDomSize,
@@ -390,6 +391,16 @@ export function BookmapDomPanel({
     !engineMode &&
     selectedDomSource === "spot" &&
     Boolean(snapshot?.bids?.length || snapshot?.asks?.length);
+  const visiblePriceBands = useMemo(
+    () =>
+      buildVisiblePriceBands({
+        labelPrices: scale.labelPrices,
+        plotHeight,
+        priceToY,
+        yToPrice: scale.yToPrice,
+      }),
+    [scale.labelPrices, scale.yToPrice, plotHeight, priceToY],
+  );
 
   const ladderResult = useMemo(() => {
     if (plotHeight < 20) {
@@ -421,6 +432,7 @@ export function BookmapDomPanel({
         priceRange,
         plotHeight,
         priceToY,
+        priceBands: visiblePriceBands,
         showDomNumbers: showNumbers,
         selectedDomSource,
         feedVenue,
@@ -460,6 +472,7 @@ export function BookmapDomPanel({
     domBucketSize,
     plotHeight,
     priceToY,
+    visiblePriceBands,
     showNumbers,
     scale.depthRangePreset,
     feedVenue,
@@ -568,7 +581,10 @@ export function BookmapDomPanel({
       bestBidPrice != null && row.price === bestBidPrice && row.hasLiveBid;
     const isBestAsk =
       bestAskPrice != null && row.price === bestAskPrice && row.hasLiveAsk;
-    const h = Math.max(3, Math.min(22, row.barHeight));
+    const top = row.bandTopY ?? row.y - Math.max(3, Math.min(22, row.barHeight)) / 2;
+    const height = row.bandBottomY != null
+      ? Math.max(1, row.bandBottomY - top)
+      : Math.max(3, Math.min(22, row.barHeight));
 
     return (
       <div
@@ -588,7 +604,7 @@ export function BookmapDomPanel({
             !isBestAsk &&
             "bg-slate-800/15",
         )}
-        style={{ top: row.y - h / 2, height: h }}
+        style={{ top, height }}
       >
         {wallOnly ? (
           <DomWallMarker row={row} />

@@ -212,6 +212,9 @@ export type DomLadderRow = {
   wallAsk?: DomWallEntry;
   /** Exact exchange price label for raw Binance DOM rows. */
   priceLabel?: string;
+  /** Shared PRICE-column band bounds for raw Binance DOM rows. */
+  bandTopY?: number;
+  bandBottomY?: number;
 };
 
 export type DomScaffoldStats = {
@@ -515,6 +518,108 @@ export type DomMicroReadabilityDiag = {
   independentDomScroll: false;
   syntheticRowsCreated: 0;
 };
+
+export type DomPriceBandLayoutDiag = {
+  enabled: true;
+  domUsesSharedPriceScale: true;
+  domUsesPriceColumnBands: true;
+  independentPixelBinsDisabled: true;
+  independentDomScroll: false;
+  extraPriceColumnEnabled: false;
+  visiblePriceBandCount: number;
+  first10PriceBands: Array<{
+    labelPrice: number;
+    topY: number;
+    bottomY: number;
+    minPrice: number;
+    maxPrice: number;
+  }>;
+  visiblePriceMin: number;
+  visiblePriceMax: number;
+  plotHeightPx: number;
+  pixelsPerDollar: number;
+  rawBidLevelsTotal: number;
+  rawAskLevelsTotal: number;
+  visibleRawBidLevels: number;
+  visibleRawAskLevels: number;
+  bidLevelsAssignedToBands: number;
+  askLevelsAssignedToBands: number;
+  bandsWithBidLiquidity: number;
+  bandsWithAskLiquidity: number;
+  bandsWithCobLiquidity: number;
+  bandsWithSvp: number;
+  bidBarsRendered: number;
+  askBarsRendered: number;
+  cobBarsRendered: number;
+  svpBarsRendered: number;
+  bidLabelsRendered: number;
+  askLabelsRendered: number;
+  cobLabelsRendered: number;
+  svpLabelsRendered: number;
+  maxBidLevelsPerBand: number;
+  maxAskLevelsPerBand: number;
+  strongestBidBand: { labelPrice: number; sumSize: number; maxSize: number } | null;
+  strongestAskBand: { labelPrice: number; sumSize: number; maxSize: number } | null;
+  bestBidBandVisible: boolean;
+  bestAskBandVisible: boolean;
+  rawDataMutatedForLayout: false;
+  syntheticRowsCreated: 0;
+  valuesCreatedWithoutBookLevel: 0;
+  maxPriceBandAlignmentErrorPx: number;
+};
+
+export type VisiblePriceBand = {
+  labelPrice: number;
+  topY: number;
+  bottomY: number;
+  centerY: number;
+  minPrice: number;
+  maxPrice: number;
+  label: string;
+};
+
+export function buildVisiblePriceBands(params: {
+  labelPrices: number[];
+  plotHeight: number;
+  priceToY: (price: number) => number;
+  yToPrice: (y: number) => number;
+}): VisiblePriceBand[] {
+  const centers = params.labelPrices
+    .map((labelPrice) => ({
+      labelPrice,
+      centerY: params.priceToY(labelPrice),
+    }))
+    .filter(
+      (entry) =>
+        Number.isFinite(entry.centerY) &&
+        entry.centerY >= BOOKMAP_PLOT_PAD.top &&
+        entry.centerY <= params.plotHeight - BOOKMAP_PLOT_PAD.bottom,
+    )
+    .sort((a, b) => a.centerY - b.centerY);
+  const plotTop = BOOKMAP_PLOT_PAD.top;
+  const plotBottom = Math.max(
+    plotTop,
+    params.plotHeight - BOOKMAP_PLOT_PAD.bottom,
+  );
+
+  return centers.map((entry, index) => {
+    const previous = centers[index - 1];
+    const next = centers[index + 1];
+    const topY = previous ? (previous.centerY + entry.centerY) / 2 : plotTop;
+    const bottomY = next ? (entry.centerY + next.centerY) / 2 : plotBottom;
+    const topPrice = params.yToPrice(topY);
+    const bottomPrice = params.yToPrice(bottomY);
+    return {
+      labelPrice: entry.labelPrice,
+      topY,
+      bottomY,
+      centerY: entry.centerY,
+      minPrice: Math.min(topPrice, bottomPrice),
+      maxPrice: Math.max(topPrice, bottomPrice),
+      label: formatBookmapPrice(entry.labelPrice),
+    };
+  });
+}
 
 export type DomScaffoldResult = {
   rows: DomLadderRow[];
@@ -1792,6 +1897,7 @@ export type PriceAlignedRawDomResult = DomScaffoldResult & {
   autoScaleDiag: DomAutoScaleLayoutDiag;
   lodDiag: DomLodRendererDiag;
   microReadabilityDiag: DomMicroReadabilityDiag;
+  priceBandLayoutDiag?: DomPriceBandLayoutDiag;
 };
 
 let lastDomPriceAlignmentDiagMs = 0;
@@ -1892,7 +1998,8 @@ function logDomLiquidityHiddenWithoutBar(params: {
   console.warn("[BOOKMAP_DOM_LIQUIDITY_HIDDEN_WITHOUT_BAR]", params);
 }
 
-export function buildPriceAlignedRawDomRows(params: {
+/** @deprecated The desktop panel now uses PRICE-column bands instead. */
+export function buildIndependentPixelBinnedRawDomRows(params: {
   bids?: OrderbookLevel[];
   asks?: OrderbookLevel[];
   spot: number | null;
@@ -1907,6 +2014,12 @@ export function buildPriceAlignedRawDomRows(params: {
   mode?: string;
   depthPreset?: DepthRangePreset;
 }): PriceAlignedRawDomResult {
+  if (import.meta.env.DEV) {
+    console.warn("[BOOKMAP_DOM_INDEPENDENT_BIN_REGRESSION]", {
+      reason: "legacy_pixel_bin_builder_called",
+      independentPixelBinsDisabled: false,
+    });
+  }
   const showDomNumbers = params.showDomNumbers !== false;
   const majorWallBtc = params.majorWallBtc ?? HEATMAP_MAJOR_WALL_BTC;
   const rawBids = params.bids ?? [];
@@ -2449,6 +2562,550 @@ export function buildPriceAlignedRawDomRows(params: {
 /**
  * STEP 1.6.4 — Strict Binance Spot raw DOM: rows ONLY from live bid/ask arrays.
  */
+type PriceBandAccumulator = {
+  band: VisiblePriceBand;
+  bidLevelCount: number;
+  askLevelCount: number;
+  bidSumSize: number;
+  askSumSize: number;
+  bidMaxSize: number;
+  askMaxSize: number;
+  bidMaxPrice: number | null;
+  askMaxPrice: number | null;
+  containsBestBid: boolean;
+  containsBestAsk: boolean;
+  nearestBidToBandCenter: { price: number; size: number; distancePx: number } | null;
+  nearestAskToBandCenter: { price: number; size: number; distancePx: number } | null;
+};
+
+let lastDomPriceBandLayoutDiagMs = 0;
+
+function emitDomPriceBandLayoutDiag(diag: DomPriceBandLayoutDiag): void {
+  if (!import.meta.env.DEV) return;
+  const now = Date.now();
+  if (now - lastDomPriceBandLayoutDiagMs < 2_000) return;
+  lastDomPriceBandLayoutDiagMs = now;
+  console.debug("[BOOKMAP_DOM_PRICE_BAND_LAYOUT_DIAG]", diag);
+}
+
+function findPriceBandForY(
+  bands: PriceBandAccumulator[],
+  y: number,
+): PriceBandAccumulator | null {
+  return (
+    bands.find(
+      ({ band }, index) =>
+        y >= band.topY &&
+        (y < band.bottomY || (index === bands.length - 1 && y <= band.bottomY)),
+    ) ?? null
+  );
+}
+
+export function buildPriceAlignedRawDomRows(params: {
+  bids?: OrderbookLevel[];
+  asks?: OrderbookLevel[];
+  spot: number | null;
+  priceRange: PriceRange;
+  plotHeight: number;
+  priceToY: (price: number) => number;
+  priceBands: VisiblePriceBand[];
+  showDomNumbers?: boolean;
+  majorWallBtc?: number;
+  selectedDomSource?: string;
+  feedVenue?: string;
+  market?: string;
+  mode?: string;
+  depthPreset?: DepthRangePreset;
+}): PriceAlignedRawDomResult {
+  const rawBids = params.bids ?? [];
+  const rawAsks = params.asks ?? [];
+  const showDomNumbers = params.showDomNumbers !== false;
+  const majorWallBtc = params.majorWallBtc ?? HEATMAP_MAJOR_WALL_BTC;
+  const minPrice = params.priceRange.minPrice;
+  const maxPrice = params.priceRange.maxPrice;
+  const priceRangeUsd = Math.max(1e-9, maxPrice - minPrice);
+  const pixelsPerDollar = params.plotHeight / priceRangeUsd;
+  const fullTextThresholdPx = 16;
+  const selectedDepthMode = params.depthPreset ?? "local";
+  const microModeActive =
+    selectedDepthMode === "local" ||
+    priceRangeUsd <= BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD * 4 ||
+    pixelsPerDollar >= 0.18;
+  const visibleBands = params.priceBands
+    .filter(
+      (band) =>
+        Number.isFinite(band.topY) &&
+        Number.isFinite(band.bottomY) &&
+        band.bottomY > band.topY,
+    )
+    .sort((a, b) => a.topY - b.topY);
+  const bands: PriceBandAccumulator[] = visibleBands.map((band) => ({
+    band,
+    bidLevelCount: 0,
+    askLevelCount: 0,
+    bidSumSize: 0,
+    askSumSize: 0,
+    bidMaxSize: 0,
+    askMaxSize: 0,
+    bidMaxPrice: null,
+    askMaxPrice: null,
+    containsBestBid: false,
+    containsBestAsk: false,
+    nearestBidToBandCenter: null,
+    nearestAskToBandCenter: null,
+  }));
+  const bestBid = rawBids.find((level) => Number(level.sizeBtc) > 0) ?? null;
+  const bestAsk = rawAsks.find((level) => Number(level.sizeBtc) > 0) ?? null;
+  let levelsOutsideChartRange = 0;
+  let visibleRawBidLevels = 0;
+  let visibleRawAskLevels = 0;
+  let bidLevelsAssignedToBands = 0;
+  let askLevelsAssignedToBands = 0;
+
+  const ingest = (level: OrderbookLevel, side: "bid" | "ask") => {
+    const price = Number(level.price);
+    const size = Number(level.sizeBtc);
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(size) || size <= 0) return;
+    const y = params.priceToY(price);
+    const inPlot =
+      price >= minPrice &&
+      price <= maxPrice &&
+      Number.isFinite(y) &&
+      y >= BOOKMAP_PLOT_PAD.top &&
+      y <= params.plotHeight - BOOKMAP_PLOT_PAD.bottom;
+    if (!inPlot) {
+      levelsOutsideChartRange += 1;
+      return;
+    }
+    if (side === "bid") visibleRawBidLevels += 1;
+    else visibleRawAskLevels += 1;
+
+    const target = findPriceBandForY(bands, y);
+    if (!target) {
+      if (import.meta.env.DEV) {
+        console.warn("[BOOKMAP_DOM_PRICE_BAND_ASSIGNMENT_FAILED]", {
+          side,
+          price,
+          y,
+          visiblePriceBandCount: visibleBands.length,
+        });
+      }
+      return;
+    }
+
+    const distancePx = Math.abs(y - target.band.centerY);
+    if (side === "bid") {
+      target.bidLevelCount += 1;
+      target.bidSumSize += size;
+      if (size > target.bidMaxSize) {
+        target.bidMaxSize = size;
+        target.bidMaxPrice = price;
+      }
+      if (
+        !target.nearestBidToBandCenter ||
+        distancePx < target.nearestBidToBandCenter.distancePx
+      ) {
+        target.nearestBidToBandCenter = { price, size, distancePx };
+      }
+      target.containsBestBid =
+        target.containsBestBid ||
+        (bestBid != null &&
+          Math.abs(price - Number(bestBid.price)) <= BOOKMAP_BTCUSDT_TICK_SIZE);
+      bidLevelsAssignedToBands += 1;
+    } else {
+      target.askLevelCount += 1;
+      target.askSumSize += size;
+      if (size > target.askMaxSize) {
+        target.askMaxSize = size;
+        target.askMaxPrice = price;
+      }
+      if (
+        !target.nearestAskToBandCenter ||
+        distancePx < target.nearestAskToBandCenter.distancePx
+      ) {
+        target.nearestAskToBandCenter = { price, size, distancePx };
+      }
+      target.containsBestAsk =
+        target.containsBestAsk ||
+        (bestAsk != null &&
+          Math.abs(price - Number(bestAsk.price)) <= BOOKMAP_BTCUSDT_TICK_SIZE);
+      askLevelsAssignedToBands += 1;
+    }
+  };
+
+  rawBids.forEach((level) => ingest(level, "bid"));
+  rawAsks.forEach((level) => ingest(level, "ask"));
+
+  const liquidityBands = bands.filter(
+    (entry) => entry.bidLevelCount > 0 || entry.askLevelCount > 0,
+  );
+  const maxBid = liquidityBands.reduce((max, entry) => Math.max(max, entry.bidSumSize), 0);
+  const maxAsk = liquidityBands.reduce((max, entry) => Math.max(max, entry.askSumSize), 0);
+  const maxCob = liquidityBands.reduce(
+    (max, entry) => Math.max(max, entry.bidSumSize + entry.askSumSize),
+    0,
+  );
+  const visibleMaxLiquidity = Math.max(maxBid, maxAsk, 1e-9);
+  let svpRunning = 0;
+  let maxPriceBandAlignmentErrorPx = 0;
+
+  const rows: DomLadderRow[] = liquidityBands.map((entry) => {
+    const bandHeight = entry.band.bottomY - entry.band.topY;
+    const bidSize = entry.bidSumSize;
+    const askSize = entry.askSumSize;
+    const cobSize = bidSize + askSize;
+    svpRunning += cobSize;
+    const textFitsBand = showDomNumbers && bandHeight >= fullTextThresholdPx;
+    const showBandText =
+      textFitsBand &&
+      (microModeActive ||
+        cobSize >= visibleMaxLiquidity * 0.2 ||
+        entry.containsBestBid ||
+        entry.containsBestAsk);
+    const renderedTop = entry.band.centerY - bandHeight / 2;
+    const renderedBottom = entry.band.centerY + bandHeight / 2;
+    const alignmentError = Math.max(
+      Math.max(0, entry.band.topY - renderedTop),
+      Math.max(0, renderedBottom - entry.band.bottomY),
+    );
+    maxPriceBandAlignmentErrorPx = Math.max(maxPriceBandAlignmentErrorPx, alignmentError);
+    if (alignmentError > 0.5 && import.meta.env.DEV) {
+      console.warn("[BOOKMAP_DOM_VALUE_NOT_IN_PRICE_BAND]", {
+        labelPrice: entry.band.labelPrice,
+        renderedTop,
+        renderedBottom,
+        bandTopY: entry.band.topY,
+        bandBottomY: entry.band.bottomY,
+        alignmentErrorPx: alignmentError,
+      });
+    }
+    if (
+      import.meta.env.DEV &&
+      ((bidSize > 0 && entry.bidLevelCount === 0) ||
+        (askSize > 0 && entry.askLevelCount === 0))
+    ) {
+      console.warn("[BOOKMAP_DOM_FAKE_VALUE_REGRESSION]", {
+        labelPrice: entry.band.labelPrice,
+        bidSize,
+        askSize,
+        bidLevelCount: entry.bidLevelCount,
+        askLevelCount: entry.askLevelCount,
+      });
+    }
+
+    return {
+      price: entry.band.labelPrice,
+      priceLabel: entry.band.label,
+      bidSize,
+      askSize,
+      bidState: bidSize > 0 ? "live" : "none",
+      askState: askSize > 0 ? "live" : "none",
+      bidLastKnownSize: 0,
+      askLastKnownSize: 0,
+      cobSize,
+      svpCumulative: svpRunning,
+      y: entry.band.centerY,
+      bucketHeight: bandHeight,
+      barHeight: bandHeight,
+      bandTopY: entry.band.topY,
+      bandBottomY: entry.band.bottomY,
+      isSpotBucket:
+        params.spot != null &&
+        params.spot >= entry.band.minPrice &&
+        params.spot <= entry.band.maxPrice,
+      showLabel: false,
+      showTick: false,
+      showDomText: showBandText,
+      showBidText: showBandText && bidSize > 0,
+      showAskText: showBandText && askSize > 0,
+      showCobText: showBandText && cobSize > 0,
+      showSvpText: showBandText && svpRunning > 0,
+      isMajorWall: cobSize >= majorWallBtc,
+      bidBarPct: maxBid > 0 ? (bidSize / maxBid) * 100 : 0,
+      askBarPct: maxAsk > 0 ? (askSize / maxAsk) * 100 : 0,
+      cobBarPct: maxCob > 0 ? (cobSize / maxCob) * 100 : 0,
+      hasLiveBid: bidSize > 0,
+      hasLiveAsk: askSize > 0,
+      hasHistoricalWall: false,
+      wallSize: 0,
+      wallSide: null,
+      wallTier: null,
+      wallIsStale: false,
+    };
+  });
+
+  const bidBarsRendered = rows.filter((row) => row.bidSize > 0).length;
+  const askBarsRendered = rows.filter((row) => row.askSize > 0).length;
+  const cobBarsRendered = rows.filter((row) => row.cobSize > 0).length;
+  const svpBarsRendered = rows.filter((row) => row.svpCumulative > 0).length;
+  const bidLabelsRendered = rows.filter((row) => row.showBidText).length;
+  const askLabelsRendered = rows.filter((row) => row.showAskText).length;
+  const cobLabelsRendered = rows.filter((row) => row.showCobText).length;
+  const svpLabelsRendered = rows.filter((row) => row.showSvpText).length;
+  const bestBidVisible = liquidityBands.some((entry) => entry.containsBestBid);
+  const bestAskVisible = liquidityBands.some((entry) => entry.containsBestAsk);
+  const strongestBid = liquidityBands.reduce<PriceBandAccumulator | null>(
+    (best, entry) => (!best || entry.bidSumSize > best.bidSumSize ? entry : best),
+    null,
+  );
+  const strongestAsk = liquidityBands.reduce<PriceBandAccumulator | null>(
+    (best, entry) => (!best || entry.askSumSize > best.askSumSize ? entry : best),
+    null,
+  );
+  const maxBidLevelsPerBand = liquidityBands.reduce(
+    (max, entry) => Math.max(max, entry.bidLevelCount),
+    0,
+  );
+  const maxAskLevelsPerBand = liquidityBands.reduce(
+    (max, entry) => Math.max(max, entry.askLevelCount),
+    0,
+  );
+  const aggregatedLevels = liquidityBands.reduce(
+    (sum, entry) =>
+      sum +
+      Math.max(0, entry.bidLevelCount - 1) +
+      Math.max(0, entry.askLevelCount - 1),
+    0,
+  );
+  const totalAssignedLevels = bidLevelsAssignedToBands + askLevelsAssignedToBands;
+  const averageLevelsPerBand =
+    liquidityBands.length > 0 ? totalAssignedLevels / liquidityBands.length : 0;
+
+  const priceBandLayoutDiag: DomPriceBandLayoutDiag = {
+    enabled: true,
+    domUsesSharedPriceScale: true,
+    domUsesPriceColumnBands: true,
+    independentPixelBinsDisabled: true,
+    independentDomScroll: false,
+    extraPriceColumnEnabled: false,
+    visiblePriceBandCount: visibleBands.length,
+    first10PriceBands: visibleBands.slice(0, 10).map((band) => ({
+      labelPrice: band.labelPrice,
+      topY: band.topY,
+      bottomY: band.bottomY,
+      minPrice: band.minPrice,
+      maxPrice: band.maxPrice,
+    })),
+    visiblePriceMin: minPrice,
+    visiblePriceMax: maxPrice,
+    plotHeightPx: params.plotHeight,
+    pixelsPerDollar,
+    rawBidLevelsTotal: rawBids.length,
+    rawAskLevelsTotal: rawAsks.length,
+    visibleRawBidLevels,
+    visibleRawAskLevels,
+    bidLevelsAssignedToBands,
+    askLevelsAssignedToBands,
+    bandsWithBidLiquidity: bidBarsRendered,
+    bandsWithAskLiquidity: askBarsRendered,
+    bandsWithCobLiquidity: cobBarsRendered,
+    bandsWithSvp: svpBarsRendered,
+    bidBarsRendered,
+    askBarsRendered,
+    cobBarsRendered,
+    svpBarsRendered,
+    bidLabelsRendered,
+    askLabelsRendered,
+    cobLabelsRendered,
+    svpLabelsRendered,
+    maxBidLevelsPerBand,
+    maxAskLevelsPerBand,
+    strongestBidBand:
+      strongestBid && strongestBid.bidSumSize > 0
+        ? {
+            labelPrice: strongestBid.band.labelPrice,
+            sumSize: strongestBid.bidSumSize,
+            maxSize: strongestBid.bidMaxSize,
+          }
+        : null,
+    strongestAskBand:
+      strongestAsk && strongestAsk.askSumSize > 0
+        ? {
+            labelPrice: strongestAsk.band.labelPrice,
+            sumSize: strongestAsk.askSumSize,
+            maxSize: strongestAsk.askMaxSize,
+          }
+        : null,
+    bestBidBandVisible: bestBidVisible,
+    bestAskBandVisible: bestAskVisible,
+    rawDataMutatedForLayout: false,
+    syntheticRowsCreated: 0,
+    valuesCreatedWithoutBookLevel: 0,
+    maxPriceBandAlignmentErrorPx,
+  };
+  emitDomPriceBandLayoutDiag(priceBandLayoutDiag);
+
+  const alignmentDiag: DomPriceAlignmentDiag = {
+    enabled: true,
+    selectedDomSource: params.selectedDomSource ?? "spot",
+    symbol: params.market ?? "BTCUSDT",
+    venue: params.feedVenue ?? "binance_spot",
+    chartVisiblePriceMin: minPrice,
+    chartVisiblePriceMax: maxPrice,
+    chartPriceRangeUsd: priceRangeUsd,
+    priceToYSource: "BookmapPriceScale.priceToY",
+    domUsesSharedPriceScale: true,
+    domHasIndependentScroll: false,
+    domUsesRowIndexY: false,
+    rawBidLevelsTotal: rawBids.length,
+    rawAskLevelsTotal: rawAsks.length,
+    visibleBidLevelsRendered: visibleRawBidLevels,
+    visibleAskLevelsRendered: visibleRawAskLevels,
+    levelsOutsideChartRange,
+    bidAskLinesY: {
+      bid: bestBid ? params.priceToY(Number(bestBid.price)) : null,
+      ask: bestAsk ? params.priceToY(Number(bestAsk.price)) : null,
+    },
+    nearestDomBidY: rows.find((row) => row.hasLiveBid)?.y ?? null,
+    nearestDomAskY: rows.find((row) => row.hasLiveAsk)?.y ?? null,
+    maxAlignmentErrorPx: maxPriceBandAlignmentErrorPx,
+    syntheticRowsCreated: 0,
+    extraPriceColumnEnabled: false,
+    chartRangeControlsDomVisibility: true,
+    heatmapBucketControlsDom: false,
+    localDepthControlsDomRows: false,
+    svpCreatesDomRows: false,
+    collapsedVisualGroups: 0,
+    aggregatedBecausePixelCollision: 0,
+  };
+  emitDomPriceAlignmentDiag(alignmentDiag);
+
+  const autoScaleDiag: DomAutoScaleLayoutDiag = {
+    enabled: true,
+    domUsesSharedPriceScale: true,
+    domHasIndependentScroll: false,
+    visiblePriceMin: minPrice,
+    visiblePriceMax: maxPrice,
+    visibleRawBidLevels,
+    visibleRawAskLevels,
+    pixelsPerDollar,
+    minAdjacentLevelDistancePx: null,
+    averageAdjacentLevelDistancePx: null,
+    textHeightPx: 13,
+    fullTextThresholdPx,
+    collisionGroupsBid: liquidityBands.filter((entry) => entry.bidLevelCount > 1).length,
+    collisionGroupsAsk: liquidityBands.filter((entry) => entry.askLevelCount > 1).length,
+    collisionGroupsCob: liquidityBands.filter(
+      (entry) => entry.bidLevelCount + entry.askLevelCount > 1,
+    ).length,
+    collisionGroupsSvp: liquidityBands.filter(
+      (entry) => entry.bidLevelCount + entry.askLevelCount > 1,
+    ).length,
+    individualLabelsRendered: rows.filter(
+      (row) => row.showDomText && (row.bidSize > 0) !== (row.askSize > 0),
+    ).length,
+    groupedLabelsRendered: rows.filter(
+      (row) => row.showDomText && row.bidSize > 0 && row.askSize > 0,
+    ).length,
+    labelsHiddenDueToDensity: rows.filter((row) => !row.showDomText).length,
+    barsRendered: cobBarsRendered,
+    strongestHiddenValue: rows.reduce(
+      (max, row) => (!row.showDomText ? Math.max(max, row.cobSize) : max),
+      0,
+    ),
+    bestBidVisible,
+    bestAskVisible,
+    maxAlignmentErrorPx: maxPriceBandAlignmentErrorPx,
+    extraPriceColumnEnabled: false,
+    rawDataMutatedForLayout: false,
+  };
+  emitDomAutoScaleLayoutDiag(autoScaleDiag);
+
+  const lodDiag: DomLodRendererDiag = {
+    enabled: true,
+    domUsesSharedPriceScale: true,
+    domHasIndependentScroll: false,
+    extraPriceColumnEnabled: false,
+    rawBidLevelsTotal: rawBids.length,
+    rawAskLevelsTotal: rawAsks.length,
+    visibleRawBidLevels,
+    visibleRawAskLevels,
+    bidVisualGroups: bidBarsRendered,
+    askVisualGroups: askBarsRendered,
+    cobVisualGroups: cobBarsRendered,
+    svpVisualGroups: svpBarsRendered,
+    bidBarsRendered,
+    askBarsRendered,
+    cobBarsRendered,
+    svpBarsRendered,
+    bidLabelsRendered,
+    askLabelsRendered,
+    cobLabelsRendered,
+    svpLabelsRendered,
+    labelsHiddenDueToCollision: rows.filter((row) => !row.showDomText).length,
+    hiddenLabelsWithBarsStillRendered: rows.filter(
+      (row) => !row.showDomText && row.cobSize > 0,
+    ).length,
+    strongestBidGroupValue: maxBid,
+    strongestAskGroupValue: maxAsk,
+    bestBidVisible,
+    bestAskVisible,
+    visibleMaxLiquidity,
+    pixelsPerDollar,
+    minCollisionBandPx: 0,
+    averageLevelsPerVisualGroup: averageLevelsPerBand,
+    maxLevelsPerVisualGroup: Math.max(maxBidLevelsPerBand, maxAskLevelsPerBand),
+    rawDataMutatedForLayout: false,
+    syntheticRowsCreated: 0,
+    valuesCreatedWithoutBookLevel: 0,
+  };
+  emitDomLodRendererDiag(lodDiag);
+
+  const microReadabilityDiag: DomMicroReadabilityDiag = {
+    selectedDepthMode,
+    visiblePriceRangeUsd: priceRangeUsd,
+    pixelsPerDollar,
+    microModeActive,
+    collisionBandPx: 0,
+    nearPricePriorityUsd: BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD,
+    visibleRawBidLevels,
+    visibleRawAskLevels,
+    individualBidLabelsRendered: bidLabelsRendered,
+    individualAskLabelsRendered: askLabelsRendered,
+    groupedBidLabelsRendered: liquidityBands.filter(
+      (entry) => entry.bidLevelCount > 1 && entry.band.bottomY - entry.band.topY >= fullTextThresholdPx,
+    ).length,
+    groupedAskLabelsRendered: liquidityBands.filter(
+      (entry) => entry.askLevelCount > 1 && entry.band.bottomY - entry.band.topY >= fullTextThresholdPx,
+    ).length,
+    bidBarsRendered,
+    askBarsRendered,
+    labelsHiddenDueToDensity: rows.filter((row) => !row.showDomText).length,
+    bestBidVisible,
+    bestAskVisible,
+    largeLevelsVisible: rows.filter((row) => row.cobSize >= visibleMaxLiquidity * 0.52).length,
+    maxLabelsPerColumn: visibleBands.length,
+    domUsesSharedPriceScale: true,
+    independentDomScroll: false,
+    syntheticRowsCreated: 0,
+  };
+  emitDomMicroReadabilityDiag(microReadabilityDiag);
+
+  return {
+    rows,
+    stats: {
+      ladderRows: rows.length,
+      liveRows: rows.length,
+      lastKnownRows: 0,
+      wallRows: 0,
+      expectedDomRowCount: rows.length,
+      zeroLiquidityRows: 0,
+      rowsWithBidLiquidity: bidBarsRendered,
+      rowsWithAskLiquidity: askBarsRendered,
+      rawBidLevelsCount: rawBids.length,
+      rawAskLevelsCount: rawAsks.length,
+      aggregatedBidLevelsCount: aggregatedLevels,
+      aggregatedAskLevelsCount: aggregatedLevels,
+      domUsesContinuousLadder: false,
+    },
+    alignmentDiag,
+    autoScaleDiag,
+    lodDiag,
+    microReadabilityDiag,
+    priceBandLayoutDiag,
+  };
+}
+
 export function buildRawDomLadderRows(params: {
   bids?: OrderbookLevel[];
   asks?: OrderbookLevel[];
