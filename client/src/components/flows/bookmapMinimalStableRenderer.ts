@@ -7,8 +7,12 @@ import {
   BOOKMAP_ENGINE_BUCKET_MS,
   BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG,
   BOOKMAP_MINIMAL_STABLE_RENDERER_V1,
+  HISTORICAL_SURFACE_MICROCELL_GAP_PX,
+  HISTORICAL_SURFACE_MICROCELL_MIN_WIDTH_PX,
+  HISTORICAL_SURFACE_MICROCELL_TEXTURE_V1,
   HISTORICAL_SURFACE_MIN_CELL_WIDTH_MS,
   HISTORICAL_SURFACE_PERSISTENT_CELL_WIDTH_MS,
+  HISTORICAL_SURFACE_PROJECTION_TEXTURE_V1,
   HISTORICAL_SURFACE_ROW_HEIGHT_USD,
 } from "@/lib/bookmapEngineConfig";
 import {
@@ -149,6 +153,56 @@ function fillBand(
   ctx.fillRect(x, geom.yTop, w, geom.height);
 }
 
+function textureSeed(price: number, timeOrX: number, sideSalt: number): number {
+  const v = Math.sin(price * 0.017 + timeOrX * 0.000_083 + sideSalt) * 10_000;
+  return v - Math.floor(v);
+}
+
+function textureAlphaMod(price: number, timeOrX: number, side: "bid" | "ask"): number {
+  const seed = textureSeed(price, timeOrX, side === "bid" ? 2.1 : 3.4);
+  return 0.82 + seed * 0.3;
+}
+
+function fillTexturedSurfaceCell(
+  ctx: CanvasRenderingContext2D,
+  cell: HistoricalLiquiditySurfaceCell,
+  x: number,
+  w: number,
+  geom: BandGeom,
+  rgb: [number, number, number],
+  alpha: number,
+): { fragments: number; alphaSum: number; varianceSamples: number[] } {
+  if (!HISTORICAL_SURFACE_MICROCELL_TEXTURE_V1 || w < HISTORICAL_SURFACE_MICROCELL_MIN_WIDTH_PX) {
+    fillBand(ctx, x, w, geom, rgb, alpha);
+    return { fragments: 1, alphaSum: alpha, varianceSamples: [alpha] };
+  }
+
+  const maxFragments = cell.coldStartSeeded ? 2 : cell.persistenceMs > 30_000 ? 4 : 3;
+  const fragments = Math.max(
+    1,
+    Math.min(maxFragments, Math.floor(w / HISTORICAL_SURFACE_MICROCELL_MIN_WIDTH_PX)),
+  );
+  const gap = Math.min(HISTORICAL_SURFACE_MICROCELL_GAP_PX, Math.max(0, w / fragments - 1));
+  const fragmentW = Math.max(1, (w - gap * (fragments - 1)) / fragments);
+  let alphaSum = 0;
+  const samples: number[] = [];
+  for (let i = 0; i < fragments; i += 1) {
+    const fx = x + i * (fragmentW + gap);
+    const mod = textureAlphaMod(cell.price, cell.timeBucket + i * 137, cell.side);
+    const fa = alpha * mod;
+    fillBand(ctx, fx, fragmentW, geom, rgb, fa);
+    alphaSum += fa;
+    samples.push(fa);
+  }
+  return { fragments, alphaSum, varianceSamples: samples };
+}
+
+function variance(values: number[]): number {
+  if (values.length < 2) return 0;
+  const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+  return values.reduce((sum, v) => sum + (v - avg) ** 2, 0) / values.length;
+}
+
 function collectHistoricalCells(
   engine: PreparedEngineRenderData,
   dataEndTime: number,
@@ -278,8 +332,13 @@ export function paintMinimalStableBookmapFrame(
     medium: 0,
     strong: 0,
   };
+  const rowAlphaSamples = new Map<number, number[]>();
+  let microcellFragmentCount = 0;
   let coldStartCellsRendered = 0;
   let liveCellsRendered = 0;
+  let projectedCellCount = 0;
+  let projectedAlphaSum = 0;
+  let projectedWidthSum = 0;
   const renderedRows = new Set<number>();
   const renderedBuckets = new Set<number>();
   const prevSmoothing = ctx.imageSmoothingEnabled;
@@ -322,7 +381,11 @@ export function paintMinimalStableBookmapFrame(
         renderSkips.tinyAlpha += 1;
         continue;
       }
-      fillBand(ctx, x0, w, geom, thermal.rgb, alpha);
+      const texture = fillTexturedSurfaceCell(ctx, cell, x0, w, geom, thermal.rgb, alpha);
+      microcellFragmentCount += texture.fragments;
+      const rowSamples = rowAlphaSamples.get(cell.price) ?? [];
+      rowSamples.push(...texture.varianceSamples);
+      rowAlphaSamples.set(cell.price, rowSamples);
       widthStats.min = Math.min(widthStats.min, w);
       widthStats.max = Math.max(widthStats.max, w);
       widthStats.sum += w;
@@ -370,49 +433,6 @@ export function paintMinimalStableBookmapFrame(
   }
   ctx.imageSmoothingEnabled = prevSmoothing;
 
-  if (engine.historicalSurfaceDiag) {
-    engine.historicalSurfaceDiag.renderCellCountPerFrame = result.visibleHeatmapCells;
-    if (import.meta.env.DEV && BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG) {
-      const now = Date.now();
-      if (now - lastHistoricalSurfaceRenderDiagMs >= 2_000) {
-        lastHistoricalSurfaceRenderDiagMs = now;
-        console.debug("[BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_RENDER]", {
-          ...engine.historicalSurfaceDiag,
-          rendererPathActuallyUsed: "bookmapMinimalStableRenderer.surface",
-          visibleHistoricalCellCount: surfaceCells.length,
-          renderCellCountPerFrame: result.visibleHeatmapCells,
-          renderSkippedCells: renderSkips,
-          averageRenderedCellWidthPx:
-            widthStats.count > 0 ? widthStats.sum / widthStats.count : 0,
-          minRenderedCellWidthPx: Number.isFinite(widthStats.min) ? widthStats.min : 0,
-          maxRenderedCellWidthPx: widthStats.max,
-          averageRenderedCellHeightPx:
-            heightStats.count > 0 ? heightStats.sum / heightStats.count : 0,
-          minRenderedCellHeightPx: Number.isFinite(heightStats.min) ? heightStats.min : 0,
-          maxRenderedCellHeightPx: heightStats.max,
-          bucketMergeFactor: engine.historicalSurfaceDiag.bucketMergeFactor,
-          priceLevelMergeFactor: engine.historicalSurfaceDiag.priceLevelMergeFactor,
-          priceLevelsCollapsedPerRow: 1,
-          timeBucketsStretchedPerCell:
-            widthStats.count > 0
-              ? (widthStats.sum / widthStats.count) /
-                Math.max(1, bucketWidthPx(dataEndTime - BOOKMAP_ENGINE_BUCKET_MS, metrics.timeToX))
-              : 0,
-          smoothingEnabled: false,
-          alphaAccumulationMode: "single-rect-source-over",
-          coldStartCellsRendered,
-          realLiveCellsRendered: liveCellsRendered,
-          renderedDarkGapCount:
-            engine.historicalSurfaceDiag.inactiveLevelCount +
-            Math.max(0, engine.historicalSurfaceDiag.visiblePriceLevels - renderedRows.size),
-          inactiveLevelCount: engine.historicalSurfaceDiag.inactiveLevelCount,
-          renderedTimeBucketCount: renderedBuckets.size,
-          renderedCellsByIntensityTier: renderedTiers,
-        });
-      }
-    }
-  }
-
   const projX1 = metrics.timeToX(timeViewport.visibleEndTime);
   const hasProjection =
     projX1 - dataEdgeX >= 2 &&
@@ -422,25 +442,46 @@ export function paintMinimalStableBookmapFrame(
     if (level.price < minPrice || level.price > maxPrice) continue;
     if (level.sizeBtc < 0.25) continue;
 
-    const geom = bandGeom(level.price, metrics.priceToY, metrics.domBucketSize);
+    const geom = surfaceBandGeom(level.price, metrics.priceToY);
     if (geom.yTop + geom.height < HEATMAP_PAD.top - 2) continue;
     if (geom.yTop > HEATMAP_PAD.top + metrics.plotH + 2) continue;
 
     const thermal = thermalFromSize(level.sizeBtc);
     const edgeX = metrics.timeToX(dataEndTime - BOOKMAP_ENGINE_BUCKET_MS);
     const edgeW = Math.min(bucketW, Math.max(1, dataEdgeX - edgeX));
-    fillBand(ctx, edgeX, edgeW, geom, thermal.rgb, thermal.alpha * opacity * 0.75);
+    const edgeMod = HISTORICAL_SURFACE_PROJECTION_TEXTURE_V1
+      ? textureAlphaMod(level.price, dataEndTime, level.side)
+      : 1;
+    const edgeDrawW = HISTORICAL_SURFACE_PROJECTION_TEXTURE_V1
+      ? Math.max(1, edgeW * 0.82)
+      : edgeW;
+    const edgeAlpha = thermal.alpha * opacity * 0.66 * edgeMod;
+    fillBand(ctx, edgeX, edgeDrawW, geom, thermal.rgb, edgeAlpha);
+    projectedCellCount += 1;
+    projectedAlphaSum += edgeAlpha;
+    projectedWidthSum += edgeDrawW;
 
     if (hasProjection) {
       for (let x = dataEdgeX; x < projX1; x += bucketW) {
+        const w = Math.min(bucketW, projX1 - x);
+        const mod = HISTORICAL_SURFACE_PROJECTION_TEXTURE_V1
+          ? textureAlphaMod(level.price, x, level.side)
+          : 1;
+        const drawW = HISTORICAL_SURFACE_PROJECTION_TEXTURE_V1
+          ? Math.max(1, w * (0.58 + mod * 0.18))
+          : w;
+        const alpha = thermal.alpha * opacity * 0.58 * mod;
         fillBand(
           ctx,
           x,
-          Math.min(bucketW, projX1 - x),
+          drawW,
           geom,
           thermal.rgb,
-          thermal.alpha * opacity * 0.72,
+          alpha,
         );
+        projectedCellCount += 1;
+        projectedAlphaSum += alpha;
+        projectedWidthSum += drawW;
       }
     }
     result.visibleLiveLevels += 1;
@@ -476,6 +517,64 @@ export function paintMinimalStableBookmapFrame(
       }
     }
     result.visibleWallBands += 1;
+  }
+
+  if (engine.historicalSurfaceDiag) {
+    engine.historicalSurfaceDiag.renderCellCountPerFrame = result.visibleHeatmapCells;
+    if (import.meta.env.DEV && BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG) {
+      const now = Date.now();
+      if (now - lastHistoricalSurfaceRenderDiagMs >= 2_000) {
+        lastHistoricalSurfaceRenderDiagMs = now;
+        const rowVariances = Array.from(rowAlphaSamples.values()).map(variance);
+        const averageRowVariance =
+          rowVariances.length > 0
+            ? rowVariances.reduce((sum, v) => sum + v, 0) / rowVariances.length
+            : 0;
+        console.debug("[BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_RENDER]", {
+          ...engine.historicalSurfaceDiag,
+          rendererPathActuallyUsed: "bookmapMinimalStableRenderer.surface",
+          visibleHistoricalCellCount: surfaceCells.length,
+          renderCellCountPerFrame: result.visibleHeatmapCells,
+          renderSkippedCells: renderSkips,
+          averageRenderedCellWidthPx:
+            widthStats.count > 0 ? widthStats.sum / widthStats.count : 0,
+          minRenderedCellWidthPx: Number.isFinite(widthStats.min) ? widthStats.min : 0,
+          maxRenderedCellWidthPx: widthStats.max,
+          averageRenderedCellHeightPx:
+            heightStats.count > 0 ? heightStats.sum / heightStats.count : 0,
+          minRenderedCellHeightPx: Number.isFinite(heightStats.min) ? heightStats.min : 0,
+          maxRenderedCellHeightPx: heightStats.max,
+          bucketMergeFactor: engine.historicalSurfaceDiag.bucketMergeFactor,
+          priceLevelMergeFactor: engine.historicalSurfaceDiag.priceLevelMergeFactor,
+          priceLevelsCollapsedPerRow: 1,
+          timeBucketsStretchedPerCell:
+            widthStats.count > 0
+              ? (widthStats.sum / widthStats.count) /
+                Math.max(1, bucketWidthPx(dataEndTime - BOOKMAP_ENGINE_BUCKET_MS, metrics.timeToX))
+              : 0,
+          smoothingEnabled: false,
+          alphaAccumulationMode: "single-rect-source-over",
+          coldStartCellsRendered,
+          realLiveCellsRendered: liveCellsRendered,
+          renderedDarkGapCount:
+            engine.historicalSurfaceDiag.inactiveLevelCount +
+            Math.max(0, engine.historicalSurfaceDiag.visiblePriceLevels - renderedRows.size),
+          inactiveLevelCount: engine.historicalSurfaceDiag.inactiveLevelCount,
+          renderedTimeBucketCount: renderedBuckets.size,
+          renderedCellsByIntensityTier: renderedTiers,
+          microcellTextureEnabled: HISTORICAL_SURFACE_MICROCELL_TEXTURE_V1,
+          microcellFragmentCount,
+          averageRowUniformity: 1 / (1 + averageRowVariance * 1_000),
+          perRowIntensityVariance: averageRowVariance,
+          projectionTextureEnabled: HISTORICAL_SURFACE_PROJECTION_TEXTURE_V1,
+          projectedRightSideRenderedCellCount: projectedCellCount,
+          averageProjectedCellWidthPx:
+            projectedCellCount > 0 ? projectedWidthSum / projectedCellCount : 0,
+          averageProjectedCellAlpha:
+            projectedCellCount > 0 ? projectedAlphaSum / projectedCellCount : 0,
+        });
+      }
+    }
   }
 
   return result;
