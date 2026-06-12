@@ -412,14 +412,14 @@ export const BOOKMAP_DOM_VALUE_MAPPING_DIAG = true;
 /** DEV-only full DOM visibility diagnostics (throttled 2s). */
 export const BOOKMAP_DOM_FULL_VISIBILITY_DIAG = true;
 
-/** Pixels-per-dollar above which DOM renders individual raw levels. */
-export const BOOKMAP_DOM_INDIVIDUAL_PPD_THRESHOLD = 0.18;
+/** Readable raw-level gap for printing every DOM number. */
+export const BOOKMAP_DOM_INDIVIDUAL_MIN_GAP_PX = 14;
 
-/** Pixels-per-dollar above which DOM uses hybrid (all bars, selective labels). */
-export const BOOKMAP_DOM_HYBRID_PPD_THRESHOLD = 0.04;
+/** Maximum visible levels per text row before switching to selective labels. */
+export const BOOKMAP_DOM_INDIVIDUAL_LEVELS_PER_TEXT_ROW = 1;
 
-/** Minimum adjacent raw-level gap (px) to force individual DOM mode. */
-export const BOOKMAP_DOM_INDIVIDUAL_MIN_GAP_PX = 3;
+/** Maximum visible levels per pixel before switching to a 2px profile. */
+export const BOOKMAP_DOM_HYBRID_LEVELS_PER_PIXEL = 1.35;
 
 /** Minimum BTC size for a visible level to require visual representation. */
 export const BOOKMAP_DOM_MIN_VISUAL_SIZE_BTC = 0;
@@ -427,17 +427,14 @@ export const BOOKMAP_DOM_MIN_VISUAL_SIZE_BTC = 0;
 /** DEV-only gray DOM panel regression diagnostics (throttled 2s). */
 export const BOOKMAP_DOM_GRAY_PANEL_REGRESSION_DIAG = true;
 
-/** Minimum readable numeric labels per BID/ASK column in dense DOM. */
-export const BOOKMAP_DOM_MIN_READABLE_LABELS_PER_SIDE = 12;
-
 /** Maximum readable numeric labels per BID/ASK column. */
-export const BOOKMAP_DOM_MAX_READABLE_LABELS_PER_SIDE = 24;
+export const BOOKMAP_DOM_MAX_READABLE_LABELS_PER_SIDE = 18;
 
 /** Row count above which DOM uses subtle bar rendering. */
 export const BOOKMAP_DOM_DENSE_ROW_THRESHOLD = 80;
 
-/** Max opacity for COB background bars without a label. */
-export const BOOKMAP_DOM_MAX_COB_BAR_ALPHA = 0.3;
+/** Max opacity for sparse COB bars. Dense modes keep COB label-only. */
+export const BOOKMAP_DOM_MAX_COB_BAR_ALPHA = 0.18;
 
 /** Max opacity for SVP profile bars. */
 export const BOOKMAP_DOM_MAX_SVP_BAR_ALPHA = 0.2;
@@ -446,7 +443,7 @@ export const BOOKMAP_DOM_MAX_SVP_BAR_ALPHA = 0.2;
 export const BOOKMAP_DOM_MAX_SVP_BAR_WIDTH_PCT = 40;
 
 /** Alpha multiplier for bid/ask bars without numeric labels. */
-export const BOOKMAP_DOM_SUBTLE_BAR_ALPHA_SCALE = 0.38;
+export const BOOKMAP_DOM_SUBTLE_BAR_ALPHA_SCALE = 0.48;
 
 export function isDesktopBookmapRuntime(): boolean {
   return import.meta.env.VITE_PLATFORM === "desktop";

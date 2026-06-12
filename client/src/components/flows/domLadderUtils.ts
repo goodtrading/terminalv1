@@ -11,12 +11,11 @@ import {
   BOOKMAP_BINANCE_RAW_DOM_SOURCE_DIAG,
   BOOKMAP_DOM_VALUE_MAPPING_DIAG,
   BOOKMAP_DOM_FULL_VISIBILITY_DIAG,
-  BOOKMAP_DOM_HYBRID_PPD_THRESHOLD,
+  BOOKMAP_DOM_HYBRID_LEVELS_PER_PIXEL,
   BOOKMAP_DOM_INDIVIDUAL_MIN_GAP_PX,
-  BOOKMAP_DOM_INDIVIDUAL_PPD_THRESHOLD,
+  BOOKMAP_DOM_INDIVIDUAL_LEVELS_PER_TEXT_ROW,
   BOOKMAP_DOM_MIN_VISUAL_SIZE_BTC,
   BOOKMAP_DOM_GRAY_PANEL_REGRESSION_DIAG,
-  BOOKMAP_DOM_MIN_READABLE_LABELS_PER_SIDE,
   BOOKMAP_DOM_MAX_READABLE_LABELS_PER_SIDE,
   BOOKMAP_DOM_DENSE_ROW_THRESHOLD,
   BOOKMAP_DOM_MAX_COB_BAR_ALPHA,
@@ -1989,6 +1988,41 @@ export type DomFullVisibilityDiag = {
   rawDataMutatedForLayout: false;
 };
 
+export type DomVisualContractDiag = {
+  enabled: true;
+  renderMode: "micro" | "hybrid" | "macro";
+  domUsesSharedPriceScale: true;
+  independentDomScroll: false;
+  extraPriceColumnEnabled: false;
+  grayPanelDominance: false;
+  verticalTextBlockDetected: boolean;
+  majorPriceLabelsUsedAsDomRows: false;
+  syntheticRowsCreated: 0;
+  rawBidLevelsTotal: number;
+  rawAskLevelsTotal: number;
+  visibleBidLevelsInsideRange: number;
+  visibleAskLevelsInsideRange: number;
+  bidBarsRendered: number;
+  askBarsRendered: number;
+  cobBarsRendered: number;
+  svpBarsRendered: number;
+  bidLabelsRendered: number;
+  askLabelsRendered: number;
+  cobLabelsRendered: number;
+  svpLabelsRendered: number;
+  bestBidLabelVisible: boolean;
+  bestAskLabelVisible: boolean;
+  largeBidLabelsVisible: number;
+  largeAskLabelsVisible: number;
+  hiddenLevelsWithNoVisualRepresentation: number;
+  visiblePriceRangeUsd: number;
+  pixelsPerDollar: number;
+  plotHeightPx: number;
+  priceZoomRangeUsd: number;
+  followMode: boolean;
+  rawDataMutatedForLayout: false;
+};
+
 export type PriceAlignedRawDomResult = DomScaffoldResult & {
   alignmentDiag: DomPriceAlignmentDiag;
   autoScaleDiag: DomAutoScaleLayoutDiag;
@@ -1997,6 +2031,7 @@ export type PriceAlignedRawDomResult = DomScaffoldResult & {
   priceBandLayoutDiag?: DomPriceBandLayoutDiag;
   minorLadderSlotDiag?: DomMinorLadderSlotDiag;
   fullVisibilityDiag?: DomFullVisibilityDiag;
+  visualContractDiag?: DomVisualContractDiag;
 };
 
 let lastDomPriceAlignmentDiagMs = 0;
@@ -3240,6 +3275,24 @@ type MinorSlotAccumulator = {
 let lastDomMinorLadderSlotDiagMs = 0;
 let lastDomFullVisibilityDiagMs = 0;
 let lastDomGrayPanelRegressionDiagMs = 0;
+let lastDomVisualContractDiagMs = 0;
+
+function emitDomVisualContractDiag(diag: DomVisualContractDiag): void {
+  if (!import.meta.env.DEV) return;
+  const now = Date.now();
+  if (now - lastDomVisualContractDiagMs < 2_000) return;
+  lastDomVisualContractDiagMs = now;
+  console.debug("[BOOKMAP_DOM_VISUAL_CONTRACT_DIAG]", diag);
+  if (diag.grayPanelDominance) {
+    console.warn("[BOOKMAP_DOM_GRAY_PANEL_REGRESSION]", diag);
+  }
+  if (diag.verticalTextBlockDetected) {
+    console.warn("[BOOKMAP_DOM_VERTICAL_TEXT_BLOCK_REGRESSION]", diag);
+  }
+  if (diag.hiddenLevelsWithNoVisualRepresentation > 0) {
+    console.warn("[BOOKMAP_DOM_VISIBLE_LEVEL_HIDDEN]", diag);
+  }
+}
 
 type DomGrayPanelRegressionDiag = {
   grayPanelDetected: boolean;
@@ -3537,22 +3590,25 @@ function computeVisibleLevelGapStats(levels: VisibleDomLevel[]): {
 function chooseDomRenderMode(params: {
   visibleLevelCount: number;
   plotHeightPx: number;
-  pixelsPerDollar: number;
   minAdjacentLevelDistancePx: number | null;
 }): DomRenderMode {
   if (params.visibleLevelCount === 0) return "aggregate";
   const minGap = params.minAdjacentLevelDistancePx ?? Number.POSITIVE_INFINITY;
+  const readableTextRows = Math.max(
+    1,
+    Math.floor(params.plotHeightPx / BOOKMAP_DOM_INDIVIDUAL_MIN_GAP_PX),
+  );
   if (
     minGap >= BOOKMAP_DOM_INDIVIDUAL_MIN_GAP_PX ||
-    params.pixelsPerDollar >= BOOKMAP_DOM_INDIVIDUAL_PPD_THRESHOLD ||
-    params.visibleLevelCount <= params.plotHeightPx * 0.9
+    params.visibleLevelCount <=
+      readableTextRows * BOOKMAP_DOM_INDIVIDUAL_LEVELS_PER_TEXT_ROW
   ) {
     return "individual";
   }
   if (
-    minGap >= 1.25 ||
-    params.pixelsPerDollar >= BOOKMAP_DOM_HYBRID_PPD_THRESHOLD ||
-    params.visibleLevelCount <= params.plotHeightPx * 2.5
+    minGap >= 1 ||
+    params.visibleLevelCount <=
+      params.plotHeightPx * BOOKMAP_DOM_HYBRID_LEVELS_PER_PIXEL
   ) {
     return "hybrid";
   }
@@ -3566,7 +3622,6 @@ function chooseSideLabelIndexes(params: {
   textHeightPx: number;
   spot: number | null;
   bestPrice: number | null;
-  minLabels: number;
   maxLabels: number;
 }): Set<number> {
   const labelIndexes = new Set<number>();
@@ -3600,41 +3655,34 @@ function chooseSideLabelIndexes(params: {
     .sort((a, b) => b.score - a.score);
 
   const acceptedLabelYs: number[] = [];
-  const tryAdd = (index: number, y: number, force: boolean) => {
+  const tryAdd = (index: number, y: number) => {
     if (labelIndexes.has(index)) return;
     const collides = acceptedLabelYs.some(
-      (acceptedY) => Math.abs(acceptedY - y) < params.textHeightPx * 0.85,
+      (acceptedY) => Math.abs(acceptedY - y) < params.textHeightPx,
     );
-    if (collides && !force) return;
+    if (collides) return;
     labelIndexes.add(index);
     acceptedLabelYs.push(y);
   };
 
   for (const entry of ranked.filter((candidate) => candidate.containsBest)) {
-    tryAdd(entry.index, entry.y, true);
+    tryAdd(entry.index, entry.y);
   }
 
   const bySize = [...sideEntries].sort((a, b) => b.level.size - a.level.size);
   for (const { index } of bySize.slice(0, 8)) {
     const entry = ranked.find((candidate) => candidate.index === index);
-    if (entry) tryAdd(index, entry.y, entry.containsBest);
+    if (entry) tryAdd(index, entry.y);
   }
 
   for (const entry of ranked.filter((candidate) => candidate.nearSpot)) {
     if (labelIndexes.size >= params.maxLabels) break;
-    tryAdd(entry.index, entry.y, entry.containsBest);
+    tryAdd(entry.index, entry.y);
   }
 
   for (const entry of ranked) {
     if (labelIndexes.size >= params.maxLabels) break;
-    tryAdd(entry.index, entry.y, entry.containsBest);
-  }
-
-  if (labelIndexes.size < params.minLabels) {
-    for (const entry of ranked) {
-      if (labelIndexes.size >= params.minLabels) break;
-      tryAdd(entry.index, entry.y, true);
-    }
+    tryAdd(entry.index, entry.y);
   }
 
   return labelIndexes;
@@ -3673,16 +3721,14 @@ function buildIndividualDomRows(params: {
   );
   const maxCob = Math.max(maxBid + maxAsk, 1e-9);
   const isDense = params.visibleLevels.length >= BOOKMAP_DOM_DENSE_ROW_THRESHOLD;
-  const maxLabelsPerSide = Math.min(
-    BOOKMAP_DOM_MAX_READABLE_LABELS_PER_SIDE,
-    Math.max(
-      BOOKMAP_DOM_MIN_READABLE_LABELS_PER_SIDE,
-      Math.floor((params.plotBottom - params.plotTop) / (params.textHeightPx * 0.8)),
-    ),
+  const labelCapacity = Math.max(
+    1,
+    Math.floor((params.plotBottom - params.plotTop) / params.textHeightPx),
   );
-  const minLabelsPerSide = isDense
-    ? BOOKMAP_DOM_MIN_READABLE_LABELS_PER_SIDE
-    : Math.min(4, maxLabelsPerSide);
+  const maxLabelsPerSide =
+    params.renderMode === "individual"
+      ? labelCapacity
+      : Math.min(BOOKMAP_DOM_MAX_READABLE_LABELS_PER_SIDE, labelCapacity);
 
   const bidLabelIndexes = chooseSideLabelIndexes({
     visibleLevels: params.visibleLevels,
@@ -3691,7 +3737,6 @@ function buildIndividualDomRows(params: {
     textHeightPx: params.textHeightPx,
     spot: params.spot,
     bestPrice: params.bestBidPrice,
-    minLabels: minLabelsPerSide,
     maxLabels: maxLabelsPerSide,
   });
   const askLabelIndexes = chooseSideLabelIndexes({
@@ -3701,7 +3746,6 @@ function buildIndividualDomRows(params: {
     textHeightPx: params.textHeightPx,
     spot: params.spot,
     bestPrice: params.bestAskPrice,
-    minLabels: minLabelsPerSide,
     maxLabels: maxLabelsPerSide,
   });
 
@@ -3713,9 +3757,6 @@ function buildIndividualDomRows(params: {
     svpRunning += cobSize;
     const expectedY = params.priceToY(level.price);
     const centerY = Number.isFinite(expectedY) ? expectedY : level.y;
-    const halfHeight = defaultHalfHeight;
-    const topY = Math.max(params.plotTop, centerY - halfHeight);
-    const bottomY = Math.min(params.plotBottom, centerY + halfHeight);
     const containsBestBid =
       level.side === "bid" &&
       params.bestBidPrice != null &&
@@ -3731,25 +3772,30 @@ function buildIndividualDomRows(params: {
     const showBidText =
       params.showDomNumbers &&
       level.side === "bid" &&
-      (params.renderMode === "individual" || bidLabelIndexes.has(index) || containsBestBid);
+      (bidLabelIndexes.has(index) || containsBestBid);
     const showAskText =
       params.showDomNumbers &&
       level.side === "ask" &&
-      (params.renderMode === "individual" || askLabelIndexes.has(index) || containsBestAsk);
+      (askLabelIndexes.has(index) || containsBestAsk);
     const showCobText =
       params.showDomNumbers &&
       cobSize > 0 &&
       (showBidText || showAskText) &&
       (nearSpot || isMajorWall || containsBestBid || containsBestAsk);
-    const showSvpText = false;
-    const showCobBar =
-      cobSize > 0 &&
-      (showCobText ||
-        ((showBidText || showAskText) && !isDense) ||
-        (isMajorWall && !isDense));
+    const showSvpText =
+      params.showDomNumbers &&
+      !isDense &&
+      (containsBestBid || containsBestAsk || isMajorWall);
+    const showCobBar = false;
     const showSvpBar = false;
     const barAlphaScale =
       showBidText || showAskText || showCobText ? 1 : BOOKMAP_DOM_SUBTLE_BAR_ALPHA_SCALE;
+    const hasText = showBidText || showAskText || showCobText || showSvpText;
+    const halfHeight = hasText
+      ? params.textHeightPx / 2
+      : Math.max(0.75, defaultHalfHeight);
+    const topY = Math.max(params.plotTop, centerY - halfHeight);
+    const bottomY = Math.min(params.plotBottom, centerY + halfHeight);
 
     return {
       price: level.price,
@@ -3820,16 +3866,20 @@ function buildAggregateDomRows(params: {
   bestBidPrice: number | null;
   bestAskPrice: number | null;
 }): DomLadderRow[] {
+  const profileBinHeightPx = 2;
   const bins = new Map<number, AggregateDomBin>();
   for (const level of params.visibleLevels) {
     const binIndex = Math.max(
       0,
-      Math.min(params.plotHeightPx - 1, Math.round(level.y - params.plotTop)),
+      Math.min(
+        Math.ceil(params.plotHeightPx / profileBinHeightPx) - 1,
+        Math.floor((level.y - params.plotTop) / profileBinHeightPx),
+      ),
     );
     let bin = bins.get(binIndex);
     if (!bin) {
-      const topY = params.plotTop + binIndex;
-      const bottomY = Math.min(params.plotBottom, topY + 1);
+      const topY = params.plotTop + binIndex * profileBinHeightPx;
+      const bottomY = Math.min(params.plotBottom, topY + profileBinHeightPx);
       bin = {
         binIndex,
         yCenter: topY + 0.5,
@@ -3859,9 +3909,49 @@ function buildAggregateDomRows(params: {
     ...entries.map((entry) => entry.bidSum + entry.askSum),
     1e-9,
   );
+  const chooseAggregateLabels = (side: "bid" | "ask") => {
+    const selected = new Set<number>();
+    const acceptedYs: number[] = [];
+    const ranked = entries
+      .map((entry, index) => {
+        const levels = side === "bid" ? entry.bidLevels : entry.askLevels;
+        const size = side === "bid" ? entry.bidSum : entry.askSum;
+        const bestPrice = side === "bid" ? params.bestBidPrice : params.bestAskPrice;
+        const containsBest =
+          bestPrice != null &&
+          levels.some(
+            (level) =>
+              Math.abs(level.price - bestPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE,
+          );
+        return {
+          index,
+          y: entry.yCenter,
+          size,
+          containsBest,
+          score: (containsBest ? 10_000_000 : 0) + size * 100,
+        };
+      })
+      .filter((entry) => entry.size > 0)
+      .sort((a, b) => b.score - a.score);
+    for (const candidate of ranked) {
+      if (selected.size >= 12) break;
+      if (
+        acceptedYs.some(
+          (acceptedY) => Math.abs(acceptedY - candidate.y) < params.textHeightPx,
+        )
+      ) {
+        continue;
+      }
+      selected.add(candidate.index);
+      acceptedYs.push(candidate.y);
+    }
+    return selected;
+  };
+  const bidLabelIndexes = chooseAggregateLabels("bid");
+  const askLabelIndexes = chooseAggregateLabels("ask");
 
   let svpRunning = 0;
-  return entries.map((entry) => {
+  return entries.map((entry, index) => {
     const bidSize = entry.bidSum;
     const askSize = entry.askSum;
     const cobSize = bidSize + askSize;
@@ -3881,41 +3971,34 @@ function buildAggregateDomRows(params: {
         (strongest, level) => (level.size > strongest.size ? level : strongest),
         [...entry.bidLevels, ...entry.askLevels][0]!,
       );
-    const representativePrice = representative?.price ?? params.priceToY(entry.yCenter);
+    const representativePrice = representative.price;
     const expectedY = params.priceToY(representativePrice);
     const centerY = Number.isFinite(expectedY) ? expectedY : entry.yCenter;
-    const showBidText =
-      params.showDomNumbers &&
-      (entry.bidLevels.some(
-        (level) =>
-          params.bestBidPrice != null &&
-          Math.abs(level.price - params.bestBidPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE,
-      ) ||
-        bidSize >= visibleMaxLiquidity * 0.55);
-    const showAskText =
-      params.showDomNumbers &&
-      (entry.askLevels.some(
-        (level) =>
-          params.bestAskPrice != null &&
-          Math.abs(level.price - params.bestAskPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE,
-      ) ||
-        askSize >= visibleMaxLiquidity * 0.55);
+    const showBidText = params.showDomNumbers && bidLabelIndexes.has(index);
+    const showAskText = params.showDomNumbers && askLabelIndexes.has(index);
     const showCobText =
       params.showDomNumbers &&
       (showBidText || showAskText || cobSize >= visibleMaxLiquidity * 0.72);
-    const showSvpText = false;
+    const showSvpText =
+      params.showDomNumbers &&
+      (showBidText || showAskText) &&
+      cobSize >= visibleMaxLiquidity * 0.72;
     const isMajorWall = cobSize >= params.majorWallBtc;
-    const showCobBar = cobSize > 0 && (showCobText || showBidText || showAskText || isMajorWall);
+    const showCobBar = false;
     const showSvpBar = false;
     const barAlphaScale =
       showBidText || showAskText || showCobText ? 1 : BOOKMAP_DOM_SUBTLE_BAR_ALPHA_SCALE;
+    const hasText = showBidText || showAskText || showCobText || showSvpText;
+    const topY = hasText
+      ? Math.max(params.plotTop, centerY - params.textHeightPx / 2)
+      : entry.topY;
+    const bottomY = hasText
+      ? Math.min(params.plotBottom, centerY + params.textHeightPx / 2)
+      : entry.bottomY;
 
     return {
-      price: typeof representativePrice === "number" ? representativePrice : centerY,
-      priceLabel:
-        typeof representativePrice === "number"
-          ? formatRawBinanceDomPrice(representativePrice)
-          : undefined,
+      price: representativePrice,
+      priceLabel: formatRawBinanceDomPrice(representativePrice),
       bidSize,
       askSize,
       bidState: bidSize > 0 ? "live" : "none",
@@ -3925,13 +4008,12 @@ function buildAggregateDomRows(params: {
       cobSize,
       svpCumulative: svpRunning,
       y: centerY,
-      bucketHeight: Math.max(1, entry.bottomY - entry.topY),
-      barHeight: Math.max(1, entry.bottomY - entry.topY),
-      bandTopY: entry.topY,
-      bandBottomY: entry.bottomY,
+      bucketHeight: Math.max(1, bottomY - topY),
+      barHeight: Math.max(1, bottomY - topY),
+      bandTopY: topY,
+      bandBottomY: bottomY,
       isSpotBucket:
         params.spot != null &&
-        typeof representativePrice === "number" &&
         Math.abs(representativePrice - params.spot) <= BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD,
       showLabel: false,
       showTick: false,
@@ -3987,12 +4069,16 @@ function validateVisibleDomRepresentation(params: {
           rowHasSideSize(row, level.side, level.size * 0.999),
       );
     } else {
+      const profileBinHeightPx = 2;
       const binIndex = Math.max(
         0,
-        Math.min(params.plotHeightPx - 1, Math.round(level.y - params.plotTop)),
+        Math.min(
+          Math.ceil(params.plotHeightPx / profileBinHeightPx) - 1,
+          Math.floor((level.y - params.plotTop) / profileBinHeightPx),
+        ),
       );
-      const binTop = params.plotTop + binIndex;
-      const binBottom = binTop + 1;
+      const binTop = params.plotTop + binIndex * profileBinHeightPx;
+      const binBottom = binTop + profileBinHeightPx;
       represented = params.rows.some(
         (row) =>
           row.bandTopY != null &&
@@ -4046,6 +4132,7 @@ export function buildPriceAlignedRawDomRows(params: {
   market?: string;
   mode?: string;
   depthPreset?: DepthRangePreset;
+  followMode?: boolean;
 }): PriceAlignedRawDomResult {
   const rawBids = params.bids ?? [];
   const rawAsks = params.asks ?? [];
@@ -4090,7 +4177,6 @@ export function buildPriceAlignedRawDomRows(params: {
   const renderMode = chooseDomRenderMode({
     visibleLevelCount: visibleLevels.length,
     plotHeightPx,
-    pixelsPerDollar,
     minAdjacentLevelDistancePx: gapStats.minAdjacentLevelDistancePx,
   });
 
@@ -4195,10 +4281,7 @@ export function buildPriceAlignedRawDomRows(params: {
       ? Math.max(0, visibleRawAskLevels - groupedAskLevelsRendered)
       : 0;
   const selectedDepthMode = params.depthPreset ?? "local";
-  const microModeActive =
-    selectedDepthMode === "local" ||
-    visiblePriceRangeUsd <= BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD * 4 ||
-    pixelsPerDollar >= BOOKMAP_DOM_INDIVIDUAL_PPD_THRESHOLD;
+  const microModeActive = renderMode === "individual";
 
   if (
     import.meta.env.DEV &&
@@ -4216,7 +4299,7 @@ export function buildPriceAlignedRawDomRows(params: {
     import.meta.env.DEV &&
     visibleLevels.length >= 40 &&
     rows.length < visibleLevels.length * 0.12 &&
-    pixelsPerDollar >= BOOKMAP_DOM_HYBRID_PPD_THRESHOLD
+    renderMode !== "aggregate"
   ) {
     logDomOverAggregatedRegression({
       visibleRawLevels: visibleLevels.length,
@@ -4441,6 +4524,77 @@ export function buildPriceAlignedRawDomRows(params: {
   });
   emitDomGrayPanelRegressionDiag(grayPanelDiag, visibleLevels.length, showDomNumbers);
 
+  const hasLabelCollision = (side: "bid" | "ask") => {
+    const ys = rows
+      .filter((row) =>
+        side === "bid" ? Boolean(row.showBidText) : Boolean(row.showAskText),
+      )
+      .map((row) => row.y)
+      .sort((a, b) => a - b);
+    return ys.some(
+      (y, index) => index > 0 && Math.abs(y - ys[index - 1]!) < textHeightPx,
+    );
+  };
+  const bestBidLabelVisible = rows.some(
+    (row) =>
+      row.showBidText &&
+      bestBidPrice != null &&
+      Math.abs(row.price - bestBidPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE,
+  );
+  const bestAskLabelVisible = rows.some(
+    (row) =>
+      row.showAskText &&
+      bestAskPrice != null &&
+      Math.abs(row.price - bestAskPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE,
+  );
+  const largeThreshold = visibleMaxLiquidity * 0.52;
+  const visualContractDiag: DomVisualContractDiag = {
+    enabled: true,
+    renderMode:
+      renderMode === "individual"
+        ? "micro"
+        : renderMode === "hybrid"
+          ? "hybrid"
+          : "macro",
+    domUsesSharedPriceScale: true,
+    independentDomScroll: false,
+    extraPriceColumnEnabled: false,
+    grayPanelDominance: false,
+    verticalTextBlockDetected:
+      hasLabelCollision("bid") || hasLabelCollision("ask"),
+    majorPriceLabelsUsedAsDomRows: false,
+    syntheticRowsCreated: 0,
+    rawBidLevelsTotal: rawBids.length,
+    rawAskLevelsTotal: rawAsks.length,
+    visibleBidLevelsInsideRange: visibleRawBidLevels,
+    visibleAskLevelsInsideRange: visibleRawAskLevels,
+    bidBarsRendered,
+    askBarsRendered,
+    cobBarsRendered: rows.filter((row) => rowShowsCobBar(row)).length,
+    svpBarsRendered: rows.filter((row) => rowShowsSvpBar(row)).length,
+    bidLabelsRendered,
+    askLabelsRendered,
+    cobLabelsRendered: rows.filter((row) => row.showCobText).length,
+    svpLabelsRendered: rows.filter((row) => row.showSvpText).length,
+    bestBidLabelVisible,
+    bestAskLabelVisible,
+    largeBidLabelsVisible: rows.filter(
+      (row) => row.showBidText && row.bidSize >= largeThreshold,
+    ).length,
+    largeAskLabelsVisible: rows.filter(
+      (row) => row.showAskText && row.askSize >= largeThreshold,
+    ).length,
+    hiddenLevelsWithNoVisualRepresentation:
+      visibilityValidation.hiddenLevelsWithNoVisualRepresentation,
+    visiblePriceRangeUsd,
+    pixelsPerDollar,
+    plotHeightPx,
+    priceZoomRangeUsd: visiblePriceRangeUsd,
+    followMode: params.followMode ?? false,
+    rawDataMutatedForLayout: false,
+  };
+  emitDomVisualContractDiag(visualContractDiag);
+
   return {
     rows,
     stats: {
@@ -4464,6 +4618,7 @@ export function buildPriceAlignedRawDomRows(params: {
     microReadabilityDiag,
     minorLadderSlotDiag,
     fullVisibilityDiag,
+    visualContractDiag,
   };
 }
 

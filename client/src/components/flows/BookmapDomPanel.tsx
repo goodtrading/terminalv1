@@ -38,7 +38,13 @@ import {
   MAJOR_WALL_BTC,
   type ImportantLiquidityLevel,
 } from "./importantLiquidityLevels";
-import { useDesktopFullRawDomLadder, BOOKMAP_DOM_DENSE_ROW_THRESHOLD, BOOKMAP_DOM_MAX_COB_BAR_ALPHA, BOOKMAP_DOM_MAX_SVP_BAR_ALPHA, BOOKMAP_DOM_MAX_SVP_BAR_WIDTH_PCT } from "@/lib/bookmapEngineConfig";
+import {
+  BOOKMAP_DOM_DENSE_ROW_THRESHOLD,
+  BOOKMAP_DOM_MAX_COB_BAR_ALPHA,
+  BOOKMAP_DOM_MAX_SVP_BAR_ALPHA,
+  BOOKMAP_DOM_MAX_SVP_BAR_WIDTH_PCT,
+  useDesktopFullRawDomLadder,
+} from "@/lib/bookmapEngineConfig";
 import type { BookmapViewMode } from "./bookmapViewMode";
 import type { BookmapMarketSource } from "@shared/bookmapMarket";
 
@@ -192,11 +198,13 @@ function DomBarCell({
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden px-0.5">
       {hasSize && showBar && (
         <div
-          className="absolute inset-y-[2px] z-[1] rounded-[2px]"
+          className="absolute z-[1] min-h-px rounded-[2px]"
           style={{
             width: `max(${DOM_MIN_BAR_PX}px, ${widthPct}%)`,
             left: "50%",
-            transform: "translateX(-50%)",
+            top: "50%",
+            height: "max(1px, 70%)",
+            transform: "translate(-50%, -50%)",
             backgroundColor: `rgba(${r}, ${g}, ${b}, ${alpha})`,
           }}
         />
@@ -232,11 +240,13 @@ function DomSvpCell({
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden px-0.5">
       {hasValue && showBar && (
         <div
-          className="absolute inset-y-[2px] z-[1] rounded-[2px]"
+          className="absolute z-[1] min-h-px rounded-[2px]"
           style={{
             width: `max(${DOM_MIN_BAR_PX}px, ${widthPct}%)`,
             left: "50%",
-            transform: "translateX(-50%)",
+            top: "50%",
+            height: "max(1px, 70%)",
+            transform: "translate(-50%, -50%)",
             backgroundColor: `rgba(71, 85, 105, ${maxAlpha})`,
           }}
         />
@@ -398,7 +408,6 @@ export function BookmapDomPanel({
   spot,
   scale,
   panelWidth,
-  viewMode = "local",
   importantLevels,
   wallEntries,
   showImportantStrip = false,
@@ -414,8 +423,7 @@ export function BookmapDomPanel({
   const useRawBinanceMapping = useDesktopFullRawDomLadder();
   const domFlags = getDomDisplayFlags(panelWidth);
   const { layout: columnLayout, showNumbers: widthAllowsNumbers, showSvp } = domFlags;
-  const isLocalMode = viewMode === "local";
-  const showNumbers = engineMode || (isLocalMode && widthAllowsNumbers);
+  const showNumbers = engineMode || widthAllowsNumbers;
   const gridClass = getDomGridClass(columnLayout);
 
   useEffect(() => {
@@ -477,6 +485,7 @@ export function BookmapDomPanel({
         market,
         mode: marketMode,
         depthPreset: scale.depthRangePreset,
+        followMode,
       });
     }
 
@@ -516,6 +525,7 @@ export function BookmapDomPanel({
     feedVenue,
     market,
     marketMode,
+    followMode,
   ]);
 
   const { rows, stats } = ladderResult;
@@ -691,6 +701,16 @@ export function BookmapDomPanel({
                 {ladderResult.fullVisibilityDiag.askBarsRendered}
                 {" · "}
                 hidden {ladderResult.fullVisibilityDiag.hiddenLevelsWithNoVisualRepresentation}
+              </>
+            ) : null}
+            {"visualContractDiag" in ladderResult &&
+            ladderResult.visualContractDiag ? (
+              <>
+                {" · "}
+                contract {ladderResult.visualContractDiag.renderMode}
+                {" · "}
+                labels {ladderResult.visualContractDiag.bidLabelsRendered}/
+                {ladderResult.visualContractDiag.askLabelsRendered}
               </>
             ) : null}
             {followMode ? " · follow" : ""}
