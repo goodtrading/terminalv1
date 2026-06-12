@@ -11,9 +11,12 @@ import {
   BOOKMAP_BINANCE_RAW_DOM_SOURCE_DIAG,
   BOOKMAP_DOM_VALUE_MAPPING_DIAG,
   BOOKMAP_DOM_FULL_VISIBILITY_DIAG,
-  BOOKMAP_DOM_HYBRID_LEVELS_PER_PIXEL,
-  BOOKMAP_DOM_INDIVIDUAL_MIN_GAP_PX,
-  BOOKMAP_DOM_INDIVIDUAL_LEVELS_PER_TEXT_ROW,
+  BOOKMAP_DOM_MICRO_LARGE_LEVEL_PERCENTILE,
+  BOOKMAP_DOM_MICRO_MIN_TEXT_SPACING_PX,
+  BOOKMAP_DOM_MICRO_MIN_PIXELS_PER_DOLLAR,
+  BOOKMAP_DOM_MICRO_MODE_RANGE_USD,
+  BOOKMAP_DOM_MICRO_NEAR_PRICE_USD,
+  BOOKMAP_DOM_MICRO_OPERATIVE_LABEL_LIMIT,
   BOOKMAP_DOM_MIN_VISUAL_SIZE_BTC,
   BOOKMAP_DOM_GRAY_PANEL_REGRESSION_DIAG,
   BOOKMAP_DOM_MAX_READABLE_LABELS_PER_SIDE,
@@ -2023,6 +2026,32 @@ export type DomVisualContractDiag = {
   rawDataMutatedForLayout: false;
 };
 
+export type DomModeDiag = {
+  renderMode: "macro" | "micro";
+  visiblePriceRangeUsd: number;
+  pixelsPerDollar: number;
+  microModeActive: boolean;
+  rawBidLevelsTotal: number;
+  rawAskLevelsTotal: number;
+  visibleBidLevels: number;
+  visibleAskLevels: number;
+  bidLabelsRendered: number;
+  askLabelsRendered: number;
+  bidBarsRendered: number;
+  askBarsRendered: number;
+  labelsHiddenDueToCollision: number;
+  bestBidVisible: boolean;
+  bestAskVisible: boolean;
+  largeBidLabelsVisible: number;
+  largeAskLabelsVisible: number;
+  grayPanelDominance: boolean;
+  verticalTextBlockDetected: boolean;
+  independentDomScroll: false;
+  extraPriceColumnEnabled: false;
+  majorPriceLabelsUsedAsRows: false;
+  syntheticRowsCreated: 0;
+};
+
 export type PriceAlignedRawDomResult = DomScaffoldResult & {
   alignmentDiag: DomPriceAlignmentDiag;
   autoScaleDiag: DomAutoScaleLayoutDiag;
@@ -2032,6 +2061,7 @@ export type PriceAlignedRawDomResult = DomScaffoldResult & {
   minorLadderSlotDiag?: DomMinorLadderSlotDiag;
   fullVisibilityDiag?: DomFullVisibilityDiag;
   visualContractDiag?: DomVisualContractDiag;
+  modeDiag?: DomModeDiag;
 };
 
 let lastDomPriceAlignmentDiagMs = 0;
@@ -3276,6 +3306,44 @@ let lastDomMinorLadderSlotDiagMs = 0;
 let lastDomFullVisibilityDiagMs = 0;
 let lastDomGrayPanelRegressionDiagMs = 0;
 let lastDomVisualContractDiagMs = 0;
+let lastDomModeDiagMs = 0;
+
+function emitDomModeDiag(diag: DomModeDiag): void {
+  if (!import.meta.env.DEV) return;
+  const now = Date.now();
+  if (now - lastDomModeDiagMs < 2_000) return;
+  lastDomModeDiagMs = now;
+  console.debug("[BOOKMAP_DOM_MODE_DIAG]", diag);
+
+  const visibleLevelCount = diag.visibleBidLevels + diag.visibleAskLevels;
+  const expectedMicroLabels = Math.min(20, visibleLevelCount);
+  if (
+    diag.microModeActive &&
+    visibleLevelCount > 0 &&
+    diag.bidLabelsRendered + diag.askLabelsRendered < expectedMicroLabels
+  ) {
+    console.warn("[BOOKMAP_DOM_MICRO_LABEL_COUNT_REGRESSION]", diag);
+  }
+  if (
+    diag.microModeActive &&
+    ((diag.visibleBidLevels > 0 && !diag.bestBidVisible) ||
+      (diag.visibleAskLevels > 0 && !diag.bestAskVisible))
+  ) {
+    console.warn("[BOOKMAP_DOM_MICRO_BBO_LABEL_REGRESSION]", diag);
+  }
+  if (diag.grayPanelDominance) {
+    console.warn("[BOOKMAP_DOM_GRAY_PANEL_REGRESSION]", diag);
+  }
+  if (diag.verticalTextBlockDetected) {
+    console.warn("[BOOKMAP_DOM_VERTICAL_TEXT_BLOCK_REGRESSION]", diag);
+  }
+  if (diag.extraPriceColumnEnabled) {
+    console.warn("[BOOKMAP_DOM_EXTRA_PRICE_COLUMN_REGRESSION]", diag);
+  }
+  if (diag.independentDomScroll) {
+    console.warn("[BOOKMAP_DOM_INDEPENDENT_SCROLL_REGRESSION]", diag);
+  }
+}
 
 function emitDomVisualContractDiag(diag: DomVisualContractDiag): void {
   if (!import.meta.env.DEV) return;
@@ -3587,32 +3655,57 @@ function computeVisibleLevelGapStats(levels: VisibleDomLevel[]): {
   };
 }
 
+function percentileSizeThreshold(
+  levels: VisibleDomLevel[],
+  side: "bid" | "ask",
+  percentile: number,
+): number {
+  const sortedSizes = levels
+    .filter((level) => level.side === side && level.size > 0)
+    .map((level) => level.size)
+    .sort((a, b) => a - b);
+  if (sortedSizes.length === 0) return Number.POSITIVE_INFINITY;
+  const percentileIndex = Math.max(
+    0,
+    Math.min(
+      sortedSizes.length - 1,
+      Math.ceil(sortedSizes.length * percentile) - 1,
+    ),
+  );
+  return sortedSizes[percentileIndex]!;
+}
+
 function chooseDomRenderMode(params: {
   visibleLevelCount: number;
-  plotHeightPx: number;
-  minAdjacentLevelDistancePx: number | null;
+  visiblePriceRangeUsd: number;
+  pixelsPerDollar: number;
+  minPrice: number;
+  maxPrice: number;
+  spot: number | null;
 }): DomRenderMode {
   if (params.visibleLevelCount === 0) return "aggregate";
-  const minGap = params.minAdjacentLevelDistancePx ?? Number.POSITIVE_INFINITY;
-  const readableTextRows = Math.max(
-    1,
-    Math.floor(params.plotHeightPx / BOOKMAP_DOM_INDIVIDUAL_MIN_GAP_PX),
-  );
-  if (
-    minGap >= BOOKMAP_DOM_INDIVIDUAL_MIN_GAP_PX ||
-    params.visibleLevelCount <=
-      readableTextRows * BOOKMAP_DOM_INDIVIDUAL_LEVELS_PER_TEXT_ROW
-  ) {
-    return "individual";
-  }
-  if (
-    minGap >= 1 ||
-    params.visibleLevelCount <=
-      params.plotHeightPx * BOOKMAP_DOM_HYBRID_LEVELS_PER_PIXEL
-  ) {
-    return "hybrid";
-  }
-  return "aggregate";
+  const spotInsideRange =
+    params.spot != null &&
+    params.spot >= params.minPrice &&
+    params.spot <= params.maxPrice;
+  const maxDistanceFromSpot =
+    spotInsideRange && params.spot != null
+      ? Math.max(
+          Math.abs(params.maxPrice - params.spot),
+          Math.abs(params.spot - params.minPrice),
+        )
+      : Number.POSITIVE_INFINITY;
+  const microByRange =
+    params.visiblePriceRangeUsd <= BOOKMAP_DOM_MICRO_MODE_RANGE_USD;
+  const microByPixelDensity =
+    params.pixelsPerDollar >= BOOKMAP_DOM_MICRO_MIN_PIXELS_PER_DOLLAR;
+  const microByCloseSpotZoom =
+    spotInsideRange &&
+    maxDistanceFromSpot <= BOOKMAP_DOM_MICRO_MODE_RANGE_USD;
+
+  return microByRange || microByPixelDensity || microByCloseSpotZoom
+    ? "individual"
+    : "aggregate";
 }
 
 function chooseSideLabelIndexes(params: {
@@ -3623,6 +3716,8 @@ function chooseSideLabelIndexes(params: {
   spot: number | null;
   bestPrice: number | null;
   maxLabels: number;
+  nearPriceUsd: number;
+  largeLevelPercentile: number;
 }): Set<number> {
   const labelIndexes = new Set<number>();
   if (!params.showDomNumbers) return labelIndexes;
@@ -3630,6 +3725,11 @@ function chooseSideLabelIndexes(params: {
   const sideEntries = params.visibleLevels
     .map((level, index) => ({ level, index }))
     .filter(({ level }) => level.side === params.side && level.size > 0);
+  const largeLevelThreshold = percentileSizeThreshold(
+    params.visibleLevels,
+    params.side,
+    params.largeLevelPercentile,
+  );
 
   const ranked = sideEntries
     .map(({ level, index }) => {
@@ -3638,16 +3738,19 @@ function chooseSideLabelIndexes(params: {
         Math.abs(level.price - params.bestPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE;
       const nearSpot =
         params.spot != null &&
-        Math.abs(level.price - params.spot) <= BOOKMAP_DOM_NEAR_PRICE_PRIORITY_USD;
+        Math.abs(level.price - params.spot) <= params.nearPriceUsd;
+      const isLarge = level.size >= largeLevelThreshold;
       return {
         index,
         y: level.y,
         size: level.size,
         containsBest,
         nearSpot,
+        isLarge,
         score:
-          (containsBest ? 10_000_000 : 0) +
-          (nearSpot ? 250_000 : 0) +
+          (containsBest ? 1_000_000_000_000 : 0) +
+          (isLarge ? 1_000_000_000 : 0) +
+          (nearSpot ? 1_000_000 : 0) +
           level.size * 100 +
           (params.spot != null ? Math.max(0, 1_000 - Math.abs(level.price - params.spot)) : 0),
       };
@@ -3669,10 +3772,9 @@ function chooseSideLabelIndexes(params: {
     tryAdd(entry.index, entry.y);
   }
 
-  const bySize = [...sideEntries].sort((a, b) => b.level.size - a.level.size);
-  for (const { index } of bySize.slice(0, 8)) {
-    const entry = ranked.find((candidate) => candidate.index === index);
-    if (entry) tryAdd(index, entry.y);
+  for (const entry of ranked.filter((candidate) => candidate.isLarge)) {
+    if (labelIndexes.size >= params.maxLabels) break;
+    tryAdd(entry.index, entry.y);
   }
 
   for (const entry of ranked.filter((candidate) => candidate.nearSpot)) {
@@ -3696,10 +3798,10 @@ function buildIndividualDomRows(params: {
   spot: number | null;
   showDomNumbers: boolean;
   majorWallBtc: number;
-  renderMode: DomRenderMode;
   textHeightPx: number;
   bestBidPrice: number | null;
   bestAskPrice: number | null;
+  microModeActive: boolean;
 }): DomLadderRow[] {
   const gapStats = computeVisibleLevelGapStats(params.visibleLevels);
   const defaultHalfHeight = Math.max(
@@ -3721,32 +3823,42 @@ function buildIndividualDomRows(params: {
   );
   const maxCob = Math.max(maxBid + maxAsk, 1e-9);
   const isDense = params.visibleLevels.length >= BOOKMAP_DOM_DENSE_ROW_THRESHOLD;
+  const labelSpacingPx = params.microModeActive
+    ? Math.max(BOOKMAP_DOM_MICRO_MIN_TEXT_SPACING_PX, params.textHeightPx)
+    : params.textHeightPx;
   const labelCapacity = Math.max(
     1,
-    Math.floor((params.plotBottom - params.plotTop) / params.textHeightPx),
+    Math.floor((params.plotBottom - params.plotTop) / labelSpacingPx),
   );
-  const maxLabelsPerSide =
-    params.renderMode === "individual"
-      ? labelCapacity
-      : Math.min(BOOKMAP_DOM_MAX_READABLE_LABELS_PER_SIDE, labelCapacity);
+  const operativeLabelsPerSide = Math.max(
+    1,
+    Math.floor(BOOKMAP_DOM_MICRO_OPERATIVE_LABEL_LIMIT / 2),
+  );
+  const maxLabelsPerSide = params.microModeActive
+    ? Math.min(labelCapacity, operativeLabelsPerSide)
+    : Math.min(BOOKMAP_DOM_MAX_READABLE_LABELS_PER_SIDE, labelCapacity);
 
   const bidLabelIndexes = chooseSideLabelIndexes({
     visibleLevels: params.visibleLevels,
     side: "bid",
     showDomNumbers: params.showDomNumbers,
-    textHeightPx: params.textHeightPx,
+    textHeightPx: labelSpacingPx,
     spot: params.spot,
     bestPrice: params.bestBidPrice,
     maxLabels: maxLabelsPerSide,
+    nearPriceUsd: BOOKMAP_DOM_MICRO_NEAR_PRICE_USD,
+    largeLevelPercentile: BOOKMAP_DOM_MICRO_LARGE_LEVEL_PERCENTILE,
   });
   const askLabelIndexes = chooseSideLabelIndexes({
     visibleLevels: params.visibleLevels,
     side: "ask",
     showDomNumbers: params.showDomNumbers,
-    textHeightPx: params.textHeightPx,
+    textHeightPx: labelSpacingPx,
     spot: params.spot,
     bestPrice: params.bestAskPrice,
     maxLabels: maxLabelsPerSide,
+    nearPriceUsd: BOOKMAP_DOM_MICRO_NEAR_PRICE_USD,
+    largeLevelPercentile: BOOKMAP_DOM_MICRO_LARGE_LEVEL_PERCENTILE,
   });
 
   let svpRunning = 0;
@@ -3772,11 +3884,11 @@ function buildIndividualDomRows(params: {
     const showBidText =
       params.showDomNumbers &&
       level.side === "bid" &&
-      (bidLabelIndexes.has(index) || containsBestBid);
+      bidLabelIndexes.has(index);
     const showAskText =
       params.showDomNumbers &&
       level.side === "ask" &&
-      (askLabelIndexes.has(index) || containsBestAsk);
+      askLabelIndexes.has(index);
     const showCobText =
       params.showDomNumbers &&
       cobSize > 0 &&
@@ -4176,9 +4288,13 @@ export function buildPriceAlignedRawDomRows(params: {
   const gapStats = computeVisibleLevelGapStats(visibleLevels);
   const renderMode = chooseDomRenderMode({
     visibleLevelCount: visibleLevels.length,
-    plotHeightPx,
-    minAdjacentLevelDistancePx: gapStats.minAdjacentLevelDistancePx,
+    visiblePriceRangeUsd,
+    pixelsPerDollar,
+    minPrice,
+    maxPrice,
+    spot: params.spot,
   });
+  const microModeActive = renderMode === "individual";
 
   const rows =
     renderMode === "aggregate"
@@ -4203,10 +4319,10 @@ export function buildPriceAlignedRawDomRows(params: {
           spot: params.spot,
           showDomNumbers,
           majorWallBtc,
-          renderMode,
           textHeightPx,
           bestBidPrice,
           bestAskPrice,
+          microModeActive,
         });
 
   let maxAlignmentErrorPx = 0;
@@ -4281,7 +4397,6 @@ export function buildPriceAlignedRawDomRows(params: {
       ? Math.max(0, visibleRawAskLevels - groupedAskLevelsRendered)
       : 0;
   const selectedDepthMode = params.depthPreset ?? "local";
-  const microModeActive = renderMode === "individual";
 
   if (
     import.meta.env.DEV &&
@@ -4355,7 +4470,7 @@ export function buildPriceAlignedRawDomRows(params: {
       renderMode === "aggregate" ? visibleLevels.length : 0,
     rawLevelsCollapsedIntoMajorLabels: 0,
     microModeActive,
-    binHeightPx: renderMode === "aggregate" ? 1 : 0,
+    binHeightPx: renderMode === "aggregate" ? 2 : 0,
     minSlotHeightPx: renderMode === "individual" ? 1 : 0,
     pixelsPerDollar,
     visiblePriceRangeUsd,
@@ -4547,6 +4662,24 @@ export function buildPriceAlignedRawDomRows(params: {
       bestAskPrice != null &&
       Math.abs(row.price - bestAskPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE,
   );
+  const largeBidThreshold = percentileSizeThreshold(
+    visibleLevels,
+    "bid",
+    BOOKMAP_DOM_MICRO_LARGE_LEVEL_PERCENTILE,
+  );
+  const largeAskThreshold = percentileSizeThreshold(
+    visibleLevels,
+    "ask",
+    BOOKMAP_DOM_MICRO_LARGE_LEVEL_PERCENTILE,
+  );
+  const largeBidLabelsVisible = rows.filter(
+    (row) => row.showBidText && row.bidSize >= largeBidThreshold,
+  ).length;
+  const largeAskLabelsVisible = rows.filter(
+    (row) => row.showAskText && row.askSize >= largeAskThreshold,
+  ).length;
+  const verticalTextBlockDetected =
+    hasLabelCollision("bid") || hasLabelCollision("ask");
   const largeThreshold = visibleMaxLiquidity * 0.52;
   const visualContractDiag: DomVisualContractDiag = {
     enabled: true,
@@ -4560,8 +4693,7 @@ export function buildPriceAlignedRawDomRows(params: {
     independentDomScroll: false,
     extraPriceColumnEnabled: false,
     grayPanelDominance: false,
-    verticalTextBlockDetected:
-      hasLabelCollision("bid") || hasLabelCollision("ask"),
+    verticalTextBlockDetected,
     majorPriceLabelsUsedAsDomRows: false,
     syntheticRowsCreated: 0,
     rawBidLevelsTotal: rawBids.length,
@@ -4595,6 +4727,33 @@ export function buildPriceAlignedRawDomRows(params: {
   };
   emitDomVisualContractDiag(visualContractDiag);
 
+  const modeDiag: DomModeDiag = {
+    renderMode: microModeActive ? "micro" : "macro",
+    visiblePriceRangeUsd,
+    pixelsPerDollar,
+    microModeActive,
+    rawBidLevelsTotal: rawBids.length,
+    rawAskLevelsTotal: rawAsks.length,
+    visibleBidLevels: visibleRawBidLevels,
+    visibleAskLevels: visibleRawAskLevels,
+    bidLabelsRendered,
+    askLabelsRendered,
+    bidBarsRendered,
+    askBarsRendered,
+    labelsHiddenDueToCollision: labelsHiddenButBarsRendered,
+    bestBidVisible: bestBidLabelVisible,
+    bestAskVisible: bestAskLabelVisible,
+    largeBidLabelsVisible,
+    largeAskLabelsVisible,
+    grayPanelDominance: grayPanelDiag.grayPanelDetected,
+    verticalTextBlockDetected,
+    independentDomScroll: false,
+    extraPriceColumnEnabled: false,
+    majorPriceLabelsUsedAsRows: false,
+    syntheticRowsCreated: 0,
+  };
+  emitDomModeDiag(modeDiag);
+
   return {
     rows,
     stats: {
@@ -4619,6 +4778,7 @@ export function buildPriceAlignedRawDomRows(params: {
     minorLadderSlotDiag,
     fullVisibilityDiag,
     visualContractDiag,
+    modeDiag,
   };
 }
 

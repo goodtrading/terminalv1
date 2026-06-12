@@ -421,6 +421,24 @@ export const BOOKMAP_DOM_INDIVIDUAL_LEVELS_PER_TEXT_ROW = 1;
 /** Maximum visible levels per pixel before switching to a 2px profile. */
 export const BOOKMAP_DOM_HYBRID_LEVELS_PER_PIXEL = 1.35;
 
+/** Visible price span at or below which the DOM becomes operative. */
+export const BOOKMAP_DOM_MICRO_MODE_RANGE_USD = 750;
+
+/** Screen density that independently activates operative micro mode. */
+export const BOOKMAP_DOM_MICRO_MIN_PIXELS_PER_DOLLAR = 0.75;
+
+/** Maximum total BID/ASK numeric labels in operative micro mode. */
+export const BOOKMAP_DOM_MICRO_OPERATIVE_LABEL_LIMIT = 80;
+
+/** Minimum vertical spacing between operative DOM labels. */
+export const BOOKMAP_DOM_MICRO_MIN_TEXT_SPACING_PX = 11;
+
+/** Near-price radius prioritized by operative micro mode. */
+export const BOOKMAP_DOM_MICRO_NEAR_PRICE_USD = 300;
+
+/** Visible side-size percentile treated as large in operative micro mode. */
+export const BOOKMAP_DOM_MICRO_LARGE_LEVEL_PERCENTILE = 0.85;
+
 /** Minimum BTC size for a visible level to require visual representation. */
 export const BOOKMAP_DOM_MIN_VISUAL_SIZE_BTC = 0;
 
