@@ -279,7 +279,10 @@ function DomRowCells({
   maxSvpSize: number;
 }) {
   const cobAbs = row.cobSize;
-  const cellText = showText && row.showDomText;
+  const bidText = showText && (row.showBidText ?? row.showDomText);
+  const askText = showText && (row.showAskText ?? row.showDomText);
+  const cobText = showText && (row.showCobText ?? row.showDomText);
+  const svpText = showText && (row.showSvpText ?? row.showDomText);
 
   if (layout === "bid-ask") {
     return (
@@ -288,14 +291,14 @@ function DomRowCells({
           size={row.bidSize}
           maxSideSize={maxBidSize}
           rgb={DOM_BID_RGB}
-          showText={cellText}
+          showText={bidText}
           liquidityState={row.bidState}
         />
         <DomBarCell
           size={row.askSize}
           maxSideSize={maxAskSize}
           rgb={DOM_ASK_RGB}
-          showText={cellText}
+          showText={askText}
           liquidityState={row.askState}
         />
       </>
@@ -308,7 +311,7 @@ function DomRowCells({
         size={cobAbs}
         maxSideSize={maxCobSize}
         rgb={DOM_COB_RGB}
-        showText={cellText && cobAbs > 0}
+        showText={cobText && cobAbs > 0}
         liquidityState="live"
         showLkSuffix={false}
       />
@@ -316,21 +319,21 @@ function DomRowCells({
         size={row.bidSize}
         maxSideSize={maxBidSize}
         rgb={DOM_BID_RGB}
-        showText={cellText}
+        showText={bidText}
         liquidityState={row.bidState}
       />
       <DomBarCell
         size={row.askSize}
         maxSideSize={maxAskSize}
         rgb={DOM_ASK_RGB}
-        showText={cellText}
+        showText={askText}
         liquidityState={row.askState}
       />
       {showSvp && layout === "full" && (
         <DomSvpCell
           svpValue={row.svpCumulative}
           maxSvp={maxSvpSize}
-          showText={cellText}
+          showText={svpText}
         />
       )}
     </>

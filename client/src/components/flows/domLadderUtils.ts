@@ -188,6 +188,10 @@ export type DomLadderRow = {
   showLabel: boolean;
   showTick: boolean;
   showDomText: boolean;
+  showBidText?: boolean;
+  showAskText?: boolean;
+  showCobText?: boolean;
+  showSvpText?: boolean;
   isMajorWall: boolean;
   bidBarPct: number;
   askBarPct: number;
@@ -443,6 +447,43 @@ export type DomAutoScaleLayoutDiag = {
   maxAlignmentErrorPx: number;
   extraPriceColumnEnabled: false;
   rawDataMutatedForLayout: false;
+};
+
+export type DomLodRendererDiag = {
+  enabled: boolean;
+  domUsesSharedPriceScale: boolean;
+  domHasIndependentScroll: false;
+  extraPriceColumnEnabled: false;
+  rawBidLevelsTotal: number;
+  rawAskLevelsTotal: number;
+  visibleRawBidLevels: number;
+  visibleRawAskLevels: number;
+  bidVisualGroups: number;
+  askVisualGroups: number;
+  cobVisualGroups: number;
+  svpVisualGroups: number;
+  bidBarsRendered: number;
+  askBarsRendered: number;
+  cobBarsRendered: number;
+  svpBarsRendered: number;
+  bidLabelsRendered: number;
+  askLabelsRendered: number;
+  cobLabelsRendered: number;
+  svpLabelsRendered: number;
+  labelsHiddenDueToCollision: number;
+  hiddenLabelsWithBarsStillRendered: number;
+  strongestBidGroupValue: number;
+  strongestAskGroupValue: number;
+  bestBidVisible: boolean;
+  bestAskVisible: boolean;
+  visibleMaxLiquidity: number;
+  pixelsPerDollar: number;
+  minCollisionBandPx: number;
+  averageLevelsPerVisualGroup: number;
+  maxLevelsPerVisualGroup: number;
+  rawDataMutatedForLayout: false;
+  syntheticRowsCreated: 0;
+  valuesCreatedWithoutBookLevel: 0;
 };
 
 export type DomScaffoldResult = {
@@ -1719,6 +1760,7 @@ export type RawDomLadderResult = DomScaffoldResult & {
 export type PriceAlignedRawDomResult = DomScaffoldResult & {
   alignmentDiag: DomPriceAlignmentDiag;
   autoScaleDiag: DomAutoScaleLayoutDiag;
+  lodDiag: DomLodRendererDiag;
 };
 
 let lastDomPriceAlignmentDiagMs = 0;
@@ -1780,6 +1822,35 @@ function logDomPriceAlignmentRegression(params: {
   console.warn("[BOOKMAP_DOM_PRICE_ALIGNMENT_REGRESSION]", params);
 }
 
+let lastDomLodRendererDiagMs = 0;
+
+function emitDomLodRendererDiag(diag: DomLodRendererDiag): void {
+  if (!import.meta.env.DEV) return;
+  const now = Date.now();
+  if (now - lastDomLodRendererDiagMs < 2_000) return;
+  lastDomLodRendererDiagMs = now;
+  console.debug("[BOOKMAP_DOM_LOD_RENDERER_DIAG]", diag);
+}
+
+function logDomEmptyRenderRegression(params: {
+  visibleRawLevels: number;
+  barsRendered: number;
+  bidVisualGroups: number;
+  askVisualGroups: number;
+}): void {
+  if (!import.meta.env.DEV) return;
+  console.warn("[BOOKMAP_DOM_EMPTY_RENDER_REGRESSION]", params);
+}
+
+function logDomLiquidityHiddenWithoutBar(params: {
+  hiddenGroups: number;
+  hiddenLevels: number;
+  barsRendered: number;
+}): void {
+  if (!import.meta.env.DEV) return;
+  console.warn("[BOOKMAP_DOM_LIQUIDITY_HIDDEN_WITHOUT_BAR]", params);
+}
+
 export function buildPriceAlignedRawDomRows(params: {
   bids?: OrderbookLevel[];
   asks?: OrderbookLevel[];
@@ -1803,9 +1874,13 @@ export function buildPriceAlignedRawDomRows(params: {
   const inChartRange = (price: number) => price >= minPrice && price <= maxPrice;
   const textHeightPx = 13;
   const fullTextThresholdPx = 16;
-  const compressedGroupThresholdPx = 9;
+  const minCollisionBandPx = 7;
   const priceRangeUsd = Math.max(1e-9, maxPrice - minPrice);
   const pixelsPerDollar = params.plotHeight > 0 ? params.plotHeight / priceRangeUsd : 0;
+  const bestBid = rawBids.find((level) => level.sizeBtc > 0) ?? null;
+  const bestAsk = rawAsks.find((level) => level.sizeBtc > 0) ?? null;
+  const bestBidPrice = bestBid?.price ?? null;
+  const bestAskPrice = bestAsk?.price ?? null;
 
   type VisualLevel = {
     price: number;
@@ -1816,19 +1891,22 @@ export function buildPriceAlignedRawDomRows(params: {
 
   type VisualGroup = {
     levels: VisualLevel[];
-    bidSize: number;
-    askSize: number;
-    bidLevels: number;
-    askLevels: number;
+    side: "bid" | "ask";
+    size: number;
     price: number;
     y: number;
+    yMin: number;
+    yMax: number;
+    containsBest: boolean;
+    nearSpotDistance: number;
   };
 
   let levelsOutsideChartRange = 0;
   let visibleBidLevelsRendered = 0;
   let visibleAskLevelsRendered = 0;
   let maxAlignmentErrorPx = 0;
-  const visibleLevels: VisualLevel[] = [];
+  const visibleBidLevels: VisualLevel[] = [];
+  const visibleAskLevels: VisualLevel[] = [];
 
   const ingest = (level: OrderbookLevel, side: "bid" | "ask") => {
     const price = Number(level.price);
@@ -1840,15 +1918,17 @@ export function buildPriceAlignedRawDomRows(params: {
     }
     const expectedY = params.priceToY(price);
     if (!Number.isFinite(expectedY)) return;
-    visibleLevels.push({
+    const visualLevel: VisualLevel = {
       price,
       y: expectedY,
       size,
       side,
-    });
+    };
     if (side === "bid") {
+      visibleBidLevels.push(visualLevel);
       visibleBidLevelsRendered += 1;
     } else {
+      visibleAskLevels.push(visualLevel);
       visibleAskLevelsRendered += 1;
     }
   };
@@ -1856,7 +1936,7 @@ export function buildPriceAlignedRawDomRows(params: {
   for (const level of rawBids) ingest(level, "bid");
   for (const level of rawAsks) ingest(level, "ask");
 
-  const sortedLevels = visibleLevels.sort((a, b) => a.y - b.y);
+  const sortedLevels = [...visibleBidLevels, ...visibleAskLevels].sort((a, b) => a.y - b.y);
   const adjacentDistances: number[] = [];
   for (let i = 1; i < sortedLevels.length; i += 1) {
     adjacentDistances.push(Math.abs(sortedLevels[i]!.y - sortedLevels[i - 1]!.y));
@@ -1868,106 +1948,131 @@ export function buildPriceAlignedRawDomRows(params: {
     ? adjacentDistances.reduce((sum, distance) => sum + distance, 0) / adjacentDistances.length
     : null;
 
-  const groups: VisualGroup[] = [];
-  for (const level of sortedLevels) {
-    const last = groups[groups.length - 1];
-    if (
-      last &&
-      Math.abs(level.y - last.y) < compressedGroupThresholdPx
-    ) {
-      last.levels.push(level);
-      if (level.side === "bid") {
-        last.bidSize += level.size;
-        last.bidLevels += 1;
-      } else {
-        last.askSize += level.size;
-        last.askLevels += 1;
-      }
-      const strongest = last.levels.reduce((best, candidate) =>
-        candidate.size > best.size ? candidate : best,
+  const chooseRepresentativeLevel = (levels: VisualLevel[], side: "bid" | "ask") => {
+    const bestPrice = side === "bid" ? bestBidPrice : bestAskPrice;
+    if (bestPrice != null) {
+      const bestLevel = levels.find(
+        (level) => Math.abs(level.price - bestPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE,
       );
-      const nearestToSpot = params.spot == null
-        ? strongest
-        : last.levels.reduce((best, candidate) =>
-            Math.abs(candidate.price - params.spot!) < Math.abs(best.price - params.spot!)
-              ? candidate
-              : best,
-          );
-      const representative = Math.abs(nearestToSpot.price - (params.spot ?? nearestToSpot.price)) <=
-        Math.abs(strongest.price - (params.spot ?? strongest.price))
-          ? nearestToSpot
-          : strongest;
-      last.price = representative.price;
-      last.y = params.priceToY(representative.price);
-    } else {
-      groups.push({
-        levels: [level],
-        bidSize: level.side === "bid" ? level.size : 0,
-        askSize: level.side === "ask" ? level.size : 0,
-        bidLevels: level.side === "bid" ? 1 : 0,
-        askLevels: level.side === "ask" ? 1 : 0,
-        price: level.price,
-        y: level.y,
-      });
+      if (bestLevel) return bestLevel;
     }
-  }
+    const strongest = levels.reduce((best, candidate) =>
+      candidate.size > best.size ? candidate : best,
+    );
+    if (params.spot == null) return strongest;
+    const nearestToSpot = levels.reduce((best, candidate) =>
+      Math.abs(candidate.price - params.spot!) < Math.abs(best.price - params.spot!)
+        ? candidate
+        : best,
+    );
+    return strongest.size >= nearestToSpot.size * 1.5 ? strongest : nearestToSpot;
+  };
+
+  const buildSideGroups = (levels: VisualLevel[], side: "bid" | "ask"): VisualGroup[] => {
+    const buckets = new Map<number, VisualLevel[]>();
+    for (const level of levels) {
+      const key = Math.round(level.y / minCollisionBandPx);
+      const existing = buckets.get(key);
+      if (existing) existing.push(level);
+      else buckets.set(key, [level]);
+    }
+    const bestPrice = side === "bid" ? bestBidPrice : bestAskPrice;
+    return Array.from(buckets.values())
+      .map((bucketLevels) => {
+        const representative = chooseRepresentativeLevel(bucketLevels, side);
+        const yValues = bucketLevels.map((level) => level.y);
+        const y = params.priceToY(representative.price);
+        const size = bucketLevels.reduce((sum, level) => sum + level.size, 0);
+        return {
+          levels: bucketLevels,
+          side,
+          size,
+          price: representative.price,
+          y,
+          yMin: Math.min(...yValues),
+          yMax: Math.max(...yValues),
+          containsBest:
+            bestPrice != null &&
+            bucketLevels.some((level) => Math.abs(level.price - bestPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE),
+          nearSpotDistance:
+            params.spot == null ? Number.POSITIVE_INFINITY : Math.abs(representative.price - params.spot),
+        };
+      })
+      .sort((a, b) => a.y - b.y);
+  };
+
+  const bidGroups = buildSideGroups(visibleBidLevels, "bid");
+  const askGroups = buildSideGroups(visibleAskLevels, "ask");
+  const visualGroups = [...bidGroups, ...askGroups].sort((a, b) => a.y - b.y);
 
   let maxBid = 0;
   let maxAsk = 0;
   let maxCob = 0;
-  for (const group of groups) {
-    maxBid = Math.max(maxBid, group.bidSize);
-    maxAsk = Math.max(maxAsk, group.askSize);
-    maxCob = Math.max(maxCob, group.bidSize + group.askSize);
+  for (const group of bidGroups) {
+    maxBid = Math.max(maxBid, group.size);
   }
+  for (const group of askGroups) {
+    maxAsk = Math.max(maxAsk, group.size);
+  }
+  maxCob = Math.max(maxBid, maxAsk);
+  const visibleMaxLiquidity = Math.max(maxBid, maxAsk, 1e-9);
 
-  const bestBidPrice = rawBids.find((level) => level.sizeBtc > 0)?.price ?? null;
-  const bestAskPrice = rawAsks.find((level) => level.sizeBtc > 0)?.price ?? null;
-  const textCandidates = groups
-    .map((group, index) => {
-      const cobSize = group.bidSize + group.askSize;
-      const nearSpotScore = params.spot == null
-        ? 0
-        : Math.max(0, 1_000 - Math.abs(group.price - params.spot));
-      const containsBestBid = bestBidPrice != null && group.levels.some(
-        (level) => level.side === "bid" && Math.abs(level.price - bestBidPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE,
-      );
-      const containsBestAsk = bestAskPrice != null && group.levels.some(
-        (level) => level.side === "ask" && Math.abs(level.price - bestAskPrice) <= BOOKMAP_BTCUSDT_TICK_SIZE,
-      );
-      const bestBidScore = bestBidPrice != null && group.bidLevels > 0
-        ? containsBestBid ? 10_000_000 : 0
-        : 0;
-      const bestAskScore = bestAskPrice != null && group.askLevels > 0
-        ? containsBestAsk ? 10_000_000 : 0
-        : 0;
-      const groupedScore = group.levels.length > 1 ? 1_000 : 0;
-      return {
+  const chooseLabelIndexes = (groups: VisualGroup[]): Set<number> => {
+    const labelIndexes = new Set<number>();
+    const acceptedLabelYs: number[] = [];
+    if (!showDomNumbers) return labelIndexes;
+    const ranked = groups
+      .map((group, index) => ({
         index,
         y: group.y,
-        score: bestBidScore + bestAskScore + groupedScore + cobSize * 100 + nearSpotScore,
-      };
-    })
-    .sort((a, b) => b.score - a.score);
-  const labelIndexes = new Set<number>();
-  const acceptedLabelYs: number[] = [];
-  for (const candidate of textCandidates) {
-    if (!showDomNumbers) continue;
-    const collides = acceptedLabelYs.some((y) => Math.abs(y - candidate.y) < fullTextThresholdPx);
-    if (collides) continue;
-    labelIndexes.add(candidate.index);
-    acceptedLabelYs.push(candidate.y);
-  }
+        score:
+          (group.containsBest ? 10_000_000 : 0) +
+          (group.levels.length > 1 ? 2_000 : 0) +
+          group.size * 100 +
+          (Number.isFinite(group.nearSpotDistance) ? Math.max(0, 1_000 - group.nearSpotDistance) : 0),
+      }))
+      .sort((a, b) => b.score - a.score);
+    for (const candidate of ranked) {
+      const group = groups[candidate.index]!;
+      const mandatory = group.containsBest || group.size >= visibleMaxLiquidity * 0.72;
+      const collides = acceptedLabelYs.some((y) => Math.abs(y - candidate.y) < fullTextThresholdPx);
+      if (collides && !mandatory) continue;
+      labelIndexes.add(candidate.index);
+      acceptedLabelYs.push(candidate.y);
+    }
+    return labelIndexes;
+  };
+
+  const bidLabelIndexes = chooseLabelIndexes(bidGroups);
+  const askLabelIndexes = chooseLabelIndexes(askGroups);
 
   let svpRunning = 0;
   let liveRows = 0;
   let rowsWithBidLiquidity = 0;
   let rowsWithAskLiquidity = 0;
-  let individualLabelsRendered = 0;
-  let groupedLabelsRendered = 0;
-  let labelsHiddenDueToDensity = 0;
-  let strongestHiddenValue = 0;
-  const rows: DomLadderRow[] = groups.map((group, index) => {
+  const rowInputs = visualGroups.map((group, index) => {
+    const groupIndex = group.side === "bid" ? bidGroups.indexOf(group) : askGroups.indexOf(group);
+    const sideText = group.side === "bid" ? bidLabelIndexes.has(groupIndex) : askLabelIndexes.has(groupIndex);
+    return {
+      group,
+      index,
+      bidText: group.side === "bid" && sideText,
+      askText: group.side === "ask" && sideText,
+      cobText: sideText || group.containsBest || group.size >= visibleMaxLiquidity * 0.62,
+      svpText: sideText && group.size >= visibleMaxLiquidity * 0.35,
+    };
+  });
+  const labelsHiddenDueToDensity = rowInputs.filter(
+    (entry) => !entry.bidText && !entry.askText && entry.group.size > 0,
+  ).length;
+  const hiddenLabelsWithBarsStillRendered = labelsHiddenDueToDensity;
+  const strongestHiddenValue = rowInputs.reduce(
+    (max, entry) =>
+      !entry.bidText && !entry.askText ? Math.max(max, entry.group.size) : max,
+    0,
+  );
+  const rows: DomLadderRow[] = rowInputs.map((entry) => {
+    const group = entry.group;
     const y = group.y;
     const expectedY = params.priceToY(group.price);
     const errorPx = Math.abs(y - expectedY);
@@ -1976,19 +2081,11 @@ export function buildPriceAlignedRawDomRows(params: {
       logDomPriceDesync({ price: group.price, renderedY: y, expectedY, errorPx });
       logDomPriceAlignmentRegression({ price: group.price, renderedY: y, expectedY, errorPx });
     }
-    const bidSize = group.bidSize;
-    const askSize = group.askSize;
+    const bidSize = group.side === "bid" ? group.size : 0;
+    const askSize = group.side === "ask" ? group.size : 0;
     const hasLiveBid = bidSize > 0;
     const hasLiveAsk = askSize > 0;
     const cobSize = bidSize + askSize;
-    const grouped = group.levels.length > 1;
-    const showTextForRow = showDomNumbers && labelIndexes.has(index);
-    if (showTextForRow && grouped) groupedLabelsRendered += 1;
-    if (showTextForRow && !grouped) individualLabelsRendered += 1;
-    if (!showTextForRow && cobSize > 0) {
-      labelsHiddenDueToDensity += 1;
-      strongestHiddenValue = Math.max(strongestHiddenValue, cobSize);
-    }
     svpRunning += cobSize;
     if (hasLiveBid) {
       liveRows += 1;
@@ -2002,6 +2099,7 @@ export function buildPriceAlignedRawDomRows(params: {
       params.spot != null && Number.isFinite(params.spot)
         ? Math.abs(group.price - params.spot) <= BOOKMAP_BTCUSDT_TICK_SIZE
         : false;
+    const footprintHeight = Math.max(4, Math.min(20, group.yMax - group.yMin + 4));
     return {
       price: group.price,
       bidSize,
@@ -2013,12 +2111,16 @@ export function buildPriceAlignedRawDomRows(params: {
       cobSize,
       svpCumulative: svpRunning,
       y,
-      bucketHeight: Math.max(4, Math.min(fullTextThresholdPx, compressedGroupThresholdPx)),
-      barHeight: grouped ? Math.max(5, compressedGroupThresholdPx - 1) : 7,
+      bucketHeight: footprintHeight,
+      barHeight: footprintHeight,
       isSpotBucket,
       showLabel: false,
       showTick: false,
-      showDomText: showTextForRow,
+      showDomText: entry.bidText || entry.askText || entry.cobText || entry.svpText,
+      showBidText: entry.bidText,
+      showAskText: entry.askText,
+      showCobText: entry.cobText,
+      showSvpText: entry.svpText,
       isMajorWall: cobSize >= majorWallBtc,
       bidBarPct: maxBid > 0 ? (bidSize / maxBid) * 100 : 0,
       askBarPct: maxAsk > 0 ? (askSize / maxAsk) * 100 : 0,
@@ -2035,40 +2137,112 @@ export function buildPriceAlignedRawDomRows(params: {
 
   const nearestBid = rows.find((row) => row.hasLiveBid) ?? null;
   const nearestAsk = rows.find((row) => row.hasLiveAsk) ?? null;
-  const bestBid = rawBids.find((level) => level.sizeBtc > 0) ?? null;
-  const bestAsk = rawAsks.find((level) => level.sizeBtc > 0) ?? null;
-  const bestBidVisible = bestBid != null && groups.some(
+  const bestBidVisible = bestBid != null && bidGroups.some(
     (group) => group.levels.some(
-      (level) => level.side === "bid" && Math.abs(level.price - bestBid.price) <= BOOKMAP_BTCUSDT_TICK_SIZE,
+      (level) => Math.abs(level.price - bestBid.price) <= BOOKMAP_BTCUSDT_TICK_SIZE,
     ),
   );
-  const bestAskVisible = bestAsk != null && groups.some(
+  const bestAskVisible = bestAsk != null && askGroups.some(
     (group) => group.levels.some(
-      (level) => level.side === "ask" && Math.abs(level.price - bestAsk.price) <= BOOKMAP_BTCUSDT_TICK_SIZE,
+      (level) => Math.abs(level.price - bestAsk.price) <= BOOKMAP_BTCUSDT_TICK_SIZE,
     ),
   );
-  const collapsedVisualGroups = rows.filter(
-    (row) => row.hasLiveBid && row.hasLiveAsk,
-  ).length;
-  const aggregatedBecausePixelCollision = groups.reduce(
+  const collapsedVisualGroups = 0;
+  const aggregatedBecausePixelCollision = visualGroups.reduce(
     (sum, group) => sum + Math.max(0, group.levels.length - 1),
     0,
   );
-  const collisionGroupsBid = groups.filter((group) => group.bidLevels > 1).length;
-  const collisionGroupsAsk = groups.filter((group) => group.askLevels > 1).length;
-  const collisionGroupsCob = groups.filter((group) => group.levels.length > 1).length;
+  const collisionGroupsBid = bidGroups.filter((group) => group.levels.length > 1).length;
+  const collisionGroupsAsk = askGroups.filter((group) => group.levels.length > 1).length;
+  const collisionGroupsCob = visualGroups.filter((group) => group.levels.length > 1).length;
   const collisionGroupsSvp = collisionGroupsCob;
-  const barsRendered = rows.filter((row) => row.cobSize > 0).length;
+  const bidBarsRendered = rows.filter((row) => row.bidSize > 0).length;
+  const askBarsRendered = rows.filter((row) => row.askSize > 0).length;
+  const cobBarsRendered = rows.filter((row) => row.cobSize > 0).length;
+  const svpBarsRendered = cobBarsRendered;
+  const barsRendered = cobBarsRendered;
+  const bidLabelsRendered = rows.filter((row) => row.showBidText && row.bidSize > 0).length;
+  const askLabelsRendered = rows.filter((row) => row.showAskText && row.askSize > 0).length;
+  const cobLabelsRendered = rows.filter((row) => row.showCobText && row.cobSize > 0).length;
+  const svpLabelsRendered = rows.filter((row) => row.showSvpText && row.cobSize > 0).length;
+  const strongestBidGroupValue = bidGroups.reduce((max, group) => Math.max(max, group.size), 0);
+  const strongestAskGroupValue = askGroups.reduce((max, group) => Math.max(max, group.size), 0);
+  const averageLevelsPerVisualGroup =
+    visualGroups.length > 0
+      ? visualGroups.reduce((sum, group) => sum + group.levels.length, 0) / visualGroups.length
+      : 0;
+  const maxLevelsPerVisualGroup = visualGroups.reduce(
+    (max, group) => Math.max(max, group.levels.length),
+    0,
+  );
 
   if (aggregatedBecausePixelCollision > 0 || labelsHiddenDueToDensity > 0) {
     logDomTextOverlapPrevented({
-      reason: aggregatedBecausePixelCollision > 0 ? "grouped_dense_price_levels" : "hid_low_priority_labels",
+      reason: aggregatedBecausePixelCollision > 0 ? "bookmap_lod_grouped_dense_levels" : "bookmap_lod_bar_only_groups",
       hiddenLabels: labelsHiddenDueToDensity,
-      groupedLabels: groupedLabelsRendered,
+      groupedLabels: bidLabelsRendered + askLabelsRendered,
       minAdjacentLevelDistancePx,
       textHeightPx,
     });
   }
+
+  if ((visibleBidLevelsRendered + visibleAskLevelsRendered) >= 25 && bidBarsRendered + askBarsRendered < 4) {
+    logDomEmptyRenderRegression({
+      visibleRawLevels: visibleBidLevelsRendered + visibleAskLevelsRendered,
+      barsRendered: bidBarsRendered + askBarsRendered,
+      bidVisualGroups: bidGroups.length,
+      askVisualGroups: askGroups.length,
+    });
+  }
+
+  const hiddenGroupsWithoutBars = rowInputs.filter(
+    (entry) => !entry.bidText && !entry.askText && entry.group.size > 0 && entry.group.size <= 0,
+  );
+  if (hiddenGroupsWithoutBars.length > 0) {
+    logDomLiquidityHiddenWithoutBar({
+      hiddenGroups: hiddenGroupsWithoutBars.length,
+      hiddenLevels: hiddenGroupsWithoutBars.reduce((sum, entry) => sum + entry.group.levels.length, 0),
+      barsRendered: bidBarsRendered + askBarsRendered,
+    });
+  }
+
+  const lodDiag: DomLodRendererDiag = {
+    enabled: true,
+    domUsesSharedPriceScale: true,
+    domHasIndependentScroll: false,
+    extraPriceColumnEnabled: false,
+    rawBidLevelsTotal: rawBids.length,
+    rawAskLevelsTotal: rawAsks.length,
+    visibleRawBidLevels: visibleBidLevelsRendered,
+    visibleRawAskLevels: visibleAskLevelsRendered,
+    bidVisualGroups: bidGroups.length,
+    askVisualGroups: askGroups.length,
+    cobVisualGroups: cobBarsRendered,
+    svpVisualGroups: svpBarsRendered,
+    bidBarsRendered,
+    askBarsRendered,
+    cobBarsRendered,
+    svpBarsRendered,
+    bidLabelsRendered,
+    askLabelsRendered,
+    cobLabelsRendered,
+    svpLabelsRendered,
+    labelsHiddenDueToCollision: labelsHiddenDueToDensity,
+    hiddenLabelsWithBarsStillRendered,
+    strongestBidGroupValue,
+    strongestAskGroupValue,
+    bestBidVisible,
+    bestAskVisible,
+    visibleMaxLiquidity,
+    pixelsPerDollar,
+    minCollisionBandPx,
+    averageLevelsPerVisualGroup,
+    maxLevelsPerVisualGroup,
+    rawDataMutatedForLayout: false,
+    syntheticRowsCreated: 0,
+    valuesCreatedWithoutBookLevel: 0,
+  };
+  emitDomLodRendererDiag(lodDiag);
 
   const autoScaleDiag: DomAutoScaleLayoutDiag = {
     enabled: true,
@@ -2087,8 +2261,11 @@ export function buildPriceAlignedRawDomRows(params: {
     collisionGroupsAsk,
     collisionGroupsCob,
     collisionGroupsSvp,
-    individualLabelsRendered,
-    groupedLabelsRendered,
+    individualLabelsRendered: Math.max(
+      0,
+      bidLabelsRendered + askLabelsRendered - collisionGroupsBid - collisionGroupsAsk,
+    ),
+    groupedLabelsRendered: collisionGroupsBid + collisionGroupsAsk,
     labelsHiddenDueToDensity,
     barsRendered,
     strongestHiddenValue,
@@ -2155,6 +2332,7 @@ export function buildPriceAlignedRawDomRows(params: {
     },
     alignmentDiag,
     autoScaleDiag,
+    lodDiag,
   };
 }
 
