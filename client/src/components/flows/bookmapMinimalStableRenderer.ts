@@ -8,6 +8,7 @@ import {
   BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG,
   BOOKMAP_MINIMAL_STABLE_RENDERER_V1,
   HISTORICAL_SURFACE_MIN_CELL_WIDTH_MS,
+  HISTORICAL_SURFACE_PERSISTENT_CELL_WIDTH_MS,
 } from "@/lib/bookmapEngineConfig";
 import {
   intensityToPassiveLiquidityRgb,
@@ -82,8 +83,11 @@ function thermalFromSurfaceCell(cell: HistoricalLiquiditySurfaceCell): {
   const intensity = Math.max(cell.intensity, Math.min(1, cell.maxSize / 120));
   const persistenceBoost = Math.min(0.2, cell.persistenceMs / 90_000);
   const weakFloor = cell.maxSize < 1 ? 0.12 : cell.maxSize < 5 ? 0.16 : 0.2;
+  const textureMod = cell.textureMod ?? 1;
   const alpha =
-    Math.max(weakFloor, 0.15 + intensity * 0.5 + persistenceBoost) * cell.decay;
+    Math.max(weakFloor, 0.15 + intensity * 0.5 + persistenceBoost) *
+    cell.decay *
+    Math.min(1.08, textureMod);
   return {
     intensity,
     rgb: intensityToPassiveLiquidityRgb(intensity),
@@ -95,12 +99,25 @@ function bucketWidthPx(timeMs: number, timeToX: (t: number) => number): number {
   return Math.max(1, timeToX(timeMs + BOOKMAP_ENGINE_BUCKET_MS) - timeToX(timeMs));
 }
 
-function minSurfaceCellWidthPx(timeMs: number, timeToX: (t: number) => number): number {
-  return Math.max(
-    bucketWidthPx(timeMs, timeToX),
-    timeToX(timeMs + HISTORICAL_SURFACE_MIN_CELL_WIDTH_MS) - timeToX(timeMs),
-    1,
-  );
+function surfaceCellWidthPx(
+  cell: HistoricalLiquiditySurfaceCell,
+  timeToX: (t: number) => number,
+): number {
+  const raw = bucketWidthPx(cell.timeBucket, timeToX);
+  const textureMod = cell.textureMod ?? 1;
+  const baseMin =
+    timeToX(cell.timeBucket + HISTORICAL_SURFACE_MIN_CELL_WIDTH_MS) -
+    timeToX(cell.timeBucket);
+  const persistentMin =
+    timeToX(cell.timeBucket + HISTORICAL_SURFACE_PERSISTENT_CELL_WIDTH_MS) -
+    timeToX(cell.timeBucket);
+  if (cell.coldStartSeeded) {
+    return Math.max(raw, baseMin * (0.5 + textureMod * 0.22), 1);
+  }
+  if (cell.persistenceMs > 30_000 && cell.intensity >= 0.28) {
+    return Math.max(raw, persistentMin, 1);
+  }
+  return Math.max(raw, baseMin * (0.8 + textureMod * 0.18), 1);
 }
 
 function fillBand(
@@ -228,6 +245,17 @@ export function paintMinimalStableBookmapFrame(
     clippedPrice: 0,
     tinyAlpha: 0,
   };
+  const widthStats = {
+    min: Number.POSITIVE_INFINITY,
+    max: 0,
+    sum: 0,
+    count: 0,
+  };
+  const renderedTiers = {
+    weak: 0,
+    medium: 0,
+    strong: 0,
+  };
 
   const surfaceCells = collectHistoricalSurfaceCells(
     engine,
@@ -256,7 +284,7 @@ export function paintMinimalStableBookmapFrame(
         continue;
       }
       const w = Math.min(
-        minSurfaceCellWidthPx(cell.timeBucket, metrics.timeToX),
+        surfaceCellWidthPx(cell, metrics.timeToX),
         Math.max(1, dataEdgeX - x0),
       );
 
@@ -267,6 +295,13 @@ export function paintMinimalStableBookmapFrame(
         continue;
       }
       fillBand(ctx, x0, w, geom, thermal.rgb, alpha);
+      widthStats.min = Math.min(widthStats.min, w);
+      widthStats.max = Math.max(widthStats.max, w);
+      widthStats.sum += w;
+      widthStats.count += 1;
+      if (cell.intensity < 0.12) renderedTiers.weak += 1;
+      else if (cell.intensity < 0.38) renderedTiers.medium += 1;
+      else renderedTiers.strong += 1;
       result.visibleHeatmapCells += 1;
     }
   } else {
@@ -310,6 +345,13 @@ export function paintMinimalStableBookmapFrame(
           visibleHistoricalCellCount: surfaceCells.length,
           renderCellCountPerFrame: result.visibleHeatmapCells,
           renderSkippedCells: renderSkips,
+          averageRenderedCellWidthPx:
+            widthStats.count > 0 ? widthStats.sum / widthStats.count : 0,
+          minRenderedCellWidthPx: Number.isFinite(widthStats.min) ? widthStats.min : 0,
+          maxRenderedCellWidthPx: widthStats.max,
+          bucketMergeFactor: engine.historicalSurfaceDiag.bucketMergeFactor,
+          priceLevelMergeFactor: engine.historicalSurfaceDiag.priceLevelMergeFactor,
+          renderedCellsByIntensityTier: renderedTiers,
         });
       }
     }

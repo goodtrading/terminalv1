@@ -9,6 +9,7 @@ import {
   HISTORICAL_SURFACE_MAX_ACTIVE_LEVELS,
   HISTORICAL_SURFACE_MAX_CELLS,
   HISTORICAL_SURFACE_MIN_SIZE_BTC,
+  HISTORICAL_SURFACE_PRICE_BUCKET_USD,
   HISTORICAL_SURFACE_RETENTION_MS,
   HISTORICAL_SURFACE_RENDER_MIN_INTENSITY,
 } from "@/lib/bookmapEngineConfig";
@@ -32,6 +33,9 @@ export type HistoricalLiquiditySurfaceCell = {
   peakSize: number;
   intensity: number;
   sizeDelta: number;
+  coldStartSeeded?: boolean;
+  liveUpdated?: boolean;
+  textureMod?: number;
 };
 
 export type ActiveRestingLiquidityLevel = {
@@ -64,6 +68,15 @@ export type HistoricalLiquiditySurfaceDiag = {
   skippedCellsBelowSize: number;
   selectedLevelCount: number;
   sourceLevelCount: number;
+  bucketMergeFactor: number;
+  priceLevelMergeFactor: number;
+  coldStartSeededCellCount: number;
+  liveUpdatedCellCount: number;
+  renderedWeakCells: number;
+  renderedMediumCells: number;
+  renderedStrongCells: number;
+  visiblePriceLevelsAbovePrice: number;
+  visiblePriceLevelsBelowPrice: number;
   cacheBucketCount: number;
   cacheMemoryEstimate: number;
   renderCellCountPerFrame: number;
@@ -121,7 +134,10 @@ function roundBucket(timeMs: number, bucketMs: number): number {
 }
 
 function bucketPrice(price: number, step: number): number {
-  const safeStep = Math.max(0.5, step || 1);
+  const safeStep = Math.max(
+    0.5,
+    Math.min(step || HISTORICAL_SURFACE_PRICE_BUCKET_USD, HISTORICAL_SURFACE_PRICE_BUCKET_USD),
+  );
   return Math.round(price / safeStep) * safeStep;
 }
 
@@ -155,6 +171,15 @@ function emptyDiag(sourceKey: string): HistoricalLiquiditySurfaceDiag {
     skippedCellsBelowSize: 0,
     selectedLevelCount: 0,
     sourceLevelCount: 0,
+    bucketMergeFactor: 1,
+    priceLevelMergeFactor: 1,
+    coldStartSeededCellCount: 0,
+    liveUpdatedCellCount: 0,
+    renderedWeakCells: 0,
+    renderedMediumCells: 0,
+    renderedStrongCells: 0,
+    visiblePriceLevelsAbovePrice: 0,
+    visiblePriceLevelsBelowPrice: 0,
     cacheBucketCount: 0,
     cacheMemoryEstimate: 0,
     renderCellCountPerFrame: 0,
@@ -243,6 +268,14 @@ function computeIntensity(size: number, peakSize: number, persistenceMs: number)
   );
 }
 
+function textureModFor(price: number, timeBucket: number, side: "bid" | "ask"): number {
+  const seed =
+    Math.sin(price * 0.013 + timeBucket * 0.000_071 + (side === "bid" ? 1.7 : 2.9)) *
+    10_000;
+  const frac = seed - Math.floor(seed);
+  return 0.74 + frac * 0.36;
+}
+
 function selectLevels(
   levels: LiveDomBookLevel[],
   minPrice: number,
@@ -250,8 +283,8 @@ function selectLevels(
   midPrice: number | null | undefined,
 ): LiveDomBookLevel[] {
   const range = maxPrice - minPrice;
-  const expandedMin = minPrice - range * 0.3;
-  const expandedMax = maxPrice + range * 0.3;
+  const expandedMin = minPrice - range * 0.55;
+  const expandedMax = maxPrice + range * 0.55;
   const filtered = levels.filter(
     (level) =>
       level.size >= HISTORICAL_SURFACE_MIN_SIZE_BTC &&
@@ -265,8 +298,10 @@ function selectLevels(
       const bNear = Math.abs(b.price - mid);
       const aNearPct = mid > 0 ? (aNear / mid) * 100 : 100;
       const bNearPct = mid > 0 ? (bNear / mid) * 100 : 100;
-      const aScore = Math.log1p(a.size) * 20_000 + Math.max(0, 3 - aNearPct) * 3_000 - aNear;
-      const bScore = Math.log1p(b.size) * 20_000 + Math.max(0, 3 - bNearPct) * 3_000 - bNear;
+      const aScore =
+        Math.log1p(a.size) * 22_000 + Math.max(0, 5 - aNearPct) * 1_000 - aNear * 0.4;
+      const bScore =
+        Math.log1p(b.size) * 22_000 + Math.max(0, 5 - bNearPct) * 1_000 - bNear * 0.4;
       return bScore - aScore;
     })
     .slice(0, HISTORICAL_SURFACE_MAX_ACTIVE_LEVELS);
@@ -282,6 +317,7 @@ function writeSurfaceCell(params: {
   peakSize: number;
   firstSeenTs: number;
   lastSeenTs: number;
+  coldStartSeeded: boolean;
 }): void {
   const cKey = cellKey(params.timeBucket, params.price);
   const existing = params.store.cells.get(cKey);
@@ -291,23 +327,32 @@ function writeSurfaceCell(params: {
   const currentSize = Math.max(bidSize, askSize);
   const firstCellTs = existing?.firstSeenTs ?? params.firstSeenTs;
   const persistenceMs = Math.max(0, params.lastSeenTs - params.firstSeenTs);
+  const textureMod = textureModFor(params.price, params.timeBucket, params.side);
+  const seedAlpha = params.coldStartSeeded ? 0.48 + textureMod * 0.28 : 1;
+  const effectiveCurrentSize = currentSize * seedAlpha;
+  const effectivePeakSize = params.peakSize * (params.coldStartSeeded ? Math.min(0.78, seedAlpha) : 1);
   params.store.cells.set(cKey, {
     timeBucket: params.timeBucket,
     price: params.price,
     side: bidSize >= askSize ? "bid" : "ask",
     bidSize,
     askSize,
-    maxSize,
+    maxSize: params.coldStartSeeded
+      ? Math.max(existing?.maxSize ?? 0, effectiveCurrentSize)
+      : maxSize,
     firstSeenTs: firstCellTs,
     lastSeenTs: params.lastSeenTs,
     persistenceMs: Math.max(persistenceMs, params.lastSeenTs - firstCellTs),
     stale: false,
     decay: 1,
-    currentSize,
+    currentSize: effectiveCurrentSize,
     previousSize: params.previousSize,
-    peakSize: params.peakSize,
-    intensity: computeIntensity(currentSize, params.peakSize, persistenceMs),
-    sizeDelta: currentSize - params.previousSize,
+    peakSize: effectivePeakSize,
+    intensity: computeIntensity(effectiveCurrentSize, effectivePeakSize, persistenceMs) * textureMod,
+    sizeDelta: effectiveCurrentSize - params.previousSize,
+    coldStartSeeded: params.coldStartSeeded,
+    liveUpdated: !params.coldStartSeeded,
+    textureMod,
   });
 }
 
@@ -350,18 +395,35 @@ function buildDiag(
   },
   selectedLevelCount: number,
   sourceLevelCount: number,
+  midPrice: number | null | undefined,
+  originalPriceBucketSize: number,
 ): HistoricalLiquiditySurfaceDiag {
   const bucketSet = new Set<number>();
   const priceSet = new Set<number>();
   let maxLiquidity = 0;
   let minLiquidity = Number.POSITIVE_INFINITY;
   const sizes: number[] = [];
+  let coldStartSeededCellCount = 0;
+  let liveUpdatedCellCount = 0;
+  let weak = 0;
+  let medium = 0;
+  let strong = 0;
+  const abovePriceLevels = new Set<number>();
+  const belowPriceLevels = new Set<number>();
+  const mid = midPrice && midPrice > 0 ? midPrice : null;
   for (const cell of cells) {
     bucketSet.add(cell.timeBucket);
     priceSet.add(cell.price);
     maxLiquidity = Math.max(maxLiquidity, cell.maxSize);
     minLiquidity = Math.min(minLiquidity, cell.maxSize);
     sizes.push(cell.maxSize);
+    if (cell.coldStartSeeded) coldStartSeededCellCount += 1;
+    if (cell.liveUpdated) liveUpdatedCellCount += 1;
+    if (cell.intensity < 0.12) weak += 1;
+    else if (cell.intensity < 0.38) medium += 1;
+    else strong += 1;
+    if (mid != null && cell.price > mid) abovePriceLevels.add(cell.price);
+    if (mid != null && cell.price < mid) belowPriceLevels.add(cell.price);
   }
   sizes.sort((a, b) => a - b);
   const medianLiquidity = sizes.length
@@ -384,6 +446,18 @@ function buildDiag(
     skippedCellsBelowSize: skips.belowSize,
     selectedLevelCount,
     sourceLevelCount,
+    bucketMergeFactor: 1,
+    priceLevelMergeFactor:
+      originalPriceBucketSize > 0
+        ? Math.max(1, originalPriceBucketSize / HISTORICAL_SURFACE_PRICE_BUCKET_USD)
+        : 1,
+    coldStartSeededCellCount,
+    liveUpdatedCellCount,
+    renderedWeakCells: weak,
+    renderedMediumCells: medium,
+    renderedStrongCells: strong,
+    visiblePriceLevelsAbovePrice: abovePriceLevels.size,
+    visiblePriceLevelsBelowPrice: belowPriceLevels.size,
     cacheBucketCount: new Set(Array.from(store.cells.values()).map((c) => c.timeBucket)).size,
     cacheMemoryEstimate: estimateBytes(store),
     renderCellCountPerFrame: 0,
@@ -457,6 +531,7 @@ export function updateHistoricalLiquiditySurface(
       Math.min(previousBucket + BOOKMAP_ENGINE_BUCKET_MS, timeBucket),
     );
     for (let bucket = startBucket; bucket <= timeBucket; bucket += BOOKMAP_ENGINE_BUCKET_MS) {
+      const coldStartSeeded = !prev && bucket < timeBucket;
       writeSurfaceCell({
         store,
         timeBucket: bucket,
@@ -467,6 +542,7 @@ export function updateHistoricalLiquiditySurface(
         peakSize,
         firstSeenTs,
         lastSeenTs: now,
+        coldStartSeeded,
       });
     }
   }
@@ -530,6 +606,8 @@ export function updateHistoricalLiquiditySurface(
     skips,
     selected.length,
     params.levels.length,
+    params.midPrice,
+    params.priceBucketSize,
   );
   emitDiag(diag);
   saveStore(sourceKey, store, now);
