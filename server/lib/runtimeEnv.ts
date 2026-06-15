@@ -36,19 +36,48 @@ const PRODUCTION_CORS_DEFAULTS = [
   "https://app-movil-production-5e55.up.railway.app",
 ];
 
-export function getAllowedCorsOrigins(): string[] {
-  const fromEnv = (process.env.CORS_ALLOWED_ORIGINS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+function normalizeCorsOrigin(origin: string): string {
+  const trimmed = origin.trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/\/+$/, "");
+}
 
-  if (isProduction) {
-    const origins = new Set<string>([...PRODUCTION_CORS_DEFAULTS, ...fromEnv]);
+/** Parse comma-separated CORS origins from env (e.g. CORS_ALLOWED_ORIGINS). */
+export function parseCorsOriginsFromEnv(raw: string | undefined): string[] {
+  if (!raw?.trim()) return [];
+  return Array.from(
+    new Set(
+      raw
+        .split(",")
+        .map(normalizeCorsOrigin)
+        .filter(Boolean),
+    ),
+  );
+}
+
+function isRailwayDeploy(): boolean {
+  return Boolean(
+    process.env.RAILWAY_ENVIRONMENT ||
+      process.env.RAILWAY_PUBLIC_DOMAIN ||
+      process.env.RAILWAY_PROJECT_ID ||
+      process.env.RAILWAY_SERVICE_ID,
+  );
+}
+
+export function getAllowedCorsOrigins(): string[] {
+  const fromEnv = parseCorsOriginsFromEnv(process.env.CORS_ALLOWED_ORIGINS);
+  const useProductionDefaults = isProduction || isRailwayDeploy();
+
+  if (useProductionDefaults) {
+    const origins = new Set<string>([
+      ...PRODUCTION_CORS_DEFAULTS.map(normalizeCorsOrigin),
+      ...fromEnv,
+    ]);
     const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
     if (railwayDomain) {
-      origins.add(`https://${railwayDomain}`);
+      origins.add(normalizeCorsOrigin(`https://${railwayDomain}`));
     }
-    return [...origins];
+    return Array.from(origins);
   }
 
   const devDefaults = [
@@ -66,7 +95,20 @@ export function getAllowedCorsOrigins(): string[] {
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5174",
   ];
-  return [...new Set([...devDefaults, ...fromEnv])];
+  return Array.from(new Set([...devDefaults.map(normalizeCorsOrigin), ...fromEnv]));
+}
+
+/** Boot-time log of resolved CORS allowlist (safe to print — public frontend URLs). */
+export function logAllowedCorsOrigins(): void {
+  const origins = getAllowedCorsOrigins();
+  const fromEnv = parseCorsOriginsFromEnv(process.env.CORS_ALLOWED_ORIGINS);
+  console.log("[BOOT] CORS configuration", {
+    allowedCount: origins.length,
+    fromEnvCount: fromEnv.length,
+    productionDefaults: isProduction || isRailwayDeploy(),
+    railwayPublicDomain: process.env.RAILWAY_PUBLIC_DOMAIN?.trim() ?? null,
+    allowedOrigins: origins,
+  });
 }
 
 export function shouldEnableReplitPush(): boolean {
@@ -88,6 +130,7 @@ export function logBootEnvPresence(): void {
       openai: Boolean(process.env.OPENAI_API_KEY),
       heatmapEnabled: isHeatmapEnabled(),
       corsOrigins: getAllowedCorsOrigins().length,
+      corsFromEnv: parseCorsOriginsFromEnv(process.env.CORS_ALLOWED_ORIGINS).length,
       railwayDomain: process.env.RAILWAY_PUBLIC_DOMAIN ?? null,
     });
     console.log("[ENV] HEATMAP_ENABLED:", isHeatmapEnabled());

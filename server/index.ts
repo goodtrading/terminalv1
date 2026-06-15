@@ -4,7 +4,7 @@ import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
 import cors from "cors";
-import { getAllowedCorsOrigins } from "./lib/runtimeEnv";
+import { getAllowedCorsOrigins, logAllowedCorsOrigins } from "./lib/runtimeEnv";
 import { recordEndpointTiming } from "./lib/performanceMonitor";
 
 function safeErrorMessage(err: unknown): string {
@@ -85,37 +85,39 @@ const app = express();
 const httpServer = createServer(app);
 console.log("[BOOT] Express app and HTTP server created");
 
-// CORS configuration - must be before routes
+// CORS configuration - must be before routes (applies to all /api/* including mobile)
 const allowedOrigins = getAllowedCorsOrigins();
-console.log("[BOOT] CORS allowed origins:", allowedOrigins.length);
+logAllowedCorsOrigins();
 
-const corsOptions = {
-  origin(origin: string | undefined, callback: (err: Error | null, allow: boolean) => void) {
-    // Permitir requests sin Origin: mobile native apps, curl, server-to-server, healthchecks
+const corsOptions: cors.CorsOptions = {
+  origin(origin, callback) {
+    // Permitir requests sin Origin: mobile native, curl, server-to-server, healthchecks
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) {
+    const normalized = origin.replace(/\/+$/, "");
+    if (allowedOrigins.includes(normalized) || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    console.warn("[cors] blocked origin:", origin);
+    console.warn("[cors] blocked origin:", origin, {
+      hint: "Add to CORS_ALLOWED_ORIGINS in Railway (comma-separated https origins)",
+    });
     return callback(null, false);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+  ],
+  optionsSuccessStatus: 204,
+  maxAge: 86_400,
 };
 
 app.use(cors(corsOptions));
-
-// Manual OPTIONS handler - avoids path-to-regexp issues with app.options("*", cors())
-app.use((req, res, next) => {
-  if (req.method === "OPTIONS") {
-    res.sendStatus(204);
-    return;
-  }
-  next();
-});
 
 console.log("[BOOT] CORS middleware configured");
 
