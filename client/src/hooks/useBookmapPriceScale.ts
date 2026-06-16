@@ -29,6 +29,7 @@ export type UseBookmapPriceScaleOptions = {
   walls?: BookLevel[];
   bookLevels?: BookLevel[];
   followSpot?: boolean;
+  enforceLocalRange?: boolean;
 };
 
 function initialRangeFromPreset(
@@ -55,6 +56,7 @@ export function useBookmapPriceScale({
   walls = [],
   bookLevels = [],
   followSpot = false,
+  enforceLocalRange = false,
 }: UseBookmapPriceScaleOptions) {
   const [range, setRange] = useState<PriceRange>(() =>
     initialRangeFromPreset(spot, depthRangePreset, localRangeUsd, walls, bookLevels),
@@ -62,12 +64,41 @@ export function useBookmapPriceScale({
   const [mode, setMode] = useState<BookmapPriceScaleMode>("auto");
   const [activePreset, setActivePreset] = useState<DepthRangePreset>(depthRangePreset);
   const dragAnchorRef = useRef<number | null>(null);
+  const rangeSourceRef = useRef("initial-preset");
+  const forcedLocalRangeAppliedRef = useRef(false);
 
-  const maxSpanRatio = maxSpanRatioForDepthPreset(activePreset);
+  const clampRangeForPreset = useCallback(
+    (next: PriceRange, preset: DepthRangePreset) => {
+      const clamped = clampPriceRange(
+        next,
+        spot,
+        maxSpanRatioForDepthPreset(preset),
+      );
+      if (
+        !enforceLocalRange ||
+        preset !== "local" ||
+        spot == null ||
+        !Number.isFinite(spot) ||
+        spot <= 0
+      ) {
+        return clamped;
+      }
+
+      const allowedSpan = localRangeUsd * 2.4;
+      if (clamped.maxPrice - clamped.minPrice <= allowedSpan) {
+        return clamped;
+      }
+
+      forcedLocalRangeAppliedRef.current = true;
+      rangeSourceRef.current = "local-hard-guard";
+      return computeDepthRangeFromPreset("local", spot, [], localRangeUsd, []);
+    },
+    [enforceLocalRange, localRangeUsd, spot],
+  );
 
   const clampRange = useCallback(
-    (next: PriceRange) => clampPriceRange(next, spot, maxSpanRatio),
-    [spot, maxSpanRatio],
+    (next: PriceRange) => clampRangeForPreset(next, activePreset),
+    [activePreset, clampRangeForPreset],
   );
 
   const visibleMinPrice = range.minPrice;
@@ -118,6 +149,7 @@ export function useBookmapPriceScale({
 
   const setVisibleRange = useCallback(
     (next: PriceRange) => {
+      rangeSourceRef.current = "manual-visible-range";
       setMode("manual");
       setRange(clampRange(next));
     },
@@ -140,8 +172,9 @@ export function useBookmapPriceScale({
     (preset: DepthRangePreset) => {
       setActivePreset(preset);
       setMode("auto");
+      rangeSourceRef.current = `selected-depth:${preset}`;
       setRange(
-        clampRange(
+        clampRangeForPreset(
           computeDepthRangeFromPreset(
             preset,
             spot,
@@ -149,10 +182,11 @@ export function useBookmapPriceScale({
             localRangeUsd,
             bookLevels,
           ),
+          preset,
         ),
       );
     },
-    [spot, walls, bookLevels, localRangeUsd, clampRange],
+    [spot, walls, bookLevels, localRangeUsd, clampRangeForPreset],
   );
 
   const zoomAtPrice = useCallback(
@@ -160,6 +194,7 @@ export function useBookmapPriceScale({
       if (!Number.isFinite(anchorPrice) || !Number.isFinite(factor) || factor <= 0) {
         return;
       }
+      rangeSourceRef.current = "manual-price-zoom";
       setMode("manual");
       setRange((prev) =>
         clampRange(zoomPriceRange(prev, anchorPrice, factor, spot)),
@@ -171,6 +206,7 @@ export function useBookmapPriceScale({
   const panPrice = useCallback(
     (deltaPrice: number) => {
       if (!Number.isFinite(deltaPrice)) return;
+      rangeSourceRef.current = "manual-price-pan";
       setMode("manual");
       setRange((prev) =>
         clampRange({
@@ -191,10 +227,11 @@ export function useBookmapPriceScale({
   );
 
   const resetToSpot = useCallback(() => {
+    rangeSourceRef.current = "reset-to-selected-depth";
     setMode("auto");
     setActivePreset(depthRangePreset);
     setRange(
-      clampRange(
+      clampRangeForPreset(
         initialRangeFromPreset(
           spot,
           depthRangePreset,
@@ -202,9 +239,17 @@ export function useBookmapPriceScale({
           walls,
           bookLevels,
         ),
+        depthRangePreset,
       ),
     );
-  }, [spot, depthRangePreset, localRangeUsd, walls, bookLevels, clampRange]);
+  }, [
+    spot,
+    depthRangePreset,
+    localRangeUsd,
+    walls,
+    bookLevels,
+    clampRangeForPreset,
+  ]);
 
   const fitToWalls = useCallback(() => {
     const fit = computeFitWallsRange(spot, walls, { paddingPct: 0.04 });
@@ -212,11 +257,15 @@ export function useBookmapPriceScale({
       resetToSpot();
       return;
     }
+    rangeSourceRef.current = "fit-walls";
     setMode("manual");
     setRange(
-      clampRange({ minPrice: fit.minPrice, maxPrice: fit.maxPrice }),
+      clampRangeForPreset(
+        { minPrice: fit.minPrice, maxPrice: fit.maxPrice },
+        "fullDepth",
+      ),
     );
-  }, [spot, walls, resetToSpot, clampRange]);
+  }, [spot, walls, resetToSpot, clampRangeForPreset]);
 
   const fitToMajorWalls = useCallback(() => {
     setActivePreset("majorWalls");
@@ -228,11 +277,15 @@ export function useBookmapPriceScale({
       resetToSpot();
       return;
     }
+    rangeSourceRef.current = "fit-major-walls";
     setMode("auto");
     setRange(
-      clampRange({ minPrice: fit.minPrice, maxPrice: fit.maxPrice }),
+      clampRangeForPreset(
+        { minPrice: fit.minPrice, maxPrice: fit.maxPrice },
+        "majorWalls",
+      ),
     );
-  }, [spot, walls, resetToSpot, clampRange]);
+  }, [spot, walls, resetToSpot, clampRangeForPreset]);
 
   const zoomIn = useCallback(() => {
     zoomAtPrice(centerPrice, 0.85);
@@ -271,13 +324,29 @@ export function useBookmapPriceScale({
 
   useEffect(() => {
     setActivePreset(depthRangePreset);
-  }, [depthRangePreset]);
+    if (depthRangePreset !== "local") return;
+    rangeSourceRef.current = "selected-depth:local";
+    setMode("auto");
+    setRange(
+      clampRangeForPreset(
+        computeDepthRangeFromPreset(
+          "local",
+          spot,
+          [],
+          localRangeUsd,
+          [],
+        ),
+        "local",
+      ),
+    );
+  }, [clampRangeForPreset, depthRangePreset, localRangeUsd, spot]);
 
   useEffect(() => {
     if (mode !== "auto" || !followSpot) return;
     if (spot == null || !Number.isFinite(spot) || spot <= 0) return;
+    rangeSourceRef.current = `follow-price:${activePreset}`;
     setRange(
-      clampRange(
+      clampRangeForPreset(
         computeDepthRangeFromPreset(
           activePreset,
           spot,
@@ -285,6 +354,7 @@ export function useBookmapPriceScale({
           localRangeUsd,
           bookLevels,
         ),
+        activePreset,
       ),
     );
   }, [
@@ -295,7 +365,7 @@ export function useBookmapPriceScale({
     localRangeUsd,
     walls,
     bookLevels,
-    clampRange,
+    clampRangeForPreset,
   ]);
 
   const priceRange: PriceRange = useMemo(
@@ -352,6 +422,8 @@ export function useBookmapPriceScale({
     endScaleDrag,
     setMode,
     chartHeight,
+    rangeSource: rangeSourceRef.current,
+    forcedLocalRangeApplied: forcedLocalRangeAppliedRef.current,
   };
 }
 

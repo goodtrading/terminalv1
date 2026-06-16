@@ -1,43 +1,25 @@
-import { useEffect, useState } from "react";
+import {
+  isBookmapEnabled,
+  isDesktopRuntime,
+  isFlowsEnabled,
+} from "@/lib/runtimeFeatures";
 
-type RuntimeFeatures = {
+export type RuntimeFeatures = {
   heatmapEnabled: boolean;
+  flowsEnabled: boolean;
+  bookmapEnabled: boolean;
+  isDesktopRuntime: boolean;
   loading: boolean;
 };
 
-const initialHeatmapEnabled =
-  import.meta.env.DEV || import.meta.env.VITE_HEATMAP_ENABLED === "true";
-
 export function useRuntimeFeatures(): RuntimeFeatures {
-  const [heatmapEnabled, setHeatmapEnabled] = useState(initialHeatmapEnabled);
-  const [loading, setLoading] = useState(!import.meta.env.DEV);
+  const flowsEnabled = isFlowsEnabled();
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadRuntimeFeatures() {
-      try {
-        const res = await fetch("/api/runtime/features", { credentials: "include" });
-        if (!res.ok) throw new Error(`features ${res.status}`);
-        const data = (await res.json()) as { heatmapEnabled?: unknown };
-        if (!cancelled) {
-          setHeatmapEnabled(data.heatmapEnabled !== false);
-        }
-      } catch {
-        if (!cancelled) {
-          setHeatmapEnabled(import.meta.env.DEV);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    void loadRuntimeFeatures();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return { heatmapEnabled, loading };
+  return {
+    heatmapEnabled: flowsEnabled,
+    flowsEnabled,
+    bookmapEnabled: isBookmapEnabled(),
+    isDesktopRuntime: isDesktopRuntime(),
+    loading: false,
+  };
 }

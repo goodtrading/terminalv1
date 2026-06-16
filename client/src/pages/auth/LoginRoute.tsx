@@ -3,8 +3,8 @@ import { useLocation } from "wouter";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 
 /**
- * Landing for `/login`: clears client session and cookie logout, then sends user to `/`
- * where the login form is shown. Used by "Volver al login" from gated screens.
+ * Legacy logout landing: clears session then sends user to `/login`.
+ * Kept for gated screens that link to `/login` expecting a fresh sign-in form.
  */
 export default function LoginRoute() {
   const { logout, authReady } = useTerminalAuth();
@@ -13,12 +13,12 @@ export default function LoginRoute() {
   useEffect(() => {
     if (!authReady) return;
     logout();
-    setLocation("/");
+    setLocation("/login");
   }, [authReady, logout, setLocation]);
 
   return (
-    <div className="h-screen w-full flex items-center justify-center bg-terminal-bg text-terminal-muted text-sm font-mono px-4">
-      Redirigiendo al inicio de sesión…
+    <div className="h-screen w-full flex items-center justify-center bg-[#030303] text-[#9ca3af] text-sm px-4">
+      Cerrando sesión…
     </div>
   );
 }
