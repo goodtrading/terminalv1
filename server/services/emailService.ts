@@ -8,11 +8,13 @@ type MailPayload = {
   html: string;
 };
 
-export type EmailDeliveryMode = "smtp" | "dev-console" | "production-unconfigured";
+export type EmailDeliveryMode = "resend" | "smtp" | "dev-console" | "production-unconfigured";
 
 export type EmailConfigStatus = {
   mode: EmailDeliveryMode;
+  provider: string | null;
   nodeEnv: string;
+  resendApiKeyPresent: boolean;
   smtpHost: string | null;
   smtpPort: number;
   smtpUserPresent: boolean;
@@ -23,6 +25,24 @@ export type EmailConfigStatus = {
   verificationTtlMinutes: number;
   resetTtlMinutes: number;
 };
+
+const RESEND_API_URL = "https://api.resend.com/emails";
+
+type MailContext = Record<string, unknown>;
+
+function emailProvider(): "resend" | "smtp" {
+  const raw = (process.env.EMAIL_PROVIDER ?? "smtp").trim().toLowerCase();
+  return raw === "resend" ? "resend" : "smtp";
+}
+
+function resendApiKey(): string | null {
+  const v = process.env.RESEND_API_KEY?.trim();
+  return v || null;
+}
+
+function resendConfigured(): boolean {
+  return Boolean(resendApiKey());
+}
 
 function smtpHost(): string | null {
   const v = process.env.SMTP_HOST?.trim();
@@ -43,7 +63,9 @@ export function smtpConfigured(): boolean {
 }
 
 export function getEmailDeliveryMode(): EmailDeliveryMode {
-  if (smtpConfigured()) return "smtp";
+  const provider = emailProvider();
+  if (provider === "resend" && resendConfigured()) return "resend";
+  if (provider === "smtp" && smtpConfigured()) return "smtp";
   if (process.env.NODE_ENV === "production") return "production-unconfigured";
   return "dev-console";
 }
@@ -56,24 +78,20 @@ export function resolveAppPublicUrl(): string {
   return "http://localhost:5000";
 }
 
-export function getEmailConfigStatus(): EmailConfigStatus {
-  return {
-    mode: getEmailDeliveryMode(),
-    nodeEnv: process.env.NODE_ENV ?? "development",
-    smtpHost: smtpHost(),
-    smtpPort: smtpPort(),
-    smtpUserPresent: Boolean(smtpUser()),
-    smtpPassPresent: smtpPassPresent(),
-    emailFrom: fromAddress(),
-    appPublicUrl: process.env.APP_PUBLIC_URL?.trim() || null,
-    railwayPublicDomain: process.env.RAILWAY_PUBLIC_DOMAIN?.trim() || null,
-    verificationTtlMinutes: Number(process.env.AUTH_VERIFICATION_TTL_MINUTES ?? 15),
-    resetTtlMinutes: Number(process.env.AUTH_RESET_TTL_MINUTES ?? 30),
-  };
-}
-
 function fromAddress(): string {
   return process.env.EMAIL_FROM?.trim() || smtpUser() || "noreply@goodtrading.io";
+}
+
+function smtpPort(): number {
+  const raw = process.env.SMTP_PORT?.trim();
+  const port = raw ? Number(raw) : 587;
+  return Number.isFinite(port) && port > 0 ? port : 587;
+}
+
+function smtpTransportSettings(): { port: number; secure: boolean; requireTLS: boolean } {
+  const port = smtpPort();
+  const secure = port === 465;
+  return { port, secure, requireTLS: port === 587 };
 }
 
 function maskEmail(email: string): string {
@@ -85,6 +103,27 @@ function maskEmail(email: string): string {
   return `${maskedLocal}@${domain}`;
 }
 
+function truncateText(value: unknown, maxLen = 500): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value;
+}
+
+function emailContextForLog(): MailContext {
+  const user = smtpUser();
+  const { port, secure, requireTLS } = smtpTransportSettings();
+  return {
+    provider: emailProvider(),
+    mode: getEmailDeliveryMode(),
+    emailFrom: fromAddress(),
+    resendApiKeyPresent: resendConfigured(),
+    smtpHost: smtpHost() ?? "(missing)",
+    smtpPort: port,
+    secure,
+    requireTLS,
+    smtpUserMasked: user ? maskEmail(user) : "(missing)",
+  };
+}
+
 type SmtpLikeError = Error & {
   code?: string;
   command?: string;
@@ -94,56 +133,15 @@ type SmtpLikeError = Error & {
   syscall?: string;
 };
 
-function smtpPort(): number {
-  const raw = process.env.SMTP_PORT?.trim();
-  const port = raw ? Number(raw) : 587;
-  return Number.isFinite(port) && port > 0 ? port : 587;
-}
-
-/** Port 465 = implicit TLS; port 587 = STARTTLS with requireTLS. */
-function smtpTransportSettings(): { port: number; secure: boolean; requireTLS: boolean } {
-  const port = smtpPort();
-  const secure = port === 465;
-  return {
-    port,
-    secure,
-    requireTLS: port === 587,
-  };
-}
-
-/** SMTP context for diagnostics — never includes SMTP_PASS. */
-function smtpContextForLog(): Record<string, unknown> {
-  const user = smtpUser();
-  const { port, secure, requireTLS } = smtpTransportSettings();
-  return {
-    mode: getEmailDeliveryMode(),
-    smtpHost: smtpHost() ?? "(missing)",
-    smtpPort: port,
-    secure,
-    requireTLS,
-    smtpUserMasked: user ? maskEmail(user) : "(missing)",
-    emailFrom: fromAddress(),
-  };
-}
-
-function truncateResponse(value: unknown, maxLen = 500): string | undefined {
-  if (typeof value !== "string" || value.length === 0) return undefined;
-  return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value;
-}
-
-/** Safe SMTP/nodemailer error fields — never logs secrets. */
-function safeSmtpFailureLog(err: unknown): Record<string, unknown> {
-  const base = smtpContextForLog();
+function safeEmailFailureLog(err: unknown): MailContext {
+  const base = emailContextForLog();
 
   if (err == null) {
     return { ...base, errorMessage: "unknown error (null)" };
   }
 
   if (!(err instanceof Error)) {
-    return {
-      ...base,
-      errorMessage: String(err),
-    };
+    return { ...base, errorMessage: String(err) };
   }
 
   const e = err as SmtpLikeError;
@@ -151,37 +149,40 @@ function safeSmtpFailureLog(err: unknown): Record<string, unknown> {
   const causeMessage =
     cause instanceof Error ? cause.message : cause != null ? String(cause) : undefined;
 
-  const out: Record<string, unknown> = {
+  return {
     ...base,
     errorName: e.name || "Error",
     errorMessage: e.message || "(empty message)",
     errorCode: e.code ?? null,
     errorCommand: e.command ?? null,
-    errorResponse: truncateResponse(e.response) ?? null,
+    errorResponse: truncateText(e.response) ?? null,
     errorResponseCode: e.responseCode ?? null,
     errorErrno: e.errno ?? null,
     errorSyscall: e.syscall ?? null,
     errorCauseMessage: causeMessage ?? null,
   };
-
-  return out;
 }
 
-/** Railway-friendly single-line JSON log (objects alone may truncate in Raw Data). */
-function logSmtpFailure(label: string, err: unknown, extra?: Record<string, unknown>): void {
-  const payload = { ...safeSmtpFailureLog(err), ...extra };
+function logEmailFailure(label: string, err: unknown, extra?: MailContext): void {
+  const payload = { ...safeEmailFailureLog(err), ...extra };
   console.error(`${label} ${JSON.stringify(payload)}`);
 }
 
-/** @deprecated Use safeSmtpFailureLog — kept for callers expecting partial fields. */
-function safeTransportError(err: unknown): Record<string, unknown> {
-  const log = safeSmtpFailureLog(err);
+export function getEmailConfigStatus(): EmailConfigStatus {
   return {
-    message: log.errorMessage,
-    code: log.errorCode,
-    command: log.errorCommand,
-    responseCode: log.errorResponseCode,
-    response: log.errorResponse,
+    mode: getEmailDeliveryMode(),
+    provider: emailProvider(),
+    nodeEnv: process.env.NODE_ENV ?? "development",
+    resendApiKeyPresent: resendConfigured(),
+    smtpHost: smtpHost(),
+    smtpPort: smtpPort(),
+    smtpUserPresent: Boolean(smtpUser()),
+    smtpPassPresent: smtpPassPresent(),
+    emailFrom: fromAddress(),
+    appPublicUrl: process.env.APP_PUBLIC_URL?.trim() || null,
+    railwayPublicDomain: process.env.RAILWAY_PUBLIC_DOMAIN?.trim() || null,
+    verificationTtlMinutes: Number(process.env.AUTH_VERIFICATION_TTL_MINUTES ?? 15),
+    resetTtlMinutes: Number(process.env.AUTH_RESET_TTL_MINUTES ?? 30),
   };
 }
 
@@ -212,7 +213,128 @@ function createTransporter(): Transporter {
   return cachedTransporter;
 }
 
-/** Safe startup / diagnostic log — never prints SMTP_PASS. */
+async function sendViaResend(payload: MailPayload, context: string): Promise<void> {
+  const apiKey = resendApiKey();
+  if (!apiKey) {
+    throw new Error("RESEND_API_KEY missing");
+  }
+
+  const res = await fetch(RESEND_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: fromAddress(),
+      to: [payload.to],
+      subject: payload.subject,
+      html: payload.html,
+      text: payload.text,
+    }),
+  });
+
+  const body = (await res.json().catch(() => ({}))) as {
+    id?: string;
+    message?: string;
+    name?: string;
+    statusCode?: number;
+  };
+
+  if (!res.ok) {
+    const err = new Error(body.message ?? `Resend HTTP ${res.status}`) as SmtpLikeError;
+    err.code = body.name ?? `RESEND_${res.status}`;
+    logEmailFailure("[email] send failed", err, {
+      context,
+      recipientMasked: maskEmail(payload.to),
+      subject: payload.subject,
+      httpStatus: res.status,
+    });
+    throw err;
+  }
+
+  console.info(
+    "[email] sent",
+    JSON.stringify({
+      provider: "resend",
+      context,
+      recipientMasked: maskEmail(payload.to),
+      subject: payload.subject,
+      messageId: body.id ?? null,
+      emailFrom: fromAddress(),
+    }),
+  );
+}
+
+async function sendViaSmtp(payload: MailPayload, context: string): Promise<void> {
+  try {
+    const info = await createTransporter().sendMail({
+      from: fromAddress(),
+      to: payload.to,
+      subject: payload.subject,
+      text: payload.text,
+      html: payload.html,
+    });
+    console.info(
+      "[email] sent",
+      JSON.stringify({
+        provider: "smtp",
+        context,
+        recipientMasked: maskEmail(payload.to),
+        subject: payload.subject,
+        messageId: info.messageId ?? null,
+        emailFrom: fromAddress(),
+      }),
+    );
+  } catch (err) {
+    logEmailFailure("[email] send failed", err, {
+      context,
+      recipientMasked: maskEmail(payload.to),
+      subject: payload.subject,
+    });
+    throw err;
+  }
+}
+
+async function sendMail(payload: MailPayload, context: string): Promise<void> {
+  const mode = getEmailDeliveryMode();
+
+  if (mode === "dev-console") {
+    console.info(
+      "[email:dev]",
+      JSON.stringify({
+        context,
+        recipientMasked: maskEmail(payload.to),
+        subject: payload.subject,
+        emailFrom: fromAddress(),
+        text: payload.text,
+      }),
+    );
+    return;
+  }
+
+  if (mode === "production-unconfigured") {
+    console.warn(
+      "[email] not configured — email NOT sent",
+      JSON.stringify({
+        context,
+        recipientMasked: maskEmail(payload.to),
+        subject: payload.subject,
+        provider: emailProvider(),
+      }),
+    );
+    return;
+  }
+
+  if (mode === "resend") {
+    await sendViaResend(payload, context);
+    return;
+  }
+
+  await sendViaSmtp(payload, context);
+}
+
+/** Safe startup / diagnostic log — never prints secrets. */
 export function logEmailConfigStatus(): void {
   const status = getEmailConfigStatus();
   const { port, secure, requireTLS } = smtpTransportSettings();
@@ -222,7 +344,9 @@ export function logEmailConfigStatus(): void {
     "[email:config]",
     JSON.stringify({
       mode: status.mode,
+      provider: status.provider,
       nodeEnv: status.nodeEnv,
+      resendApiKeyPresent: status.resendApiKeyPresent,
       smtpHost: status.smtpHost ?? "(missing)",
       smtpPort: port,
       secure,
@@ -241,7 +365,7 @@ export function logEmailConfigStatus(): void {
 
   if (status.mode === "production-unconfigured") {
     console.warn(
-      "[email:config] PRODUCTION without SMTP — verification/reset emails will NOT be sent. Set SMTP_HOST, SMTP_USER, SMTP_PASS on Railway.",
+      "[email:config] PRODUCTION without email provider — set EMAIL_PROVIDER=resend + RESEND_API_KEY, or SMTP_* vars.",
     );
   }
   if (status.mode === "dev-console") {
@@ -249,17 +373,45 @@ export function logEmailConfigStatus(): void {
   }
 }
 
-/** Verifies SMTP login at startup (non-blocking). */
-export async function verifyEmailTransport(): Promise<{ ok: boolean; error?: string; detail?: Record<string, unknown> }> {
+/** Verifies email transport at startup (non-blocking). */
+export async function verifyEmailTransport(): Promise<{
+  ok: boolean;
+  error?: string;
+  detail?: Record<string, unknown>;
+}> {
+  const mode = getEmailDeliveryMode();
+
+  if (mode === "resend") {
+    console.info(
+      "[email:transport] Resend API ready",
+      JSON.stringify({
+        provider: "resend",
+        emailFrom: fromAddress(),
+        resendApiKeyPresent: true,
+      }),
+    );
+    return { ok: true };
+  }
+
+  if (mode === "dev-console") {
+    return { ok: false, error: "dev_console" };
+  }
+
+  if (mode === "production-unconfigured") {
+    return { ok: false, error: "email_not_configured" };
+  }
+
   if (!smtpConfigured()) {
     return { ok: false, error: "smtp_not_configured" };
   }
+
   try {
     await createTransporter().verify();
     const { port, secure, requireTLS } = smtpTransportSettings();
     console.info(
       "[email:transport] SMTP verify OK",
       JSON.stringify({
+        provider: "smtp",
         smtpHost: smtpHost(),
         smtpPort: port,
         secure,
@@ -270,57 +422,9 @@ export async function verifyEmailTransport(): Promise<{ ok: boolean; error?: str
     );
     return { ok: true };
   } catch (err) {
-    const detail = safeSmtpFailureLog(err);
-    logSmtpFailure("[email:transport] SMTP verify FAILED", err);
+    const detail = safeEmailFailureLog(err);
+    logEmailFailure("[email:transport] SMTP verify FAILED", err);
     return { ok: false, error: "smtp_verify_failed", detail };
-  }
-}
-
-async function sendMail(payload: MailPayload, context: string): Promise<void> {
-  const mode = getEmailDeliveryMode();
-
-  if (mode === "dev-console") {
-    console.info("[email:dev]", {
-      context,
-      to: maskEmail(payload.to),
-      subject: payload.subject,
-      text: payload.text,
-    });
-    return;
-  }
-
-  if (mode === "production-unconfigured") {
-    console.warn("[email] SMTP not configured — email NOT sent", {
-      context,
-      to: maskEmail(payload.to),
-      subject: payload.subject,
-    });
-    return;
-  }
-
-  try {
-    const info = await createTransporter().sendMail({
-      from: fromAddress(),
-      to: payload.to,
-      subject: payload.subject,
-      text: payload.text,
-      html: payload.html,
-    });
-    console.info("[email] sent", {
-      context,
-      to: maskEmail(payload.to),
-      subject: payload.subject,
-      messageId: info.messageId ?? null,
-      accepted: info.accepted?.length ?? 0,
-      rejected: info.rejected?.length ?? 0,
-    });
-  } catch (err) {
-    logSmtpFailure("[email] send failed", err, {
-      context,
-      to: maskEmail(payload.to),
-      subject: payload.subject,
-    });
-    throw err;
   }
 }
 
@@ -330,7 +434,7 @@ export async function sendTestEmail(to: string): Promise<void> {
   const text = [
     "Este es un email de prueba de GoodTrading.",
     "",
-    "Si ves este mensaje, SMTP está configurado correctamente.",
+    "Si ves este mensaje, el proveedor de email está configurado correctamente.",
     "",
     `Ejemplo reset URL: ${sampleResetUrl}`,
     "",
@@ -339,7 +443,7 @@ export async function sendTestEmail(to: string): Promise<void> {
 
   const html = `
     <p>Este es un email de prueba de GoodTrading.</p>
-    <p>Si ves este mensaje, SMTP está configurado correctamente.</p>
+    <p>Si ves este mensaje, el proveedor de email está configurado correctamente.</p>
     <p><a href="${sampleResetUrl}">Ejemplo enlace reset</a></p>
     <p>Código de verificación de ejemplo: <strong>123456</strong></p>
   `;

@@ -1,5 +1,5 @@
 /**
- * Send a test email using current .env SMTP settings.
+ * Send a test email using current .env email provider (Resend or SMTP).
  * Usage: npm run test:email -- tu@email.com
  */
 import "dotenv/config";
@@ -28,18 +28,20 @@ async function main() {
 
   const config = getEmailConfigStatus();
   if (config.mode === "production-unconfigured") {
-    console.error("[test:email] SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS.");
+    console.error(
+      "[test:email] Email not configured. Set EMAIL_PROVIDER=resend + RESEND_API_KEY, or SMTP_* vars.",
+    );
     process.exit(1);
   }
 
   if (config.mode === "dev-console") {
-    console.info("[test:email] No SMTP — output will appear as [email:dev] above.");
+    console.info("[test:email] No provider — output will appear as [email:dev] above.");
     await sendTestEmail(to);
     process.exit(0);
   }
 
   const verify = await verifyEmailTransport();
-  if (!verify.ok) {
+  if (!verify.ok && config.mode === "smtp") {
     console.error("[test:email] SMTP verify failed:", verify.detail ?? verify.error);
     process.exit(1);
   }
