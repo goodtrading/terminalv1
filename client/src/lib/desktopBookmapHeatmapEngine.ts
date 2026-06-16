@@ -53,6 +53,15 @@ export type DesktopBookmapHeatmapStats = {
   }>;
 };
 
+export type DesktopLocalHistorySelection = {
+  cells: HeatmapCell[];
+  rejectedOutsideLocalRange: number;
+  rejectedByAge: number;
+  rejectedByWeakIntensity: number;
+  rejectedByNoiseFilter: number;
+  maxHistoryAgeMs: number;
+};
+
 type LiquidityTier = "low" | "medium" | "strong" | "wall" | "structural";
 
 type TrackedLevel = {
@@ -292,6 +301,83 @@ export class DesktopBookmapHeatmapEngine {
 
   getStats(): DesktopBookmapHeatmapStats {
     return this.lastStats;
+  }
+
+  hydrateHistory(cells: readonly HeatmapCell[], now: number): number {
+    const byKey = new Map<string, HeatmapCell>();
+    for (const cell of [...this.cells, ...cells]) {
+      if (
+        !Number.isFinite(cell.timeBucket) ||
+        !Number.isFinite(cell.price) ||
+        cell.price <= 0 ||
+        !Number.isFinite(cell.maxSizeInBucket) ||
+        cell.maxSizeInBucket <= 0
+      ) {
+        continue;
+      }
+      if (now - cell.lastUpdateTs > this.config.memoryWindowMs) continue;
+      const key = `${cell.timeBucket}:${cell.side}:${cell.price}`;
+      const previous = byKey.get(key);
+      if (!previous || cell.maxSizeInBucket > previous.maxSizeInBucket) {
+        byKey.set(key, { ...cell });
+      }
+    }
+    this.cells = Array.from(byKey.values())
+      .sort((a, b) => a.timeBucket - b.timeBucket)
+      .slice(-this.config.maxCells);
+    this.rebuildCellIndex();
+    return this.cells.length;
+  }
+
+  getPersistableLocalHistory(params: {
+    currentPrice: number;
+    halfRangeUsd: number;
+    now: number;
+    maxAgeMs: number;
+  }): DesktopLocalHistorySelection {
+    const minPrice = params.currentPrice - params.halfRangeUsd;
+    const maxPrice = params.currentPrice + params.halfRangeUsd;
+    const result: DesktopLocalHistorySelection = {
+      cells: [],
+      rejectedOutsideLocalRange: 0,
+      rejectedByAge: 0,
+      rejectedByWeakIntensity: 0,
+      rejectedByNoiseFilter: 0,
+      maxHistoryAgeMs: 0,
+    };
+    const observationsByLevel = new Map<string, number>();
+    for (const cell of this.cells) {
+      const key = levelKey(cell.side, cell.price);
+      observationsByLevel.set(key, (observationsByLevel.get(key) ?? 0) + 1);
+    }
+    for (const cell of this.cells) {
+      const age = Math.max(0, params.now - cell.lastUpdateTs);
+      if (age > params.maxAgeMs) {
+        result.rejectedByAge += 1;
+        continue;
+      }
+      if (cell.price < minPrice || cell.price > maxPrice) {
+        result.rejectedOutsideLocalRange += 1;
+        continue;
+      }
+      const key = levelKey(cell.side, cell.price);
+      const tracked = this.levels.get(key);
+      const persistent =
+        (tracked?.updatesCount ?? 0) >= 3 ||
+        (observationsByLevel.get(key) ?? 0) >= 3;
+      const strongEnough = cell.maxSizeInBucket >= 5;
+      if (!persistent && !strongEnough) {
+        result.rejectedByNoiseFilter += 1;
+        continue;
+      }
+      if (cell.maxSizeInBucket < 0.75) {
+        result.rejectedByWeakIntensity += 1;
+        continue;
+      }
+      result.cells.push({ ...cell });
+      result.maxHistoryAgeMs = Math.max(result.maxHistoryAgeMs, age);
+    }
+    return result;
   }
 
   private computeIntensity(

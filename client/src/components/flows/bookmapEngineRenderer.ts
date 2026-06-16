@@ -4034,7 +4034,7 @@ function renderHeatmapBands(
       ? mapWallSizeToStableVisualIntensity(band.maxSize)
       : (band.visualIntensity ?? band.intensity);
     if (!isLargeWall) {
-      vi = Math.max(0, Math.min(1, (vi - 0.5) * heatmapContrast + 0.5));
+    vi = Math.max(0, Math.min(1, (vi - 0.5) * heatmapContrast + 0.5));
     }
     if (vi < viFloor) continue;
 
@@ -5094,8 +5094,8 @@ export function paintBookmapEngineHeatmapFrame(
       viewportMaxSize: computeViewportSizeStats(overlayTextureCells).maxSize,
     };
     const overlayTextureDraw = renderHeatmapTextureCells(
-      ctx,
-      metrics,
+        ctx,
+        metrics,
       overlayTextureCells,
       timeViewport,
       params.visualSettings,
@@ -5119,8 +5119,8 @@ export function paintBookmapEngineHeatmapFrame(
   if (hasOverlayBands && params.overlayEngine) {
     renderedLayerOrder.push("overlayWallBands");
     const preparedOverlayWalls = prepareWallBandsForContinuousRender(
-      params.overlayEngine.bands,
-      timeViewport.dataEndTime,
+        params.overlayEngine.bands,
+        timeViewport.dataEndTime,
       timeViewport.visibleEndTime,
       BOOKMAP_TEXTURE_SAMPLER_MS,
     );
@@ -5130,11 +5130,11 @@ export function paintBookmapEngineHeatmapFrame(
       preparedOverlayWalls.bands,
       timeViewport.dataEndTime,
       timeViewport.dataEndTime,
-      params.visualSettings,
-      "perp-overlay",
-      params.overlayOpacity ?? 0.35,
-    );
-  }
+        params.visualSettings,
+        "perp-overlay",
+        params.overlayOpacity ?? 0.35,
+      );
+    }
 
   if (params.layerAuditSink) {
     params.layerAuditSink.audit = buildBookmapLayerAudit({

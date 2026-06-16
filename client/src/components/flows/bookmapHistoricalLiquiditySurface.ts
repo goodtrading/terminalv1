@@ -123,6 +123,7 @@ type UpdateHistoricalLiquiditySurfaceParams = {
   state: BookmapState;
   levels: LiveDomBookLevel[];
   sourceKey: string;
+  enabled?: boolean;
   /** Fine storage bucket (e.g. 2.5 USD) — not the DOM ladder step. */
   priceBucketSize: number;
   domLadderStep: number;
@@ -563,7 +564,11 @@ export function updateHistoricalLiquiditySurface(
   params: UpdateHistoricalLiquiditySurfaceParams,
 ): UpdateHistoricalLiquiditySurfaceResult {
   const sourceKey = params.sourceKey || "default";
-  if (!BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_V1 || !isDesktopRuntime()) {
+  if (
+    params.enabled === false ||
+    !BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_V1 ||
+    !isDesktopRuntime()
+  ) {
     const diag = emptyDiag(sourceKey);
     return { cells: [], activeLevels: [], diag };
   }

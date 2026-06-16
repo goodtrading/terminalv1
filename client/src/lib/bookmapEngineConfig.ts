@@ -307,6 +307,13 @@ export const BOOKMAP_MINIMAL_STABLE_RENDERER_V1 = true;
 export const BOOKMAP_CLEAN_BASELINE_DIAG = true;
 
 /**
+ * B.6 - Historical texture refinement inside the minimal stable renderer.
+ * Desktop builds and local development only; production web stays unchanged.
+ */
+export const BOOKMAP_HISTORICAL_TEXTURE_REFINEMENT_V1 =
+  import.meta.env.VITE_PLATFORM === "desktop" || import.meta.env.DEV;
+
+/**
  * STEP 1 — Desktop historical liquidity surface.
  * Stateful priceLevel x timeBucket matrix fed from active DOM snapshots.
  */
@@ -314,6 +321,13 @@ export const BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_V1 = true;
 
 /** DEV-only historical surface diagnostics (throttled 2s). */
 export const BOOKMAP_HISTORICAL_LIQUIDITY_SURFACE_DIAG = true;
+
+/** B.11-R - Disabled after visual regression; B.10.5 remains active. */
+export const BOOKMAP_SPOT_HISTORICAL_SURFACE_V1 = false;
+
+/** B.11-lite - local Spot history cache; never expands the price viewport. */
+export const BOOKMAP_SPOT_LOCAL_HISTORY_BACKFILL_V1 =
+  import.meta.env.VITE_PLATFORM === "desktop" || import.meta.env.DEV;
 
 export const HISTORICAL_SURFACE_RETENTION_MS = 90 * 60 * 1000;
 export const HISTORICAL_SURFACE_MAX_CELLS = 72_000;
@@ -469,6 +483,13 @@ export function isDesktopBookmapRuntime(): boolean {
 
 export function useDesktopFullRawDomLadder(): boolean {
   return isDesktopBookmapRuntime() && BOOKMAP_DESKTOP_FULL_RAW_DOM_LADDER_V1;
+}
+
+/** B.10.3 - Spot DOM rendered directly against the chart price axis. */
+export const BOOKMAP_INTEGRATED_DOM_LAYER_V1 = true;
+
+export function useBookmapIntegratedDomLayer(): boolean {
+  return isDesktopBookmapRuntime() && BOOKMAP_INTEGRATED_DOM_LAYER_V1;
 }
 
 /**

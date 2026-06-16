@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { useTerminalState } from "@/hooks/useTerminalState";
 import { getDesktopStoragePaths, isDesktopBuild, writeDesktopLog } from "@/lib/desktopStorage";
@@ -31,6 +32,7 @@ function ContextChip({ label, value, testId }: { label: string; value: string; t
 }
 
 export function TopNav({ activeTab, onTabChange, panelsVisible = true, onTogglePanels }: TopNavProps) {
+  const [, setLocation] = useLocation();
   const { data: terminalState } = useTerminalState();
   const desktopFeed = useDesktopFeedDiagnostics();
   const desktopUpdate = useDesktopUpdateCheck();
@@ -83,14 +85,27 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
     <header className="shrink-0 w-full z-10 relative bg-terminal-bg border-b border-terminal-border">
       <div className="flex h-10 items-center justify-between px-4">
         <div className="flex items-center min-w-0">
-          <div className="flex items-center mr-6 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              if (!isDesktopBuild) setLocation("/");
+            }}
+            aria-label="Volver al inicio GoodTrading"
+            className={cn(
+              "flex items-center mr-6 shrink-0 text-left",
+              !isDesktopBuild && "cursor-pointer rounded-sm hover:opacity-90",
+            )}
+          >
             <img
               src="/logo.png"
-              alt="GoodTrading logo"
-              className="h-5 w-auto object-contain mr-2 opacity-95"
+              alt=""
+              aria-hidden
+              className="h-5 w-auto object-contain mr-2 opacity-95 pointer-events-none"
             />
-            <span className="font-bold text-white tracking-widest text-sm">GOODTRADING</span>
-          </div>
+            <span className="font-bold text-white tracking-widest text-sm pointer-events-none">
+              GOODTRADING
+            </span>
+          </button>
 
           <nav className="flex items-center gap-0.5 min-w-0 overflow-x-auto">
             {tabs.map((tab) => (
