@@ -85,16 +85,71 @@ function maskEmail(email: string): string {
   return `${maskedLocal}@${domain}`;
 }
 
-function safeTransportError(err: unknown): Record<string, unknown> {
-  if (!(err instanceof Error)) {
-    return { message: String(err) };
-  }
-  const anyErr = err as Error & { code?: string; response?: string; responseCode?: number };
+type SmtpLikeError = Error & {
+  code?: string;
+  command?: string;
+  response?: string;
+  responseCode?: number;
+  errno?: number;
+  syscall?: string;
+};
+
+/** SMTP context for diagnostics — never includes SMTP_PASS. */
+function smtpContextForLog(): Record<string, unknown> {
+  const user = smtpUser();
   return {
-    message: anyErr.message,
-    code: anyErr.code,
-    responseCode: anyErr.responseCode,
-    response: typeof anyErr.response === "string" ? anyErr.response.slice(0, 200) : undefined,
+    mode: getEmailDeliveryMode(),
+    smtpHost: smtpHost() ?? "(missing)",
+    smtpPort: Number(process.env.SMTP_PORT ?? 587),
+    smtpUser: user ? maskEmail(user) : "(missing)",
+    emailFrom: fromAddress(),
+  };
+}
+
+function truncateResponse(value: unknown, maxLen = 500): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  return value.length > maxLen ? `${value.slice(0, maxLen)}…` : value;
+}
+
+/** Safe SMTP/nodemailer error fields — never logs secrets. */
+function safeSmtpFailureLog(err: unknown): Record<string, unknown> {
+  const base = smtpContextForLog();
+
+  if (!(err instanceof Error)) {
+    return {
+      ...base,
+      errorMessage: String(err),
+    };
+  }
+
+  const e = err as SmtpLikeError;
+  const cause = err.cause;
+  const causeMessage =
+    cause instanceof Error ? cause.message : cause != null ? String(cause) : undefined;
+
+  return {
+    ...base,
+    errorName: e.name || undefined,
+    errorMessage: e.message || undefined,
+    errorCode: e.code,
+    errorCommand: e.command,
+    errorResponse: truncateResponse(e.response),
+    errorResponseCode: e.responseCode,
+    errorErrno: e.errno,
+    errorSyscall: e.syscall,
+    errorCauseMessage: causeMessage,
+  };
+}
+
+/** @deprecated Use safeSmtpFailureLog — kept for callers expecting partial fields. */
+function safeTransportError(err: unknown): Record<string, unknown> {
+  const log = safeSmtpFailureLog(err);
+  return {
+    message: log.errorMessage,
+    code: log.errorCode,
+    command: log.errorCommand,
+    responseCode: log.errorResponseCode,
+    response: log.errorResponse,
   };
 }
 
@@ -165,7 +220,7 @@ export async function verifyEmailTransport(): Promise<{ ok: boolean; error?: str
     });
     return { ok: true };
   } catch (err) {
-    const detail = safeTransportError(err);
+    const detail = safeSmtpFailureLog(err);
     console.error("[email:transport] SMTP verify FAILED", detail);
     return { ok: false, error: "smtp_verify_failed", detail };
   }
@@ -214,7 +269,7 @@ async function sendMail(payload: MailPayload, context: string): Promise<void> {
       context,
       to: maskEmail(payload.to),
       subject: payload.subject,
-      ...safeTransportError(err),
+      ...safeSmtpFailureLog(err),
     });
     throw err;
   }
