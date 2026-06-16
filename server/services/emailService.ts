@@ -61,7 +61,7 @@ export function getEmailConfigStatus(): EmailConfigStatus {
     mode: getEmailDeliveryMode(),
     nodeEnv: process.env.NODE_ENV ?? "development",
     smtpHost: smtpHost(),
-    smtpPort: Number(process.env.SMTP_PORT ?? 587),
+    smtpPort: smtpPort(),
     smtpUserPresent: Boolean(smtpUser()),
     smtpPassPresent: smtpPassPresent(),
     emailFrom: fromAddress(),
@@ -94,14 +94,34 @@ type SmtpLikeError = Error & {
   syscall?: string;
 };
 
+function smtpPort(): number {
+  const raw = process.env.SMTP_PORT?.trim();
+  const port = raw ? Number(raw) : 587;
+  return Number.isFinite(port) && port > 0 ? port : 587;
+}
+
+/** Port 465 = implicit TLS; port 587 = STARTTLS with requireTLS. */
+function smtpTransportSettings(): { port: number; secure: boolean; requireTLS: boolean } {
+  const port = smtpPort();
+  const secure = port === 465;
+  return {
+    port,
+    secure,
+    requireTLS: port === 587,
+  };
+}
+
 /** SMTP context for diagnostics — never includes SMTP_PASS. */
 function smtpContextForLog(): Record<string, unknown> {
   const user = smtpUser();
+  const { port, secure, requireTLS } = smtpTransportSettings();
   return {
     mode: getEmailDeliveryMode(),
     smtpHost: smtpHost() ?? "(missing)",
-    smtpPort: Number(process.env.SMTP_PORT ?? 587),
-    smtpUser: user ? maskEmail(user) : "(missing)",
+    smtpPort: port,
+    secure,
+    requireTLS,
+    smtpUserMasked: user ? maskEmail(user) : "(missing)",
     emailFrom: fromAddress(),
   };
 }
@@ -115,6 +135,10 @@ function truncateResponse(value: unknown, maxLen = 500): string | undefined {
 function safeSmtpFailureLog(err: unknown): Record<string, unknown> {
   const base = smtpContextForLog();
 
+  if (err == null) {
+    return { ...base, errorMessage: "unknown error (null)" };
+  }
+
   if (!(err instanceof Error)) {
     return {
       ...base,
@@ -127,18 +151,26 @@ function safeSmtpFailureLog(err: unknown): Record<string, unknown> {
   const causeMessage =
     cause instanceof Error ? cause.message : cause != null ? String(cause) : undefined;
 
-  return {
+  const out: Record<string, unknown> = {
     ...base,
-    errorName: e.name || undefined,
-    errorMessage: e.message || undefined,
-    errorCode: e.code,
-    errorCommand: e.command,
-    errorResponse: truncateResponse(e.response),
-    errorResponseCode: e.responseCode,
-    errorErrno: e.errno,
-    errorSyscall: e.syscall,
-    errorCauseMessage: causeMessage,
+    errorName: e.name || "Error",
+    errorMessage: e.message || "(empty message)",
+    errorCode: e.code ?? null,
+    errorCommand: e.command ?? null,
+    errorResponse: truncateResponse(e.response) ?? null,
+    errorResponseCode: e.responseCode ?? null,
+    errorErrno: e.errno ?? null,
+    errorSyscall: e.syscall ?? null,
+    errorCauseMessage: causeMessage ?? null,
   };
+
+  return out;
+}
+
+/** Railway-friendly single-line JSON log (objects alone may truncate in Raw Data). */
+function logSmtpFailure(label: string, err: unknown, extra?: Record<string, unknown>): void {
+  const payload = { ...safeSmtpFailureLog(err), ...extra };
+  console.error(`${label} ${JSON.stringify(payload)}`);
 }
 
 /** @deprecated Use safeSmtpFailureLog — kept for callers expecting partial fields. */
@@ -158,21 +190,23 @@ let cachedTransporter: Transporter | null = null;
 function createTransporter(): Transporter {
   if (cachedTransporter) return cachedTransporter;
 
-  const port = Number(process.env.SMTP_PORT ?? 587);
-  const secure = port === 465;
+  const { port, secure, requireTLS } = smtpTransportSettings();
 
   cachedTransporter = nodemailer.createTransport({
     host: smtpHost()!,
     port,
     secure,
-    requireTLS: !secure && port === 587,
+    requireTLS,
     auth: {
       user: smtpUser()!,
       pass: process.env.SMTP_PASS!.trim(),
     },
-    connectionTimeout: 15_000,
-    greetingTimeout: 15_000,
-    socketTimeout: 20_000,
+    tls: {
+      minVersion: "TLSv1.2",
+    },
+    connectionTimeout: 20_000,
+    greetingTimeout: 20_000,
+    socketTimeout: 25_000,
   });
 
   return cachedTransporter;
@@ -181,20 +215,29 @@ function createTransporter(): Transporter {
 /** Safe startup / diagnostic log — never prints SMTP_PASS. */
 export function logEmailConfigStatus(): void {
   const status = getEmailConfigStatus();
-  console.info("[email:config]", {
-    mode: status.mode,
-    nodeEnv: status.nodeEnv,
-    smtpHost: status.smtpHost ?? "(missing)",
-    smtpPort: status.smtpPort,
-    smtpUserPresent: status.smtpUserPresent,
-    smtpPassPresent: status.smtpPassPresent,
-    emailFrom: status.emailFrom,
-    appPublicUrl: resolveAppPublicUrl(),
-    appPublicUrlEnvSet: Boolean(status.appPublicUrl),
-    railwayPublicDomain: status.railwayPublicDomain ?? "(not set)",
-    verificationTtlMinutes: status.verificationTtlMinutes,
-    resetTtlMinutes: status.resetTtlMinutes,
-  });
+  const { port, secure, requireTLS } = smtpTransportSettings();
+  const user = smtpUser();
+
+  console.info(
+    "[email:config]",
+    JSON.stringify({
+      mode: status.mode,
+      nodeEnv: status.nodeEnv,
+      smtpHost: status.smtpHost ?? "(missing)",
+      smtpPort: port,
+      secure,
+      requireTLS,
+      smtpUserMasked: user ? maskEmail(user) : "(missing)",
+      smtpUserPresent: status.smtpUserPresent,
+      smtpPassPresent: status.smtpPassPresent,
+      emailFrom: status.emailFrom,
+      appPublicUrl: resolveAppPublicUrl(),
+      appPublicUrlEnvSet: Boolean(status.appPublicUrl),
+      railwayPublicDomain: status.railwayPublicDomain ?? "(not set)",
+      verificationTtlMinutes: status.verificationTtlMinutes,
+      resetTtlMinutes: status.resetTtlMinutes,
+    }),
+  );
 
   if (status.mode === "production-unconfigured") {
     console.warn(
@@ -213,15 +256,22 @@ export async function verifyEmailTransport(): Promise<{ ok: boolean; error?: str
   }
   try {
     await createTransporter().verify();
-    console.info("[email:transport] SMTP verify OK", {
-      host: smtpHost(),
-      port: Number(process.env.SMTP_PORT ?? 587),
-      userPresent: Boolean(smtpUser()),
-    });
+    const { port, secure, requireTLS } = smtpTransportSettings();
+    console.info(
+      "[email:transport] SMTP verify OK",
+      JSON.stringify({
+        smtpHost: smtpHost(),
+        smtpPort: port,
+        secure,
+        requireTLS,
+        smtpUserMasked: smtpUser() ? maskEmail(smtpUser()!) : "(missing)",
+        emailFrom: fromAddress(),
+      }),
+    );
     return { ok: true };
   } catch (err) {
     const detail = safeSmtpFailureLog(err);
-    console.error("[email:transport] SMTP verify FAILED", detail);
+    logSmtpFailure("[email:transport] SMTP verify FAILED", err);
     return { ok: false, error: "smtp_verify_failed", detail };
   }
 }
@@ -265,11 +315,10 @@ async function sendMail(payload: MailPayload, context: string): Promise<void> {
       rejected: info.rejected?.length ?? 0,
     });
   } catch (err) {
-    console.error("[email] send failed", {
+    logSmtpFailure("[email] send failed", err, {
       context,
       to: maskEmail(payload.to),
       subject: payload.subject,
-      ...safeSmtpFailureLog(err),
     });
     throw err;
   }
