@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../dist/public",
     "devUrl": "http://localhost:5000",
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "cross-env VITE_PLATFORM=desktop VITE_HEATMAP_ENABLED=true npm run dev",
     "beforeBuildCommand": "npm run build:desktop:web"
   },
   "app": {

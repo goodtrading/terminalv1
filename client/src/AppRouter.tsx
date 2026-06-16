@@ -14,7 +14,6 @@ import AccountPage from "@/pages/marketing/AccountPage";
 import MyAccountRedirect from "@/pages/marketing/MyAccountRedirect";
 import TermsPage from "@/pages/marketing/TermsPage";
 import PrivacyPage from "@/pages/marketing/PrivacyPage";
-import { isDesktopBuild } from "@/lib/desktopStorage";
 
 function TerminalRoute() {
   return (
@@ -24,9 +23,10 @@ function TerminalRoute() {
   );
 }
 
-function MarketingRoutes() {
+/** Desktop: home at `/`, terminal at `/terminal`. Web/Railway: same layout. */
+export function AppRouter() {
   return (
-    <>
+    <Switch>
       <Route path="/login" component={LoginPage} />
       <Route path="/register" component={RegisterPage} />
       <Route path="/forgot-password" component={ForgotPasswordPage} />
@@ -39,27 +39,7 @@ function MarketingRoutes() {
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
       <Route path="/admin" component={AdminPage} />
-    </>
-  );
-}
-
-/** Desktop: home at `/`, terminal at `/terminal`. Web/Railway: same layout. */
-export function AppRouter() {
-  if (isDesktopBuild) {
-    return (
-      <Switch>
-        <MarketingRoutes />
-        <Route path="/terminal" component={TerminalRoute} />
-        <Route path="/" component={HomePage} />
-        <Route component={NotFound} />
-      </Switch>
-    );
-  }
-
-  return (
-    <Switch>
       <Route path="/terminal" component={TerminalRoute} />
-      <MarketingRoutes />
       <Route path="/" component={HomePage} />
       <Route component={NotFound} />
     </Switch>

@@ -8,6 +8,7 @@ import { TerminalAuthProvider } from "@/contexts/TerminalAuthContext";
 import { initDesktopStorage, isDesktopBuild, writeDesktopLog } from "@/lib/desktopStorage";
 import { DesktopUpdateModal } from "@/components/desktop/DesktopUpdateModal";
 import { DesktopUpdateStartup } from "@/components/desktop/DesktopUpdateStartup";
+import { DesktopAppErrorBoundary } from "@/components/desktop/DesktopAppErrorBoundary";
 import { DesktopUpdateProvider } from "@/hooks/useDesktopUpdateCheck";
 import { AppRouter } from "@/AppRouter";
 
@@ -34,7 +35,9 @@ function App() {
           <TooltipProvider>
             <LearnModeProvider>
               <Toaster />
-              <AppRouter />
+              <DesktopAppErrorBoundary>
+                <AppRouter />
+              </DesktopAppErrorBoundary>
               <DesktopUpdateModal />
             </LearnModeProvider>
           </TooltipProvider>
