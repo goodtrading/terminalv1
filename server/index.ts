@@ -6,6 +6,7 @@ import path from "path";
 import cors from "cors";
 import { getAllowedCorsOrigins, logAllowedCorsOrigins } from "./lib/runtimeEnv";
 import { recordEndpointTiming } from "./lib/performanceMonitor";
+import { logEmailConfigStatus, verifyEmailTransport } from "./services/emailService";
 
 function safeErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -47,6 +48,13 @@ console.log("[ENV] DATABASE_URL exists:", !!process.env.DATABASE_URL);
 console.log("[ENV] DATABASE_URL length:", process.env.DATABASE_URL?.length || 0);
 console.log("[ENV] SESSION_SECRET exists:", !!process.env.SESSION_SECRET);
 console.log("[ENV] JWT_SECRET exists:", !!process.env.JWT_SECRET);
+
+logEmailConfigStatus();
+void verifyEmailTransport().then((result) => {
+  if (result.ok) return;
+  if (result.error === "smtp_not_configured") return;
+  console.warn("[email:transport] startup verify failed — emails may not send until SMTP is fixed.");
+});
 
 // Log DATABASE_URL host hint (censored) for Railway debugging
 if (process.env.DATABASE_URL) {

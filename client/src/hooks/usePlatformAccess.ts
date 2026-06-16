@@ -33,7 +33,7 @@ export function usePlatformAccess(): PlatformUser & {
   mockAccessMode: MockAccessMode;
   setMockAccessMode: (mode: MockAccessMode) => void;
 } {
-  const { authReady, authenticated, access } = useTerminalAuth();
+  const { authReady, authenticated, access, user: authUser } = useTerminalAuth();
   const mockAccessMode = useSyncExternalStore(
     subscribeMockAccess,
     getMockAccessSnapshot,
@@ -43,10 +43,14 @@ export function usePlatformAccess(): PlatformUser & {
   const user = useMemo<PlatformUser>(
     () =>
       resolvePlatformUser(
-        { authenticated, accessAllowed: access?.allowed === true },
+        {
+          authenticated,
+          accessAllowed: access?.allowed === true,
+          emailVerified: authUser?.emailVerified,
+        },
         mockAccessMode,
       ),
-    [authenticated, access?.allowed, mockAccessMode],
+    [authenticated, access?.allowed, mockAccessMode, authUser?.emailVerified],
   );
 
   const updateMockMode = useCallback((mode: MockAccessMode) => {

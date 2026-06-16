@@ -16,6 +16,8 @@ export interface AuthUser {
   id: number;
   email: string;
   role: string;
+  fullName?: string | null;
+  emailVerified?: boolean;
 }
 
 export interface AccessSnapshot {
@@ -48,9 +50,10 @@ interface TerminalAuthContextValue {
   token: string | null;
   authError: string | null;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, fullName?: string) => Promise<void>;
   logout: () => void;
   refreshSession: () => Promise<void>;
+  emailVerified: boolean;
 }
 
 const TerminalAuthContext = createContext<TerminalAuthContextValue | null>(null);
@@ -237,12 +240,12 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
   );
 
   const register = useCallback(
-    async (email: string, password: string) => {
+    async (email: string, password: string, fullName?: string) => {
       const res = await fetch(apiUrl("/api/auth/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, fullName: fullName?.trim() || undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -289,6 +292,7 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
       access,
       token,
       authError,
+      emailVerified: user?.emailVerified !== false,
       login,
       register,
       logout,

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { cn } from "@/lib/utils";
+import { apiUrl } from "@/lib/apiBase";
 
 const SUCCESS_MESSAGE =
   "Si el email existe en GoodTrading, recibirás instrucciones para recuperar tu cuenta.";
@@ -29,10 +30,18 @@ export function ForgotPasswordRecovery({ onBack, initialEmail = "" }: ForgotPass
     }
 
     setBusy(true);
-    // TODO: POST /api/auth/forgot-password — always show generic success (no email enumeration)
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    setBusy(false);
-    setSuccess(true);
+    try {
+      await fetch(apiUrl("/api/auth/forgot-password"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: normalized }),
+      });
+    } catch {
+      // Always show generic success — no email enumeration.
+    } finally {
+      setBusy(false);
+      setSuccess(true);
+    }
   };
 
   return (

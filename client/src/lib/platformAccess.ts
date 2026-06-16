@@ -27,6 +27,7 @@ export type MockAccessMode = "off" | "visitor" | "logged_in" | "active";
 export type PlatformUser = {
   isAuthenticated: boolean;
   hasActiveSubscription: boolean;
+  emailVerified?: boolean;
 };
 
 export function isAuthenticated(user: PlatformUser | null | undefined): boolean {
@@ -37,9 +38,15 @@ export function hasActiveSubscription(user: PlatformUser | null | undefined): bo
   return user?.hasActiveSubscription === true;
 }
 
+export function isEmailVerifiedForAccess(user: PlatformUser | null | undefined): boolean {
+  if (!isAuthenticated(user)) return false;
+  return user?.emailVerified !== false;
+}
+
 /** Where "Terminal Web" should send the user based on session + subscription. */
 export function getTerminalRedirect(user: PlatformUser | null | undefined): string {
   if (!isAuthenticated(user)) return "/login";
+  if (user?.emailVerified === false) return "/verify-email";
   if (!hasActiveSubscription(user)) return "/pricing";
   return "/terminal";
 }
@@ -126,22 +133,23 @@ export function setMockActiveSubscription(active: boolean): void {
 }
 
 export function resolvePlatformUser(
-  real: { authenticated: boolean; accessAllowed: boolean },
+  real: { authenticated: boolean; accessAllowed: boolean; emailVerified?: boolean },
   mockMode: MockAccessMode = readMockAccessMode(),
 ): PlatformUser {
   if (mockMode === "visitor") {
-    return { isAuthenticated: false, hasActiveSubscription: false };
+    return { isAuthenticated: false, hasActiveSubscription: false, emailVerified: false };
   }
   if (mockMode === "logged_in") {
-    return { isAuthenticated: true, hasActiveSubscription: false };
+    return { isAuthenticated: true, hasActiveSubscription: false, emailVerified: true };
   }
   if (mockMode === "active") {
-    return { isAuthenticated: true, hasActiveSubscription: true };
+    return { isAuthenticated: true, hasActiveSubscription: true, emailVerified: true };
   }
 
   const legacyMockActive = readMockActiveSubscription();
   return {
     isAuthenticated: real.authenticated,
     hasActiveSubscription: real.accessAllowed === true || legacyMockActive,
+    emailVerified: real.emailVerified !== false,
   };
 }

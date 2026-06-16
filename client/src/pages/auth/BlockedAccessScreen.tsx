@@ -77,6 +77,10 @@ export default function BlockedAccessScreen({ children }: { children: ReactNode 
     return <TerminalAccessBlockedPanel variant="login_required" />;
   }
 
+  if (user.emailVerified === false) {
+    return <TerminalAccessBlockedPanel variant="email_unverified" />;
+  }
+
   if (!access?.allowed) {
     const reason = access?.reason || "inactive";
     if (reason === "pending_approval") {

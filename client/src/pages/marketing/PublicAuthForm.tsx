@@ -10,7 +10,7 @@ import { ForgotPasswordRecovery } from "@/components/marketing/ForgotPasswordRec
 type AuthMode = "login" | "register";
 
 function mapAuthError(msg: string) {
-  if (msg.includes("EMAIL_TAKEN")) return "Ese email ya está registrado.";
+  if (msg.includes("EMAIL_TAKEN")) return "Ya existe una cuenta con este email.";
   if (msg.includes("INVALID_CREDENTIALS")) return "Email o contraseña incorrectos.";
   if (msg.includes("ACCOUNT_DISABLED")) return "Tu cuenta está inactiva.";
   if (msg.includes("REGISTER_FAILED")) return "No se pudo crear la cuenta. Intentá de nuevo.";
@@ -23,10 +23,11 @@ type PublicAuthFormProps = {
 };
 
 export function PublicAuthForm({ mode }: PublicAuthFormProps) {
-  const { authReady, authenticated, login, register } = useTerminalAuth();
-  const { isAuthenticated, hasActiveSubscription } = usePlatformAccess();
+  const { authReady, login, register } = useTerminalAuth();
+  const { isAuthenticated, hasActiveSubscription, emailVerified } = usePlatformAccess();
   const [, setLocation] = useLocation();
 
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -39,8 +40,10 @@ export function PublicAuthForm({ mode }: PublicAuthFormProps) {
 
   useEffect(() => {
     if (!authReady || !isAuthenticated) return;
-    setLocation(getTerminalRedirect({ isAuthenticated, hasActiveSubscription }));
-  }, [authReady, isAuthenticated, hasActiveSubscription, setLocation]);
+    setLocation(
+      getTerminalRedirect({ isAuthenticated, hasActiveSubscription, emailVerified }),
+    );
+  }, [authReady, isAuthenticated, hasActiveSubscription, emailVerified, setLocation]);
 
   return (
     <MarketingLayout>
@@ -76,7 +79,11 @@ export function PublicAuthForm({ mode }: PublicAuthFormProps) {
 
               const fe: Record<string, string> = {};
               const normalizedEmail = email.trim();
+              const normalizedName = fullName.trim();
               const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
+              if (isRegister && normalizedName.length < 2) {
+                fe.fullName = "Ingresá tu nombre.";
+              }
               if (!emailOk) fe.email = "Ingresá un email válido.";
               if (password.length < (isRegister ? 8 : 1)) {
                 fe.password = isRegister
@@ -93,7 +100,7 @@ export function PublicAuthForm({ mode }: PublicAuthFormProps) {
 
               setBusy(true);
               try {
-                if (isRegister) await register(normalizedEmail, password);
+                if (isRegister) await register(normalizedEmail, password, normalizedName);
                 else await login(normalizedEmail, password);
               } catch (ex: unknown) {
                 const message = ex instanceof Error ? ex.message : "";
@@ -103,6 +110,27 @@ export function PublicAuthForm({ mode }: PublicAuthFormProps) {
               }
             }}
           >
+            {isRegister && (
+              <div>
+                <label className="mb-1 block text-xs text-[#9ca3af]">Nombre</label>
+                <input
+                  className={cn(
+                    "h-11 w-full rounded-xl border bg-[#030303] px-3 text-sm text-white outline-none focus:border-blue-500/50",
+                    fieldErr.fullName ? "border-red-500/60" : "border-white/10",
+                  )}
+                  type="text"
+                  autoComplete="name"
+                  placeholder="Tu nombre"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  required
+                />
+                {fieldErr.fullName && (
+                  <p className="mt-1 text-xs text-red-400">{fieldErr.fullName}</p>
+                )}
+              </div>
+            )}
+
             <div>
               <label className="mb-1 block text-xs text-[#9ca3af]">Email</label>
               <input

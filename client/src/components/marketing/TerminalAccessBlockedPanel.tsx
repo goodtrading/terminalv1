@@ -6,6 +6,7 @@ const SUPPORT_EMAIL = "GoodTradingpay@gmail.com";
 
 export type TerminalAccessBlockedVariant =
   | "login_required"
+  | "email_unverified"
   | "pending_approval"
   | "inactive"
   | "no_subscription"
@@ -36,6 +37,18 @@ const VARIANTS: Record<TerminalAccessBlockedVariant, VariantConfig> = {
     showSupportFooter: false,
     primaryLabel: "Iniciar sesión",
     primaryHref: "/login",
+    secondaryLabel: "Volver al inicio",
+    secondaryAction: "home",
+  },
+  email_unverified: {
+    eyebrow: "Terminal Web",
+    title: "Verificá tu email",
+    text: "Necesitás verificar tu email antes de acceder a la Terminal Web.",
+    detail: "Revisá tu bandeja de entrada o reenviá el código desde la pantalla de verificación.",
+    showAccount: true,
+    showSupportFooter: false,
+    primaryLabel: "Verificar email",
+    primaryHref: "/verify-email",
     secondaryLabel: "Volver al inicio",
     secondaryAction: "home",
   },

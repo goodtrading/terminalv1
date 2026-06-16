@@ -17,12 +17,6 @@ export type SubscriptionSnapshot = {
   renewsAt: string | null;
 };
 
-const MOCK_PROFILE: AccountProfile = {
-  name: "Nicolas Trader",
-  email: "demo@goodtrading.io",
-  country: "Argentina",
-};
-
 function daysUntil(isoDate: string): number {
   const end = new Date(isoDate).getTime();
   const diff = end - Date.now();
@@ -37,10 +31,17 @@ function formatDate(isoDate: string): string {
   });
 }
 
-/** Mock + real auth snapshot for /account — no backend yet. */
+function displayName(fullName: string | null | undefined, email: string): string {
+  const trimmed = fullName?.trim();
+  if (trimmed) return trimmed;
+  const local = email.split("@")[0]?.replace(/[._]/g, " ") ?? "Usuario";
+  return local.charAt(0).toUpperCase() + local.slice(1);
+}
+
+/** Real auth snapshot for /account from GET /api/auth/me. */
 export function useAccountProfile() {
   const { authReady, isAuthenticated, hasActiveSubscription } = usePlatformAccess();
-  const { user, access, logout } = useTerminalAuth();
+  const { user, access, logout, emailVerified } = useTerminalAuth();
 
   const status: AccountStatus = useMemo(() => {
     if (!isAuthenticated) return "visitor";
@@ -52,14 +53,13 @@ export function useAccountProfile() {
     if (status === "visitor") {
       return { name: "—", email: "—", country: "—" };
     }
-    const email = user?.email ?? MOCK_PROFILE.email;
-    const nameFromEmail = email.split("@")[0]?.replace(/[._]/g, " ") ?? MOCK_PROFILE.name;
+    const email = user?.email ?? "—";
     return {
-      name: nameFromEmail.charAt(0).toUpperCase() + nameFromEmail.slice(1),
+      name: email === "—" ? "—" : displayName(user?.fullName, email),
       email,
-      country: MOCK_PROFILE.country,
+      country: "—",
     };
-  }, [status, user?.email]);
+  }, [status, user?.email, user?.fullName]);
 
   const subscription = useMemo<SubscriptionSnapshot>(() => {
     const plan = access?.subscription?.planName ?? "GoodTrading Terminal";
@@ -77,21 +77,16 @@ export function useAccountProfile() {
       };
     }
 
-    const mockEnd = new Date();
-    mockEnd.setDate(mockEnd.getDate() + 27);
-    return {
-      plan,
-      active: true,
-      daysRemaining: 27,
-      renewsAt: formatDate(mockEnd.toISOString()),
-    };
+    return { plan, active: true, daysRemaining: 0, renewsAt: null };
   }, [status, access?.subscription]);
 
   const statusLabel =
     status === "active"
       ? "Cliente activo"
       : status === "no_plan"
-        ? "Sin plan activo"
+        ? emailVerified === false
+          ? "Email pendiente de verificación"
+          : "Sin plan activo"
         : "Visitante";
 
   return {
@@ -103,5 +98,6 @@ export function useAccountProfile() {
     logout,
     isAuthenticated,
     hasActiveSubscription,
+    emailVerified,
   };
 }
