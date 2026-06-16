@@ -35,15 +35,15 @@ export function PublicHeader() {
     <header className="sticky top-0 z-50 border-b border-white/[0.07] bg-[#030303]/95 backdrop-blur-xl">
       <div className="mx-auto flex h-[76px] max-w-7xl items-center gap-4 px-4 sm:px-6 lg:gap-8 lg:px-8">
         {/* Left — logo */}
-        <Link href="/" className="flex shrink-0 items-center gap-2.5 md:gap-3">
+        <Link href="/" className="flex shrink-0 items-center gap-2">
           <img
             src="/logo.png"
             alt="GoodTrading"
             width={51}
             height={34}
-            className="h-7 w-auto shrink-0 object-contain md:h-[34px]"
+            className="h-7 w-auto shrink-0 translate-y-px object-contain md:h-[34px]"
           />
-          <span className="text-base font-semibold tracking-wide text-white">GoodTrading</span>
+          <span className="text-base font-semibold leading-none tracking-wide text-white">GoodTrading</span>
         </Link>
 
         {/* Center — desktop nav */}
