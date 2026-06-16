@@ -4,14 +4,9 @@ import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
 import cors from "cors";
-import { getAllowedCorsOrigins } from "./lib/runtimeEnv";
+import { getAllowedCorsOrigins, isProduction, logBootEnvPresence, shouldEnableReplitPush } from "./lib/runtimeEnv";
 import { recordEndpointTiming } from "./lib/performanceMonitor";
-import {
-  getAllowedCorsOrigins,
-  isProduction,
-  logBootEnvPresence,
-  shouldEnableReplitPush,
-} from "./lib/runtimeEnv";
+import { logEmailConfigStatus, verifyEmailTransport } from "./services/emailService";
 
 function safeErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -49,6 +44,13 @@ dotenv.config({
 
 console.log("[ENV] cwd:", process.cwd());
 logBootEnvPresence();
+
+logEmailConfigStatus();
+void verifyEmailTransport().then((result) => {
+  if (result.ok) return;
+  if (result.error === "smtp_not_configured") return;
+  console.warn("[email:transport] startup verify failed — emails may not send until SMTP is fixed.");
+});
 
 // Log DATABASE_URL host hint (censored) for Railway debugging
 if (process.env.DATABASE_URL) {

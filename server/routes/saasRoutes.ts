@@ -21,6 +21,16 @@ import {
   setUserActive,
   setUserOnboardingStatus,
   updateUserAdminPatch,
+  isEmailVerified,
+  issueVerificationCodeForUser,
+  markEmailVerified,
+  verificationCodeValid,
+  updateUserPassword,
+  setPasswordResetToken,
+  clearPasswordResetToken,
+  passwordResetTokenValid,
+  findUserByValidResetToken,
+  userMayAuthenticate,
 } from "../services/userService";
 import { getAccessForUserId } from "../services/accessService";
 import {
@@ -31,6 +41,10 @@ import {
   listPlans,
 } from "../services/subscriptionService";
 import { createPaymentReport } from "../services/paymentService";
+import { ensureAuthSchemaMigration } from "../services/authMigrationService";
+import { sendPasswordResetEmail, sendVerificationCodeEmail } from "../services/emailService";
+import { generatePasswordResetToken } from "../lib/authTokens";
+import { authRateLimit } from "../middleware/authRateLimit";
 
 const registerBody = z.object({
   email: z.string().email(),
@@ -72,6 +86,45 @@ const grantSubBody = z.object({
   endsAt: z.string().optional(),
 });
 
+const verifyEmailBody = z.object({
+  code: z.string().min(6).max(6),
+});
+
+const forgotPasswordBody = z.object({
+  email: z.string().email(),
+});
+
+const resetPasswordBody = z.object({
+  token: z.string().min(16),
+  password: z.string().min(8),
+  confirmPassword: z.string().min(8),
+});
+
+const changePasswordBody = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8),
+  confirmPassword: z.string().min(8),
+});
+
+function serializeAuthUser(user: Awaited<ReturnType<typeof findUserById>> & object) {
+  return {
+    id: user.id,
+    email: user.email,
+    role: dbRoleToApiRole(user.role),
+    fullName: user.fullName,
+    emailVerified: isEmailVerified(user),
+  };
+}
+
+function appPublicUrl(req: Request): string {
+  const configured = process.env.APP_PUBLIC_URL?.trim();
+  if (configured) return configured.replace(/\/$/, "");
+  const railway = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
+  if (railway) return `https://${railway}`;
+  const host = req.get("host");
+  return `${req.protocol}://${host ?? "localhost:5000"}`;
+}
+
 /** Admin table: derive onboarding column from DB `users.status` (includes legacy values if still present). */
 function statusToOnboardingStatus(status: string): string {
   const m: Record<string, string> = {
@@ -92,6 +145,7 @@ function userIsActiveish(u: { status: string }): boolean {
 export function registerSaasRoutes(app: Express): void {
   void (async () => {
     try {
+      await ensureAuthSchemaMigration();
       await ensureDefaultPlans();
       await ensureBootstrapAdmin();
     } catch (e) {
@@ -109,7 +163,7 @@ export function registerSaasRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/auth/register", async (req: Request, res: Response) => {
+  app.post("/api/auth/register", authRateLimit("register", 8, 15 * 60_000), async (req: Request, res: Response) => {
     const logPrefix = "[auth/register]";
     try {
       const parsed = registerBody.safeParse(req.body);
@@ -131,12 +185,24 @@ export function registerSaasRoutes(app: Express): void {
       const existing = await findUserByEmail(normalizedEmail);
       if (existing) {
         console.info(logPrefix, "email already exists", { id: existing.id, email: normalizedEmail });
-        res.status(409).json({ error: "EMAIL_TAKEN", message: "An account with this email already exists" });
+        res.status(409).json({
+          error: "EMAIL_TAKEN",
+          message: "Ya existe una cuenta con este email",
+        });
         return;
       }
 
       const user = await createUser(normalizedEmail, password, "user", { fullName });
       console.info(logPrefix, "insert ok", { id: user.id, email: user.email, fullName: user.fullName, status: user.status });
+
+      let verificationSent = false;
+      try {
+        const code = await issueVerificationCodeForUser(user.id);
+        await sendVerificationCodeEmail(user.email, code);
+        verificationSent = true;
+      } catch (emailErr) {
+        console.error(logPrefix, "verification email failed", emailErr);
+      }
 
       const token = signUserToken({
         id: user.id,
@@ -146,16 +212,13 @@ export function registerSaasRoutes(app: Express): void {
       const access = await getAccessForUserId(user.id);
       res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
       res.status(201).json({
-        message: "Account created. Your status is pending until an administrator approves access.",
+        message: "Account created. Verificá tu email para continuar.",
         status: user.status,
         token,
-        user: {
-          id: user.id,
-          email: user.email,
-          role: dbRoleToApiRole(user.role),
-          fullName: user.fullName,
-        },
+        user: serializeAuthUser(user),
         access,
+        requiresEmailVerification: true,
+        verificationEmailSent: verificationSent,
       });
     } catch (e: any) {
       const pg = e && typeof e === "object";
@@ -171,7 +234,7 @@ export function registerSaasRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/auth/login", async (req: Request, res: Response) => {
+  app.post("/api/auth/login", authRateLimit("login", 12, 15 * 60_000), async (req: Request, res: Response) => {
     const logPrefix = "[auth-login]";
     console.log(logPrefix, "request received");
     console.log(logPrefix, "email provided:", !!req.body?.email);
@@ -229,6 +292,11 @@ export function registerSaasRoutes(app: Express): void {
         res.status(401).json({ error: "INVALID_CREDENTIALS" });
         return;
       }
+
+      if (!userMayAuthenticate(user)) {
+        res.status(403).json({ error: "ACCOUNT_DISABLED" });
+        return;
+      }
       
       console.log(logPrefix, "token generation started");
       const token = signUserToken({
@@ -254,8 +322,9 @@ export function registerSaasRoutes(app: Express): void {
       
       res.json({
         token,
-        user: { id: user.id, email: user.email, role: dbRoleToApiRole(user.role) },
+        user: serializeAuthUser(user),
         access,
+        requiresEmailVerification: !isEmailVerified(user),
       });
     } catch (e: any) {
       console.error(logPrefix, "login failed:", {
@@ -324,16 +393,17 @@ export function registerSaasRoutes(app: Express): void {
       
       console.log(logPrefix, "fetching access for user");
       const access = await getAccessForUserId(user.id);
+      const dbUser = await findUserById(user.id);
+      if (!dbUser) {
+        res.json({ authenticated: false, user: null, access: null });
+        return;
+      }
       console.log(logPrefix, "access fetched:", access.allowed);
       console.log(logPrefix, "response sent");
       
       res.json({
         authenticated: true,
-        user: {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-        },
+        user: serializeAuthUser(dbUser),
         access,
       });
     } catch (e: any) {
@@ -361,6 +431,163 @@ export function registerSaasRoutes(app: Express): void {
       res.status(500).json({ error: "ACCESS_FAILED" });
     }
   });
+
+  app.post(
+    "/api/auth/verify-email",
+    authRateLimit("verify-email", 10, 15 * 60_000),
+    requireSaasAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const parsed = verifyEmailBody.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
+          return;
+        }
+        const dbUser = await findUserById(req.saasUser!.id);
+        if (!dbUser) {
+          res.status(404).json({ error: "NOT_FOUND" });
+          return;
+        }
+        if (isEmailVerified(dbUser)) {
+          res.json({ ok: true, alreadyVerified: true });
+          return;
+        }
+        if (!verificationCodeValid(dbUser, parsed.data.code)) {
+          res.status(400).json({ error: "INVALID_CODE", message: "Código inválido o expirado." });
+          return;
+        }
+        const updated = await markEmailVerified(dbUser.id);
+        res.json({ ok: true, user: updated ? serializeAuthUser(updated) : undefined });
+      } catch (e) {
+        console.error("[SaaS] verify-email", e);
+        res.status(500).json({ error: "VERIFY_EMAIL_FAILED" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/auth/resend-verification-code",
+    authRateLimit("resend-verification", 5, 15 * 60_000),
+    requireSaasAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const dbUser = await findUserById(req.saasUser!.id);
+        if (!dbUser) {
+          res.status(404).json({ error: "NOT_FOUND" });
+          return;
+        }
+        if (isEmailVerified(dbUser)) {
+          res.json({ ok: true, alreadyVerified: true });
+          return;
+        }
+        const code = await issueVerificationCodeForUser(dbUser.id);
+        await sendVerificationCodeEmail(dbUser.email, code);
+        res.json({ ok: true, message: "Código reenviado." });
+      } catch (e) {
+        console.error("[SaaS] resend-verification", e);
+        res.status(500).json({ error: "RESEND_VERIFICATION_FAILED" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/auth/forgot-password",
+    authRateLimit("forgot-password", 6, 15 * 60_000),
+    async (req: Request, res: Response) => {
+      const generic = {
+        ok: true,
+        message:
+          "Si el email existe en GoodTrading, recibirás instrucciones para recuperar tu cuenta.",
+      };
+      try {
+        const parsed = forgotPasswordBody.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
+          return;
+        }
+        const email = parsed.data.email.toLowerCase().trim();
+        const user = await findUserByEmail(email);
+        if (user) {
+          const token = generatePasswordResetToken();
+          await setPasswordResetToken(user.id, token);
+          const resetUrl = `${appPublicUrl(req)}/reset-password?token=${encodeURIComponent(token)}`;
+          await sendPasswordResetEmail(user.email, resetUrl);
+        }
+        res.json(generic);
+      } catch (e) {
+        console.error("[SaaS] forgot-password", e);
+        res.json(generic);
+      }
+    },
+  );
+
+  app.post(
+    "/api/auth/reset-password",
+    authRateLimit("reset-password", 8, 15 * 60_000),
+    async (req: Request, res: Response) => {
+      try {
+        const parsed = resetPasswordBody.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
+          return;
+        }
+        if (parsed.data.password !== parsed.data.confirmPassword) {
+          res.status(400).json({ error: "PASSWORD_MISMATCH" });
+          return;
+        }
+        const match = await findUserByValidResetToken(parsed.data.token);
+        if (!match) {
+          res.status(400).json({ error: "INVALID_TOKEN", message: "Enlace inválido o expirado." });
+          return;
+        }
+        await updateUserPassword(match.id, parsed.data.password);
+        await clearPasswordResetToken(match.id);
+        res.json({ ok: true, message: "Contraseña actualizada. Podés iniciar sesión." });
+      } catch (e) {
+        console.error("[SaaS] reset-password", e);
+        res.status(500).json({ error: "RESET_PASSWORD_FAILED" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/auth/change-password",
+    authRateLimit("change-password", 8, 15 * 60_000),
+    requireSaasAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const parsed = changePasswordBody.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: "VALIDATION", details: parsed.error.flatten() });
+          return;
+        }
+        if (parsed.data.newPassword !== parsed.data.confirmPassword) {
+          res.status(400).json({ error: "PASSWORD_MISMATCH" });
+          return;
+        }
+        const dbUser = await findUserById(req.saasUser!.id);
+        if (!dbUser) {
+          res.status(404).json({ error: "NOT_FOUND" });
+          return;
+        }
+        if (!verifyPassword(parsed.data.currentPassword, dbUser.passwordHash)) {
+          res.status(400).json({ error: "INVALID_CURRENT_PASSWORD" });
+          return;
+        }
+        await updateUserPassword(dbUser.id, parsed.data.newPassword);
+        const token = signUserToken({
+          id: dbUser.id,
+          email: dbUser.email,
+          role: dbRoleToApiRole(dbUser.role),
+        });
+        res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
+        res.json({ ok: true, token, message: "Contraseña actualizada." });
+      } catch (e) {
+        console.error("[SaaS] change-password", e);
+        res.status(500).json({ error: "CHANGE_PASSWORD_FAILED" });
+      }
+    },
+  );
 
   app.post("/api/payments/report", requireSaasAuth, async (req: Request, res: Response) => {
     try {

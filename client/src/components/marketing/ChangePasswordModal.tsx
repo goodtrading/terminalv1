@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { setAuthToken } from "@/lib/authToken";
 
 type ChangePasswordModalProps = {
   open: boolean;
@@ -27,7 +28,6 @@ const inputClass = (hasError: boolean) =>
     hasError ? "border-red-500/60" : "border-white/10",
   );
 
-/** Mock password change UI — connect to POST /api/auth/change-password later. */
 export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalProps) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -69,13 +69,38 @@ export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalP
     }
 
     setBusy(true);
-    // TODO: replace with real auth API — e.g. await changePassword({ current, next })
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    setBusy(false);
-    setSuccess(true);
-    setCurrentPassword("");
-    setNewPassword("");
-    setConfirmPassword("");
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          confirmPassword,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const code = (data as { error?: string }).error ?? "";
+        if (code === "INVALID_CURRENT_PASSWORD") {
+          setFieldErrors({ current: "La contraseña actual no es correcta." });
+          return;
+        }
+        setFieldErrors({ form: "No se pudo cambiar la contraseña. Intentá de nuevo." });
+        return;
+      }
+      const token = (data as { token?: string }).token;
+      if (token) setAuthToken(token);
+      setSuccess(true);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch {
+      setFieldErrors({ form: "No se pudo cambiar la contraseña. Intentá de nuevo." });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -84,8 +109,7 @@ export function ChangePasswordModal({ open, onOpenChange }: ChangePasswordModalP
         <DialogHeader>
           <DialogTitle className="text-white">Cambiar contraseña</DialogTitle>
           <DialogDescription className="text-[#9ca3af]">
-            Actualizá tu contraseña de acceso a GoodTrading. Por ahora es una vista de prueba —
-            conectar con auth real próximamente.
+            Actualizá tu contraseña de acceso a GoodTrading.
           </DialogDescription>
         </DialogHeader>
 

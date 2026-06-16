@@ -12,6 +12,8 @@ import ProductsPage from "@/pages/marketing/ProductsPage";
 import DownloadDesktopPage from "@/pages/marketing/DownloadDesktopPage";
 import AccountPage from "@/pages/marketing/AccountPage";
 import MyAccountRedirect from "@/pages/marketing/MyAccountRedirect";
+import VerifyEmailPage from "@/pages/marketing/VerifyEmailPage";
+import ResetPasswordPage from "@/pages/marketing/ResetPasswordPage";
 
 function TerminalRoute() {
   return (
@@ -29,6 +31,8 @@ export function AppRouter() {
       <Route path="/login" component={LoginPage} />
       <Route path="/register" component={RegisterPage} />
       <Route path="/forgot-password" component={ForgotPasswordPage} />
+      <Route path="/verify-email" component={VerifyEmailPage} />
+      <Route path="/reset-password" component={ResetPasswordPage} />
       <Route path="/pricing" component={PricingPage} />
       <Route path="/checkout" component={PricingPage} />
       <Route path="/products" component={ProductsPage} />

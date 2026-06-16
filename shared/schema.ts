@@ -109,7 +109,13 @@ export const users = pgTable("users", {
   /** DB may enforce `users_role_check`; persisted values are lowercase via `usersDbRoles`. */
   role: text("role").notNull().default("user"),
   status: text("status").notNull().default("pending"),
+  emailVerified: boolean("email_verified").notNull().default(false),
+  verificationCodeHash: text("verification_code_hash"),
+  verificationCodeExpiresAt: timestamp("verification_code_expires_at"),
+  passwordResetTokenHash: text("password_reset_token_hash"),
+  passwordResetExpiresAt: timestamp("password_reset_expires_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const subscriptionPlans = pgTable("saas_subscription_plans", {
