@@ -1,10 +1,39 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, type ReactNode } from "react";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
+import { MarketingLayout } from "@/components/marketing/MarketingLayout";
 import { openExternalUrl } from "@/lib/openExternalUrl";
+import { cn } from "@/lib/utils";
 
 const PLAN_PRICE = "$25 USD / mes";
 const PAYPAL_LINK = "https://www.paypal.com/ncp/payment/4VPWL3R9MPVHS";
 const USDT_ADDRESS = "0xb0e2ef9d8f730c047c631fe4941d3117268d5365";
+const SUPPORT_EMAIL = "GoodTradingpay@gmail.com";
+
+const PLAN_BENEFITS = [
+  "Terminal Web",
+  "Gamma Exposure",
+  "Options Panel",
+  "Volatility Panel",
+  "Market Structure",
+  "Zonas gamma integradas al gráfico",
+  "Operativa en tiempo real",
+  "Paper Trading",
+  "Backtesting y Reports",
+  "Acceso a actualizaciones de producto",
+];
+
+function CardShell({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <section
+      className={cn(
+        "rounded-[22px] border border-white/[0.09] bg-[#050505]/85 p-6 shadow-[0_0_40px_rgba(255,59,59,0.05)] sm:p-7",
+        className,
+      )}
+    >
+      {children}
+    </section>
+  );
+}
 
 export function SubscriptionPage() {
   const { logout, refreshSession } = useTerminalAuth();
@@ -37,117 +66,142 @@ export function SubscriptionPage() {
   }, [refreshSession]);
 
   return (
-    <div className="min-h-screen w-full bg-terminal-bg text-terminal-text px-4 py-8 overflow-y-auto">
-      <div className="max-w-lg mx-auto space-y-6">
-        {/* Header */}
-        <div className="text-center space-y-1">
-          <h1 className="text-xl font-bold tracking-wide text-white">Activar suscripción</h1>
-          <p className="text-sm text-terminal-muted font-mono">
-            Necesitás una suscripción activa para acceder al terminal.
+    <MarketingLayout>
+      <div className="relative mx-auto max-w-6xl px-4 py-12 sm:px-6 lg:py-16">
+        <div className="mx-auto mb-10 max-w-3xl text-center lg:mb-12">
+          <span className="inline-flex rounded-full border border-[#ff3b3b]/30 bg-[#ff3b3b]/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-[#ff8a8a]">
+            GoodTrading Membership
+          </span>
+          <h1 className="mt-5 text-3xl font-bold leading-tight text-white sm:text-4xl">
+            Activá tu acceso a GoodTrading
+          </h1>
+          <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-[#9ca3af] sm:text-lg">
+            Accedé a la Terminal Web y a las herramientas profesionales de análisis, ejecución y
+            seguimiento.
           </p>
         </div>
 
-        {/* Institutional access info */}
-        <div className="border border-white/10 bg-black/30 rounded-sm px-4 py-3.5 text-center space-y-1.5">
-          <p className="text-sm font-medium text-white">Acceso al terminal institucional</p>
-          <p className="text-xs text-terminal-muted font-mono leading-relaxed">
-            Acceso completo a herramientas profesionales de trading y análisis en tiempo real.
-          </p>
-          <p className="text-[11px] text-terminal-muted/80 font-mono">
-            Activación manual para garantizar control y calidad del entorno.
-          </p>
-        </div>
+        <div className="grid gap-6 lg:grid-cols-2 lg:gap-8">
+          <CardShell>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#ff3b3b]/80">
+              Plan
+            </p>
+            <h2 className="mt-2 text-2xl font-bold text-white">GoodTrading Membership</h2>
+            <p className="mt-3 text-3xl font-bold text-white">{PLAN_PRICE}</p>
+            <p className="mt-2 text-sm text-[#9ca3af]">Acceso mensual a la plataforma GoodTrading.</p>
 
-        {/* Main plan card */}
-        <section className="border border-white/12 bg-terminal-panel rounded-sm p-4">
-          <p className="text-[10px] tracking-[0.2em] uppercase text-terminal-muted font-mono mb-1">Plan</p>
-          <h2 className="text-lg font-bold text-white mb-1">GoodTrading Membership</h2>
-          <p className="text-sm font-mono text-red-400/95 mb-4">{PLAN_PRICE}</p>
-          <ul className="space-y-2 text-xs text-terminal-muted font-mono">
-            <li className="flex items-start gap-2">
-              <span className="text-red-500/80">•</span>
-              <span>Acceso completo al sistema</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-red-500/80">•</span>
-              <span>Señales + análisis institucional</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-red-500/80">•</span>
-              <span>Operativa en tiempo real</span>
-            </li>
-          </ul>
-        </section>
+            <ul className="mt-6 space-y-2.5">
+              {PLAN_BENEFITS.map((item) => (
+                <li key={item} className="flex items-start gap-2.5 text-sm text-[#d1d5db]">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#ff3b3b]/80" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
 
-        {/* Primary CTA: PayPal */}
-        <section className="space-y-3">
-          <p className="text-[10px] tracking-wider uppercase text-terminal-muted font-mono">Activar acceso ahora</p>
-          <p className="text-[10px] text-terminal-muted font-mono">Método recomendado</p>
-          <button
-            type="button"
-            onClick={handlePayPalClick}
-            className="block w-full py-3 text-center text-sm font-bold tracking-wider rounded-sm border border-red-600/80 bg-red-600/20 text-white hover:bg-red-600/30 hover:border-red-500/90 transition-colors"
-          >
-            Pagar con PayPal
-          </button>
-          <div className="space-y-0.5 text-[11px] text-terminal-muted font-mono">
-            <p>El acceso puede cerrarse en cualquier momento</p>
-            <p>Pago seguro • Activación en minutos</p>
-            <p>+120 traders activos</p>
-          </div>
-        </section>
-
-        {/* Secondary: USDT */}
-        <section className="border border-white/10 bg-terminal-panel/50 rounded-sm p-4 space-y-3">
-          <p className="text-[10px] tracking-wider uppercase text-terminal-muted font-mono">Opción alternativa</p>
-          <p className="text-sm font-medium text-white">Pagar con USDT</p>
-          <p className="text-[11px] text-terminal-muted font-mono">
-            Recomendado para pagos sin comisiones
-          </p>
-          <div className="space-y-2">
-            <p className="text-[10px] text-terminal-muted font-mono">USDT (BEP20):</p>
-            <div className="bg-black/50 border border-white/10 rounded-sm px-3 py-2.5 font-mono text-xs text-white/90 break-all">
-              {USDT_ADDRESS}
+            <div className="mt-6 rounded-xl border border-white/[0.07] bg-white/[0.03] px-4 py-3.5">
+              <p className="text-sm leading-relaxed text-[#9ca3af]">
+                La App Desktop incluye módulos avanzados como Bookmap, Heatmap, DOM avanzado, Modo
+                Pro y procesamiento local.
+              </p>
             </div>
-            <button
-              type="button"
-              onClick={handleCopyAddress}
-              className="w-full py-2 text-xs font-mono border border-white/20 rounded-sm text-white/80 hover:bg-white/5 hover:border-white/30 transition-colors"
-            >
-              {copied ? "Copiado" : "Copiar dirección"}
-            </button>
+
+            <p className="mt-4 text-xs leading-relaxed text-[#6b7280]">
+              La activación puede requerir validación manual para mantener la calidad y seguridad del
+              entorno.
+            </p>
+          </CardShell>
+
+          <div className="space-y-6">
+            <CardShell>
+              <h3 className="text-lg font-semibold text-white">Pagar con PayPal</h3>
+              <p className="mt-2 text-sm leading-relaxed text-[#9ca3af]">
+                Método recomendado para activar tu acceso de forma rápida.
+              </p>
+              <button
+                type="button"
+                onClick={handlePayPalClick}
+                className="mt-5 w-full rounded-xl bg-gradient-to-r from-[#ff3b3b] via-red-600 to-violet-700 py-3.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+              >
+                Pagar con PayPal
+              </button>
+              <p className="mt-4 text-center text-xs text-[#6b7280]">
+                Pago seguro · Activación en minutos · Podés cancelar en cualquier momento
+              </p>
+            </CardShell>
+
+            <CardShell>
+              <h3 className="text-lg font-semibold text-white">Pagar con USDT</h3>
+              <p className="mt-2 text-sm leading-relaxed text-[#9ca3af]">
+                Opción alternativa para pagos cripto sin comisiones de tarjeta.
+              </p>
+
+              <div className="mt-5 space-y-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#6b7280]">Red</p>
+                  <p className="mt-1 text-sm font-medium text-white">USDT BEP20 / BSC</p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-[#6b7280]">
+                    Dirección
+                  </p>
+                  <div className="mt-2 rounded-xl border border-white/[0.1] bg-black/40 px-3 py-3 font-mono text-xs leading-relaxed text-white/90 break-all">
+                    {USDT_ADDRESS}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCopyAddress}
+                  className="w-full rounded-xl border border-white/15 bg-white/[0.04] py-2.5 text-sm font-medium text-[#d1d5db] transition-colors hover:border-white/25 hover:bg-white/[0.07] hover:text-white"
+                >
+                  {copied ? "Copiado" : "Copiar dirección"}
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3">
+                <p className="text-xs leading-relaxed text-amber-100/90">
+                  Enviar únicamente USDT en red BEP20 (BSC). No enviar por otras redes como ERC20 o
+                  TRC20; los fondos podrían perderse.
+                </p>
+              </div>
+            </CardShell>
+
+            <CardShell>
+              <button
+                type="button"
+                onClick={handleRefreshAccess}
+                disabled={refreshing}
+                className="w-full rounded-xl border border-white/20 bg-white/[0.06] py-3.5 text-sm font-semibold text-white transition-colors hover:border-white/30 hover:bg-white/[0.1] disabled:opacity-50"
+              >
+                {refreshing ? "Verificando…" : "Ya realicé el pago — desbloquear acceso"}
+              </button>
+              <p className="mt-3 text-center text-sm leading-relaxed text-[#9ca3af]">
+                Después de pagar, enviá el comprobante para que tu acceso sea activado.
+              </p>
+              <div className="mt-4 text-center">
+                <a
+                  href={`mailto:${SUPPORT_EMAIL}`}
+                  className="text-sm font-medium text-blue-400 transition-colors hover:text-blue-300"
+                >
+                  Contactar soporte de pagos
+                </a>
+              </div>
+            </CardShell>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => logout()}
+                className="text-sm text-[#6b7280] transition-colors hover:text-[#9ca3af]"
+              >
+                Cerrar sesión
+              </button>
+            </div>
           </div>
-        </section>
-
-        {/* Payment instructions */}
-        <div className="border-l-2 border-red-500/50 bg-red-950/15 px-3 py-2 rounded-r-sm space-y-2">
-          <p className="text-[11px] text-amber-200/90 font-mono">
-            ⚠️ Enviar únicamente USDT en red BEP20 (BSC). No enviar por otras redes (ERC20, TRC20), se perderán los fondos.
-          </p>
-          <p className="text-[11px] text-terminal-muted font-mono">
-            Una vez realizado el pago, enviá el comprobante para activar tu acceso.
-          </p>
-        </div>
-
-        {/* Final actions */}
-        <div className="flex flex-col gap-3 pt-2">
-          <button
-            type="button"
-            onClick={handleRefreshAccess}
-            disabled={refreshing}
-            className="w-full py-2.5 text-xs font-mono font-medium border border-white/25 rounded-sm text-white/90 hover:bg-white/5 hover:border-white/35 disabled:opacity-50 transition-colors"
-          >
-            {refreshing ? "Verificando…" : "Ya realicé el pago — desbloquear acceso"}
-          </button>
-          <button
-            type="button"
-            onClick={() => logout()}
-            className="text-[11px] font-mono text-terminal-muted hover:text-white/80 transition-colors"
-          >
-            Cerrar sesión
-          </button>
         </div>
       </div>
-    </div>
+    </MarketingLayout>
   );
 }

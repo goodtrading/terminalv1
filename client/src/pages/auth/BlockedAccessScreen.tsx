@@ -4,12 +4,35 @@ import { SubscriptionPage } from "@/pages/auth/SubscriptionPage";
 import PendingApprovalScreen from "@/pages/auth/PendingApprovalScreen";
 import AccountInactiveScreen from "@/pages/auth/AccountInactiveScreen";
 import ExpiredSubscriptionScreen from "@/pages/auth/ExpiredSubscriptionScreen";
+import {
+  TerminalAccessBlockedPanel,
+  type TerminalAccessBlockedVariant,
+} from "@/components/marketing/TerminalAccessBlockedPanel";
 import { cn } from "@/lib/utils";
 import { isDesktopBuild } from "@/lib/desktopStorage";
 import {
   DesktopConnectionErrorScreen,
   DesktopLoadingScreen,
 } from "@/pages/auth/DesktopBootScreens";
+
+function reasonToVariant(reason: string): TerminalAccessBlockedVariant {
+  switch (reason) {
+    case "pending_approval":
+      return "pending_approval";
+    case "inactive":
+      return "inactive";
+    case "expired":
+      return "expired";
+    case "no_subscription":
+      return "no_subscription";
+    case "approved_to_pay":
+      return "approved_to_pay";
+    case "pending_payment_review":
+      return "payment_review";
+    default:
+      return "generic";
+  }
+}
 
 export default function BlockedAccessScreen({ children }: { children: ReactNode }) {
   const { saasDisabled, authReady, authenticated, user, access, authError, login, register, refreshSession } =
@@ -22,7 +45,6 @@ export default function BlockedAccessScreen({ children }: { children: ReactNode 
   const [err, setErr] = useState<string | null>(null);
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [renewingExpired, setRenewingExpired] = useState(false);
 
   if (!authReady) {
     if (isDesktopBuild) {
@@ -61,6 +83,10 @@ export default function BlockedAccessScreen({ children }: { children: ReactNode 
   }
 
   if (!authenticated || !user) {
+    if (!isDesktopBuild) {
+      return <TerminalAccessBlockedPanel variant="login_required" />;
+    }
+
     const isRegister = mode === "register";
 
     const mapAuthError = (msg: string) => {
@@ -262,25 +288,12 @@ export default function BlockedAccessScreen({ children }: { children: ReactNode 
       return <AccountInactiveScreen />;
     }
     if (reason === "expired") {
-      if (renewingExpired) return <SubscriptionPage />;
-      return <ExpiredSubscriptionScreen onRenew={() => setRenewingExpired(true)} />;
+      return <ExpiredSubscriptionScreen />;
     }
     if (reason === "no_subscription") {
       return <SubscriptionPage />;
     }
-    return (
-      <div className="min-h-screen w-full flex items-center justify-center bg-terminal-bg text-terminal-text px-4">
-        <div className="w-full max-w-lg border border-terminal-border bg-terminal-panel p-6 rounded-sm space-y-3">
-          <h1 className="text-lg font-bold tracking-wider text-white">ACCESO NO DISPONIBLE</h1>
-          <p className="text-xs text-terminal-muted font-mono">
-            Tu cuenta no tiene acceso activo en este momento. Contacta al administrador.
-          </p>
-          <p className="text-xs text-terminal-muted font-mono">
-            Estado: <span className="text-terminal-accent">{reason}</span>
-          </p>
-        </div>
-      </div>
-    );
+    return <TerminalAccessBlockedPanel variant={reasonToVariant(reason)} />;
   }
 
   return <>{children}</>;

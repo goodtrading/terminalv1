@@ -8,9 +8,20 @@ const MODES: { id: MockAccessMode; label: string }[] = [
   { id: "active", label: "Cliente activo" },
 ];
 
+function isLocalDevHost(): boolean {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1";
+}
+
+function shouldShowMockAccessDevPanel(): boolean {
+  if (import.meta.env.PROD) return false;
+  return import.meta.env.DEV || isLocalDevHost();
+}
+
 /** Dev-only mock switcher for marketing access states. Hidden in production builds. */
 export function MockAccessDevPanel() {
-  if (!import.meta.env.DEV) return null;
+  if (!shouldShowMockAccessDevPanel()) return null;
 
   const { mockAccessMode, setMockAccessMode, terminalRedirect } = usePlatformAccess();
 
