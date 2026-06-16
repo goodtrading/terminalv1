@@ -3,6 +3,8 @@ import { Link, useLocation } from "wouter";
 import { usePlatformAccess } from "@/hooks/usePlatformAccess";
 import { openDesktopDownload } from "@/lib/downloadDesktop";
 
+const SUPPORT_EMAIL = "GoodTradingpay@gmail.com";
+
 function FooterLink({
   href,
   onClick,
@@ -80,9 +82,14 @@ export function MarketingFooter() {
               Legal / Soporte
             </p>
             <nav className="mt-4 flex flex-col gap-2.5">
-              <span className="text-sm text-[#6b7280]">Términos</span>
-              <span className="text-sm text-[#6b7280]">Privacidad</span>
-              <span className="text-sm text-[#6b7280]">Soporte</span>
+              <FooterLink href="/terms">Términos</FooterLink>
+              <FooterLink href="/privacy">Privacidad</FooterLink>
+              <a
+                href={`mailto:${SUPPORT_EMAIL}`}
+                className="text-sm text-[#9ca3af] transition-colors hover:text-white"
+              >
+                Soporte
+              </a>
             </nav>
           </div>
         </div>
