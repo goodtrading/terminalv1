@@ -6,6 +6,11 @@ import { getTerminalRedirect } from "@/lib/platformAccess";
 import { usePlatformAccess } from "@/hooks/usePlatformAccess";
 import { MarketingLayout } from "@/components/marketing/MarketingLayout";
 import { ForgotPasswordRecovery } from "@/components/marketing/ForgotPasswordRecovery";
+import { DesktopWebForgotPasswordPrompt } from "@/components/marketing/DesktopWebForgotPasswordPrompt";
+import {
+  isDesktopWebPasswordRecovery,
+  openWebForgotPassword,
+} from "@/lib/webPasswordRecovery";
 
 type AuthMode = "login" | "register";
 
@@ -50,10 +55,14 @@ export function PublicAuthForm({ mode }: PublicAuthFormProps) {
       <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-md items-center px-4 py-16">
         <div className="w-full rounded-[22px] border border-white/[0.09] bg-[#050505]/85 p-8 shadow-[0_0_48px_rgba(255,59,59,0.06)]">
           {!isRegister && showForgotPassword ? (
-            <ForgotPasswordRecovery
-              initialEmail={email}
-              onBack={() => setShowForgotPassword(false)}
-            />
+            isDesktopWebPasswordRecovery() ? (
+              <DesktopWebForgotPasswordPrompt onBack={() => setShowForgotPassword(false)} />
+            ) : (
+              <ForgotPasswordRecovery
+                initialEmail={email}
+                onBack={() => setShowForgotPassword(false)}
+              />
+            )
           ) : (
             <>
           <div className="mb-8 space-y-2">
@@ -165,14 +174,25 @@ export function PublicAuthForm({ mode }: PublicAuthFormProps) {
               />
               {fieldErr.password && <p className="mt-1 text-xs text-red-400">{fieldErr.password}</p>}
               {!isRegister && (
-                <div className="mt-2 text-right">
+                <div className="mt-2 space-y-1 text-right">
                   <button
                     type="button"
-                    onClick={() => setShowForgotPassword(true)}
+                    onClick={() => {
+                      if (isDesktopWebPasswordRecovery()) {
+                        openWebForgotPassword();
+                        return;
+                      }
+                      setShowForgotPassword(true);
+                    }}
                     className="text-xs font-medium text-blue-400 hover:text-blue-300"
                   >
                     ¿Olvidaste tu contraseña?
                   </button>
+                  {isDesktopWebPasswordRecovery() && (
+                    <p className="text-[10px] leading-snug text-[#6b7280]">
+                      Por seguridad, la recuperación de cuenta se realiza desde la web de GoodTrading.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
