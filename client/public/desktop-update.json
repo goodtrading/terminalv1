@@ -1,13 +1,12 @@
 {
-  "latestVersion": "0.1.7",
-  "minSupportedVersion": "0.1.6",
+  "latestVersion": "0.1.8",
+  "minSupportedVersion": "0.1.7",
   "mandatory": false,
-  "downloadUrl": "https://github.com/goodtrading/terminalv1/releases/download/v0.1.7/GoodTrading-Terminal-0.1.7-x64-setup.exe",
+  "downloadUrl": "https://github.com/goodtrading/terminalv1/releases/download/v0.1.8/GoodTrading-Terminal-0.1.8-x64-setup.exe",
   "releaseNotes": [
-    "Polish visual completo de la app desktop",
-    "Nuevo selector de activos preparado para próximos mercados",
-    "Nuevo modo Focus para ocultar paneles laterales e inferiores",
-    "Mejoras en My Account, diagnósticos y estados del feed"
+    "Desktop app update v0.1.8",
+    "Nueva entrada desktop directa al login/auth",
+    "Mejoras generales de estabilidad y experiencia desktop"
   ],
-  "publishedAt": "2026-06-11T09:00:00.000Z"
+  "publishedAt": "2026-06-17T00:00:00.000Z"
 }
