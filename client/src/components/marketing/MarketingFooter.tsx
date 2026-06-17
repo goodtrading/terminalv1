@@ -39,8 +39,17 @@ export function MarketingFooter() {
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
           <div className="sm:col-span-2 lg:col-span-1">
             <div className="flex items-center gap-2.5">
-              <img src="/logo.png" alt="" className="h-8 w-8 rounded-md" aria-hidden />
-              <span className="font-semibold text-white">GoodTrading</span>
+              <img
+                src="/logo.png"
+                alt=""
+                width={51}
+                height={34}
+                className="h-7 w-auto shrink-0 translate-y-px object-contain md:h-[34px]"
+                aria-hidden
+              />
+              <span className="text-base font-semibold leading-none tracking-wide text-white">
+                GoodTrading
+              </span>
             </div>
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-[#9ca3af]">
               Leé el mercado como una mesa institucional.
@@ -80,9 +89,9 @@ export function MarketingFooter() {
               Legal / Soporte
             </p>
             <nav className="mt-4 flex flex-col gap-2.5">
-              <span className="text-sm text-[#6b7280]">Términos</span>
-              <span className="text-sm text-[#6b7280]">Privacidad</span>
-              <span className="text-sm text-[#6b7280]">Soporte</span>
+              <FooterLink href="/terms">Términos</FooterLink>
+              <FooterLink href="/privacy">Privacidad</FooterLink>
+              <FooterLink href="/support">Soporte</FooterLink>
             </nav>
           </div>
         </div>

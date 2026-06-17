@@ -14,6 +14,9 @@ import AccountPage from "@/pages/marketing/AccountPage";
 import MyAccountRedirect from "@/pages/marketing/MyAccountRedirect";
 import VerifyEmailPage from "@/pages/marketing/VerifyEmailPage";
 import ResetPasswordPage from "@/pages/marketing/ResetPasswordPage";
+import TermsPage from "@/pages/marketing/TermsPage";
+import PrivacyPage from "@/pages/marketing/PrivacyPage";
+import SupportPage from "@/pages/marketing/SupportPage";
 
 function TerminalRoute() {
   return (
@@ -39,6 +42,9 @@ export function AppRouter() {
       <Route path="/download/desktop" component={DownloadDesktopPage} />
       <Route path="/account" component={AccountPage} />
       <Route path="/my-account" component={MyAccountRedirect} />
+      <Route path="/terms" component={TermsPage} />
+      <Route path="/privacy" component={PrivacyPage} />
+      <Route path="/support" component={SupportPage} />
       <Route path="/admin" component={AdminPage} />
       <Route path="/" component={HomePage} />
       <Route component={NotFound} />
