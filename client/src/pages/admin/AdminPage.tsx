@@ -2,6 +2,7 @@ import { apiUrl } from "../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
+import { isAdminUser } from "@/lib/authRoles";
 import { getAuthToken } from "@/lib/authToken";
 import type { AccessSnapshot } from "@/contexts/TerminalAuthContext";
 
@@ -278,11 +279,11 @@ export default function AdminPage() {
     );
   }
 
-  if (!user || user.role !== "admin") {
+  if (!user || !isAdminUser(user)) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-terminal-bg text-terminal-text gap-4 px-4">
         <p className="text-sm font-mono text-terminal-muted">Admin access required.</p>
-        <Link href="/" className="text-xs font-mono text-terminal-accent underline">
+        <Link href="/terminal" className="text-xs font-mono text-terminal-accent underline">
           Back to terminal
         </Link>
       </div>
@@ -294,7 +295,7 @@ export default function AdminPage() {
       <div className="max-w-6xl mx-auto space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 text-xs font-mono">
-            <Link href="/" className="text-terminal-accent hover:underline">
+            <Link href="/terminal" className="text-terminal-accent hover:underline">
               ← Terminal
             </Link>
             <span className="text-terminal-muted">/</span>

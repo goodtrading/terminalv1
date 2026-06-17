@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { ChevronDown, Download, LogOut, Stethoscope } from "lucide-react";
+import { useLocation } from "wouter";
+import { ChevronDown, Download, LogOut, Shield, Stethoscope } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
+import { isAdminUser } from "@/lib/authRoles";
 import { useDesktopUpdateCheck, type ManualCheckFeedback } from "@/hooks/useDesktopUpdateCheck";
 import { isDesktopApp } from "@/lib/desktopRuntime";
 import { appVersion } from "@/lib/appVersion";
@@ -32,6 +34,7 @@ function manualCheckFeedbackLabel(feedback: ManualCheckFeedback): string | null 
 
 export function TopNavUserMenu() {
   const { saasDisabled, user, access, authenticated, logout } = useTerminalAuth();
+  const [, navigate] = useLocation();
   const desktopUpdate = useDesktopUpdateCheck();
   const [menuOpen, setMenuOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -77,7 +80,7 @@ export function TopNavUserMenu() {
             </div>
             <div className="flex items-center gap-2 text-[10px] text-terminal-muted uppercase tracking-wide">
               <span>{planLabel}</span>
-              {user.role === "admin" && (
+              {isAdminUser(user) && (
                 <span className="rounded border border-terminal-accent/40 px-1 py-0.5 text-terminal-accent">
                   Admin
                 </span>
@@ -87,6 +90,23 @@ export function TopNavUserMenu() {
           </DropdownMenuLabel>
 
           <DropdownMenuSeparator className="bg-terminal-border" />
+
+          {isDesktopApp() && isAdminUser(user) && (
+            <DropdownMenuItem
+              className="cursor-pointer focus:bg-terminal-bg focus:text-white"
+              onSelect={() => {
+                setMenuOpen(false);
+                navigate("/admin");
+              }}
+            >
+              <Shield className="mr-2 h-3.5 w-3.5" />
+              Admin panel
+            </DropdownMenuItem>
+          )}
+
+          {isDesktopApp() && isAdminUser(user) && (
+            <DropdownMenuSeparator className="bg-terminal-border" />
+          )}
 
           {isDesktopApp() && (
             <DropdownMenuItem

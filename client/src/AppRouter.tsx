@@ -4,6 +4,7 @@ import TerminalLayout from "@/pages/terminal/TerminalLayout";
 import BlockedAccessScreen from "@/pages/auth/BlockedAccessScreen";
 import DesktopEntryRedirect from "@/pages/auth/DesktopEntryRedirect";
 import AdminPage from "@/pages/admin/AdminPage";
+import { AdminRoute } from "@/pages/admin/AdminRoute";
 import HomePage from "@/pages/marketing/HomePage";
 import LoginPage from "@/pages/marketing/LoginPage";
 import RegisterPage from "@/pages/marketing/RegisterPage";
@@ -18,6 +19,14 @@ import PrivacyPage from "@/pages/marketing/PrivacyPage";
 import VerifyEmailPage from "@/pages/marketing/VerifyEmailPage";
 import ResetPasswordPage from "@/pages/marketing/ResetPasswordPage";
 import { isDesktopRuntime } from "@/lib/runtimeFeatures";
+
+function AdminPageRoute() {
+  return (
+    <AdminRoute>
+      <AdminPage />
+    </AdminRoute>
+  );
+}
 
 function TerminalRoute() {
   return (
@@ -43,7 +52,7 @@ function WebRouter() {
       <Route path="/my-account" component={MyAccountRedirect} />
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
-      <Route path="/admin" component={AdminPage} />
+      <Route path="/admin" component={AdminPageRoute} />
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/" component={HomePage} />
       <Route component={NotFound} />
@@ -66,7 +75,7 @@ function DesktopRouter() {
       <Route path="/my-account" component={MyAccountRedirect} />
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
-      <Route path="/admin" component={AdminPage} />
+      <Route path="/admin" component={AdminPageRoute} />
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/products" component={DesktopEntryRedirect} />
       <Route path="/download/desktop" component={DesktopEntryRedirect} />
