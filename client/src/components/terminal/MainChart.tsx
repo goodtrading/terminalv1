@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartContextMenu, type ChartContextMenuAction } from "./chart/ChartContextMenu";
 import { ChartSettingsModal } from "./chart/ChartSettingsModal";
 import { ChartTimeframeSelector } from "./chart/ChartTimeframeSelector";
-import { CandleCloseCountdown } from "./chart/CandleCloseCountdown";
+import { PriceLineCountdownLabel } from "./chart/PriceLineCountdownLabel";
 import { useChartContextMenu } from "./chart/useChartContextMenu";
 import type { ChartTimeframeId } from "@/lib/chartTimeframes";
 import { getChartTimeframeMeta } from "@/lib/chartTimeframes";
@@ -546,7 +546,7 @@ export function MainChart({
       rightPriceScale: { borderColor: "#1a1a1a", scaleMargins: { top: 0.2, bottom: 0.25 }, minimumWidth: 100 },
       crosshair: { mode: 0 },
     });
-    const candleSeries = chart.addSeries(CandlestickSeries, { upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444", priceLineVisible: false });
+    const candleSeries = chart.addSeries(CandlestickSeries, { upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444", priceLineVisible: false, lastValueVisible: false });
     const volumeSeries = chart.addSeries(HistogramSeries, { color: 'rgba(38, 166, 154, 0.2)', priceFormat: { type: 'volume' }, priceScaleId: '' });
     const ghostSeries = chart.addSeries(LineSeries, {
       color: "rgba(0,0,0,0)",
@@ -2130,7 +2130,6 @@ export function MainChart({
                   <ChartTimeframeSelector />
                 </div>
                 <span className={`text-2xl font-mono font-bold ${isLive ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{headerPriceLabel}</span>
-                <CandleCloseCountdown timeframe={chartTimeframe} />
                 <div className="flex items-center ml-2">
                   <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", isLive ? "bg-terminal-positive" : "bg-terminal-negative")} />
                   <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? `Live (${liveSourceLabel})` : baseLoading ? 'Connecting…' : 'Live Feed Offline'}</span>
@@ -2332,6 +2331,16 @@ export function MainChart({
                 viewportVersion={drawingsViewportVersion}
                 coordinates={chartCoordinates}
               />
+              {lastCandle && toggles.price ? (
+                <PriceLineCountdownLabel
+                  price={lastCandle.close}
+                  isUp={lastCandle.close >= lastCandle.open}
+                  timeframe={chartTimeframe}
+                  chartHeight={chartSize.h}
+                  priceToCoordinate={(p) => candleSeriesRef.current?.priceToCoordinate(p) ?? null}
+                  viewportVersion={drawingsViewportVersion}
+                />
+              ) : null}
             </>
           );
         })()}
