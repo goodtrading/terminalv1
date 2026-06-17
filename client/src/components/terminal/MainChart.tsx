@@ -2332,20 +2332,22 @@ export function MainChart({
                 viewportVersion={drawingsViewportVersion}
                 coordinates={chartCoordinates}
               />
-              {lastCandle && toggles.price ? (
-                <PriceLineCountdownLabel
-                  price={lastCandle.close}
-                  isUp={lastCandle.close >= lastCandle.open}
-                  timeframe={chartTimeframe}
-                  chartHeight={chartSize.h}
-                  priceToCoordinate={(p) => candleSeriesRef.current?.priceToCoordinate(p) ?? null}
-                  viewportVersion={drawingsViewportVersion}
-                />
-              ) : null}
             </>
           );
         })()}
         </div>
+        {chartReady && chartContainerRef.current && chartSize && lastCandle && toggles.price ? (
+          <div className="absolute inset-y-0 right-0 z-[12] w-[100px] pointer-events-none">
+            <PriceLineCountdownLabel
+              price={lastCandle.close}
+              isUp={lastCandle.close >= lastCandle.open}
+              timeframe={chartTimeframe}
+              chartHeight={chartSize.h}
+              priceToCoordinate={(p) => candleSeriesRef.current?.priceToCoordinate(p) ?? null}
+              viewportVersion={drawingsViewportVersion}
+            />
+          </div>
+        ) : null}
         {activePanels.has("HEATMAP") && (
           <HeatmapCanvas isActive />
         )}

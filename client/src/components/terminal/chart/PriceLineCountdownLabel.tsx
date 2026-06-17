@@ -13,7 +13,6 @@ type PriceLineCountdownLabelProps = {
 };
 
 const LABEL_HEIGHT = 26;
-const RIGHT_AXIS_WIDTH = 100;
 
 export function PriceLineCountdownLabel({
   price,
@@ -50,17 +49,13 @@ export function PriceLineCountdownLabel({
 
   return (
     <div
-      className="pointer-events-none absolute z-[12]"
-      style={{
-        top,
-        right: 0,
-        width: RIGHT_AXIS_WIDTH,
-      }}
+      className="pointer-events-none absolute right-[4px] z-[12]"
+      style={{ top }}
       title="Precio actual · tiempo hasta cierre de vela"
     >
       <div
         className={cn(
-          "price-line-countdown-label ml-auto box-border flex w-fit min-h-[24px] min-w-[52px] max-w-full flex-col items-center justify-center gap-0 overflow-hidden rounded-[2px] px-[4px] py-[2px]",
+          "price-line-countdown-label box-border flex w-fit min-h-[24px] min-w-[52px] max-w-full flex-col items-center justify-center gap-0 overflow-hidden rounded-[2px] px-[4px] py-[2px]",
           "pointer-events-none whitespace-nowrap font-mono tabular-nums leading-none",
         )}
         style={{
