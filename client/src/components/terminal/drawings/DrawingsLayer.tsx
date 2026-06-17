@@ -13,6 +13,7 @@ import { DrawingsContextualBar } from "./DrawingsContextualBar";
 import { DrawingsOverlay } from "./DrawingsOverlay";
 import { useDrawings } from "./useDrawings";
 import { useDrawingToolbarPosition } from "@/hooks/useDrawingToolbarPosition";
+import { drawingToolbarPanelOpensLeft } from "@/lib/drawingToolbarPosition";
 import { createDrawingProjection } from "./projection";
 import type { Drawing, DrawingTool } from "./types";
 import type { ChartMenuContext } from "../chart/chartContextTypes";
@@ -148,13 +149,15 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
 
   const {
     position: toolbarPosition,
-    contextualOffsetX,
+    contextualLeft,
     toggleCollapsed,
     resetPosition,
     onDragHandlePointerDown,
     onDragHandlePointerMove,
     onDragHandlePointerUp,
   } = useDrawingToolbarPosition(chartWidth, chartHeight);
+
+  const panelOpensLeft = drawingToolbarPanelOpensLeft(toolbarPosition.x, chartWidth);
 
   return (
     <>
@@ -169,6 +172,7 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
       >
         <DrawingsToolbar
           activeTool={activeTool}
+          panelOpensLeft={panelOpensLeft}
           onToolChange={setActiveTool}
           onToolVariantSelect={(tool, style) => {
             setActiveTool(tool);
@@ -187,7 +191,7 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
       {showContextual && !toolbarPosition.collapsed && (
         <div
           className="absolute z-[20] pointer-events-auto"
-          style={{ left: toolbarPosition.x + contextualOffsetX, top: toolbarPosition.y + 28 }}
+          style={{ left: contextualLeft, top: toolbarPosition.y + 28 }}
           title="Drawing style"
         >
           {selectedDrawing ? (
