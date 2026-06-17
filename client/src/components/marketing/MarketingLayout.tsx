@@ -2,8 +2,14 @@ import type { ReactNode } from "react";
 import { PublicHeader } from "./PublicHeader";
 import { MockAccessDevPanel } from "./MockAccessDevPanel";
 import { MarketingFooter } from "./MarketingFooter";
+import { DesktopAuthLayout } from "@/components/auth/DesktopAuthLayout";
+import { isDesktopRuntime } from "@/lib/runtimeFeatures";
 
 export function MarketingLayout({ children }: { children: ReactNode }) {
+  if (isDesktopRuntime()) {
+    return <DesktopAuthLayout>{children}</DesktopAuthLayout>;
+  }
+
   return (
     <div className="min-h-screen w-full bg-[#030303] text-[#f3f4f6]">
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
