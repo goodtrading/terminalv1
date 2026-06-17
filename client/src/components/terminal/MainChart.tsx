@@ -2122,8 +2122,8 @@ export function MainChart({
         />
       )}
       <TerminalPanel className="flex-1 w-full min-w-0 min-h-0 border border-terminal-border relative z-0 overflow-hidden" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
-        <div className="absolute inset-0 pointer-events-none z-10">
-          <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start">
+        <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+          <div className="absolute top-0 left-0 right-[100px] p-4 flex justify-between items-start">
             <div className="flex flex-col pointer-events-none">
               <div className="flex items-baseline flex-wrap gap-x-3 gap-y-2">
                 <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
@@ -2248,7 +2248,7 @@ export function MainChart({
             </>
           );
         })()}
-        <div className="absolute inset-0 pr-[100px] z-[5] pointer-events-none">
+        <div className="absolute inset-0 pr-[100px] z-[5] overflow-hidden pointer-events-none">
         <div
           ref={chartContainerRef}
           data-chart-container

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ChevronDown, ChevronUp, GripVertical, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { DrawingToolbarPosition } from "@/hooks/useDrawingToolbarPosition";
+import type { DrawingToolbarPosition } from "@/lib/drawingToolbarPosition";
 
 type MovableDrawingToolbarShellProps = {
   position: DrawingToolbarPosition;

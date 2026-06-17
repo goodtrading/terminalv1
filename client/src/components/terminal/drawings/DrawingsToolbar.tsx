@@ -21,6 +21,7 @@ import { useMemo, useState } from "react";
 
 interface DrawingsToolbarProps {
   activeTool: DrawingTool;
+  panelOpensLeft?: boolean;
   onToolChange: (tool: DrawingTool) => void;
   onToolVariantSelect: (tool: DrawingTool, style?: { color?: string; lineWidth?: number; opacity?: number }) => void;
   onSmartVariantSelect: (smartKind: SmartToolKind, style?: { color?: string; lineWidth?: number; opacity?: number }) => void;
@@ -33,6 +34,7 @@ const railBtn =
 
 export function DrawingsToolbar({
   activeTool,
+  panelOpensLeft = false,
   onToolChange,
   onToolVariantSelect,
   onSmartVariantSelect,
@@ -112,7 +114,12 @@ export function DrawingsToolbar({
         </button>
       </div>
       {openPanel && (
-        <div className="absolute left-10 top-0 rounded-md border border-white/10 bg-[#0b0b0f]/95 shadow-[0_8px_18px_rgba(0,0,0,0.45)] backdrop-blur-sm p-1 flex flex-col gap-0.5 min-w-[40px]">
+        <div
+          className={cn(
+            "absolute top-0 rounded-md border border-white/10 bg-[#0b0b0f]/95 shadow-[0_8px_18px_rgba(0,0,0,0.45)] backdrop-blur-sm p-1 flex flex-col gap-0.5 min-w-[40px]",
+            panelOpensLeft ? "right-10" : "left-10",
+          )}
+        >
           {openPanel === "draw" &&
             drawTools.map(({ tool, Icon, style, title }) => (
               <button
