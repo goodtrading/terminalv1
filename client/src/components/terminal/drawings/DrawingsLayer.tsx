@@ -8,9 +8,11 @@ import {
   useState,
 } from "react";
 import { DrawingsToolbar } from "./DrawingsToolbar";
+import { MovableDrawingToolbarShell } from "./MovableDrawingToolbarShell";
 import { DrawingsContextualBar } from "./DrawingsContextualBar";
 import { DrawingsOverlay } from "./DrawingsOverlay";
 import { useDrawings } from "./useDrawings";
+import { useDrawingToolbarPosition } from "@/hooks/useDrawingToolbarPosition";
 import { createDrawingProjection } from "./projection";
 import type { Drawing, DrawingTool } from "./types";
 import type { ChartMenuContext } from "../chart/chartContextTypes";
@@ -144,10 +146,27 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
   const selectedDrawing = selectedId ? drawings.find((d) => d.id === selectedId) : null;
   const showContextual = activeTool !== "select" || selectedDrawing != null;
 
+  const {
+    position: toolbarPosition,
+    contextualOffsetX,
+    toggleCollapsed,
+    resetPosition,
+    onDragHandlePointerDown,
+    onDragHandlePointerMove,
+    onDragHandlePointerUp,
+  } = useDrawingToolbarPosition(chartWidth, chartHeight);
+
   return (
     <>
       {/* Above DrawingsOverlay (z-15) so chart hit-layers do not steal clicks from tools */}
-      <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[20] pointer-events-auto" title="Drawing tools">
+      <MovableDrawingToolbarShell
+        position={toolbarPosition}
+        onToggleCollapsed={toggleCollapsed}
+        onResetPosition={resetPosition}
+        onDragHandlePointerDown={onDragHandlePointerDown}
+        onDragHandlePointerMove={onDragHandlePointerMove}
+        onDragHandlePointerUp={onDragHandlePointerUp}
+      >
         <DrawingsToolbar
           activeTool={activeTool}
           onToolChange={setActiveTool}
@@ -163,10 +182,14 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
             }
           }}
         />
-      </div>
+      </MovableDrawingToolbarShell>
 
-      {showContextual && (
-        <div className="absolute left-14 top-1/2 -translate-y-1/2 z-[20] pointer-events-auto" title="Drawing style">
+      {showContextual && !toolbarPosition.collapsed && (
+        <div
+          className="absolute z-[20] pointer-events-auto"
+          style={{ left: toolbarPosition.x + contextualOffsetX, top: toolbarPosition.y + 28 }}
+          title="Drawing style"
+        >
           {selectedDrawing ? (
             <DrawingsContextualBar
               drawing={selectedDrawing}
