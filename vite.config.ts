@@ -23,6 +23,13 @@ if (onOneDrive) {
 
 export default defineConfig({
   cacheDir: viteCacheDir,
+  define: {
+    __GOODTRADING_APP_VERSION__: JSON.stringify(
+      process.env.npm_package_version ??
+        process.env.VITE_APP_VERSION ??
+        "dev",
+    ),
+  },
   plugins: [
     react(),
     runtimeErrorOverlay(),
