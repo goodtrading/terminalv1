@@ -2,6 +2,8 @@
 import { ChartContextMenu, type ChartContextMenuAction } from "./chart/ChartContextMenu";
 import { ChartSettingsModal } from "./chart/ChartSettingsModal";
 import { ChartTimeframeSelector } from "./chart/ChartTimeframeSelector";
+import { useTimezonePreference } from "@/hooks/useTimezonePreference";
+import { formatLwChartDate, formatLwChartTime } from "@/lib/timezone";
 import { useChartContextMenu } from "./chart/useChartContextMenu";
 import type { ChartTimeframeId } from "@/lib/chartTimeframes";
 import { getChartTimeframeMeta } from "@/lib/chartTimeframes";
@@ -274,6 +276,7 @@ export function MainChart({
   const { learnMode } = useLearnMode();
 
   const chartSettings = useChartSettings();
+  const { preference: timezonePreference, displayLabel: timezoneLabel } = useTimezonePreference();
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const chartContextMenu = useChartContextMenu({ closeDeps: [] });
 
@@ -1992,6 +1995,16 @@ export function MainChart({
     });
   }, [chartSettings, chartReady]);
 
+  useEffect(() => {
+    if (!chartReady || !chartRef.current) return;
+    chartRef.current.applyOptions({
+      localization: {
+        timeFormatter: (time) => formatLwChartTime(time, timezonePreference),
+        dateFormatter: (date) => formatLwChartDate(date, timezonePreference),
+      },
+    });
+  }, [chartReady, timezonePreference]);
+
   const chartCoordinates = useMemo(
     () =>
       buildChartCoordinateHelpers(
@@ -2128,6 +2141,9 @@ export function MainChart({
                 <div className="pointer-events-auto">
                   <ChartTimeframeSelector />
                 </div>
+                <span className="text-[10px] font-mono text-white/45 uppercase tracking-wider">
+                  {timezoneLabel}
+                </span>
                 <span className={`text-2xl font-mono font-bold ${isLive ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{headerPriceLabel}</span>
                 <div className="flex items-center ml-2">
                   <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", isLive ? "bg-terminal-positive" : "bg-terminal-negative")} />

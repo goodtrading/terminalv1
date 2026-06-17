@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTerminalState } from "@/hooks/useTerminalState";
+import { formatTerminalTime } from "@/lib/timezone";
+import { useTimezonePreference } from "@/hooks/useTimezonePreference";
 
 type ChatRole = "user" | "assistant";
 
@@ -153,6 +155,7 @@ function isNearPrice(spot: number | undefined, target: number | undefined, pct: 
 }
 
 export function AIChatPanel() {
+  useTimezonePreference();
   const MAX_MESSAGES = 30;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -556,7 +559,7 @@ export function AIChatPanel() {
               >
                 <div className="text-[9px] text-white/40 font-mono mb-0.5">
                   {m.role === "user" ? "YOU" : m.kind === "autoAlert" ? "AI (AUTO)" : "AI"} ·{" "}
-                  {new Date(m.timestamp).toLocaleTimeString(undefined, { hour12: false })}
+                  {formatTerminalTime(m.timestamp)}
                 </div>
                 {m.role === "assistant" ? (
                   <div className="flex flex-wrap gap-1 mb-1">

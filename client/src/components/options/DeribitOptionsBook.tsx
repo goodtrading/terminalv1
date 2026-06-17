@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { formatTerminalTime } from "@/lib/timezone";
+import { useTimezonePreference } from "@/hooks/useTimezonePreference";
 import type { DeribitOptionsBookResponse, DeribitOptionBookRow, DeribitOptionSide, DeribitOptionSizeStats } from "@shared/types/deribit-options";
 import {
   buildOptionsZoneContext,
@@ -384,6 +386,7 @@ function mergeRequiredDefaultColumnIds(order: string[]): string[] {
 
 
 export default function DeribitOptionsBook() {
+  useTimezonePreference();
   const [currency, setCurrency] = useState<"BTC" | "ETH">("BTC");
   const [selectedExpiry, setSelectedExpiry] = useState<string>("");
   const [filter, setFilter] = useState<"ALL" | "ATM" | "RANGE" | "MOVEMENT" | "DISTANCE">("ATM");
@@ -2608,7 +2611,7 @@ const viewMode: OptionsViewMode = "PRO";
       {/* Footer */}
       {bookData && (
         <div className="p-2 border-t border-terminal-border text-xs text-terminal-muted shrink-0">
-          Last updated: {new Date(bookData.generatedAt).toLocaleTimeString()} | 
+          Last updated: {formatTerminalTime(bookData.generatedAt)} | 
           Rows: {filteredRows.length} / {bookData.rows.length} ({filter})
         </div>
       )}

@@ -44,6 +44,8 @@ export interface BaseDrawing {
   labelPrecision?: number;
   targetColor?: string;
   stopColor?: string;
+  targetOpacity?: number;
+  stopOpacity?: number;
 }
 
 export type Drawing = BaseDrawing;

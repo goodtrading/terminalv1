@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { useLearnMode } from "@/hooks/useLearnMode";
 import { useTerminalState } from "@/hooks/useTerminalState";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
+import { TimezoneSelector } from "@/components/terminal/TimezoneSelector";
 
 interface TopNavProps {
   activeTab: string;
@@ -89,6 +90,8 @@ export function TopNav({ activeTab, onTabChange }: TopNavProps) {
           <span className="text-terminal-muted">FEED:</span>
           <span className="text-white">DERIBIT</span>
         </div>
+
+        <TimezoneSelector compact />
         
         <div className="flex items-center space-x-2 ml-4">
           <div className="w-2 h-2 rounded-full bg-terminal-positive animate-pulse"></div>

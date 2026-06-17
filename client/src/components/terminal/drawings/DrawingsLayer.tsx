@@ -8,9 +8,14 @@ import {
   useState,
 } from "react";
 import { DrawingsToolbar } from "./DrawingsToolbar";
+import { MovableDrawingToolbarShell } from "./MovableDrawingToolbarShell";
 import { DrawingsContextualBar } from "./DrawingsContextualBar";
 import { DrawingsOverlay } from "./DrawingsOverlay";
 import { useDrawings } from "./useDrawings";
+import { getStableDrawingUserKey, resolveDrawingUserScope } from "./persistence";
+import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
+import { useDrawingToolbarPosition } from "@/hooks/useDrawingToolbarPosition";
+import { drawingToolbarPanelOpensLeft, CHART_HEADER_HEIGHT_ESTIMATE } from "@/lib/drawingToolbarPosition";
 import { createDrawingProjection } from "./projection";
 import type { Drawing, DrawingTool } from "./types";
 import type { ChartMenuContext } from "../chart/chartContextTypes";
@@ -54,6 +59,9 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
 ) {
   const overlayRootRef = useRef<HTMLDivElement>(null);
   const [editorOpenRequestId, setEditorOpenRequestId] = useState<string | null>(null);
+  const { user, authReady } = useTerminalAuth();
+  const userKey = useMemo(() => getStableDrawingUserKey(user), [user]);
+  const userScope = resolveDrawingUserScope(userKey, authReady);
 
   const {
     drawings,
@@ -86,7 +94,8 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
     setToolStyle,
     setSmartKind,
     convertSelectedToSmart,
-  } = useDrawings(symbol, timeframe);
+    flushPersistence,
+  } = useDrawings(symbol, timeframe, userScope, authReady);
 
   const projection = useMemo(
     () => createDrawingProjection(coordinates.timeToCoordinate, coordinates.priceToCoordinate),
@@ -144,12 +153,37 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
   const selectedDrawing = selectedId ? drawings.find((d) => d.id === selectedId) : null;
   const showContextual = activeTool !== "select" || selectedDrawing != null;
 
+  const {
+    position: toolbarPosition,
+    contextualLeft,
+    toggleCollapsed,
+    resetPosition,
+    onDragHandlePointerDown,
+    onDragHandlePointerMove,
+    onDragHandlePointerUp,
+  } = useDrawingToolbarPosition(
+    chartWidth,
+    chartHeight,
+    CHART_HEADER_HEIGHT_ESTIMATE,
+    userScope ?? "guest",
+  );
+
+  const panelOpensLeft = drawingToolbarPanelOpensLeft(toolbarPosition.x, chartWidth);
+
   return (
     <>
       {/* Above DrawingsOverlay (z-15) so chart hit-layers do not steal clicks from tools */}
-      <div className="absolute left-2 top-1/2 -translate-y-1/2 z-[20] pointer-events-auto" title="Drawing tools">
+      <MovableDrawingToolbarShell
+        position={toolbarPosition}
+        onToggleCollapsed={toggleCollapsed}
+        onResetPosition={resetPosition}
+        onDragHandlePointerDown={onDragHandlePointerDown}
+        onDragHandlePointerMove={onDragHandlePointerMove}
+        onDragHandlePointerUp={onDragHandlePointerUp}
+      >
         <DrawingsToolbar
           activeTool={activeTool}
+          panelOpensLeft={panelOpensLeft}
           onToolChange={setActiveTool}
           onToolVariantSelect={(tool, style) => {
             setActiveTool(tool);
@@ -163,10 +197,14 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
             }
           }}
         />
-      </div>
+      </MovableDrawingToolbarShell>
 
-      {showContextual && (
-        <div className="absolute left-14 top-1/2 -translate-y-1/2 z-[20] pointer-events-auto" title="Drawing style">
+      {showContextual && !toolbarPosition.collapsed && (
+        <div
+          className="absolute z-[20] pointer-events-auto"
+          style={{ left: contextualLeft, top: toolbarPosition.y + 28 }}
+          title="Drawing style"
+        >
           {selectedDrawing ? (
             <DrawingsContextualBar
               drawing={selectedDrawing}
@@ -223,6 +261,7 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
           removeLastPolylinePoint,
           cancelPending,
         }}
+        flushPersistence={flushPersistence}
       />
     </>
   );

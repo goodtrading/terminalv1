@@ -1,9 +1,23 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { Drawing, DrawingPoint, DrawingTool, SmartToolKind } from "./types";
 import { DEFAULT_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_OPACITY, getToolPointCount } from "./types";
-import { loadDrawings, saveDrawings } from "./persistence";
+import {
+  loadDrawingSettings,
+  loadDrawings,
+  saveDrawingSettings,
+  saveDrawings,
+} from "./persistence";
+import {
+  DEFAULT_DRAWING_SETTINGS_V2,
+  drawingFieldsToPositionStyle,
+  logDrawingColorModal,
+  positionStyleForTool,
+  positionStyleToDrawingFields,
+  type DrawingUserSettingsV2,
+} from "@/lib/drawingPersistence";
 import { getChartSettings } from "../chart/chartSettingsStore";
 import { getPositionMetrics, isPositionDrawing, nextPositionLevels } from "./positionUtils";
+import { hitTestPositionAnchor } from "./positionInteraction";
 
 const MAX_POLYLINE_POINTS = 10;
 const HIT_THRESHOLD = 10;
@@ -37,23 +51,121 @@ function sanitizeDrawings(list: Drawing[]): Drawing[] {
   return list.map((d) => sanitizeDrawing(d)).filter((d): d is Drawing => d != null);
 }
 
-export function useDrawings(symbol: string, _timeframe?: string) {
-  const [drawings, setDrawings] = useState<Drawing[]>(() => sanitizeDrawings(loadDrawings(symbol)));
+const SAVE_DEBOUNCE_MS = 400;
+
+const DEFAULT_TOOL_STYLES: Record<DrawingTool, { color: string; lineWidth: number; opacity: number }> = {
+  select: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
+  horizontalLine: { color: "#ffffff", lineWidth: 1, opacity: 1 },
+  trendLine: { color: "#ffffff", lineWidth: 1, opacity: 1 },
+  arrow: { color: "#ffffff", lineWidth: 2, opacity: 1 },
+  rectangle: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
+  text: { color: "#ffffff", lineWidth: 1, opacity: 1 },
+  polyline: { color: "#ffffff", lineWidth: 2, opacity: 1 },
+  longPosition: { color: "#22c55e", lineWidth: 1, opacity: 0.9 },
+  shortPosition: { color: "#ef4444", lineWidth: 1, opacity: 0.9 },
+};
+
+function mergeToolStyles(saved?: DrawingUserSettingsV2["toolStyles"]) {
+  const next = { ...DEFAULT_TOOL_STYLES };
+  if (!saved) return next;
+  (Object.keys(next) as DrawingTool[]).forEach((tool) => {
+    if (saved[tool]) next[tool] = { ...next[tool], ...saved[tool]! };
+  });
+  return next;
+}
+
+function buildPersistedSettings(
+  userSettings: DrawingUserSettingsV2,
+  toolStyles: Record<DrawingTool, { color: string; lineWidth: number; opacity: number }>,
+): DrawingUserSettingsV2 {
+  return {
+    ...userSettings,
+    version: 2,
+    updatedAt: Date.now(),
+    toolStyles,
+  };
+}
+
+export function useDrawings(
+  symbol: string,
+  _timeframe?: string,
+  userScope: string | null = null,
+  authReady = false,
+) {
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const drawingsRef = useRef<Drawing[]>([]);
+  const userSettingsRef = useRef<DrawingUserSettingsV2>(DEFAULT_DRAWING_SETTINGS_V2);
+  const toolStylesRef = useRef(DEFAULT_TOOL_STYLES);
+  const userScopeRef = useRef<string | null>(userScope);
+
+  const [drawings, setDrawings] = useState<Drawing[]>([]);
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [activeTool, setActiveTool] = useState<DrawingTool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingDrawing, setPendingDrawing] = useState<Drawing | null>(null);
   const [draggingAnchor, setDraggingAnchor] = useState<{ id: string; pointIndex: number } | null>(null);
-  const [toolStyles, setToolStyles] = useState<Record<DrawingTool, { color: string; lineWidth: number; opacity: number }>>({
-    select: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
-    horizontalLine: { color: "#ffffff", lineWidth: 1, opacity: 1 },
-    trendLine: { color: "#ffffff", lineWidth: 1, opacity: 1 },
-    arrow: { color: "#ffffff", lineWidth: 2, opacity: 1 },
-    rectangle: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
-    text: { color: "#ffffff", lineWidth: 1, opacity: 1 },
-    polyline: { color: "#ffffff", lineWidth: 2, opacity: 1 },
-    longPosition: { color: "#22c55e", lineWidth: 1, opacity: 0.9 },
-    shortPosition: { color: "#ef4444", lineWidth: 1, opacity: 0.9 },
-  });
+  const [userSettings, setUserSettings] = useState<DrawingUserSettingsV2>(DEFAULT_DRAWING_SETTINGS_V2);
+  const [toolStyles, setToolStyles] = useState<Record<DrawingTool, { color: string; lineWidth: number; opacity: number }>>(
+    DEFAULT_TOOL_STYLES,
+  );
+
+  drawingsRef.current = drawings;
+  userSettingsRef.current = userSettings;
+  toolStylesRef.current = toolStyles;
+
+  const flushPersistence = useCallback(
+    (scope = userScopeRef.current) => {
+      if (!scope || !authReady) return;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      if (settingsTimerRef.current) {
+        clearTimeout(settingsTimerRef.current);
+        settingsTimerRef.current = null;
+      }
+      saveDrawings(symbol, scope, _timeframe, drawingsRef.current);
+      saveDrawingSettings(scope, buildPersistedSettings(userSettingsRef.current, toolStylesRef.current));
+    },
+    [authReady, symbol, _timeframe],
+  );
+
+  useEffect(() => {
+    if (!authReady || !userScope) {
+      setSettingsHydrated(false);
+      return;
+    }
+
+    const previousScope = userScopeRef.current;
+    if (previousScope && previousScope !== userScope) {
+      flushPersistence(previousScope);
+    }
+    userScopeRef.current = userScope;
+
+    const settings = loadDrawingSettings(userScope);
+    setUserSettings(settings);
+    setToolStyles(mergeToolStyles(settings.toolStyles));
+    setDrawings(sanitizeDrawings(loadDrawings(symbol, userScope, _timeframe)));
+    setSelectedId(null);
+    setPendingDrawing(null);
+    setDraggingAnchor(null);
+    setSettingsHydrated(true);
+
+    if (import.meta.env.DEV) {
+      console.debug("[drawing-settings:hydrate]", {
+        userKey: userScope,
+        settings,
+      });
+    }
+  }, [authReady, userScope, symbol, _timeframe, flushPersistence]);
+
+  useEffect(() => {
+    const clean = sanitizeDrawings(drawings);
+    if (clean.length !== drawings.length) {
+      setDrawings(clean);
+    }
+  }, [drawings]);
 
   useEffect(() => {
     const onDrawingDefaults = () => {
@@ -77,17 +189,38 @@ export function useDrawings(symbol: string, _timeframe?: string) {
   }, []);
 
   useEffect(() => {
-    setDrawings(sanitizeDrawings(loadDrawings(symbol)));
-  }, [symbol]);
+    if (!userScope || !settingsHydrated) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveDrawings(symbol, userScope, _timeframe, drawingsRef.current);
+    }, SAVE_DEBOUNCE_MS);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [drawings, symbol, userScope, _timeframe, settingsHydrated]);
 
   useEffect(() => {
-    const clean = sanitizeDrawings(drawings);
-    if (clean.length !== drawings.length) {
-      setDrawings(clean);
-      return;
-    }
-    saveDrawings(symbol, _timeframe, clean);
-  }, [drawings, symbol, _timeframe]);
+    if (!userScope || !settingsHydrated) return;
+    if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
+    settingsTimerRef.current = setTimeout(() => {
+      saveDrawingSettings(userScope, buildPersistedSettings(userSettings, toolStyles));
+    }, SAVE_DEBOUNCE_MS);
+    return () => {
+      if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
+    };
+  }, [userSettings, toolStyles, userScope, settingsHydrated]);
+
+  useEffect(() => {
+    const onFlush = () => flushPersistence();
+    window.addEventListener("gt-drawing-persist-flush", onFlush);
+    return () => window.removeEventListener("gt-drawing-persist-flush", onFlush);
+  }, [flushPersistence]);
+
+  useEffect(() => {
+    return () => {
+      flushPersistence(userScopeRef.current);
+    };
+  }, [flushPersistence]);
 
   const addDrawing = useCallback((d: Omit<Drawing, "id" | "createdAt">) => {
     const full: Drawing = {
@@ -105,7 +238,43 @@ export function useDrawings(symbol: string, _timeframe?: string) {
   const updateDrawing = useCallback((id: string, updates: Partial<Drawing>) => {
     setDrawings((prev) =>
       prev
-        .map((d) => (d.id === id ? ({ ...d, ...updates } as Drawing) : d))
+        .map((d) => {
+          if (d.id !== id) return d;
+          let merged = { ...d, ...updates } as Drawing;
+          if (isPositionDrawing(merged)) {
+            if (updates.opacity != null || updates.targetOpacity != null || updates.stopOpacity != null) {
+              const fill = merged.targetOpacity ?? merged.stopOpacity ?? merged.opacity;
+              merged = {
+                ...merged,
+                opacity: fill,
+                targetOpacity: merged.targetOpacity ?? fill,
+                stopOpacity: merged.stopOpacity ?? fill,
+              };
+            }
+            if (
+              updates.targetColor ||
+              updates.stopColor ||
+              updates.opacity != null ||
+              updates.targetOpacity != null ||
+              updates.stopOpacity != null
+            ) {
+              logDrawingColorModal({
+                targetFillColor: merged.targetColor,
+                stopFillColor: merged.stopColor,
+                targetOpacity: merged.targetOpacity ?? merged.opacity,
+                stopOpacity: merged.stopOpacity ?? merged.opacity,
+              });
+            }
+            setUserSettings((settings) => ({
+              ...settings,
+              [merged.tool === "longPosition" ? "longPosition" : "shortPosition"]: drawingFieldsToPositionStyle(
+                merged,
+                positionStyleForTool(settings, merged.tool),
+              ),
+            }));
+          }
+          return merged;
+        })
         .map((d) => sanitizeDrawing(d))
         .filter((d): d is Drawing => d != null)
     );
@@ -323,31 +492,8 @@ export function useDrawings(symbol: string, _timeframe?: string) {
             return { drawing: d, pointIndex: j };
         }
         if (isPositionDrawing(d) && d.points.length >= 2) {
-          const m = getPositionMetrics(d);
-          const x1 = timeToX(d.points[0].time);
-          const x2 = timeToX(d.points[1].time);
-          if (!m || x2 == null) continue;
-          const entryY = priceToY(m.entry);
-          const stopY = priceToY(m.stop);
-          const targetY = priceToY(m.target);
-          const anchors: Array<number | null> = [entryY, stopY, targetY];
-          for (let k = 0; k < anchors.length; k++) {
-            const ay = anchors[k];
-            if (ay == null) continue;
-            if (Math.abs(x - x2) <= threshold && Math.abs(y - ay) <= threshold) {
-              return { drawing: d, pointIndex: 100 + k };
-            }
-          }
-          if (x1 != null) {
-            const yTop = priceToY(Math.max(m.entry, m.stop, m.target));
-            const yBottom = priceToY(Math.min(m.entry, m.stop, m.target));
-            if (yTop != null && yBottom != null) {
-              const midY = (yTop + yBottom) / 2;
-              if (Math.abs(x - x2) <= threshold && Math.abs(y - midY) <= Math.max(threshold, 14)) {
-                return { drawing: d, pointIndex: 103 };
-              }
-            }
-          }
+          const anchorIndex = hitTestPositionAnchor(x, y, d, timeToX, priceToY, ANCHOR_HIT_THRESHOLD);
+          if (anchorIndex != null) return { drawing: d, pointIndex: anchorIndex };
         }
       }
       return null;
@@ -381,6 +527,8 @@ export function useDrawings(symbol: string, _timeframe?: string) {
         } as Drawing);
       } else if (activeTool === "longPosition" || activeTool === "shortPosition") {
         const levels = nextPositionLevels(activeTool, price, price);
+        const style = positionStyleForTool(userSettingsRef.current, activeTool);
+        const fields = positionStyleToDrawingFields(style);
         setPendingDrawing({
           ...base,
           tool: activeTool,
@@ -388,10 +536,13 @@ export function useDrawings(symbol: string, _timeframe?: string) {
           entryPrice: price,
           targetPrice: levels.targetPrice,
           stopPrice: levels.stopPrice,
-          showLabels: true,
-          labelPrecision: 2,
-          targetColor: activeTool === "longPosition" ? "#22c55e" : "#22c55e",
-          stopColor: activeTool === "longPosition" ? "#ef4444" : "#ef4444",
+          showLabels: fields.showLabels,
+          labelPrecision: fields.labelPrecision,
+          targetColor: fields.targetColor,
+          stopColor: fields.stopColor,
+          opacity: fields.opacity,
+          targetOpacity: fields.targetOpacity,
+          stopOpacity: fields.stopOpacity,
           accountSize: 10000,
           riskPercent: 1,
           leverage: 1,
@@ -404,7 +555,7 @@ export function useDrawings(symbol: string, _timeframe?: string) {
         } as Drawing);
       }
     },
-    [activeTool, addDrawing, toolStyles]
+    [activeTool, addDrawing, toolStyles, userSettings]
   );
 
   const setToolStyle = useCallback((tool: DrawingTool, updates: Partial<{ color: string; lineWidth: number; opacity: number }>) => {
@@ -641,6 +792,7 @@ export function useDrawings(symbol: string, _timeframe?: string) {
     cancelPending,
     updatePositionLevels,
     movePositionDrawing,
+    flushPersistence,
     getPositionMetrics,
   };
 }

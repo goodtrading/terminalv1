@@ -17,6 +17,8 @@ import {
   horizonShort,
   prioritizeLevelsForPlaybook,
 } from "@/lib/levelTiming";
+import { formatTerminalTime } from "@/lib/timezone";
+import { useTimezonePreference } from "@/hooks/useTimezonePreference";
 
 // Import vacuum engine types
 interface VacuumAnalysisResult {
@@ -568,6 +570,7 @@ function StructuralScenariosPanel({
 }
 
 function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebarProps) {
+  useTimezonePreference();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const { data: state, isLoading: terminalStateLoading } = useTerminalState();
   const sweepHistory = useSweepHistory();
@@ -832,7 +835,7 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
           const topMagnets = Array.isArray(opts?.topMagnets) ? opts!.topMagnets.slice(0, 3) : [];
           const asOf =
             typeof opts?.asOf === "string" && opts.asOf
-              ? new Date(opts.asOf).toLocaleTimeString(undefined, { hour12: false })
+              ? formatTerminalTime(opts.asOf)
               : "--";
           const regimeColor =
             regime === "LONG_GAMMA" ? "green" : regime === "SHORT_GAMMA" ? "red" : "gray";
@@ -1320,7 +1323,7 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
                   <ul className="mt-1.5 space-y-1 max-h-[140px] overflow-y-auto">
                     {sweepHistory.slice(0, 8).map((e, i) => (
                       <li key={`${e.timestamp}-${e.type}-${e.zone}-${i}`} className="text-[9px] font-mono text-white/50 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                        <span className="text-white/35">{new Date(e.timestamp).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                        <span className="text-white/35">{formatTerminalTime(e.timestamp)}</span>
                         <span className={e.direction === "UP" ? "text-green-400/80" : e.direction === "DOWN" ? "text-red-400/80" : "text-purple-400/80"}>{e.direction}</span>
                         <span className="text-amber-400/80">{e.type.replace(/_/g, " ")}</span>
                         {e.confidence > 0 && <span className="text-white/40">{e.confidence}%</span>}
