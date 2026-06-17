@@ -54,7 +54,7 @@ export function DesktopFeedStatusBanner() {
     });
   }, [banner, feed.connected, feed.feedStatus, feed.lastError, feed.reconnectCount]);
 
-  if (!showBanner || !banner) return null;
+  if (!showBanner || !banner || banner.kind === "waiting") return null;
 
   const handleReconnect = async () => {
     setReconnectBusy(true);
