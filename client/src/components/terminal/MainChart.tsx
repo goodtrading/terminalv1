@@ -103,8 +103,8 @@ export function MainChart({
   const lastChartPushRef = useRef<{ tf: ChartTimeframeId; len: number; lastTime: number } | null>(null);
   const [chartReady, setChartReady] = useState(false);
   const [brokerSession, setBrokerSession] = useState(loadBrokerSession);
-    const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
-  const [rightPriceScaleWidth, setRightPriceScaleWidth] = useState(RIGHT_PRICE_SCALE_MIN_WIDTH);
+  const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
+  const [plotAreaWidth, setPlotAreaWidth] = useState<number | null>(null);
   const [drawingsViewportVersion, setDrawingsViewportVersion] = useState(0);
   const [chartCandleTimes, setChartCandleTimes] = useState<{ time: number }[]>([]);
   const drawingsInteractionActiveRef = useRef(false);
@@ -567,15 +567,15 @@ export function MainChart({
     ghostSeriesRef.current = ghostSeries;
     setChartReady(true);
 
-    const syncRightPriceScaleWidth = () => {
-      const scaleWidth = chart.priceScale("right").width();
-      if (scaleWidth > 0) {
-        setRightPriceScaleWidth((prev) => (prev === scaleWidth ? prev : scaleWidth));
+    const syncChartLayoutMetrics = () => {
+      const plotW = chart.timeScale().width();
+      if (plotW > 0) {
+        setPlotAreaWidth((prev) => (prev === plotW ? prev : plotW));
       }
     };
 
     const bumpDrawingsViewport = () => {
-      syncRightPriceScaleWidth();
+      syncChartLayoutMetrics();
       setDrawingsViewportVersion((v) => {
         const next = v + 1;
         setChartViewportVersion(next);
@@ -657,7 +657,7 @@ export function MainChart({
         lastAppliedSize.h = h;
 
         chartRef.current.applyOptions({ width: w, height: h });
-        syncRightPriceScaleWidth();
+        syncChartLayoutMetrics();
         setChartSize((prev) => {
           if (prev && prev.w === w && prev.h === h) return prev;
           return { w, h };
@@ -2270,7 +2270,11 @@ export function MainChart({
         {chartReady && chartContainerRef.current && chartSize && lastCandle && toggles.price ? (
           <div
             className="price-axis-overlay absolute top-0 right-0 bottom-0 z-[12] pointer-events-none"
-            style={{ width: rightPriceScaleWidth }}
+            style={
+              plotAreaWidth != null
+                ? { left: plotAreaWidth }
+                : { width: RIGHT_PRICE_SCALE_MIN_WIDTH }
+            }
           >
             <PriceLineCountdownLabel
               price={lastCandle.close}
@@ -2284,7 +2288,12 @@ export function MainChart({
         ) : null}
         <div
           className="absolute inset-0 overflow-hidden pointer-events-none"
-          style={{ paddingRight: rightPriceScaleWidth }}
+          style={{
+            paddingRight:
+              chartSize && plotAreaWidth != null && plotAreaWidth < chartSize.w
+                ? chartSize.w - plotAreaWidth
+                : RIGHT_PRICE_SCALE_MIN_WIDTH,
+          }}
         >
         {LIVE_CANDLE_CHART_DISABLED && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
