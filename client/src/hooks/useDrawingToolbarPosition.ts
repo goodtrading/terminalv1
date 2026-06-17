@@ -2,21 +2,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type DrawingToolbarPosition,
   DRAWING_TOOLBAR_DIMS,
-  DRAWING_TOOLBAR_STORAGE_KEY,
   CHART_HEADER_HEIGHT_ESTIMATE,
   clampDrawingToolbarPosition,
   clampContextualBarLeft,
   normalizeStoredDrawingToolbarPosition,
   safeDefaultDrawingToolbarForChart,
 } from "@/lib/drawingToolbarPosition";
+import { getDrawingToolbarStorageKey } from "@/components/terminal/drawings/persistence";
 
 export type { DrawingToolbarPosition };
 
 const SMALL_CHART_WIDTH = 480;
 
-function readStoredPosition(): DrawingToolbarPosition | null {
+function readStoredPosition(storageKey: string): DrawingToolbarPosition | null {
   try {
-    const raw = localStorage.getItem(DRAWING_TOOLBAR_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<DrawingToolbarPosition>;
     return {
@@ -29,9 +29,9 @@ function readStoredPosition(): DrawingToolbarPosition | null {
   }
 }
 
-function persistPosition(position: DrawingToolbarPosition): void {
+function persistPosition(storageKey: string, position: DrawingToolbarPosition): void {
   try {
-    localStorage.setItem(DRAWING_TOOLBAR_STORAGE_KEY, JSON.stringify(position));
+    localStorage.setItem(storageKey, JSON.stringify(position));
   } catch {
     /* ignore quota / private mode */
   }
@@ -41,9 +41,12 @@ export function useDrawingToolbarPosition(
   chartWidth: number,
   chartHeight: number,
   chartHeaderHeight = CHART_HEADER_HEIGHT_ESTIMATE,
+  userScope = "guest",
 ) {
+  const storageKey = getDrawingToolbarStorageKey(userScope);
+
   const [position, setPosition] = useState<DrawingToolbarPosition>(() => {
-    const stored = readStoredPosition();
+    const stored = readStoredPosition(storageKey);
     const base =
       stored ??
       safeDefaultDrawingToolbarForChart(chartWidth > 0 ? chartWidth : SMALL_CHART_WIDTH, chartHeaderHeight);
@@ -53,7 +56,9 @@ export function useDrawingToolbarPosition(
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
 
   useEffect(() => {
+    const stored = readStoredPosition(storageKey);
     setPosition((prev) => {
+      const base = stored ?? prev;
       if (chartWidth > 0 && chartWidth < SMALL_CHART_WIDTH) {
         return normalizeStoredDrawingToolbarPosition(
           safeDefaultDrawingToolbarForChart(chartWidth, chartHeaderHeight),
@@ -62,17 +67,17 @@ export function useDrawingToolbarPosition(
           chartHeaderHeight,
         );
       }
-      return normalizeStoredDrawingToolbarPosition(prev, chartWidth, chartHeight, chartHeaderHeight);
+      return normalizeStoredDrawingToolbarPosition(base, chartWidth, chartHeight, chartHeaderHeight);
     });
-  }, [chartWidth, chartHeight, chartHeaderHeight]);
+  }, [chartWidth, chartHeight, chartHeaderHeight, storageKey]);
 
   const commitPosition = useCallback(
     (next: DrawingToolbarPosition) => {
       const clamped = clampDrawingToolbarPosition(next, chartWidth, chartHeight);
       setPosition(clamped);
-      persistPosition(clamped);
+      persistPosition(storageKey, clamped);
     },
-    [chartWidth, chartHeight],
+    [chartWidth, chartHeight, storageKey],
   );
 
   const onDragHandlePointerDown = useCallback(
@@ -116,20 +121,20 @@ export function useDrawingToolbarPosition(
       }
       setPosition((prev) => {
         const clamped = clampDrawingToolbarPosition(prev, chartWidth, chartHeight);
-        persistPosition(clamped);
+        persistPosition(storageKey, clamped);
         return clamped;
       });
     },
-    [chartWidth, chartHeight],
+    [chartWidth, chartHeight, storageKey],
   );
 
   const toggleCollapsed = useCallback(() => {
     setPosition((prev) => {
       const next = clampDrawingToolbarPosition({ ...prev, collapsed: !prev.collapsed }, chartWidth, chartHeight);
-      persistPosition(next);
+      persistPosition(storageKey, next);
       return next;
     });
-  }, [chartWidth, chartHeight]);
+  }, [chartWidth, chartHeight, storageKey]);
 
   const resetPosition = useCallback(() => {
     commitPosition(safeDefaultDrawingToolbarForChart(chartWidth, chartHeaderHeight));
