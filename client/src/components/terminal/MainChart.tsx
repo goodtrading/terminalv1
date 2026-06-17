@@ -76,6 +76,7 @@ type UTCTimestamp = number;
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP" | "FOOTPRINT";
 
 const RIGHT_PRICE_SCALE_MIN_WIDTH = 100;
+const PRICE_LABEL_DEBUG = false;
 
 export function MainChart({
   activeScenario,
@@ -105,6 +106,7 @@ export function MainChart({
   const [brokerSession, setBrokerSession] = useState(loadBrokerSession);
   const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
   const [plotAreaWidth, setPlotAreaWidth] = useState<number | null>(null);
+  const [priceAxisWidth, setPriceAxisWidth] = useState(RIGHT_PRICE_SCALE_MIN_WIDTH);
   const [drawingsViewportVersion, setDrawingsViewportVersion] = useState(0);
   const [chartCandleTimes, setChartCandleTimes] = useState<{ time: number }[]>([]);
   const drawingsInteractionActiveRef = useRef(false);
@@ -568,9 +570,27 @@ export function MainChart({
     setChartReady(true);
 
     const syncChartLayoutMetrics = () => {
+      const chartW = chartContainerRef.current?.clientWidth ?? 0;
       const plotW = chart.timeScale().width();
-      if (plotW > 0) {
-        setPlotAreaWidth((prev) => (prev === plotW ? prev : plotW));
+      const scaleW = chart.priceScale("right").width();
+
+      let nextPlot = plotW > 0 ? plotW : null;
+      let nextAxis = scaleW > 0 ? scaleW : null;
+
+      if (nextAxis != null && chartW > nextAxis) {
+        const plotFromAxis = chartW - nextAxis;
+        if (nextPlot == null || nextPlot >= chartW) {
+          nextPlot = plotFromAxis;
+        }
+      } else if (nextPlot != null && chartW > nextPlot) {
+        nextAxis = chartW - nextPlot;
+      }
+
+      if (nextPlot != null && nextPlot > 0) {
+        setPlotAreaWidth((prev) => (prev === nextPlot ? prev : nextPlot));
+      }
+      if (nextAxis != null && nextAxis > 0) {
+        setPriceAxisWidth((prev) => (prev === nextAxis ? prev : nextAxis));
       }
     };
 
@@ -608,6 +628,7 @@ export function MainChart({
     ensureFutureSpace();
     ts.subscribeVisibleTimeRangeChange(onViewportChange);
     ts.subscribeVisibleLogicalRangeChange(onViewportChange);
+    requestAnimationFrame(() => syncChartLayoutMetrics());
     const interactionTarget = chartContainerRef.current;
 
     const stopInteractionRaf = () => {
@@ -652,12 +673,14 @@ export function MainChart({
         const h = el.clientHeight;
         // Ignore transient zero/near-zero sizes during layout transitions.
         if (w < 50 || h < 50) return;
+
+        chartRef.current.applyOptions({ width: w, height: h });
+        syncChartLayoutMetrics();
+
         if (lastAppliedSize.w === w && lastAppliedSize.h === h) return;
         lastAppliedSize.w = w;
         lastAppliedSize.h = h;
 
-        chartRef.current.applyOptions({ width: w, height: h });
-        syncChartLayoutMetrics();
         setChartSize((prev) => {
           if (prev && prev.w === w && prev.h === h) return prev;
           return { w, h };
@@ -2260,40 +2283,24 @@ export function MainChart({
             </>
           );
         })()}
-        <div className="absolute inset-0 z-[5]">
+        <div
+          className={cn(
+            "chart-shell relative absolute inset-0 z-[5]",
+            PRICE_LABEL_DEBUG && "outline outline-2 outline-blue-500",
+          )}
+        >
         <div
           ref={chartContainerRef}
           data-chart-container
           className="absolute inset-0 pointer-events-none"
           style={{ cursor: measurementDragging ? "crosshair" : undefined }}
         />
-        {chartReady && chartContainerRef.current && chartSize && lastCandle && toggles.price ? (
-          <div
-            className="price-axis-overlay absolute top-0 right-0 bottom-0 z-[12] pointer-events-none"
-            style={
-              plotAreaWidth != null
-                ? { left: plotAreaWidth }
-                : { width: RIGHT_PRICE_SCALE_MIN_WIDTH }
-            }
-          >
-            <PriceLineCountdownLabel
-              price={lastCandle.close}
-              isUp={lastCandle.close >= lastCandle.open}
-              timeframe={chartTimeframe}
-              chartHeight={chartSize.h}
-              priceToCoordinate={(p) => candleSeriesRef.current?.priceToCoordinate(p) ?? null}
-              viewportVersion={drawingsViewportVersion}
-            />
-          </div>
-        ) : null}
         <div
-          className="absolute inset-0 overflow-hidden pointer-events-none"
-          style={{
-            paddingRight:
-              chartSize && plotAreaWidth != null && plotAreaWidth < chartSize.w
-                ? chartSize.w - plotAreaWidth
-                : RIGHT_PRICE_SCALE_MIN_WIDTH,
-          }}
+          className={cn(
+            "candles-layer absolute inset-0 overflow-hidden pointer-events-none",
+            PRICE_LABEL_DEBUG && "outline outline-2 outline-red-500",
+          )}
+          style={{ paddingRight: priceAxisWidth }}
         >
         {LIVE_CANDLE_CHART_DISABLED && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
@@ -2377,6 +2384,21 @@ export function MainChart({
           );
         })()}
         </div>
+        {chartReady && chartContainerRef.current && chartSize && lastCandle && toggles.price ? (
+          <PriceLineCountdownLabel
+            price={lastCandle.close}
+            isUp={lastCandle.close >= lastCandle.open}
+            timeframe={chartTimeframe}
+            plotWidth={
+              plotAreaWidth ??
+              Math.max(0, chartSize.w - priceAxisWidth)
+            }
+            priceAxisWidth={priceAxisWidth}
+            chartHeight={chartSize.h}
+            priceToCoordinate={(p) => candleSeriesRef.current?.priceToCoordinate(p) ?? null}
+            viewportVersion={drawingsViewportVersion}
+          />
+        ) : null}
         </div>
         {activePanels.has("HEATMAP") && (
           <HeatmapCanvas isActive />

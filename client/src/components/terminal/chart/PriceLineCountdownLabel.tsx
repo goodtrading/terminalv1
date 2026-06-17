@@ -2,10 +2,15 @@ import { useEffect, useState } from "react";
 import { useCandleCountdown } from "@/hooks/useCandleCountdown";
 import { cn } from "@/lib/utils";
 
+const PRICE_LABEL_AXIS_PADDING_X = 2;
+const PRICE_LABEL_DEBUG = false;
+
 type PriceLineCountdownLabelProps = {
   price: number;
   isUp: boolean;
   timeframe: string;
+  plotWidth: number;
+  priceAxisWidth: number;
   chartHeight: number;
   priceToCoordinate: (price: number) => number | null;
   viewportVersion?: number;
@@ -18,6 +23,8 @@ export function PriceLineCountdownLabel({
   price,
   isUp,
   timeframe,
+  plotWidth,
+  priceAxisWidth,
   chartHeight,
   priceToCoordinate,
   viewportVersion = 0,
@@ -32,14 +39,22 @@ export function PriceLineCountdownLabel({
       setTop(null);
       return;
     }
-    const clamped = Math.max(
+    const clampedY = Math.max(
       LABEL_HEIGHT / 2 + 4,
       Math.min(chartHeight - LABEL_HEIGHT / 2 - 4, y),
     );
-    setTop(clamped);
+    setTop(clampedY);
   }, [price, priceToCoordinate, chartHeight, viewportVersion]);
 
-  if (!visible || countdownLabel == null || top == null || !Number.isFinite(price) || price <= 0) {
+  if (
+    !visible ||
+    countdownLabel == null ||
+    top == null ||
+    !Number.isFinite(price) ||
+    price <= 0 ||
+    plotWidth <= 0 ||
+    priceAxisWidth <= 0
+  ) {
     return null;
   }
 
@@ -49,16 +64,27 @@ export function PriceLineCountdownLabel({
   });
 
   const lineColor = isUp ? "#22c55e" : "#ef4444";
+  const x = plotWidth + PRICE_LABEL_AXIS_PADDING_X;
+  const width = Math.max(48, priceAxisWidth - PRICE_LABEL_AXIS_PADDING_X * 2);
 
   return (
     <div
-      className="pointer-events-none absolute right-[4px] z-[12]"
-      style={{ top, transform: "translateY(-50%)" }}
+      className={cn(
+        "price-line-countdown-anchor pointer-events-none absolute z-[12]",
+        PRICE_LABEL_DEBUG && "outline outline-2 outline-yellow-400",
+      )}
+      style={{
+        left: `${x}px`,
+        top: `${top - LABEL_HEIGHT / 2}px`,
+        width: `${width}px`,
+        height: `${LABEL_HEIGHT}px`,
+        transform: "none",
+      }}
       title="Precio actual · tiempo hasta cierre de vela"
     >
       <div
         className={cn(
-          "price-line-countdown-label box-border flex w-fit min-h-[24px] min-w-[52px] max-w-full flex-col items-center justify-center gap-0 overflow-hidden rounded-[2px] px-[4px] py-[2px]",
+          "price-line-countdown-label box-border flex h-full w-full min-h-[24px] flex-col items-center justify-center gap-0 overflow-hidden rounded-[2px] px-[4px] py-[2px] text-center",
           "pointer-events-none whitespace-nowrap font-mono tabular-nums leading-none",
         )}
         style={{
