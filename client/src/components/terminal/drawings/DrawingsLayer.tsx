@@ -12,8 +12,10 @@ import { MovableDrawingToolbarShell } from "./MovableDrawingToolbarShell";
 import { DrawingsContextualBar } from "./DrawingsContextualBar";
 import { DrawingsOverlay } from "./DrawingsOverlay";
 import { useDrawings } from "./useDrawings";
+import { getDrawingUserScope } from "./persistence";
+import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 import { useDrawingToolbarPosition } from "@/hooks/useDrawingToolbarPosition";
-import { drawingToolbarPanelOpensLeft } from "@/lib/drawingToolbarPosition";
+import { drawingToolbarPanelOpensLeft, CHART_HEADER_HEIGHT_ESTIMATE } from "@/lib/drawingToolbarPosition";
 import { createDrawingProjection } from "./projection";
 import type { Drawing, DrawingTool } from "./types";
 import type { ChartMenuContext } from "../chart/chartContextTypes";
@@ -57,6 +59,8 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
 ) {
   const overlayRootRef = useRef<HTMLDivElement>(null);
   const [editorOpenRequestId, setEditorOpenRequestId] = useState<string | null>(null);
+  const { user } = useTerminalAuth();
+  const userScope = getDrawingUserScope(user?.id ?? null);
 
   const {
     drawings,
@@ -89,7 +93,7 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
     setToolStyle,
     setSmartKind,
     convertSelectedToSmart,
-  } = useDrawings(symbol, timeframe);
+  } = useDrawings(symbol, timeframe, user?.id ?? null);
 
   const projection = useMemo(
     () => createDrawingProjection(coordinates.timeToCoordinate, coordinates.priceToCoordinate),
@@ -155,7 +159,7 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
     onDragHandlePointerDown,
     onDragHandlePointerMove,
     onDragHandlePointerUp,
-  } = useDrawingToolbarPosition(chartWidth, chartHeight);
+  } = useDrawingToolbarPosition(chartWidth, chartHeight, CHART_HEADER_HEIGHT_ESTIMATE, userScope);
 
   const panelOpensLeft = drawingToolbarPanelOpensLeft(toolbarPosition.x, chartWidth);
 

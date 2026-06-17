@@ -1,13 +1,16 @@
 /**
- * Persist drawings per symbol (absolute time + price — shared across chart timeframes).
- * Primary key: goodtrading:drawings:<symbol>
- * Migrates legacy keys goodtrading:drawings:<symbol>:<timeframe> (first non-empty wins).
+ * Persist drawings and drawing UI settings per user + symbol.
+ * Keys:
+ * - goodtrading:drawings:v1:{userId}:{symbol}
+ * - goodtrading:drawing-settings:v1:{userId}
  */
 
-import type { Drawing, DrawingPoint } from "./types";
+import type { Drawing, DrawingPoint, DrawingTool } from "./types";
 import { DEFAULT_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_OPACITY } from "./types";
 
-const PREFIX = "goodtrading:drawings:";
+const DRAWINGS_PREFIX = "goodtrading:drawings:v1:";
+const SETTINGS_PREFIX = "goodtrading:drawing-settings:v1:";
+const LEGACY_PREFIX = "goodtrading:drawings:";
 
 const VALID_TOOLS = [
   "horizontalLine",
@@ -20,9 +23,49 @@ const VALID_TOOLS = [
   "shortPosition",
 ] as const;
 
+export type DrawingUserSettings = {
+  version: 1;
+  userId: string;
+  updatedAt: number;
+  toolStyles?: Partial<
+    Record<
+      DrawingTool,
+      {
+        color: string;
+        lineWidth: number;
+        opacity: number;
+      }
+    >
+  >;
+  longShort?: {
+    targetColor?: string;
+    stopColor?: string;
+    showLabels?: boolean;
+    labelPrecision?: number;
+  };
+  toolbar?: {
+    x?: number;
+    y?: number;
+    collapsed?: boolean;
+  };
+};
+
+export function getDrawingUserScope(userId: number | string | null | undefined): string {
+  if (userId == null || userId === "") return "guest";
+  return String(userId);
+}
+
+function drawingsKey(userScope: string, symbol: string): string {
+  return `${DRAWINGS_PREFIX}${userScope}:${symbol}`;
+}
+
+function settingsKey(userScope: string): string {
+  return `${SETTINGS_PREFIX}${userScope}`;
+}
+
 function isValidDrawing(d: Drawing): boolean {
   if (!d || typeof d.id !== "string" || d.id.trim() === "") return false;
-  if (!VALID_TOOLS.includes(d.tool as typeof VALID_TOOLS[number])) return false;
+  if (!VALID_TOOLS.includes(d.tool as (typeof VALID_TOOLS)[number])) return false;
   if (!Array.isArray(d.points)) return false;
   const pts = d.points as DrawingPoint[];
   for (const p of pts) {
@@ -58,10 +101,29 @@ interface LegacyDrawing {
   time?: number;
   color?: string;
   lineWidth?: number;
-  fillOpacity?: number;
   locked?: boolean;
   text?: string;
   createdAt?: number;
+}
+
+function applyPositionFields(out: Drawing, obj: Record<string, unknown>): void {
+  if (obj.tool !== "longPosition" && obj.tool !== "shortPosition") return;
+  const num = (k: string) =>
+    typeof obj[k] === "number" && Number.isFinite(obj[k] as number) ? (obj[k] as number) : undefined;
+  const entryPrice = num("entryPrice");
+  const targetPrice = num("targetPrice");
+  const stopPrice = num("stopPrice");
+  if (entryPrice != null) out.entryPrice = entryPrice;
+  if (targetPrice != null) out.targetPrice = targetPrice;
+  if (stopPrice != null) out.stopPrice = stopPrice;
+  if (typeof obj.targetColor === "string") out.targetColor = obj.targetColor;
+  if (typeof obj.stopColor === "string") out.stopColor = obj.stopColor;
+  if (typeof obj.showLabels === "boolean") out.showLabels = obj.showLabels;
+  if (typeof obj.labelPrecision === "number") out.labelPrecision = obj.labelPrecision;
+  if (typeof obj.accountSize === "number") out.accountSize = obj.accountSize;
+  if (typeof obj.riskPercent === "number") out.riskPercent = obj.riskPercent;
+  if (typeof obj.leverage === "number") out.leverage = obj.leverage;
+  if (typeof obj.quantity === "number") out.quantity = obj.quantity;
 }
 
 function migrateLegacy(raw: LegacyDrawing): Drawing | null {
@@ -129,8 +191,14 @@ function normalizeDrawing(d: unknown): Drawing | null {
 
   if (Array.isArray(obj.points) && obj.points.length > 0) {
     const points = obj.points
-      .filter((p: unknown) => p && typeof p === "object" && typeof (p as any).time === "number" && typeof (p as any).price === "number")
-      .map((p: any) => ({ time: p.time, price: p.price }));
+      .filter(
+        (p: unknown) =>
+          p &&
+          typeof p === "object" &&
+          typeof (p as { time?: unknown }).time === "number" &&
+          typeof (p as { price?: unknown }).price === "number",
+      )
+      .map((p) => ({ time: (p as DrawingPoint).time, price: (p as DrawingPoint).price }));
     if (points.length === 0) return null;
     const out = {
       id: typeof obj.id === "string" ? obj.id : crypto.randomUUID(),
@@ -145,37 +213,21 @@ function normalizeDrawing(d: unknown): Drawing | null {
       text: typeof obj.text === "string" ? obj.text : undefined,
     } as Drawing;
     if (out.tool === "text" && out.text === undefined) out.text = "Label";
+    applyPositionFields(out, obj);
     return out;
   }
 
   return migrateLegacy(obj as LegacyDrawing);
 }
 
-function storageKeySymbol(symbol: string): string {
-  return `${PREFIX}${symbol}`;
-}
-
-/** @deprecated timeframe ignored — kept for call-site compatibility */
-export function loadDrawings(symbol: string, _timeframe?: string): Drawing[] {
+function parseDrawingsRaw(raw: string | null): Drawing[] {
+  if (!raw) return [];
   try {
-    const symKey = storageKeySymbol(symbol);
-    let raw = localStorage.getItem(symKey);
-    if (!raw) {
-      const legacy = localStorage.getItem(`${PREFIX}${symbol}:15m`);
-      if (legacy) {
-        raw = legacy;
-        try {
-          localStorage.setItem(symKey, legacy);
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown[];
-    if (!Array.isArray(parsed)) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    const list = Array.isArray(parsed) ? parsed : (parsed as { drawings?: unknown[] })?.drawings;
+    if (!Array.isArray(list)) return [];
     const result: Drawing[] = [];
-    for (const item of parsed) {
+    for (const item of list) {
       const d = normalizeDrawing(item);
       if (!d) continue;
       if (!isValidDrawing(d)) continue;
@@ -188,11 +240,78 @@ export function loadDrawings(symbol: string, _timeframe?: string): Drawing[] {
   }
 }
 
-/** @deprecated timeframe ignored */
-export function saveDrawings(symbol: string, _timeframe: string | undefined, drawings: Drawing[]): void {
+function loadLegacySymbolDrawings(symbol: string): Drawing[] {
   try {
-    localStorage.setItem(storageKeySymbol(symbol), JSON.stringify(drawings));
+    let raw = localStorage.getItem(`${LEGACY_PREFIX}${symbol}`);
+    if (!raw) raw = localStorage.getItem(`${LEGACY_PREFIX}${symbol}:15m`);
+    return parseDrawingsRaw(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function loadDrawings(
+  symbol: string,
+  userScope: string = "guest",
+  _timeframe?: string,
+): Drawing[] {
+  try {
+    const key = drawingsKey(userScope, symbol);
+    let result = parseDrawingsRaw(localStorage.getItem(key));
+    if (result.length === 0 && userScope !== "guest") {
+      const legacy = loadLegacySymbolDrawings(symbol);
+      if (legacy.length > 0) {
+        result = legacy;
+        try {
+          localStorage.setItem(key, JSON.stringify(legacy));
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    if (result.length === 0 && userScope === "guest") {
+      result = loadLegacySymbolDrawings(symbol);
+    }
+    return result;
+  } catch {
+    return [];
+  }
+}
+
+export function saveDrawings(
+  symbol: string,
+  userScope: string,
+  _timeframe: string | undefined,
+  drawings: Drawing[],
+): void {
+  try {
+    const payload = drawings.map((d) => ({ ...d, selected: false }));
+    localStorage.setItem(drawingsKey(userScope, symbol), JSON.stringify(payload));
   } catch (e) {
     console.warn("[Drawings] Failed to save:", e);
   }
+}
+
+export function loadDrawingSettings(userScope: string): DrawingUserSettings | null {
+  try {
+    const raw = localStorage.getItem(settingsKey(userScope));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DrawingUserSettings;
+    if (!parsed || parsed.version !== 1) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function saveDrawingSettings(userScope: string, settings: DrawingUserSettings): void {
+  try {
+    localStorage.setItem(settingsKey(userScope), JSON.stringify(settings));
+  } catch (e) {
+    console.warn("[Drawings] Failed to save settings:", e);
+  }
+}
+
+export function getDrawingToolbarStorageKey(userScope: string): string {
+  return `${SETTINGS_PREFIX}${userScope}:toolbar-pos`;
 }

@@ -1,9 +1,17 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import type { Drawing, DrawingPoint, DrawingTool, SmartToolKind } from "./types";
 import { DEFAULT_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_OPACITY, getToolPointCount } from "./types";
-import { loadDrawings, saveDrawings } from "./persistence";
+import {
+  getDrawingUserScope,
+  loadDrawingSettings,
+  loadDrawings,
+  saveDrawingSettings,
+  saveDrawings,
+  type DrawingUserSettings,
+} from "./persistence";
 import { getChartSettings } from "../chart/chartSettingsStore";
 import { getPositionMetrics, isPositionDrawing, nextPositionLevels } from "./positionUtils";
+import { hitTestPositionAnchor } from "./positionInteraction";
 
 const MAX_POLYLINE_POINTS = 10;
 const HIT_THRESHOLD = 10;
@@ -37,23 +45,45 @@ function sanitizeDrawings(list: Drawing[]): Drawing[] {
   return list.map((d) => sanitizeDrawing(d)).filter((d): d is Drawing => d != null);
 }
 
-export function useDrawings(symbol: string, _timeframe?: string) {
-  const [drawings, setDrawings] = useState<Drawing[]>(() => sanitizeDrawings(loadDrawings(symbol)));
+const SAVE_DEBOUNCE_MS = 400;
+
+const DEFAULT_TOOL_STYLES: Record<DrawingTool, { color: string; lineWidth: number; opacity: number }> = {
+  select: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
+  horizontalLine: { color: "#ffffff", lineWidth: 1, opacity: 1 },
+  trendLine: { color: "#ffffff", lineWidth: 1, opacity: 1 },
+  arrow: { color: "#ffffff", lineWidth: 2, opacity: 1 },
+  rectangle: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
+  text: { color: "#ffffff", lineWidth: 1, opacity: 1 },
+  polyline: { color: "#ffffff", lineWidth: 2, opacity: 1 },
+  longPosition: { color: "#22c55e", lineWidth: 1, opacity: 0.9 },
+  shortPosition: { color: "#ef4444", lineWidth: 1, opacity: 0.9 },
+};
+
+function mergeToolStyles(saved?: DrawingUserSettings["toolStyles"]) {
+  const next = { ...DEFAULT_TOOL_STYLES };
+  if (!saved) return next;
+  (Object.keys(next) as DrawingTool[]).forEach((tool) => {
+    if (saved[tool]) next[tool] = { ...next[tool], ...saved[tool]! };
+  });
+  return next;
+}
+
+export function useDrawings(symbol: string, _timeframe?: string, userId?: number | null) {
+  const userScope = useMemo(() => getDrawingUserScope(userId), [userId]);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [drawings, setDrawings] = useState<Drawing[]>(() =>
+    sanitizeDrawings(loadDrawings(symbol, userScope)),
+  );
   const [activeTool, setActiveTool] = useState<DrawingTool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingDrawing, setPendingDrawing] = useState<Drawing | null>(null);
   const [draggingAnchor, setDraggingAnchor] = useState<{ id: string; pointIndex: number } | null>(null);
-  const [toolStyles, setToolStyles] = useState<Record<DrawingTool, { color: string; lineWidth: number; opacity: number }>>({
-    select: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
-    horizontalLine: { color: "#ffffff", lineWidth: 1, opacity: 1 },
-    trendLine: { color: "#ffffff", lineWidth: 1, opacity: 1 },
-    arrow: { color: "#ffffff", lineWidth: 2, opacity: 1 },
-    rectangle: { color: DEFAULT_COLOR, lineWidth: DEFAULT_LINE_WIDTH, opacity: DEFAULT_OPACITY },
-    text: { color: "#ffffff", lineWidth: 1, opacity: 1 },
-    polyline: { color: "#ffffff", lineWidth: 2, opacity: 1 },
-    longPosition: { color: "#22c55e", lineWidth: 1, opacity: 0.9 },
-    shortPosition: { color: "#ef4444", lineWidth: 1, opacity: 0.9 },
-  });
+  const [toolStyles, setToolStyles] = useState<Record<DrawingTool, { color: string; lineWidth: number; opacity: number }>>(
+    () => mergeToolStyles(loadDrawingSettings(userScope)?.toolStyles),
+  );
+  const longShortDefaultsRef = useRef(loadDrawingSettings(userScope)?.longShort);
 
   useEffect(() => {
     const onDrawingDefaults = () => {
@@ -77,8 +107,14 @@ export function useDrawings(symbol: string, _timeframe?: string) {
   }, []);
 
   useEffect(() => {
-    setDrawings(sanitizeDrawings(loadDrawings(symbol)));
-  }, [symbol]);
+    const saved = loadDrawingSettings(userScope);
+    longShortDefaultsRef.current = saved?.longShort;
+    setToolStyles(mergeToolStyles(saved?.toolStyles));
+    setDrawings(sanitizeDrawings(loadDrawings(symbol, userScope)));
+    setSelectedId(null);
+    setPendingDrawing(null);
+    setDraggingAnchor(null);
+  }, [symbol, userScope]);
 
   useEffect(() => {
     const clean = sanitizeDrawings(drawings);
@@ -86,8 +122,30 @@ export function useDrawings(symbol: string, _timeframe?: string) {
       setDrawings(clean);
       return;
     }
-    saveDrawings(symbol, _timeframe, clean);
-  }, [drawings, symbol, _timeframe]);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveDrawings(symbol, userScope, _timeframe, clean);
+    }, SAVE_DEBOUNCE_MS);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [drawings, symbol, userScope, _timeframe]);
+
+  useEffect(() => {
+    if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
+    settingsTimerRef.current = setTimeout(() => {
+      saveDrawingSettings(userScope, {
+        version: 1,
+        userId: userScope,
+        updatedAt: Date.now(),
+        toolStyles,
+        longShort: longShortDefaultsRef.current,
+      });
+    }, SAVE_DEBOUNCE_MS);
+    return () => {
+      if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
+    };
+  }, [toolStyles, userScope]);
 
   const addDrawing = useCallback((d: Omit<Drawing, "id" | "createdAt">) => {
     const full: Drawing = {
@@ -105,7 +163,20 @@ export function useDrawings(symbol: string, _timeframe?: string) {
   const updateDrawing = useCallback((id: string, updates: Partial<Drawing>) => {
     setDrawings((prev) =>
       prev
-        .map((d) => (d.id === id ? ({ ...d, ...updates } as Drawing) : d))
+        .map((d) => {
+          if (d.id !== id) return d;
+          const merged = { ...d, ...updates } as Drawing;
+          if (isPositionDrawing(merged) && (updates.targetColor || updates.stopColor || updates.showLabels != null)) {
+            longShortDefaultsRef.current = {
+              ...longShortDefaultsRef.current,
+              targetColor: merged.targetColor ?? longShortDefaultsRef.current?.targetColor,
+              stopColor: merged.stopColor ?? longShortDefaultsRef.current?.stopColor,
+              showLabels: merged.showLabels ?? longShortDefaultsRef.current?.showLabels,
+              labelPrecision: merged.labelPrecision ?? longShortDefaultsRef.current?.labelPrecision,
+            };
+          }
+          return merged;
+        })
         .map((d) => sanitizeDrawing(d))
         .filter((d): d is Drawing => d != null)
     );
@@ -323,31 +394,8 @@ export function useDrawings(symbol: string, _timeframe?: string) {
             return { drawing: d, pointIndex: j };
         }
         if (isPositionDrawing(d) && d.points.length >= 2) {
-          const m = getPositionMetrics(d);
-          const x1 = timeToX(d.points[0].time);
-          const x2 = timeToX(d.points[1].time);
-          if (!m || x2 == null) continue;
-          const entryY = priceToY(m.entry);
-          const stopY = priceToY(m.stop);
-          const targetY = priceToY(m.target);
-          const anchors: Array<number | null> = [entryY, stopY, targetY];
-          for (let k = 0; k < anchors.length; k++) {
-            const ay = anchors[k];
-            if (ay == null) continue;
-            if (Math.abs(x - x2) <= threshold && Math.abs(y - ay) <= threshold) {
-              return { drawing: d, pointIndex: 100 + k };
-            }
-          }
-          if (x1 != null) {
-            const yTop = priceToY(Math.max(m.entry, m.stop, m.target));
-            const yBottom = priceToY(Math.min(m.entry, m.stop, m.target));
-            if (yTop != null && yBottom != null) {
-              const midY = (yTop + yBottom) / 2;
-              if (Math.abs(x - x2) <= threshold && Math.abs(y - midY) <= Math.max(threshold, 14)) {
-                return { drawing: d, pointIndex: 103 };
-              }
-            }
-          }
+          const anchorIndex = hitTestPositionAnchor(x, y, d, timeToX, priceToY, ANCHOR_HIT_THRESHOLD);
+          if (anchorIndex != null) return { drawing: d, pointIndex: anchorIndex };
         }
       }
       return null;
@@ -381,6 +429,7 @@ export function useDrawings(symbol: string, _timeframe?: string) {
         } as Drawing);
       } else if (activeTool === "longPosition" || activeTool === "shortPosition") {
         const levels = nextPositionLevels(activeTool, price, price);
+        const ls = longShortDefaultsRef.current;
         setPendingDrawing({
           ...base,
           tool: activeTool,
@@ -388,10 +437,10 @@ export function useDrawings(symbol: string, _timeframe?: string) {
           entryPrice: price,
           targetPrice: levels.targetPrice,
           stopPrice: levels.stopPrice,
-          showLabels: true,
-          labelPrecision: 2,
-          targetColor: activeTool === "longPosition" ? "#22c55e" : "#22c55e",
-          stopColor: activeTool === "longPosition" ? "#ef4444" : "#ef4444",
+          showLabels: ls?.showLabels ?? true,
+          labelPrecision: ls?.labelPrecision ?? 2,
+          targetColor: ls?.targetColor ?? "#22c55e",
+          stopColor: ls?.stopColor ?? "#ef4444",
           accountSize: 10000,
           riskPercent: 1,
           leverage: 1,
