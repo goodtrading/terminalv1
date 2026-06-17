@@ -12,7 +12,7 @@ type PriceLineCountdownLabelProps = {
   visible?: boolean;
 };
 
-const LABEL_HEIGHT = 34;
+const LABEL_HEIGHT = 26;
 const RIGHT_AXIS_WIDTH = 100;
 
 export function PriceLineCountdownLabel({
@@ -60,7 +60,7 @@ export function PriceLineCountdownLabel({
     >
       <div
         className={cn(
-          "price-line-countdown-label ml-auto box-border flex min-h-[32px] min-w-[72px] max-w-full flex-col items-center justify-center gap-0 overflow-hidden rounded-sm px-1.5 py-[3px]",
+          "price-line-countdown-label ml-auto box-border flex min-h-[24px] min-w-[58px] max-w-full flex-col items-center justify-center gap-0 overflow-hidden rounded-[2px] px-[5px] py-0.5",
           "pointer-events-none whitespace-nowrap font-mono tabular-nums leading-none",
         )}
         style={{
@@ -68,10 +68,10 @@ export function PriceLineCountdownLabel({
           color: "#ffffff",
         }}
       >
-        <div className="price-line-countdown-price text-[12px] font-extrabold leading-none">
+        <div className="price-line-countdown-price text-[11px] font-extrabold leading-none">
           {priceText}
         </div>
-        <div className="price-line-countdown-time mt-0.5 text-[10px] font-semibold leading-none opacity-[0.78]">
+        <div className="price-line-countdown-time mt-[1px] text-[9px] font-semibold leading-none opacity-70">
           {countdownLabel}
         </div>
       </div>
