@@ -75,6 +75,8 @@ type UTCTimestamp = number;
 
 type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP" | "FOOTPRINT";
 
+const RIGHT_PRICE_SCALE_MIN_WIDTH = 100;
+
 export function MainChart({
   activeScenario,
   onActiveScenarioChange,
@@ -102,6 +104,7 @@ export function MainChart({
   const [chartReady, setChartReady] = useState(false);
   const [brokerSession, setBrokerSession] = useState(loadBrokerSession);
     const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
+  const [rightPriceScaleWidth, setRightPriceScaleWidth] = useState(RIGHT_PRICE_SCALE_MIN_WIDTH);
   const [drawingsViewportVersion, setDrawingsViewportVersion] = useState(0);
   const [chartCandleTimes, setChartCandleTimes] = useState<{ time: number }[]>([]);
   const drawingsInteractionActiveRef = useRef(false);
@@ -544,7 +547,7 @@ export function MainChart({
         rightOffset: FUTURE_RIGHT_OFFSET,
         rightBarStaysOnScroll: true,
       },
-      rightPriceScale: { borderColor: "#1a1a1a", scaleMargins: { top: 0.2, bottom: 0.25 }, minimumWidth: 100 },
+      rightPriceScale: { borderColor: "#1a1a1a", scaleMargins: { top: 0.2, bottom: 0.25 }, minimumWidth: RIGHT_PRICE_SCALE_MIN_WIDTH },
       crosshair: { mode: 0 },
     });
     const candleSeries = chart.addSeries(CandlestickSeries, { upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444", priceLineVisible: false, lastValueVisible: false });
@@ -564,13 +567,22 @@ export function MainChart({
     ghostSeriesRef.current = ghostSeries;
     setChartReady(true);
 
-    const bumpDrawingsViewport = () =>
+    const syncRightPriceScaleWidth = () => {
+      const scaleWidth = chart.priceScale("right").width();
+      if (scaleWidth > 0) {
+        setRightPriceScaleWidth((prev) => (prev === scaleWidth ? prev : scaleWidth));
+      }
+    };
+
+    const bumpDrawingsViewport = () => {
+      syncRightPriceScaleWidth();
       setDrawingsViewportVersion((v) => {
         const next = v + 1;
         setChartViewportVersion(next);
         drawDebug("CHART_VIEWPORT", { viewportVersion: next, source: "MainChart.onViewportChange" });
         return next;
       });
+    };
     const onViewportChange = () => {
       bumpDrawingsViewport();
       const lastTimeSec = drawingsTimeProjectionRef.current.lastTimeSec;
@@ -645,6 +657,7 @@ export function MainChart({
         lastAppliedSize.h = h;
 
         chartRef.current.applyOptions({ width: w, height: h });
+        syncRightPriceScaleWidth();
         setChartSize((prev) => {
           if (prev && prev.w === w && prev.h === h) return prev;
           return { w, h };
@@ -2247,13 +2260,32 @@ export function MainChart({
             </>
           );
         })()}
-        <div className="absolute inset-0 pr-[100px] z-[5] overflow-hidden pointer-events-none">
+        <div className="absolute inset-0 z-[5]">
         <div
           ref={chartContainerRef}
           data-chart-container
           className="absolute inset-0 pointer-events-none"
           style={{ cursor: measurementDragging ? "crosshair" : undefined }}
         />
+        {chartReady && chartContainerRef.current && chartSize && lastCandle && toggles.price ? (
+          <div
+            className="price-axis-overlay absolute top-0 right-0 bottom-0 z-[12] pointer-events-none"
+            style={{ width: rightPriceScaleWidth }}
+          >
+            <PriceLineCountdownLabel
+              price={lastCandle.close}
+              isUp={lastCandle.close >= lastCandle.open}
+              timeframe={chartTimeframe}
+              chartHeight={chartSize.h}
+              priceToCoordinate={(p) => candleSeriesRef.current?.priceToCoordinate(p) ?? null}
+              viewportVersion={drawingsViewportVersion}
+            />
+          </div>
+        ) : null}
+        <div
+          className="absolute inset-0 overflow-hidden pointer-events-none"
+          style={{ paddingRight: rightPriceScaleWidth }}
+        >
         {LIVE_CANDLE_CHART_DISABLED && <LivePriceMarker />}
         <ScenarioOverlay chart={chartRef.current} candleSeries={candleSeriesRef.current} activeScenario={activeScenario} />
         {chartReady && chartSize ? (
@@ -2336,18 +2368,7 @@ export function MainChart({
           );
         })()}
         </div>
-        {chartReady && chartContainerRef.current && chartSize && lastCandle && toggles.price ? (
-          <div className="absolute inset-y-0 right-0 z-[12] w-[100px] pointer-events-none">
-            <PriceLineCountdownLabel
-              price={lastCandle.close}
-              isUp={lastCandle.close >= lastCandle.open}
-              timeframe={chartTimeframe}
-              chartHeight={chartSize.h}
-              priceToCoordinate={(p) => candleSeriesRef.current?.priceToCoordinate(p) ?? null}
-              viewportVersion={drawingsViewportVersion}
-            />
-          </div>
-        ) : null}
+        </div>
         {activePanels.has("HEATMAP") && (
           <HeatmapCanvas isActive />
         )}

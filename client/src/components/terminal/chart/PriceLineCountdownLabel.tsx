@@ -32,7 +32,10 @@ export function PriceLineCountdownLabel({
       setTop(null);
       return;
     }
-    const clamped = Math.max(4, Math.min(chartHeight - LABEL_HEIGHT - 4, y - LABEL_HEIGHT / 2));
+    const clamped = Math.max(
+      LABEL_HEIGHT / 2 + 4,
+      Math.min(chartHeight - LABEL_HEIGHT / 2 - 4, y),
+    );
     setTop(clamped);
   }, [price, priceToCoordinate, chartHeight, viewportVersion]);
 
@@ -50,7 +53,7 @@ export function PriceLineCountdownLabel({
   return (
     <div
       className="pointer-events-none absolute right-[4px] z-[12]"
-      style={{ top }}
+      style={{ top, transform: "translateY(-50%)" }}
       title="Precio actual · tiempo hasta cierre de vela"
     >
       <div
