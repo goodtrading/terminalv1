@@ -221,6 +221,7 @@ app.use((req, res, next) => {
   const { registerRoutes } = await import("./routes");
   const { serveStatic } = await import("./static");
   const { setupMobileDirectEndpoint } = await import("./mobile-direct-endpoint");
+  const { registerMobileMarketStateV2Routes } = await import("./routes/mobileMarketStateV2.routes");
   console.log("[BOOT] Routes and endpoints imported");
 
   try {
@@ -299,6 +300,7 @@ app.use((req, res, next) => {
   console.log("[BOOT] Registering API routes...");
   await registerRoutes(httpServer, app);
   setupMobileDirectEndpoint(app);
+  registerMobileMarketStateV2Routes(app);
   console.log("[BOOT] API routes registered");
 
   app.use((req, res, next) => {
