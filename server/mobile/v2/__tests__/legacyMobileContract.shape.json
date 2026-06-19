@@ -1,0 +1,87 @@
+{
+  "topLevelKeys": [
+    "alerts",
+    "bias",
+    "levels",
+    "market",
+    "meta",
+    "risk",
+    "scenarios"
+  ],
+  "marketKeys": [
+    "distanceToFlip",
+    "gammaFlip",
+    "gammaRegime",
+    "marketMode",
+    "spot",
+    "totalGex",
+    "transitionZone"
+  ],
+  "marketModeKeys": [
+    "confidence",
+    "description",
+    "drivers",
+    "type"
+  ],
+  "transitionZoneKeys": [
+    "end",
+    "start"
+  ],
+  "biasKeys": [
+    "confidence",
+    "drivers",
+    "horizon",
+    "invalidation",
+    "type"
+  ],
+  "riskKeys": [
+    "cascadeDirection",
+    "cascadeRisk",
+    "squeezeDirection",
+    "squeezeProbability",
+    "squeezeType",
+    "volatilityState"
+  ],
+  "levelsKeys": [
+    "callWall",
+    "dealerPivot",
+    "gammaMagnets",
+    "putWall",
+    "shortGammaPocket"
+  ],
+  "shortGammaPocketKeys": [
+    "end",
+    "start"
+  ],
+  "metaKeys": [
+    "coherence",
+    "dataSource",
+    "lastUpdated",
+    "tickerStatus",
+    "timestamp"
+  ],
+  "scenarioItemKeys": [
+    "confirmation",
+    "id",
+    "invalidation",
+    "levels",
+    "probability",
+    "thesis",
+    "type"
+  ],
+  "alertItemKeys": [
+    "message",
+    "severity",
+    "timestamp",
+    "trigger",
+    "type"
+  ],
+  "scenarioCount": 3,
+  "alertCount": 1,
+  "gammaRegime": "LONG GAMMA",
+  "biasType": "BULLISH_COMPRESSION",
+  "riskCascade": "MEDIUM",
+  "volatilityState": "COMPRESSING",
+  "dataSource": "deribit",
+  "tickerStatus": "fresh"
+}

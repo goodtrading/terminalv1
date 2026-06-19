@@ -15,6 +15,7 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "test:live-submit-blockers": "tsx --test server/services/execution/liveOrderSubmit.blockers.test.ts",
+    "test:mobile-v2": "tsx --test --test-force-exit server/mobile/v2/__tests__/mobileMarketStateV2.test.ts server/mobile/v2/__tests__/mobileMarketStateV2.routes.test.ts server/mobile/v2/__tests__/legacyMobileContract.test.ts server/services/mobile/mobileTerminalAccessService.test.ts",
     "db:push": "drizzle-kit push",
     "db:push:saas": "tsx scripts/apply-saas-tables.ts",
     "test:email": "tsx scripts/test-email.ts",

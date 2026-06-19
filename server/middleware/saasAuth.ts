@@ -24,6 +24,14 @@ function attachAuthUser(req: Request, user: SaasAuthUser): void {
 
 export type SaasAuthUser = { id: number; email: string; role: string };
 
+type SaasAuthTestResolver = (req: Request) => Promise<SaasAuthUser | null> | SaasAuthUser | null;
+let saasAuthTestResolver: SaasAuthTestResolver | null = null;
+
+/** Test seam — bypass JWT resolution in integration tests. */
+export function __setSaasAuthResolverForTests(resolver: SaasAuthTestResolver | null): void {
+  saasAuthTestResolver = resolver;
+}
+
 export type AuthTokenDiagnostic = {
   hasCookie: boolean;
   hasBearer: boolean;
@@ -368,6 +376,17 @@ export async function requireSaasAuth(
   res: Response,
   next: NextFunction,
 ) {
+  if (saasAuthTestResolver) {
+    const user = await saasAuthTestResolver(req);
+    if (!user) {
+      saasUnauthorized(res, "UNAUTHORIZED", undefined, "no_token");
+      return;
+    }
+    attachAuthUser(req, user);
+    next();
+    return;
+  }
+
   const route = requestRoute(req);
   const { user, tokenSource, diagnostic } = await resolveAuthenticatedUser(req, {
     enforceMayAuthenticate: false,
