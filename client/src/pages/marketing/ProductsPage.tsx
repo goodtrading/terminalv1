@@ -11,30 +11,30 @@ const PRODUCTS = [
     title: "Terminal Web",
     badge: "available" as const,
     description:
-      "Versión liviana en el navegador. Gamma, opciones, order flow y estructura de mercado — acceso rápido sin instalar nada.",
-    note: "Optimizada para Railway. Bookmap pesado no incluido.",
+      "Terminal en el navegador para leer Bitcoin con gamma, opciones, estructura, niveles, paper trading y reportes.",
+    note: "Acceso inmediato desde el navegador.",
     cta: "Entrar a Terminal Web",
     action: "terminal" as const,
     featured: true,
   },
   {
     id: "desktop",
-    title: "App Desktop (Windows)",
+    title: "GoodTrading Desktop",
     badge: "desktop" as const,
     description:
-      "Build nativa con Bookmap avanzado, heatmap completo, DOM avanzado y procesamiento local de datos.",
-    note: "v0.1.7 — módulos pesados solo en desktop.",
+      "Capa avanzada con Bookmap, heatmap completo, DOM avanzado y procesamiento local de datos.",
+    note: "Pensada para setups más intensivos.",
     cta: "Descargar App Desktop",
     action: "download" as const,
     featured: false,
   },
   {
     id: "mobile",
-    title: "App Móvil",
+    title: "Seguimiento móvil",
     badge: "soon" as const,
     description: "Alertas, watchlists y seguimiento de mercado desde el teléfono.",
-    note: "En roadmap activo.",
-    cta: "Próximamente",
+    note: "Parte de la evolución del ecosistema GoodTrading.",
+    cta: "En desarrollo",
     action: "disabled" as const,
     featured: false,
   },
@@ -42,7 +42,7 @@ const PRODUCTS = [
 
 const TOOL_GROUPS = [
   {
-    title: "Análisis",
+    title: "Contexto",
     accent: "from-[#ff3b3b]/15 to-transparent",
     items: [
       "Gamma Exposure",
@@ -59,9 +59,9 @@ const TOOL_GROUPS = [
     items: ["Order Flow", "Operativa desde la terminal", "Paper Trading"],
   },
   {
-    title: "Seguimiento",
+    title: "Revisión",
     accent: "from-blue-600/15 to-transparent",
-    items: ["Backtesting", "Track record", "Reports"],
+    items: ["Reports", "Journal operativo", "Track record"],
   },
 ] as const;
 
@@ -77,21 +77,19 @@ export default function ProductsPage() {
   return (
     <MarketingLayout>
       <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
-        {/* Hero */}
         <div className="mb-14 max-w-3xl">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#ff3b3b]/90">
             Productos GoodTrading
           </p>
           <h1 className="mt-3 text-4xl font-bold leading-tight text-white sm:text-5xl">
-            Elegí cómo operar Bitcoin con ventaja institucional
+            Leé Bitcoin con una terminal profesional
           </h1>
           <p className="mt-5 text-lg leading-relaxed text-[#9ca3af]">
-            Terminal web liviana para acceso inmediato. App desktop con módulos avanzados de
-            liquidez. Mobile en camino.
+            Terminal Web para acceso inmediato. GoodTrading Desktop agrega módulos avanzados para
+            visualización, liquidez y procesamiento local.
           </p>
         </div>
 
-        {/* Product cards */}
         <div className="grid gap-6 lg:grid-cols-3">
           {PRODUCTS.map((product) => (
             <article
@@ -110,7 +108,7 @@ export default function ProductsPage() {
                     ? "Disponible"
                     : product.badge === "desktop"
                       ? "Desktop"
-                      : "Próximamente"}
+                      : "En desarrollo"}
                 </StatusBadge>
               </div>
               <p className="flex-1 text-sm leading-relaxed text-[#9ca3af]">{product.description}</p>
@@ -134,15 +132,11 @@ export default function ProductsPage() {
           ))}
         </div>
 
-        {/* Tools */}
         <div className="mt-14 rounded-[22px] border border-white/[0.08] bg-[#050505]/60 p-8 sm:p-10">
-          <h3 className="text-2xl font-semibold text-white">Herramientas incluidas</h3>
+          <h3 className="text-2xl font-semibold text-white">Herramientas del ecosistema</h3>
           <p className="mt-3 max-w-3xl text-sm leading-relaxed text-[#9ca3af]">
-            Web: análisis, ejecución y seguimiento en una terminal liviana. Desktop: Bookmap,
-            heatmap avanzado, DOM avanzado, Modo Pro y procesamiento local.{" "}
-            <Link href="/#comparativa" className="text-blue-400 hover:text-blue-300">
-              Ver comparativa completa →
-            </Link>
+            GoodTrading organiza contexto, ejecución y revisión. La web concentra el flujo operativo
+            principal; Desktop suma profundidad visual para setups avanzados.
           </p>
 
           <div className="mt-8 grid gap-5 md:grid-cols-3">
@@ -174,12 +168,11 @@ export default function ProductsPage() {
           </div>
 
           <p className="mt-6 text-xs leading-relaxed text-[#6b7280]">
-            Desktop App agrega Bookmap / Heatmap avanzado, DOM avanzado, Modo Pro y procesamiento
-            local. Próximamente en Desktop: Footprint y multi-activos.
+            GoodTrading Desktop agrega Bookmap, heatmap completo, DOM avanzado, Modo Pro y
+            procesamiento local para análisis más intensivo.
           </p>
         </div>
 
-        {/* Bottom CTAs */}
         <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <Link
             href="/"

@@ -8,7 +8,6 @@ const NAV_ITEMS = [
   { label: "Productos", href: "/products", type: "link" as const },
   { label: "Terminal Web", type: "terminal" as const },
   { label: "Descargar App Desktop", type: "download" as const },
-  { label: "App Móvil · Próximamente", type: "disabled" as const },
 ];
 
 const navLinkClass =
@@ -34,7 +33,6 @@ export function PublicHeader() {
   return (
     <header className="sticky top-0 z-50 border-b border-white/[0.07] bg-[#030303]/95 backdrop-blur-xl">
       <div className="mx-auto flex h-[76px] max-w-7xl items-center gap-4 px-4 sm:px-6 lg:gap-8 lg:px-8">
-        {/* Left — logo */}
         <Link href="/" className="flex shrink-0 items-center gap-2">
           <img
             src="/logo.png"
@@ -46,27 +44,19 @@ export function PublicHeader() {
           <span className="text-base font-semibold leading-none tracking-wide text-white">GoodTrading</span>
         </Link>
 
-        {/* Center — desktop nav */}
         <nav className="hidden flex-1 items-center justify-center gap-7 xl:gap-9 lg:flex">
-          {NAV_ITEMS.map((item) =>
-            item.type === "disabled" ? (
-              <span key={item.label} className="cursor-default text-[15px] text-[#6b7280]">
-                {item.label}
-              </span>
-            ) : (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => handleNav(item)}
-                className={navLinkClass}
-              >
-                {item.label}
-              </button>
-            ),
-          )}
+          {NAV_ITEMS.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              onClick={() => handleNav(item)}
+              className={navLinkClass}
+            >
+              {item.label}
+            </button>
+          ))}
         </nav>
 
-        {/* Right — auth + CTA */}
         <div className="ml-auto flex items-center gap-2.5 sm:gap-3">
           {!authReady ? (
             <span className="text-sm text-[#6b7280]">…</span>
@@ -134,26 +124,19 @@ export function PublicHeader() {
         </div>
       </div>
 
-      {/* Mobile nav */}
       {mobileOpen && (
         <div className="border-t border-white/[0.06] bg-[#050505]/98 px-4 py-4 lg:hidden">
           <nav className="flex flex-col gap-1">
-            {NAV_ITEMS.map((item) =>
-              item.type === "disabled" ? (
-                <span key={item.label} className="px-3 py-2.5 text-sm text-[#6b7280]">
-                  {item.label}
-                </span>
-              ) : (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() => handleNav(item)}
-                  className="rounded-lg px-3 py-2.5 text-left text-sm font-medium text-[#d1d5db] hover:bg-white/[0.04] hover:text-white"
-                >
-                  {item.label}
-                </button>
-              ),
-            )}
+            {NAV_ITEMS.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => handleNav(item)}
+                className="rounded-lg px-3 py-2.5 text-left text-sm font-medium text-[#d1d5db] hover:bg-white/[0.04] hover:text-white"
+              >
+                {item.label}
+              </button>
+            ))}
             {!isAuthenticated ? (
               <>
                 <Link

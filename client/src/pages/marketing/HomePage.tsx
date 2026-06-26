@@ -1,10 +1,9 @@
 import { MarketingLayout } from "@/components/marketing/MarketingLayout";
 import { AccessCTA } from "@/components/marketing/AccessCTA";
 import { AudienceSection } from "@/components/marketing/AudienceSection";
-import { TerminalPreview } from "@/components/marketing/TerminalPreview";
-import { ComparisonTable } from "@/components/marketing/ComparisonTable";
+import { ProductScreenshotsSection } from "@/components/marketing/ProductScreenshotsSection";
 import { ProductCards } from "@/components/marketing/ProductCards";
-import { RoadmapSection } from "@/components/marketing/RoadmapSection";
+import { DesktopSection } from "@/components/marketing/DesktopSection";
 import { FinalCtaSection } from "@/components/marketing/FinalCtaSection";
 
 export default function HomePage() {
@@ -12,10 +11,9 @@ export default function HomePage() {
     <MarketingLayout>
       <AccessCTA className="pb-6 pt-10 sm:pt-14 lg:pt-16" />
       <AudienceSection />
-      <TerminalPreview />
-      <ComparisonTable />
+      <ProductScreenshotsSection />
       <ProductCards />
-      <RoadmapSection />
+      <DesktopSection />
       <FinalCtaSection />
     </MarketingLayout>
   );

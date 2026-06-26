@@ -15,9 +15,8 @@ export default function DownloadDesktopPage() {
           <h1 className="text-3xl font-bold text-white sm:text-4xl">Descargar App Desktop</h1>
           <p className="mt-4 text-base leading-relaxed text-[#9ca3af]">
             Instalador para Windows con módulos avanzados de liquidez:{" "}
-            <span className="text-[#d1d5db]">Bookmap, Heatmap completo y DOM avanzado</span>.
-            Procesamiento local y diagnósticos de feed. Requiere suscripción activa para acceder al
-            terminal.
+            <span className="text-[#d1d5db]">Bookmap, heatmap completo y DOM avanzado</span>.
+            Procesamiento local y diagnósticos de feed para setups más intensivos.
           </p>
 
           <ul className="mt-6 space-y-2.5 text-sm text-[#d1d5db]">
@@ -31,7 +30,7 @@ export default function DownloadDesktopPage() {
             </li>
             <li className="flex gap-2">
               <span className="text-[#ff3b3b]">•</span>
-              Bookmap / Heatmap avanzado — solo en desktop, no en web
+              Bookmap, heatmap y DOM avanzado con procesamiento local
             </li>
           </ul>
 
