@@ -20,7 +20,7 @@ export default function PricingPage() {
     return (
       <MarketingLayout>
         <div className="flex min-h-[50vh] items-center justify-center text-sm text-[#9ca3af]">
-          Cargando…
+          Cargando...
         </div>
       </MarketingLayout>
     );
@@ -39,20 +39,22 @@ export default function PricingPage() {
       <div className="mx-auto max-w-2xl px-4 py-16 sm:px-6 lg:py-24">
         <div className="rounded-[22px] border border-white/[0.09] bg-[#050505]/85 p-8 text-center sm:p-10">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#ff3b3b]/80">
-            GoodTrading Membership
+            Acceso a GoodTrading Terminal
           </p>
-          <h1 className="mt-3 text-3xl font-bold text-white sm:text-4xl">Activar acceso</h1>
+          <h1 className="mt-3 text-3xl font-bold text-white sm:text-4xl">USD 25 / mes</h1>
           <p className="mx-auto mt-4 max-w-md text-base leading-relaxed text-[#9ca3af]">
-            Necesitás una suscripción activa para entrar a la Terminal Web.
+            Acceso mensual a la Terminal Web para leer Bitcoin con gamma, opciones, estructura y
+            niveles operativos.
           </p>
 
           <div className="mx-auto mt-8 max-w-sm rounded-xl border border-white/[0.08] bg-black/30 p-5">
-            <p className="text-sm font-medium text-white">Plan institucional</p>
-            <p className="mt-2 text-2xl font-bold text-white">$25 USD / mes</p>
+            <p className="text-sm font-medium text-white">Incluye</p>
             <ul className="mt-4 space-y-2 text-left text-xs text-[#9ca3af]">
-              <li>• Terminal web liviana (Gamma, opciones, order flow)</li>
-              <li>• Señales y análisis en tiempo real</li>
-              <li>• Bookmap avanzado disponible en App Desktop</li>
+              <li>• Terminal Web BTC</li>
+              <li>• Gamma + Options + Market Structure</li>
+              <li>• Niveles integrados al chart</li>
+              <li>• Paper Trading + Reports</li>
+              <li>• Actualizaciones del producto</li>
             </ul>
           </div>
 
@@ -67,12 +69,9 @@ export default function PricingPage() {
               href="/login"
               className="rounded-xl border border-white/15 px-6 py-3 text-sm font-semibold text-white hover:bg-white/[0.06]"
             >
-              Ya tengo cuenta
+              Entrar a Terminal Web
             </Link>
           </div>
-          <p className="mt-6 text-xs text-[#6b7280]">
-            Pagos vía PayPal / USDT — conectable a Stripe o MercadoPago.
-          </p>
         </div>
       </div>
     </MarketingLayout>
