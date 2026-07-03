@@ -12,7 +12,7 @@ import { MovableDrawingToolbarShell } from "./MovableDrawingToolbarShell";
 import { DrawingsContextualBar } from "./DrawingsContextualBar";
 import { DrawingsOverlay } from "./DrawingsOverlay";
 import { useDrawings } from "./useDrawings";
-import { getDrawingUserScope } from "./persistence";
+import { getStableDrawingUserKey, resolveDrawingUserScope } from "./persistence";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
 import { useDrawingToolbarPosition } from "@/hooks/useDrawingToolbarPosition";
 import { drawingToolbarPanelOpensLeft, CHART_HEADER_HEIGHT_ESTIMATE } from "@/lib/drawingToolbarPosition";
@@ -59,8 +59,9 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
 ) {
   const overlayRootRef = useRef<HTMLDivElement>(null);
   const [editorOpenRequestId, setEditorOpenRequestId] = useState<string | null>(null);
-  const { user } = useTerminalAuth();
-  const userScope = getDrawingUserScope(user?.id ?? null);
+  const { user, authReady } = useTerminalAuth();
+  const userKey = useMemo(() => getStableDrawingUserKey(user), [user]);
+  const userScope = resolveDrawingUserScope(userKey, authReady);
 
   const {
     drawings,
@@ -93,7 +94,8 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
     setToolStyle,
     setSmartKind,
     convertSelectedToSmart,
-  } = useDrawings(symbol, timeframe, user?.id ?? null);
+    flushPersistence,
+  } = useDrawings(symbol, timeframe, userScope, authReady);
 
   const projection = useMemo(
     () => createDrawingProjection(coordinates.timeToCoordinate, coordinates.priceToCoordinate),
@@ -159,7 +161,12 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
     onDragHandlePointerDown,
     onDragHandlePointerMove,
     onDragHandlePointerUp,
-  } = useDrawingToolbarPosition(chartWidth, chartHeight, CHART_HEADER_HEIGHT_ESTIMATE, userScope);
+  } = useDrawingToolbarPosition(
+    chartWidth,
+    chartHeight,
+    CHART_HEADER_HEIGHT_ESTIMATE,
+    userScope ?? "guest",
+  );
 
   const panelOpensLeft = drawingToolbarPanelOpensLeft(toolbarPosition.x, chartWidth);
 
@@ -254,6 +261,7 @@ export const DrawingsLayer = forwardRef<DrawingsLayerHandle, DrawingsLayerProps>
           removeLastPolylinePoint,
           cancelPending,
         }}
+        flushPersistence={flushPersistence}
       />
     </>
   );

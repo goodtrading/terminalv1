@@ -1,5 +1,9 @@
 import { assertNotChartVenue } from "@shared/execution/executionGuards";
 import type { OrderIntent } from "./executionTypes";
+import {
+  isBingxReadOnlyFreezeActive,
+  BINGX_READ_ONLY_FREEZE_CODE,
+} from "../exchanges/bingx/bingxReadOnlyFreeze";
 
 function envBool(key: string, fallback = false): boolean {
   const v = process.env[key];
@@ -70,6 +74,9 @@ export function isKillSwitchActive(): boolean {
   return envBool("LIVE_TRADING_KILL_SWITCH", false);
 }
 
+/** Phase B1: read-only stabilization freeze (default ON). */
+export { isBingxReadOnlyFreezeActive, BINGX_READ_ONLY_FREEZE_CODE };
+
 /** Phase 5B: internal dry-run preview (never submits to exchange). */
 export function isDryRunEnabled(): boolean {
   return envBool("BINGX_ENABLE_DRY_RUN", true);
@@ -90,6 +97,7 @@ export function getLiveTradingEnvFlags() {
     marketOrdersAllowed: isBingxMarketOrdersAllowed(),
     killSwitchActive: isKillSwitchActive(),
     liveLimitTestMode: isLiveLimitTestMode(),
+    readOnlyFreezeActive: isBingxReadOnlyFreezeActive(),
   };
 }
 

@@ -5,6 +5,9 @@ import { useBookmapCompositeState } from "@/hooks/useBookmapCompositeState";
 import { useBookmapPriceScale } from "@/hooks/useBookmapPriceScale";
 import { useBookmapTimeScale } from "@/hooks/useBookmapTimeScale";
 import { formatBookmapTimeSpanMs } from "@/lib/bookmapInteractionUtils";
+import { formatTerminalTimeAxis } from "@/lib/timezone";
+import { useTimezonePreference } from "@/hooks/useTimezonePreference";
+import { TimezoneSelector } from "@/components/terminal/TimezoneSelector";
 import {
   detectPassiveConfluence,
   summarizePassiveConfluence,
@@ -360,6 +363,7 @@ export function LiquidityHeatmapPanel({
   spot: spotProp,
 }: LiquidityHeatmapPanelProps) {
   const { prefs, updatePrefs } = useBookmapPanelPrefs();
+  const { preference: timezonePreference } = useTimezonePreference();
   const {
     settings: visualSettings,
     setSettings: setVisualSettings,
@@ -3250,6 +3254,7 @@ export function LiquidityHeatmapPanel({
         confluenceRenderMode,
         confluenceMinDisplayTier: confluencePrefs.minDisplayTier,
         timeViewport: timeScale.viewport,
+        formatTimeAxisLabel: (ms) => formatTerminalTimeAxis(ms, timezonePreference),
         showFarWallMarkers: showImportantFarLevels,
         tradeDots: tradeDotsEnabled ? engineTradeDots.dots : undefined,
         tradeDotRenderStatsOut: tradeDotRenderStats,
@@ -3415,6 +3420,7 @@ export function LiquidityHeatmapPanel({
     divergenceMarkerSignals,
     bothModeDivergence,
     executionOrderLines,
+    timezonePreference,
   ]);
 
   useEffect(() => {
@@ -3806,6 +3812,7 @@ export function LiquidityHeatmapPanel({
         {visualSettings.layout.showTopMetrics && (
           <>
             <span className="text-[10px] font-mono text-slate-300 shrink-0">{symbol}</span>
+            <TimezoneSelector compact className="shrink-0" />
             <span className="text-[10px] font-mono text-terminal-muted shrink-0">
               {exchange} · {sourceMode}
               {sourceMode === "both" ? ` · dom ${activeDomMarket}` : ""}

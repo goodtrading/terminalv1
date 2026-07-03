@@ -1,5 +1,7 @@
 import { Router, type Express, type Request, type Response } from "express";
 import { requireSaasAuth } from "../middleware/saasAuth";
+import { requireBingxTerminalPlan } from "../middleware/bingxTerminalGuard";
+import { bingxRateLimit } from "../middleware/bingxRateLimit";
 import { getLiveTradingReadiness } from "../services/execution/liveTradingReadinessService";
 import { previewBingXLiveOrder } from "../services/execution/liveOrderPreviewService";
 import type { LiveOrderPreviewRequest } from "../services/execution/liveOrderPreviewTypes";
@@ -24,7 +26,12 @@ function jsonResponse(res: Response, status: number, body: Record<string, unknow
 
 export const liveApiRouter = Router();
 
-liveApiRouter.get("/readiness", requireSaasAuth, async (req: Request, res: Response) => {
+liveApiRouter.get(
+  "/readiness",
+  requireSaasAuth,
+  requireBingxTerminalPlan,
+  bingxRateLimit({ scope: "live.readiness", max: 30, windowMs: 60_000 }),
+  async (req: Request, res: Response) => {
   try {
     const userId = resolveUserId(req);
     if (userId == null) {
@@ -64,6 +71,8 @@ liveApiRouter.get("/readiness", requireSaasAuth, async (req: Request, res: Respo
 liveApiRouter.post(
   "/order-preview",
   requireSaasAuth,
+  requireBingxTerminalPlan,
+  bingxRateLimit({ scope: "live.preview", max: 10, windowMs: 60_000 }),
   async (req: Request, res: Response) => {
     console.log(`${LIVE_ROUTES_LOG} POST /api/live/order-preview hit`);
     try {
@@ -121,6 +130,8 @@ liveApiRouter.post(
 liveApiRouter.post(
   "/order-submit",
   requireSaasAuth,
+  requireBingxTerminalPlan,
+  bingxRateLimit({ scope: "live.submit", max: 2, windowMs: 60_000 }),
   async (req: Request, res: Response) => {
     console.log(`${LIVE_ROUTES_LOG} POST /api/live/order-submit hit`);
     try {
@@ -170,6 +181,8 @@ liveApiRouter.post(
 liveApiRouter.get(
   "/symbol-rules",
   requireSaasAuth,
+  requireBingxTerminalPlan,
+  bingxRateLimit({ scope: "live.symbol-rules", max: 30, windowMs: 60_000 }),
   async (req: Request, res: Response) => {
     try {
       const userId = resolveUserId(req);

@@ -36,7 +36,6 @@ import {
   NATURAL_MATRIX_WIDTH_VARIANCE,
   BOOKMAP_RENDER_PATH_PROOF_DIAG,
   BOOKMAP_TEXTURE_CALIBRATION_V2,
-  computeVisiblePriceRangePct,
   DEPTH_V2_NEAR_PRICE_PCT,
   H_PERSIST_V2_SOLID_BASE_ALPHA_MUL,
   H_PERSIST_V2_SOLID_BASE_MIN_INTENSITY,
@@ -44,7 +43,6 @@ import {
   PALETTE_ALPHA_CLOSED_RECENT_MUL,
   PERP_RENDER_ACTIVE_CAP,
   PERP_RENDER_CLOSED_CAP,
-  resolveZoomRegime,
   TEX_CALIB_V2_INNER_CORE_ALPHA_MUL,
   TEX_CALIB_V2_INNER_CORE_WIDTH_PCT,
   TEX_CALIB_V2_ORGANIC_EDGE_FADE_PCT,
@@ -64,8 +62,6 @@ import {
   type BookmapZoomRegime,
   BOOKMAP_MINIMAL_STABLE_RENDERER_V1,
   BOOKMAP_CLEAN_BASELINE_DIAG,
-  BOOKMAP_SURFACE_RENDERER_V1,
-  BOOKMAP_CANONICAL_HEATMAP_V1,
   countBookmapExperimentalVisualFlagsEnabled,
 } from "@/lib/bookmapEngineConfig";
 import type { BookmapTimeViewport } from "@/hooks/useBookmapTimeScale";
@@ -348,6 +344,8 @@ export type BookmapEngineFrameParams = {
   perpFilterTruthOut?: BookmapPerpFilterTruth;
   /** DEV — visual parity truth snap (scalar, no arrays). */
   visualParityTruthOut?: BookmapVisualParityTruth;
+  /** UI-only axis labels (ms epoch → display string). */
+  formatTimeAxisLabel?: (ms: number) => string;
   /** DEV — L2 band continuity truth snap (scalar, no arrays). */
   l2BandContinuityTruthOut?: BookmapL2BandContinuityTruth;
   /** DEV — palette parity truth snap (scalar, no arrays). */
@@ -450,7 +448,12 @@ function metricsForCrosshair(metrics: EnginePlotMetrics): BookmapPlotMetrics {
   };
 }
 
-function renderEngineTimeGrid(ctx: CanvasRenderingContext2D, metrics: EnginePlotMetrics) {
+function renderEngineTimeGrid(
+  ctx: CanvasRenderingContext2D,
+  metrics: EnginePlotMetrics,
+  timeViewport: BookmapTimeViewport,
+  formatTimeAxisLabel?: (ms: number) => string,
+) {
   const { plotW, plotH } = metrics;
   ctx.strokeStyle = "rgba(30, 58, 95, 0.35)";
   ctx.lineWidth = 1;
@@ -461,6 +464,20 @@ function renderEngineTimeGrid(ctx: CanvasRenderingContext2D, metrics: EnginePlot
     ctx.lineTo(x, HEATMAP_PAD.top + plotH);
     ctx.stroke();
   }
+
+  if (!formatTimeAxisLabel) return;
+
+  const span = Math.max(1, timeViewport.visibleEndTime - timeViewport.visibleStartTime);
+  ctx.fillStyle = "rgba(148, 163, 184, 0.75)";
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  for (let i = 0; i <= 10; i++) {
+    const t = timeViewport.visibleStartTime + (i / 10) * span;
+    const x = HEATMAP_PAD.left + (i / 10) * plotW;
+    ctx.fillText(formatTimeAxisLabel(t), x, HEATMAP_PAD.top + plotH + 4);
+  }
+  ctx.textAlign = "start";
 }
 
 /** Live data edge — boundary before right-side projection zone. */
@@ -5296,7 +5313,7 @@ export function paintBookmapEngineHeatmapFrame(
       BOOKMAP_TEXTURE_CONTINUOUS_MODE;
   }
 
-  renderEngineTimeGrid(ctx, metrics);
+  renderEngineTimeGrid(ctx, metrics, timeViewport, params.formatTimeAxisLabel);
   renderLiveDataEdge(ctx, metrics, timeViewport);
   renderPriceGrid(ctx, w, crosshairMetrics, minPrice, maxPrice);
 

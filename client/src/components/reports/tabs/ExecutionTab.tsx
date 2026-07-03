@@ -255,7 +255,7 @@ export function ExecutionTab({ drilldownFilter }: { drilldownFilter?: ExecutionD
               : empty
                 ? isBingx
                   ? "No BingX position or history for this symbol."
-                  : "No paper trades yet."
+                  : "No hay trades paper registrados todavía. Conectá GoodTrading Paper Trading y ejecutá operaciones simuladas para generar reportes de ejecución."
                 : undefined
           }
           onEdit={isPaperOnly ? handleEdit : undefined}

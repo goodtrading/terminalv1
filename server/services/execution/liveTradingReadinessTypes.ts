@@ -28,6 +28,7 @@ export interface LiveTradingReadiness {
   warnings: string[];
   readyForDryRun: boolean;
   readyForLive: boolean;
+  readOnlyFreezeActive: boolean;
 }
 
 export interface LiveTradingHealthSummary {

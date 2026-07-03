@@ -1,6 +1,9 @@
 import { apiUrl } from "../../lib/apiBase";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { fetchOptionsBook, readAnyOptionsBookCache } from "@/lib/optionsBookClient";
+import { formatTerminalTime } from "@/lib/timezone";
+import { useTimezonePreference } from "@/hooks/useTimezonePreference";
 import { cn } from "@/lib/utils";
 import type { DeribitOptionsBookResponse, DeribitOptionBookRow, DeribitOptionSide, DeribitOptionSizeStats } from "@shared/types/deribit-options";
 import {
@@ -389,6 +392,8 @@ function mergeRequiredDefaultColumnIds(order: string[]): string[] {
 export default function DeribitOptionsBook() {
   const [currency, setCurrency] = useState<"BTC" | "ETH">("BTC");
   const [selectedExpiry, setSelectedExpiry] = useState<string>("");
+  const [fetchExpiry, setFetchExpiry] = useState<string | null>(null);
+  const [slowLoadHint, setSlowLoadHint] = useState(false);
   const [filter, setFilter] = useState<"ALL" | "ATM" | "RANGE" | "MOVEMENT" | "DISTANCE">("ATM");
   const [isColumnPanelOpen, setIsColumnPanelOpen] = useState(false);
   const [topOfBookStreamData, setTopOfBookStreamData] = useState<OptionTopOfBookPayload | null>(null);
@@ -408,26 +413,44 @@ export default function DeribitOptionsBook() {
   // Fixed to PRO mode - view toggle removed
 const viewMode: OptionsViewMode = "PRO";
 
-  // Main data fetching
-  const { data: bookData, isLoading, error, refetch } = useQuery<DeribitOptionsBookResponse>({
-    queryKey: ["deribit-options-book", currency, selectedExpiry],
-    queryFn: async () => {
-      const params = new URLSearchParams({ currency });
-      if (selectedExpiry) params.append("expiry", selectedExpiry);
-      
-      const response = await fetch(apiUrl(`/api/options/deribit/book?${params}`));
-      if (!response.ok) {
-        throw new Error("Failed to fetch options book");
-      }
-      const data = await response.json();
-      console.log("[OPTIONS_UI_RESPONSE_RAW]", data);
-      console.log("[OPTIONS_UI_UNDERLYING]", data?.underlyingPrice, typeof data?.underlyingPrice);
-      return data;
-    },
+  const fetchKey = fetchExpiry ?? "auto";
+  useTimezonePreference();
+
+  const {
+    data: bookData,
+    isLoading,
+    isFetching,
+    error,
+    refetch,
+  } = useQuery<DeribitOptionsBookResponse>({
+    queryKey: ["deribit-options-book", currency, fetchKey],
+    queryFn: ({ signal }) =>
+      fetchOptionsBook({ currency, expiry: fetchExpiry, signal }),
+    initialData: () => readAnyOptionsBookCache(currency, fetchExpiry),
+    placeholderData: (previousData) =>
+      previousData ?? readAnyOptionsBookCache(currency, fetchExpiry),
     refetchInterval: CACHE_TTL_MS,
-    staleTime: CACHE_TTL_MS,
-    retry: false,
+    staleTime: 15_000,
+    retry: 0,
   });
+
+  const showInitialLoader = !bookData && (isLoading || isFetching);
+  const isRefreshing = isFetching && !!bookData;
+  const displayExpiry = selectedExpiry || bookData?.selectedExpiry || "";
+
+  useEffect(() => {
+    if (!showInitialLoader) {
+      setSlowLoadHint(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSlowLoadHint(true), 3000);
+    return () => window.clearTimeout(timer);
+  }, [showInitialLoader]);
+
+  const handleExpirySelect = (expiry: string) => {
+    setSelectedExpiry(expiry);
+    setFetchExpiry(expiry);
+  };
 
   useEffect(() => {
     console.log("FIRST_ROW_FROM_API", bookData?.rows?.[0]);
@@ -444,18 +467,15 @@ const viewMode: OptionsViewMode = "PRO";
 
   // Get visible instrument names for enrichment (will be added after derivedRows is defined)
 
-  // Auto-select first expiry when data loads and reset on currency change
+  // Sync UI expiry from API without triggering a second fetch
   useEffect(() => {
-    if (bookData?.expiries.length) {
-      if (!selectedExpiry || !bookData.expiries.includes(selectedExpiry)) {
-        setSelectedExpiry(bookData.expiries[0]);
-      }
-    }
-  }, [bookData, selectedExpiry]);
+    if (!bookData?.selectedExpiry || selectedExpiry) return;
+    setSelectedExpiry(bookData.selectedExpiry);
+  }, [bookData?.selectedExpiry, selectedExpiry]);
 
-  // Reset selected expiry when currency changes
   useEffect(() => {
     setSelectedExpiry("");
+    setFetchExpiry(null);
   }, [currency]);
 
   const formatNumber = (value: number | null | undefined, decimals: number = 2): string => {
@@ -2219,13 +2239,13 @@ const viewMode: OptionsViewMode = "PRO";
     }
   }, [bookData, institutionalData, filter, filteredRows.length, selectedExpiry]);
 
-  if (error) {
+  if (error && !bookData) {
     return (
       <div className="p-4">
         <DesktopEmptyState
           status="error"
           title="Options data unavailable"
-          description="Gamma and options positioning could not be loaded. Market data may still be connecting."
+          description="Could not load options book. Market data may still be connecting."
           actionLabel="Retry"
           onAction={() => void refetch()}
           secondaryActionLabel="System diagnostics"
@@ -2249,6 +2269,15 @@ const viewMode: OptionsViewMode = "PRO";
         </div>
         
         <div className="flex items-center gap-2 text-xs">
+          {bookData?.generatedAt && (
+            <span className="text-terminal-muted">
+              {Math.max(0, Math.round((Date.now() - bookData.generatedAt) / 1000))}s ago
+              {isRefreshing ? " · Updating…" : ""}
+            </span>
+          )}
+          {error && bookData && (
+            <span className="text-amber-400/90">Update failed · showing cached data</span>
+          )}
           <button className="px-2 py-1 border border-terminal-border bg-terminal-panel text-white hover:border-terminal-accent transition-colors">
             CSV
           </button>
@@ -2271,7 +2300,7 @@ const viewMode: OptionsViewMode = "PRO";
           <div className="bg-terminal-panel/50 border border-terminal-border/30 rounded p-2">
             <div className="text-[9px] text-terminal-muted uppercase tracking-wider">Expiry</div>
             <div className="text-sm font-mono font-bold text-white">
-              {formatExpiryDisplay(selectedExpiry || "-")}
+              {formatExpiryDisplay(displayExpiry || "-")}
             </div>
           </div>
           
@@ -2464,10 +2493,10 @@ const viewMode: OptionsViewMode = "PRO";
             {bookData.expiries.map(expiry => (
               <button
                 key={expiry}
-                onClick={() => setSelectedExpiry(expiry)}
+                onClick={() => handleExpirySelect(expiry)}
                 className={cn(
                   "px-2 py-1 text-xs font-medium border whitespace-nowrap transition-colors",
-                  selectedExpiry === expiry
+                  displayExpiry === expiry
                     ? "border-terminal-accent bg-terminal-accent/20 text-terminal-accent"
                     : "border-terminal-border bg-terminal-panel text-terminal-muted hover:text-white"
                 )}
@@ -2544,19 +2573,23 @@ const viewMode: OptionsViewMode = "PRO";
 
               </div>
 
-      {/* Loading State */}
-      {isLoading && (
+      {/* Loading State — only when no cached or prior data */}
+      {showInitialLoader && (
         <div className="flex-1 flex items-center justify-center p-4">
           <DesktopEmptyState
             status="loading"
             title="Loading options data"
-            description="Fetching Deribit book, gamma positioning, and institutional levels."
+            description={
+              slowLoadHint
+                ? "La carga está demorando más de lo habitual. Seguimos intentando…"
+                : "Fetching Deribit book and options chain."
+            }
           />
         </div>
       )}
 
       {/* Options Table */}
-      {!isLoading && bookData && (
+      {!showInitialLoader && bookData && (
         <div className="flex-1 overflow-auto">
           <div className="min-w-[1400px]">
             <table className="w-full border-collapse">
@@ -2617,7 +2650,7 @@ const viewMode: OptionsViewMode = "PRO";
       {/* Footer */}
       {bookData && (
         <div className="p-2 border-t border-terminal-border text-xs text-terminal-muted shrink-0">
-          Last updated: {new Date(bookData.generatedAt).toLocaleTimeString()} | 
+          Last updated: {formatTerminalTime(bookData.generatedAt)} | 
           Rows: {filteredRows.length} / {bookData.rows.length} ({filter})
         </div>
       )}

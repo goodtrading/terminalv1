@@ -17,7 +17,7 @@ type PriceLineCountdownLabelProps = {
   visible?: boolean;
 };
 
-const LABEL_HEIGHT = 26;
+const LABEL_HEIGHT = 22;
 
 export function PriceLineCountdownLabel({
   price,
@@ -65,7 +65,7 @@ export function PriceLineCountdownLabel({
 
   const lineColor = isUp ? "#22c55e" : "#ef4444";
   const x = plotWidth + PRICE_LABEL_AXIS_PADDING_X;
-  const width = Math.max(48, priceAxisWidth - PRICE_LABEL_AXIS_PADDING_X * 2);
+  const width = Math.max(44, priceAxisWidth - PRICE_LABEL_AXIS_PADDING_X * 2);
 
   return (
     <div
@@ -84,7 +84,7 @@ export function PriceLineCountdownLabel({
     >
       <div
         className={cn(
-          "price-line-countdown-label box-border flex h-full w-full min-h-[24px] flex-col items-center justify-center gap-0 overflow-hidden rounded-[2px] px-[4px] py-[2px] text-center",
+          "price-line-countdown-label box-border flex h-full w-full min-h-[20px] flex-col items-center justify-center gap-0 overflow-hidden rounded-[1px] px-[3px] py-[1px] text-center",
           "pointer-events-none whitespace-nowrap font-mono tabular-nums leading-none",
         )}
         style={{
@@ -92,10 +92,10 @@ export function PriceLineCountdownLabel({
           color: "#ffffff",
         }}
       >
-        <div className="price-line-countdown-price text-[11px] font-extrabold leading-none">
+        <div className="price-line-countdown-price text-[10px] font-bold leading-none">
           {priceText}
         </div>
-        <div className="price-line-countdown-time mt-[1px] text-[9px] font-semibold leading-none opacity-[0.72]">
+        <div className="price-line-countdown-time mt-[1px] text-[8px] font-semibold leading-none opacity-[0.68]">
           {countdownLabel}
         </div>
       </div>

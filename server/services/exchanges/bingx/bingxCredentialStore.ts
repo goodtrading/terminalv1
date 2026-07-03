@@ -19,6 +19,17 @@ import { maskApiKey } from "./bingxSigner";
 const STORAGE_DIR = path.resolve(process.cwd(), "server", "storage");
 const STORAGE_FILE = path.join(STORAGE_DIR, "bingx-connections.json");
 
+let storageFileOverride: string | null = null;
+
+/** Test seam — isolate ownership integration tests to a temp file. */
+export function __setBingxStorageFileForTests(filePath: string | null): void {
+  storageFileOverride = filePath;
+}
+
+function resolveStorageFile(): string {
+  return storageFileOverride ?? STORAGE_FILE;
+}
+
 type StorageFile = {
   connections: StoredBingXConnection[];
 };
@@ -35,12 +46,13 @@ function ensureStorageDir(): void {
 }
 
 function readFile(): StorageFile {
+  const filePath = resolveStorageFile();
   ensureStorageDir();
-  if (!fs.existsSync(STORAGE_FILE)) {
+  if (!fs.existsSync(filePath)) {
     return { connections: [] };
   }
   try {
-    const raw = fs.readFileSync(STORAGE_FILE, "utf8");
+    const raw = fs.readFileSync(filePath, "utf8");
     const parsed = JSON.parse(raw) as StorageFile;
     if (!Array.isArray(parsed.connections)) return { connections: [] };
     return {
@@ -58,10 +70,10 @@ function readFile(): StorageFile {
       err instanceof Error ? err.message : err,
     );
     try {
-      if (fs.existsSync(STORAGE_FILE)) {
+      if (fs.existsSync(filePath)) {
         fs.copyFileSync(
-          STORAGE_FILE,
-          `${STORAGE_FILE}.corrupt.${Date.now()}.bak`,
+          filePath,
+          `${filePath}.corrupt.${Date.now()}.bak`,
         );
       }
     } catch {
@@ -72,9 +84,10 @@ function readFile(): StorageFile {
 }
 
 function writeFile(data: StorageFile): void {
+  const filePath = resolveStorageFile();
   ensureStorageDir();
   try {
-    fs.writeFileSync(STORAGE_FILE, JSON.stringify(data, null, 2), "utf8");
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
   } catch (err) {
     console.error(
       "[bingx-storage] write failed",

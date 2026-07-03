@@ -11,6 +11,7 @@ interface DrawingHitRegionsProps {
   priceToCoordinate: (price: number) => number | null;
   timeToCoordinate: (time: number) => number | null;
   onSelect: (d: Drawing) => void;
+  onPositionDoubleClick?: (d: Drawing) => void;
 }
 
 const HIT_THRESHOLD = 10;
@@ -45,6 +46,7 @@ export function DrawingHitRegions({
   priceToCoordinate,
   timeToCoordinate,
   onSelect,
+  onPositionDoubleClick,
 }: DrawingHitRegionsProps) {
   const { timeToX, priceToY } = createDrawingProjection(timeToCoordinate, priceToCoordinate);
   const regions: React.ReactNode[] = [];
@@ -261,6 +263,10 @@ export function DrawingHitRegions({
           onClick={(e) => {
             e.stopPropagation();
             onSelect(d);
+          }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onPositionDoubleClick?.(d);
           }}
         />
       );

@@ -78,7 +78,7 @@ export function PositionDrawingEditor({ open, drawing, onClose, onUpdate, onUpda
             <>
               <Row label="Target color"><input type="color" value={drawing.targetColor ?? "#22c55e"} onChange={(e) => onUpdate({ targetColor: e.target.value })} /></Row>
               <Row label="Stop color"><input type="color" value={drawing.stopColor ?? "#ef4444"} onChange={(e) => onUpdate({ stopColor: e.target.value })} /></Row>
-              <Row label="Opacity"><Num value={drawing.opacity ?? 0.9} step={0.05} onChange={(v) => onUpdate({ opacity: v })} /></Row>
+              <Row label="Opacity"><Num value={drawing.opacity ?? 0.22} step={0.05} onChange={(v) => onUpdate({ opacity: v, targetOpacity: v, stopOpacity: v })} /></Row>
             </>
           )}
           {tab === "visibility" && (

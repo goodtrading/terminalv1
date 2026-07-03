@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/queryClient";
+import { formatTerminalTime } from "@/lib/timezone";
 import {
   CLIENT_PERSISTABLE_AUDIT_TYPES,
   severityToLevel,
@@ -92,11 +93,7 @@ export function emitTerminalAudit(
 }
 
 export function formatAuditTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return formatTerminalTime(ts);
 }
 
 export { severityToLevel, summarizeAuditMetadata };

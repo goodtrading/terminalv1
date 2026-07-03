@@ -75,11 +75,12 @@ test("validateQuantityAgainstRules passes for valid quantity", () => {
 });
 
 test("validateQuantityAgainstRules blocks below minQty", () => {
-  const result = validateQuantityAgainstRules(0.0005, 50000, mockRules);
+  const rules = { ...mockRules, minQty: 0.002 };
+  const result = validateQuantityAgainstRules(0.0015, 50000, rules);
   assert.equal(result.valid, false);
   assert.ok(result.error?.includes("below BingX minimum"));
   assert.ok(result.requiredMinNotional != null);
-  assert.equal(result.requiredMinNotional, 50); // 0.001 * 50000
+  assert.equal(result.requiredMinNotional, 100);
 });
 
 test("validateQuantityAgainstRules blocks above maxQty", () => {
@@ -90,10 +91,25 @@ test("validateQuantityAgainstRules blocks above maxQty", () => {
 
 test("validateQuantityAgainstRules blocks below minNotional", () => {
   const rules = { ...mockRules, minQty: 0.0001, minNotional: 10 };
+  // 0.001 BTC × 8000 USDT = 8 USDT notional (below minNotional 10)
+  const result = validateQuantityAgainstRules(0.001, 8000, rules);
+  assert.equal(result.valid, false);
+  assert.ok(result.error?.includes("notional below BingX minimum"));
+  assert.equal(result.requiredMinNotional, 10);
+});
+
+test("validateQuantityAgainstRules passes at minNotional boundary", () => {
+  const rules = { ...mockRules, minQty: 0.0001, minNotional: 10 };
+  const result = validateQuantityAgainstRules(0.001, 10000, rules);
+  assert.equal(result.valid, true);
+  assert.equal(result.normalizedQty, 0.001);
+});
+
+test("validateQuantityAgainstRules rejects zero after step floor", () => {
+  const rules = { ...mockRules, minQty: 0.0001, minNotional: 10 };
   const result = validateQuantityAgainstRules(0.0002, 50000, rules);
   assert.equal(result.valid, false);
-  assert.ok(result.error?.includes("below BingX minimum"));
-  assert.equal(result.requiredMinNotional, 10);
+  assert.ok(result.error?.includes("step size"));
 });
 
 test("validateQuantityAgainstRules normalizes quantity", () => {
@@ -117,9 +133,14 @@ test("validateQuantityAgainstRules handles 2 USDT at 76500 (below min)", () => {
   assert.ok(result.requiredMinNotional > 2);
 });
 
-test("validateQuantityAgainstRules passes for 10 USDT at 76500", () => {
-  const result = validateQuantityAgainstRules(10 / 76500, 76500, mockRules);
+test("validateQuantityAgainstRules passes for sufficient notional at 76500", () => {
+  // minQty 0.001 × 76500 = 76.5 USDT (above minNotional 5)
+  const result = validateQuantityAgainstRules(80 / 76500, 76500, mockRules);
   assert.equal(result.valid, true);
-  // 10 USDT / 76500 = 0.0001307 BTC, which normalizes to 0.001 (min step)
   assert.equal(result.normalizedQty, 0.001);
+});
+
+test("validateQuantityAgainstRules fails for 10 USDT at 76500 (below min qty step)", () => {
+  const result = validateQuantityAgainstRules(10 / 76500, 76500, mockRules);
+  assert.equal(result.valid, false);
 });

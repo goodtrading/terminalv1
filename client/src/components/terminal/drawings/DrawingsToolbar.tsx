@@ -30,7 +30,7 @@ interface DrawingsToolbarProps {
 type PanelId = "draw" | "smart";
 
 const railBtn =
-  "w-8 h-8 min-w-[32px] min-h-[32px] flex items-center justify-center rounded border transition-all outline-none focus-visible:ring-1 focus-visible:ring-red-500/50";
+  "w-7 h-7 min-w-[28px] min-h-[28px] flex items-center justify-center rounded-[2px] border transition-all outline-none focus-visible:ring-1 focus-visible:ring-red-500/50";
 
 export function DrawingsToolbar({
   activeTool,
@@ -69,7 +69,7 @@ export function DrawingsToolbar({
 
   return (
     <div className="relative">
-      <div className="rounded-md border border-white/10 bg-[#0b0b0f]/95 shadow-[0_8px_18px_rgba(0,0,0,0.45)] backdrop-blur-sm p-1 flex flex-col gap-1">
+      <div className="rounded-[3px] border border-white/[0.07] bg-black/45 shadow-[0_4px_10px_rgba(0,0,0,0.28)] p-0.5 flex flex-col gap-0.5">
         <button
           type="button"
           onClick={() => {
@@ -79,12 +79,12 @@ export function DrawingsToolbar({
           className={cn(
             railBtn,
             activeTool === "select"
-              ? "bg-red-950/70 text-white border-red-500/85 shadow-[0_0_0_1px_rgba(239,68,68,0.35),0_0_10px_rgba(127,29,29,0.35)]"
+              ? "bg-red-950/55 text-white border-red-500/70"
               : "bg-white/[0.02] text-white/65 hover:text-white hover:bg-white/[0.05] border-white/10 hover:border-white/25",
           )}
           title="Cursor"
         >
-          <MousePointer2 className="h-4 w-4" strokeWidth={1.75} />
+          <MousePointer2 className="h-3.5 w-3.5" strokeWidth={1.75} />
         </button>
         <button
           type="button"
@@ -92,12 +92,12 @@ export function DrawingsToolbar({
           className={cn(
             railBtn,
             openPanel === "draw"
-              ? "bg-red-950/70 text-white border-red-500/85 shadow-[0_0_0_1px_rgba(239,68,68,0.35),0_0_10px_rgba(127,29,29,0.35)]"
+              ? "bg-red-950/55 text-white border-red-500/70"
               : "bg-white/[0.02] text-white/65 hover:text-white hover:bg-white/[0.05] border-white/10 hover:border-white/25",
           )}
           title="Draw"
         >
-          <Pencil className="h-4 w-4" strokeWidth={1.75} />
+          <Pencil className="h-3.5 w-3.5" strokeWidth={1.75} />
         </button>
         <button
           type="button"
@@ -105,41 +105,45 @@ export function DrawingsToolbar({
           className={cn(
             railBtn,
             openPanel === "smart"
-              ? "bg-red-950/70 text-white border-red-500/85 shadow-[0_0_0_1px_rgba(239,68,68,0.35),0_0_10px_rgba(127,29,29,0.35)]"
+              ? "bg-red-950/55 text-white border-red-500/70"
               : "bg-white/[0.02] text-white/65 hover:text-white hover:bg-white/[0.05] border-white/10 hover:border-white/25",
           )}
           title="Smart"
         >
-          <Sparkles className="h-4 w-4" strokeWidth={1.75} />
+          <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
         </button>
       </div>
       {openPanel && (
         <div
           className={cn(
-            "absolute top-0 rounded-md border border-white/10 bg-[#0b0b0f]/95 shadow-[0_8px_18px_rgba(0,0,0,0.45)] backdrop-blur-sm p-1 flex flex-col gap-0.5 min-w-[40px]",
-            panelOpensLeft ? "right-10" : "left-10",
+            "absolute top-0 rounded-[3px] border border-white/[0.07] bg-black/55 shadow-[0_4px_10px_rgba(0,0,0,0.32)] p-0.5 flex flex-col gap-0.5 min-w-[32px]",
+            panelOpensLeft ? "right-8" : "left-8",
           )}
         >
           {openPanel === "draw" &&
-            drawTools.map(({ tool, Icon, style, title }) => (
-              <button
-                key={tool}
-                type="button"
-                onClick={() => {
-                  onToolVariantSelect(tool, style);
-                  setOpenPanel(null);
-                }}
-                className={cn(
-                  railBtn,
-                  activeTool === tool
-                    ? "border-red-500/60 bg-red-950/35 text-white"
-                    : "border-transparent bg-white/[0.02] text-white/70 hover:bg-white/[0.08] hover:border-white/15",
-                )}
-                title={title}
-              >
-                <Icon className="h-4 w-4" strokeWidth={1.75} />
-              </button>
-            ))}
+            drawTools.map((item) => {
+              const { tool, Icon, title } = item;
+              const style = "style" in item ? item.style : undefined;
+              return (
+                <button
+                  key={tool}
+                  type="button"
+                  onClick={() => {
+                    onToolVariantSelect(tool, style);
+                    setOpenPanel(null);
+                  }}
+                  className={cn(
+                    railBtn,
+                    activeTool === tool
+                      ? "border-red-500/60 bg-red-950/35 text-white"
+                      : "border-transparent bg-white/[0.02] text-white/70 hover:bg-white/[0.08] hover:border-white/15",
+                  )}
+                  title={title}
+                >
+                  <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
+                </button>
+              );
+            })}
           {openPanel === "smart" &&
             smartTools.map(({ kind, Icon, style, title }) => (
               <button
@@ -155,7 +159,7 @@ export function DrawingsToolbar({
                 )}
                 title={title}
               >
-                <Icon className="h-4 w-4" strokeWidth={1.75} />
+                <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
               </button>
             ))}
         </div>

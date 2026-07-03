@@ -17,6 +17,10 @@ import { ReportsPanel } from "@/components/reports/ReportsPanel";
 import { TerminalErrorBoundary } from "@/components/common/TerminalErrorBoundary";
 import { useDesktopPanelsVisible } from "@/hooks/useDesktopPanelsVisible";
 import { cn } from "@/lib/utils";
+import { prefetchOptionsBook } from "@/lib/optionsBookClient";
+import { AlertCenter } from "@/components/alerts/AlertCenter";
+import { AlertRuntime } from "@/components/alerts/AlertRuntime";
+import type { AlertEvent } from "@shared/alerts";
 
 export default function TerminalLayout() {
   const [activeScenario, setActiveScenario] = useState<"BASE" | "ALT" | "VOL">("BASE");
@@ -36,6 +40,38 @@ const viewMode: "PRO" = "PRO";
   }, []);
 
   useEffect(() => mountClickInteractionDiag(), []);
+
+  useEffect(() => {
+    prefetchOptionsBook("BTC");
+  }, []);
+
+  useEffect(() => {
+    const routeAlert = (alert: AlertEvent) => {
+      const primary = alert.actions?.[0];
+      const panel = typeof primary?.payload?.panel === "string" ? primary.payload.panel : null;
+      if (panel === "alerts") setActiveTab("ALERTS");
+      else if (panel === "options" || alert.domain === "gamma") setActiveTab("OPTIONS");
+      else if (panel === "account" || alert.domain === "account") setActiveTab("TERMINAL");
+      else setActiveTab("ALERTS");
+    };
+
+    try {
+      const pending = sessionStorage.getItem("gt-alert-pending-action");
+      if (pending) {
+        sessionStorage.removeItem("gt-alert-pending-action");
+        routeAlert(JSON.parse(pending) as AlertEvent);
+      }
+    } catch (error) {
+      console.warn("[alerts] pending action restore failed", error);
+    }
+
+    const onOpen = (event: Event) => {
+      const alert = (event as CustomEvent<AlertEvent>).detail;
+      if (alert) routeAlert(alert);
+    };
+    window.addEventListener("gt-alert-open", onOpen);
+    return () => window.removeEventListener("gt-alert-open", onOpen);
+  }, []);
 
   const toggleBottomPanels = () => {
     setBottomPanelsMinimized((prev) => {
@@ -57,6 +93,7 @@ const viewMode: "PRO" = "PRO";
         panelsVisible={panelsVisible}
         onTogglePanels={togglePanels}
       />
+      <AlertRuntime />
       <DesktopFeedStatusBanner />
       
       <div className="flex-1 flex overflow-hidden min-h-0">
@@ -155,6 +192,12 @@ const viewMode: "PRO" = "PRO";
               <ReportsPanel />
             </TerminalErrorBoundary>
           </section>
+        )}
+
+        {activeTab === "ALERTS" && (
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+            <AlertCenter />
+          </div>
         )}
       </div>
 

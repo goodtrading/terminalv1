@@ -279,6 +279,9 @@ export function TerminalAuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("gt-drawing-persist-flush"));
+    }
     invalidateSession();
     void fetch(apiUrl("/api/auth/logout"), { method: "POST", credentials: "include" });
   }, [invalidateSession]);

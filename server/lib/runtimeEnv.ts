@@ -13,6 +13,26 @@ export function isHeatmapEnabled(): boolean {
   return envBool("HEATMAP_ENABLED", true);
 }
 
+export function isAlertsEnabled(): boolean {
+  return envBool("ALERTS_ENABLED", true);
+}
+
+export function isAlertsDesktopNativeEnabled(): boolean {
+  return envBool("ALERTS_DESKTOP_NATIVE_ENABLED", true);
+}
+
+export function isAlertsFlowEnabled(): boolean {
+  return envBool("ALERTS_FLOW_ENABLED", false);
+}
+
+export function isAlertsWebNotificationsEnabled(): boolean {
+  return envBool("ALERTS_WEB_NOTIFICATIONS_ENABLED", false);
+}
+
+export function isAlertsMobilePushEnabled(): boolean {
+  return envBool("ALERTS_MOBILE_PUSH_ENABLED", false);
+}
+
 export function envInt(key: string, fallback: number): number {
   const v = process.env[key];
   if (v == null || v === "") return fallback;

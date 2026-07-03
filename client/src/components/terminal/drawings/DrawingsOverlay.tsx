@@ -10,6 +10,16 @@ import { getPositionMetrics, isPositionDrawing } from "./positionUtils";
 import { isPointInsidePositionBody, POSITION_ANCHOR } from "./positionInteraction";
 import { PositionDrawingEditor } from "./PositionDrawingEditor";
 
+const POSITION_BODY_DRAG_THRESHOLD_PX = 4;
+
+type PositionBodyPending = {
+  id: string;
+  pointerStartX: number;
+  pointerStartY: number;
+  anchorTime: number;
+  anchorPrice: number;
+};
+
 type PositionDragMode =
   | "position-entry"
   | "position-stop"
@@ -67,6 +77,7 @@ interface DrawingsCoordinateHelpers {
 
 interface DrawingsOverlayProps {
   editorOpenRequestId?: string | null;
+  flushPersistence?: () => void;
   chartWidth: number;
   chartHeight: number;
   viewportVersion?: number;
@@ -77,6 +88,7 @@ interface DrawingsOverlayProps {
 export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(function DrawingsOverlay(
   {
   editorOpenRequestId = null,
+  flushPersistence,
   chartWidth,
   chartHeight,
   viewportVersion = 0,
@@ -133,8 +145,10 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
   const [textInput, setTextInput] = useState<{ x: number; y: number; time: number; price: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [interactionTick, setInteractionTick] = useState(0);
+  const [positionBodyPending, setPositionBodyPending] = useState<PositionBodyPending | null>(null);
   const [positionBodyDrag, setPositionBodyDrag] = useState<{ id: string; anchorTime: number; anchorPrice: number } | null>(null);
   const [positionEditorOpen, setPositionEditorOpen] = useState(false);
+  const lastPositionDragMovedAtRef = useRef(0);
   const lastDragReleaseAtRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const interactionRef = useRef(false);
@@ -441,7 +455,19 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
   }, [draggingAnchor, drawings, coordinateToTime, coordinateToPrice, getBarSec, updatePoint, updatePositionLevels, setDraggingAnchor]);
 
   useEffect(() => {
-    if (!positionBodyDrag) return;
+    if (!positionBodyPending && !positionBodyDrag) return;
+
+    const applyBodyDrag = (id: string, anchorTime: number, anchorPrice: number, time: number, price: number) => {
+      const d = drawings.find((item) => item.id === id);
+      if (!d || !isPositionDrawing(d)) return;
+      const deltaTime = time - anchorTime;
+      const deltaPrice = price - anchorPrice;
+      if (deltaTime === 0 && deltaPrice === 0) return;
+      movePositionDrawing(d.id, deltaTime, deltaPrice);
+      lastPositionDragMovedAtRef.current = Date.now();
+      setPositionBodyDrag({ id: d.id, anchorTime: time, anchorPrice: price });
+    };
+
     const onMove = (e: MouseEvent) => {
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
@@ -450,25 +476,33 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
       const time = coordinateToTime(x);
       const price = coordinateToPrice(y);
       if (time == null || price == null) return;
-      const d = drawings.find((item) => item.id === positionBodyDrag.id);
-      if (!d || !isPositionDrawing(d)) return;
-      const deltaTime = time - positionBodyDrag.anchorTime;
-      const deltaPrice = price - positionBodyDrag.anchorPrice;
-      if (deltaTime === 0 && deltaPrice === 0) return;
-      movePositionDrawing(d.id, deltaTime, deltaPrice);
-      setPositionBodyDrag({ id: d.id, anchorTime: time, anchorPrice: price });
+
+      if (positionBodyPending && !positionBodyDrag) {
+        const dx = e.clientX - positionBodyPending.pointerStartX;
+        const dy = e.clientY - positionBodyPending.pointerStartY;
+        if (Math.hypot(dx, dy) < POSITION_BODY_DRAG_THRESHOLD_PX) return;
+        const pending = positionBodyPending;
+        setPositionBodyPending(null);
+        applyBodyDrag(pending.id, pending.anchorTime, pending.anchorPrice, time, price);
+        return;
+      }
+
+      if (!positionBodyDrag) return;
+      applyBodyDrag(positionBodyDrag.id, positionBodyDrag.anchorTime, positionBodyDrag.anchorPrice, time, price);
     };
+
     const onUp = () => {
+      setPositionBodyPending(null);
       setPositionBodyDrag(null);
-      lastDragReleaseAtRef.current = Date.now();
     };
+
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [positionBodyDrag, drawings, coordinateToTime, coordinateToPrice, movePositionDrawing]);
+  }, [positionBodyPending, positionBodyDrag, drawings, coordinateToTime, coordinateToPrice, movePositionDrawing]);
 
   const handleDrawClick = useCallback(
     (e: React.MouseEvent) => {
@@ -601,7 +635,7 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
       const c = getCoords(e);
       if (!c) return;
 
-      if (positionBodyDrag) {
+      if (positionBodyPending || positionBodyDrag) {
         return;
       }
 
@@ -630,7 +664,7 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
         updatePendingEnd(c.time, c.price);
       }
     },
-    [positionBodyDrag, draggingAnchor, isDragging, pendingDrawing, drawings, getCoords, movePositionDrawing, updatePositionLevels, updatePoint, updatePendingEnd]
+    [positionBodyPending, positionBodyDrag, draggingAnchor, isDragging, pendingDrawing, drawings, getCoords, movePositionDrawing, updatePositionLevels, updatePoint, updatePendingEnd]
   );
 
   const handleDrawMouseUp = useCallback(
@@ -640,9 +674,9 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
         lastDragReleaseAtRef.current = Date.now();
         return;
       }
-      if (positionBodyDrag) {
+      if (positionBodyPending || positionBodyDrag) {
+        setPositionBodyPending(null);
         setPositionBodyDrag(null);
-        lastDragReleaseAtRef.current = Date.now();
         return;
       }
       if (
@@ -667,7 +701,7 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
         lastDragReleaseAtRef.current = Date.now();
       }
     },
-    [draggingAnchor, positionBodyDrag, isDragging, pendingDrawing, getCoords, setDraggingAnchor, finishDrawing, getBarSec]
+    [draggingAnchor, positionBodyPending, positionBodyDrag, isDragging, pendingDrawing, getCoords, setDraggingAnchor, finishDrawing, getBarSec]
   );
 
   const handleSelectMouseDown = useCallback(
@@ -685,8 +719,13 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
 
       if (isPointInsidePositionBody(c.x, c.y, selectedDrawing, timeToX, priceToY)) {
         setPositionEditorOpen(false);
-        setPositionBodyDrag({ id: selectedDrawing.id, anchorTime: c.time, anchorPrice: c.price });
-        e.preventDefault();
+        setPositionBodyPending({
+          id: selectedDrawing.id,
+          pointerStartX: e.clientX,
+          pointerStartY: e.clientY,
+          anchorTime: c.time,
+          anchorPrice: c.price,
+        });
       }
     },
     [selectedDrawing, getCoords, hitTestAnchor, timeToX, priceToY, setDraggingAnchor]
@@ -725,10 +764,12 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
   const handleSelectDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       if (!selectedDrawing || !isPositionDrawing(selectedDrawing)) return;
-      if (Date.now() - lastDragReleaseAtRef.current < 500) return;
+      if (Date.now() - lastPositionDragMovedAtRef.current < 300) return;
       const c = getCoords(e);
       if (!c) return;
       if (isPointInsideSelectedPosition(c.x, c.y)) {
+        setPositionBodyPending(null);
+        setPositionBodyDrag(null);
         setPositionEditorOpen(true);
         e.stopPropagation();
         return;
@@ -738,6 +779,17 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
       e.stopPropagation();
     },
     [selectedDrawing, getCoords, isPointInsideSelectedPosition, selectDrawing]
+  );
+
+  const handlePositionDoubleClick = useCallback(
+    (d: Drawing) => {
+      if (!isPositionDrawing(d)) return;
+      setPositionBodyPending(null);
+      setPositionBodyDrag(null);
+      selectDrawing(d.id);
+      setPositionEditorOpen(true);
+    },
+    [selectDrawing]
   );
 
   const handleTextSubmit = useCallback(
@@ -811,6 +863,7 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
             priceToCoordinate={priceToY}
             timeToCoordinate={timeToX}
             onSelect={(d) => selectDrawing(d.id)}
+            onPositionDoubleClick={handlePositionDoubleClick}
           />
         </div>
       )}
@@ -871,7 +924,10 @@ export const DrawingsOverlay = forwardRef<HTMLDivElement, DrawingsOverlayProps>(
         <PositionDrawingEditor
           open={positionEditorOpen}
           drawing={selectedDrawing}
-          onClose={() => setPositionEditorOpen(false)}
+          onClose={() => {
+            flushPersistence?.();
+            setPositionEditorOpen(false);
+          }}
           onUpdate={(updates) => updateDrawing(selectedDrawing.id, updates)}
           onUpdateLevels={(updates) => updatePositionLevels(selectedDrawing.id, updates)}
         />

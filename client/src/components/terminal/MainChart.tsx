@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartContextMenu, type ChartContextMenuAction } from "./chart/ChartContextMenu";
 import { ChartSettingsModal } from "./chart/ChartSettingsModal";
 import { ChartTimeframeSelector } from "./chart/ChartTimeframeSelector";
+import { useTimezonePreference } from "@/hooks/useTimezonePreference";
+import { formatLwChartDate, formatLwChartTime } from "@/lib/timezone";
 import { PriceLineCountdownLabel } from "./chart/PriceLineCountdownLabel";
 import { useChartContextMenu } from "./chart/useChartContextMenu";
 import type { ChartTimeframeId } from "@/lib/chartTimeframes";
@@ -69,14 +71,36 @@ import {
   loadBrokerSession,
 } from "./execution/brokerSessionState";
 import { isBingXVisualSession } from "./execution/bingxSession";
+import {
+  readTerminalActivePanels,
+  writeTerminalActivePanels,
+  type TerminalActivePanelId,
+} from "@/lib/terminalActivePanelsPrefs";
 
 /** Lightweight Charts candlestick time: integer seconds since Unix epoch */
 type UTCTimestamp = number;
 
-type MapMode = "LEVELS" | "GAMMA" | "CASCADE" | "SQUEEZE" | "HEATMAP" | "FOOTPRINT";
+type MapMode = TerminalActivePanelId;
 
-const RIGHT_PRICE_SCALE_MIN_WIDTH = 100;
+const RIGHT_PRICE_SCALE_MIN_WIDTH = 78;
 const PRICE_LABEL_DEBUG = false;
+
+const abbreviateLevelLabel = (label: string) =>
+  label
+    .replace(/SHORT GAMMA POCKET/g, "SG POCKET")
+    .replace(/LOCAL FLIP/g, "L FLIP")
+    .replace(/LOCAL GAMMA ZONE/g, "L GAMMA ZONE")
+    .replace(/MAGNET/g, "MAG")
+    .replace(/PENDING/g, "PEND")
+    .replace(/EXPANDING/g, "EXP")
+    .replace(/ACTIVE/g, "ACT")
+    .replace(/WATCH/g, "WATCH");
+
+const scaleRgbaAlpha = (color: string, multiplier: number) =>
+  color.replace(
+    /rgba\((\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*)([\d.]+)(\s*)\)/,
+    (_, rgb, alpha, tail) => `rgba(${rgb}${Math.max(0.05, Math.min(1, Number(alpha) * multiplier)).toFixed(2)}${tail})`,
+  );
 
 export function MainChart({
   activeScenario,
@@ -122,39 +146,22 @@ export function MainChart({
   const FUTURE_GHOST_EXTEND_STEP = 150;
   const FUTURE_GHOST_EXTEND_BUFFER = 40;
   const [lastCandle, setLastCandle] = useState<any>(null);
-  const [activePanels, setActivePanels] = useState<Set<MapMode>>(() => {
-  // Load from localStorage on initialization
-  const savedPanels = localStorage.getItem('terminal-activePanels');
-  if (savedPanels) {
-    try {
-      const parsed = JSON.parse(savedPanels);
-      return new Set(parsed.filter((p: string) => ["LEVELS", "GAMMA", "CASCADE", "SQUEEZE", "HEATMAP", "FOOTPRINT"].includes(p)));
-    } catch {
-      // Fallback to default if localStorage is corrupted
-      return new Set(["LEVELS" as MapMode]);
-    }
-  }
-  return new Set(["LEVELS" as MapMode]);
-});
+  const [activePanels, setActivePanels] = useState<Set<MapMode>>(() => readTerminalActivePanels());
 
-  // Toggle panel activation
   const togglePanel = (panel: MapMode) => {
-    setActivePanels(prev => {
+    setActivePanels((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(panel)) {
         newSet.delete(panel);
       } else {
         newSet.add(panel);
       }
-      // Save to localStorage whenever panels change
-      localStorage.setItem('terminal-activePanels', JSON.stringify(Array.from(newSet)));
       return newSet;
     });
   };
 
-  // Save active panels to localStorage whenever they change
   useEffect(() => {
-    localStorage.setItem('terminal-activePanels', JSON.stringify(Array.from(activePanels)));
+    writeTerminalActivePanels(activePanels);
   }, [activePanels]);
 
   useEffect(() => {
@@ -281,6 +288,7 @@ export function MainChart({
   const { learnMode } = useLearnMode();
 
   const chartSettings = useChartSettings();
+  const { preference: timezonePreference, displayLabel: timezoneLabel } = useTimezonePreference();
   const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
   const chartContextMenu = useChartContextMenu({ closeDeps: [] });
 
@@ -538,8 +546,8 @@ export function MainChart({
     if (!chartContainerRef.current) return;
     const FUTURE_RIGHT_OFFSET = 36;
     const chart = createChart(chartContainerRef.current, {
-      layout: { background: { type: ColorType.Solid, color: "#000000" }, textColor: "#ffffff", fontSize: 12, fontFamily: "JetBrains Mono, monospace" },
-      grid: { vertLines: { color: "#0a0a0a" }, horzLines: { color: "#0a0a0a" } },
+      layout: { background: { type: ColorType.Solid, color: "#000000" }, textColor: "rgba(255,255,255,0.72)", fontSize: 10, fontFamily: "JetBrains Mono, monospace" },
+      grid: { vertLines: { color: "rgba(255,255,255,0.035)" }, horzLines: { color: "rgba(255,255,255,0.035)" } },
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight,
       timeScale: {
@@ -549,7 +557,7 @@ export function MainChart({
         rightOffset: FUTURE_RIGHT_OFFSET,
         rightBarStaysOnScroll: true,
       },
-      rightPriceScale: { borderColor: "#1a1a1a", scaleMargins: { top: 0.2, bottom: 0.25 }, minimumWidth: RIGHT_PRICE_SCALE_MIN_WIDTH },
+      rightPriceScale: { borderColor: "rgba(255,255,255,0.08)", scaleMargins: { top: 0.16, bottom: 0.2 }, minimumWidth: RIGHT_PRICE_SCALE_MIN_WIDTH },
       crosshair: { mode: 0 },
     });
     const candleSeries = chart.addSeries(CandlestickSeries, { upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444", priceLineVisible: false, lastValueVisible: false });
@@ -982,23 +990,30 @@ export function MainChart({
       const lineWidthScaled = Math.max(1, Math.min(5, width * stateScale));
       const axisLabel =
         !isBandFill &&
-        timing?.state !== "invalidated";
+        timing?.state !== "invalidated" &&
+        priority <= 3 &&
+        label.trim().length > 0;
       // Suppress timing suffix for Short Gamma Pocket labels to keep them clean
       const isShortGammaPocket = label.startsWith("SHORT GAMMA POCKET");
       const labelWithTiming =
         !isBandFill && timing && !isShortGammaPocket
           ? `${label} ${horizonTag} ${urgencyTag}${timingTitleSuffix(timing)}`
           : label;
+      const compactLabel = abbreviateLevelLabel(labelWithTiming);
+      const displayLabel =
+        compactLabel.length > 34 ? `${compactLabel.slice(0, 31).trim()}...` : compactLabel;
       const shortWithTiming =
         !isBandFill && timing && !isShortGammaPocket ? `${shortLabel} ${horizonTag}` : shortLabel;
+      const hierarchyAlpha =
+        isBandFill ? 0.55 : style === LineStyle.Dashed || style === LineStyle.Dotted ? 0.74 : priority >= 4 ? 0.68 : priority >= 3 ? 0.82 : 1;
       const finalEntry = {
         price: p,
         priority,
-        label: labelWithTiming,
+        label: displayLabel,
         shortLabel: shortWithTiming,
-        color,
+        color: scaleRgbaAlpha(color, hierarchyAlpha),
         style,
-        width: lineWidthScaled,
+        width: Math.max(1, Math.min(2, lineWidthScaled)),
         axisLabel,
         isBandFill,
         timing,
@@ -1058,12 +1073,12 @@ export function MainChart({
       const putWallLabel = putWallUsd != null && Number.isFinite(putWallUsd)
         ? `PUT WALL (${formatNotional(putWallUsd)}) ${fmtK(pw!)}`
         : "PUT WALL";
-      if (cw) pushEntry(cw, 1, callWallLabel, pos?.activeCallWall ? "CW (active)" : "CW", `rgba(239, 68, 68, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2, false, false, "call_wall", "options", 0.88, true);
-      if (pw) pushEntry(pw, 1, putWallLabel, pos?.activePutWall ? "PW (active)" : "PW", `rgba(34, 197, 94, ${dim(0.6, 0.7)})`, LineStyle.Solid, 2, false, false, "put_wall", "options", 0.88, true);
+      if (cw) pushEntry(cw, 1, callWallLabel, pos?.activeCallWall ? "CW active" : "CW", `rgba(239, 68, 68, ${dim(0.48, 0.65)})`, LineStyle.Solid, 2, false, false, "call_wall", "options", 0.88, true);
+      if (pw) pushEntry(pw, 1, putWallLabel, pos?.activePutWall ? "PW active" : "PW", `rgba(34, 197, 94, ${dim(0.48, 0.65)})`, LineStyle.Solid, 2, false, false, "put_wall", "options", 0.88, true);
       if (levels?.gammaMagnets) {
-        levels.gammaMagnets.forEach((m, i) => pushEntry(m, 3, `MAG ${fmtK(m)}`, "M", `rgba(59, 130, 246, ${dim(0.4, 0.5)})`, LineStyle.Dashed, 1, false, false, "gamma_magnet", "gamma", 0.64, true));
+        levels.gammaMagnets.forEach((m, i) => pushEntry(m, 3, `MAG ${fmtK(m)}`, "M", `rgba(59, 130, 246, ${dim(0.28, 0.5)})`, LineStyle.Dashed, 1, false, false, "gamma_magnet", "gamma", 0.64, true));
       }
-      if (positioning?.dealerPivot) pushEntry(positioning.dealerPivot, 2, "PIVOT", "PV", `rgba(255, 255, 255, ${dim(0.3, 0.7)})`, LineStyle.Dashed, 1, false, false, "dealer_pivot", "options", 0.58, false);
+      if (positioning?.dealerPivot) pushEntry(positioning.dealerPivot, 2, "PIVOT", "PV", `rgba(255, 255, 255, ${dim(0.22, 0.7)})`, LineStyle.Dashed, 1, false, false, "dealer_pivot", "options", 0.58, false);
     }
 
     if (activePanels.has("GAMMA")) {
@@ -1073,7 +1088,7 @@ export function MainChart({
           1,
           "LOCAL FLIP",
           "LFL",
-          `rgba(168, 250, 220, ${dim(0.88, 0.7)})`,
+          `rgba(125, 232, 194, ${dim(0.76, 0.68)})`,
           LineStyle.Solid,
           2,
           false,
@@ -1089,7 +1104,7 @@ export function MainChart({
             4,
             "LOCAL GAMMA ZONE (lo)",
             "LZL",
-            `rgba(34, 197, 94, ${dim(0.35, 0.6)})`,
+            `rgba(34, 197, 94, ${dim(0.22, 0.6)})`,
             LineStyle.Dashed,
           );
           pushEntry(
@@ -1097,7 +1112,7 @@ export function MainChart({
             4,
             "LOCAL GAMMA ZONE (hi)",
             "LZH",
-            `rgba(34, 197, 94, ${dim(0.35, 0.6)})`,
+            `rgba(34, 197, 94, ${dim(0.22, 0.6)})`,
             LineStyle.Dashed,
           );
         }
@@ -1107,7 +1122,7 @@ export function MainChart({
           1,
           "BROAD FLIP",
           "BFL",
-          `rgba(250, 240, 180, ${dim(0.85, 0.7)})`,
+          `rgba(234, 214, 150, ${dim(0.72, 0.68)})`,
           LineStyle.Solid,
           2,
           false,
@@ -1118,8 +1133,8 @@ export function MainChart({
           true,
         );
         if (gammaOverlaySel.broadZoneStart && gammaOverlaySel.broadZoneEnd) {
-          pushEntry(gammaOverlaySel.broadZoneStart, 4, "TR LO", "TL", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
-          pushEntry(gammaOverlaySel.broadZoneEnd, 4, "TR HI", "TH", `rgba(234, 179, 8, ${dim(0.25, 0.6)})`, LineStyle.Dashed);
+          pushEntry(gammaOverlaySel.broadZoneStart, 4, "TR LO", "TL", `rgba(234, 179, 8, ${dim(0.18, 0.6)})`, LineStyle.Dashed);
+          pushEntry(gammaOverlaySel.broadZoneEnd, 4, "TR HI", "TH", `rgba(234, 179, 8, ${dim(0.18, 0.6)})`, LineStyle.Dashed);
         }
       }
       {
@@ -1136,7 +1151,7 @@ export function MainChart({
               2,
               "GLOBAL FLIP",
               "GFG",
-              `rgba(196, 181, 253, ${dim(0.82, 0.7)})`,
+              `rgba(196, 181, 253, ${dim(0.68, 0.68)})`,
               LineStyle.Solid,
               2,
               false,
@@ -1488,7 +1503,7 @@ export function MainChart({
         pushEntry(p, 2, "", "", `rgba(${sweepDirColor}, ${opacity})`, LineStyle.Solid, 1, true);
       }
       const zoneLabel = typeShortLabel ? `SW ${sweepDirArrow} ${typeShortLabel}` : `SWEEP ${sweepDirArrow}`;
-      pushEntry(sweepZoneRange.end, 2, zoneLabel, typeShortLabel || "SW", `rgba(${sweepDirColor}, 0.4)`, LineStyle.Solid, 1);
+        pushEntry(sweepZoneRange.end, 2, zoneLabel, typeShortLabel || "SW", `rgba(${sweepDirColor}, 0.32)`, LineStyle.Solid, 1);
     }
 
     if (sweepActive && activePanels.has("SQUEEZE") && sweptZoneRange && !activePanels.has("HEATMAP")) {
@@ -1498,7 +1513,7 @@ export function MainChart({
         const isBorder = i === 0 || i === 4;
         pushEntry(p, 2, "", "", `rgba(251, 191, 36, ${isBorder ? 0.25 : 0.06})`, LineStyle.Dotted, 1, true);
       }
-      pushEntry(sweptZoneRange.end, 2, "SWEPT", "SWEPT", "rgba(251, 191, 36, 0.5)", LineStyle.Solid, 1);
+        pushEntry(sweptZoneRange.end, 2, "SWEPT", "SWEPT", "rgba(251, 191, 36, 0.34)", LineStyle.Solid, 1);
     }
 
     if (sweepActive && activePanels.has("SQUEEZE")) {
@@ -1532,7 +1547,7 @@ export function MainChart({
         if (!bestTrigger && Math.abs(triggerPrice - price) <= threshold) bestTrigger = triggerPrice;
       }
       if (bestTrigger) {
-        pushEntry(bestTrigger, 2, "SW TRIG", "SWT", `rgba(${sweepDirColor}, 0.5)`, LineStyle.Dashed, 2);
+        pushEntry(bestTrigger, 2, "SW TRIG", "SWT", `rgba(${sweepDirColor}, 0.36)`, LineStyle.Dashed, 2);
       }
     }
 
@@ -1554,7 +1569,7 @@ export function MainChart({
           0,
           label,
           isBid ? "BID" : "ASK",
-          isBid ? "rgba(34, 197, 94, 0.85)" : "rgba(239, 68, 68, 0.85)",
+          isBid ? "rgba(34, 197, 94, 0.58)" : "rgba(239, 68, 68, 0.58)",
           LineStyle.Solid,
           2,
           false,
@@ -1666,7 +1681,7 @@ export function MainChart({
         pushEntry(p, 3, "", "", `rgba(${r}, ${g}, ${b}, ${opacity})`, LineStyle.Dashed, 1, true, true);
       }
       const confStr = absorption.confidence != null ? ` ${absorption.confidence}%` : "";
-      pushEntry(absorption.zoneHigh, 3, isSellAbsorb ? `SELL ABSORB${confStr}` : `BUY ABSORB${confStr}`, isSellAbsorb ? "S-ABS" : "B-ABS", `rgba(${r}, ${g}, ${b}, 0.85)`, LineStyle.Dashed, 1, false, true);
+      pushEntry(absorption.zoneHigh, 3, isSellAbsorb ? `SELL ABSORB${confStr}` : `BUY ABSORB${confStr}`, isSellAbsorb ? "S-ABS" : "B-ABS", `rgba(${r}, ${g}, ${b}, 0.62)`, LineStyle.Dashed, 1, false, true);
     }
 
     // Candidate / pre-absorption overlay (subtle)
@@ -2003,11 +2018,12 @@ export function MainChart({
     const i = chartSettings.interaction;
     const chart = chartRef.current;
     const series = candleSeriesRef.current;
-    const gridColor = `rgba(255,255,255,${Math.min(0.28, a.gridOpacity * 0.9)})`;
+    const gridColor = `rgba(255,255,255,${Math.min(0.12, a.gridOpacity * 0.45)})`;
     chart.applyOptions({
       layout: {
         background: { type: ColorType.Solid, color: a.background },
         textColor: a.textColor,
+        fontSize: 10,
       },
       grid: {
         vertLines: { visible: a.showGrid, color: gridColor },
@@ -2017,8 +2033,8 @@ export function MainChart({
         vertLine: { visible: i.showCrosshairVertical },
         horzLine: { visible: i.showCrosshairHorizontal },
       },
-      rightPriceScale: { borderColor: "#1a1a1a", visible: s.showPriceScale },
-      timeScale: { borderColor: "#1a1a1a", visible: s.showTimeScale },
+      rightPriceScale: { borderColor: "rgba(255,255,255,0.08)", visible: s.showPriceScale, minimumWidth: RIGHT_PRICE_SCALE_MIN_WIDTH },
+      timeScale: { borderColor: "rgba(255,255,255,0.08)", visible: s.showTimeScale },
     });
     chart.priceScale("right").applyOptions({ autoScale: s.autoScale });
     series.applyOptions({
@@ -2029,6 +2045,16 @@ export function MainChart({
       priceFormat: { type: "price", precision: s.pricePrecision, minMove: 10 ** -s.pricePrecision },
     });
   }, [chartSettings, chartReady]);
+
+  useEffect(() => {
+    if (!chartReady || !chartRef.current) return;
+    chartRef.current.applyOptions({
+      localization: {
+        timeFormatter: (time) => formatLwChartTime(time, timezonePreference),
+        dateFormatter: (date) => formatLwChartDate(date, timezonePreference),
+      },
+    });
+  }, [chartReady, timezonePreference]);
 
   const chartCoordinates = useMemo(
     () =>
@@ -2157,25 +2183,29 @@ export function MainChart({
           dataTestId="toggle-map-mode"
         />
       )}
-      <TerminalPanel className="flex-1 w-full min-w-0 min-h-0 border border-terminal-border relative z-0 overflow-hidden" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(30, 58, 138, 0.03)' : 'rgba(127, 29, 29, 0.03)' }}>
+      <TerminalPanel className="flex-1 w-full min-w-0 min-h-0 border border-white/[0.08] relative z-0 overflow-hidden shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]" noPadding style={{ backgroundColor: market?.gammaRegime === 'LONG GAMMA' ? 'rgba(15, 33, 63, 0.16)' : 'rgba(45, 12, 16, 0.16)' }}>
         <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
-          <div className="absolute top-0 left-0 right-[100px] p-4 flex justify-between items-start">
+          <div className="absolute top-0 left-0 right-[86px] px-3 py-2 flex justify-between items-start">
             <div className="flex flex-col pointer-events-none">
-              <div className="flex items-baseline flex-wrap gap-x-3 gap-y-2">
-                <h2 className="text-xl font-bold font-mono text-white/90 tracking-tight">BTC/USDT</h2>
+              <div className="flex items-center flex-wrap gap-x-2 gap-y-1 px-1 py-0.5">
+                <h2 className="text-[17px] leading-none font-semibold font-mono text-white tracking-tight [text-shadow:0_1px_2px_rgba(0,0,0,0.65)]">BTC/USDT</h2>
                 <div className="pointer-events-auto">
                   <ChartTimeframeSelector />
                 </div>
-                <span className={`text-2xl font-mono font-bold ${isLive ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{headerPriceLabel}</span>
-                <div className="flex items-center ml-2">
-                  <div className={cn("w-1.5 h-1.5 rounded-full mr-1.5 animate-pulse", isLive ? "bg-terminal-positive" : "bg-terminal-negative")} />
-                  <span className={cn("text-[9px] font-mono font-bold tracking-widest uppercase", isLive ? "text-terminal-positive" : "text-terminal-negative")}>{isLive ? `Live (${liveSourceLabel})` : baseLoading ? 'Connecting…' : 'Live Feed Offline'}</span>
+                <span className="text-[9px] leading-none font-mono text-white/45 uppercase tracking-wider [text-shadow:0_1px_2px_rgba(0,0,0,0.65)]">
+                  {timezoneLabel}
+                </span>
+                <span className={`text-[clamp(26px,2.2vw,32px)] leading-none font-mono font-semibold tracking-tight [text-shadow:0_1px_2px_rgba(0,0,0,0.65)] ${isLive ? 'text-emerald-400' : 'text-red-400'}`}>{headerPriceLabel}</span>
+                <div className="flex h-5 items-center rounded-full border border-white/[0.08] bg-white/[0.025] px-1.5">
+                  <div className={cn("w-1 h-1 rounded-full mr-1", isLive ? "bg-emerald-400" : "bg-red-400")} />
+                  <span className={cn("text-[8px] leading-none font-mono font-semibold tracking-widest uppercase", isLive ? "text-emerald-300/85" : "text-red-300/85")}>{isLive ? `Live (${liveSourceLabel})` : baseLoading ? 'Connecting...' : 'Live Feed Offline'}</span>
                 </div>
               </div>
               {!isSimpleView && (
-                <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
-                  <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Regime</span><span className={`text-[11px] font-bold font-mono ${chartRegimeIsLong ? 'text-terminal-positive' : 'text-terminal-negative'}`}>{chartRegimeDisplay}</span></div>
-                  <div className="flex flex-col"><span className="text-[9px] text-terminal-muted font-mono uppercase tracking-tighter">Flip Dist</span><span className="text-[11px] font-bold font-mono text-white">{chartFlipDistPct != null ? `${chartFlipDistPct.toFixed(2)}%` : "--"}</span></div>
+                <div className="mt-1 px-1 text-[9px] leading-none font-mono uppercase tracking-wider text-white/52 [text-shadow:0_1px_2px_rgba(0,0,0,0.65)]">
+                  <span className={chartRegimeIsLong ? 'text-emerald-300/85' : 'text-red-300/85'}>{chartRegimeDisplay}</span>
+                  <span className="mx-1.5 text-white/25">·</span>
+                  <span>Flip Dist {chartFlipDistPct != null ? `${chartFlipDistPct.toFixed(2)}%` : "--"}</span>
                 </div>
               )}
               {!isSimpleView && activePanels.has("GAMMA") && (
@@ -2206,27 +2236,27 @@ export function MainChart({
           </div>
         </div>
         {!isSimpleView && activePanels.has("GAMMA") && (
-          <div className="absolute bottom-3 left-3 z-10 pointer-events-none">
-            <div className="flex flex-wrap items-center gap-3 bg-black/50 border border-white/[0.06] rounded px-2.5 py-1.5 backdrop-blur-sm max-w-[min(100%,420px)]">
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(168, 250, 220, 0.88)" }} />
-                <span className="text-[9px] font-mono text-white/50">Local flip</span>
+          <div className="absolute bottom-2 left-2 z-10 pointer-events-none">
+            <div className="flex flex-wrap items-center gap-2 bg-black/24 border border-white/[0.04] rounded-[2px] px-1.5 py-1 max-w-[min(100%,360px)]">
+              <div className="flex items-center gap-1">
+                <span className="w-2.5 h-px rounded-full" style={{ backgroundColor: "rgba(168, 250, 220, 0.78)" }} />
+                <span className="text-[8px] leading-none font-mono text-white/42">L flip</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(196, 181, 253, 0.82)" }} />
-                <span className="text-[9px] font-mono text-white/50">Global</span>
+              <div className="flex items-center gap-1">
+                <span className="w-2.5 h-px rounded-full" style={{ backgroundColor: "rgba(196, 181, 253, 0.72)" }} />
+                <span className="text-[8px] leading-none font-mono text-white/42">Global</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(250, 240, 180, 0.85)" }} />
-                <span className="text-[9px] font-mono text-white/50">Broad flip</span>
+              <div className="flex items-center gap-1">
+                <span className="w-2.5 h-px rounded-full" style={{ backgroundColor: "rgba(250, 240, 180, 0.75)" }} />
+                <span className="text-[8px] leading-none font-mono text-white/42">Broad</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(34, 197, 94, 0.45)" }} />
-                <span className="text-[9px] font-mono text-white/50">Local zone</span>
+              <div className="flex items-center gap-1">
+                <span className="w-2.5 h-px rounded-full" style={{ backgroundColor: "rgba(34, 197, 94, 0.36)" }} />
+                <span className="text-[8px] leading-none font-mono text-white/42">L zone</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(234, 179, 8, 0.5)" }} />
-                <span className="text-[9px] font-mono text-white/50">Broad zone</span>
+              <div className="flex items-center gap-1">
+                <span className="w-2.5 h-px rounded-full" style={{ backgroundColor: "rgba(234, 179, 8, 0.42)" }} />
+                <span className="text-[8px] leading-none font-mono text-white/42">B zone</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(249, 115, 22, 0.7)" }} />
@@ -2240,19 +2270,19 @@ export function MainChart({
           </div>
         )}
         {!isSimpleView && activePanels.has("HEATMAP") && (
-          <div className="absolute bottom-3 left-3 z-10 pointer-events-none">
-            <div className="flex items-center gap-3 bg-black/50 border border-white/[0.06] rounded px-2.5 py-1.5 backdrop-blur-sm">
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(34, 197, 94, 0.6)" }} />
-                <span className="text-[9px] font-mono text-white/50">Bid</span>
+          <div className="absolute bottom-2 left-2 z-10 pointer-events-none">
+            <div className="flex items-center gap-2 bg-black/24 border border-white/[0.04] rounded-[2px] px-1.5 py-1">
+              <div className="flex items-center gap-1">
+                <span className="w-2.5 h-px rounded-full" style={{ backgroundColor: "rgba(34, 197, 94, 0.5)" }} />
+                <span className="text-[8px] leading-none font-mono text-white/42">Bid</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(239, 68, 68, 0.6)" }} />
-                <span className="text-[9px] font-mono text-white/50">Ask</span>
+              <div className="flex items-center gap-1">
+                <span className="w-2.5 h-px rounded-full" style={{ backgroundColor: "rgba(239, 68, 68, 0.5)" }} />
+                <span className="text-[8px] leading-none font-mono text-white/42">Ask</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="w-3 h-[2px] rounded-full" style={{ backgroundColor: "rgba(168, 85, 247, 0.55)" }} />
-                <span className="text-[9px] font-mono text-white/50">Confluence</span>
+              <div className="flex items-center gap-1">
+                <span className="w-2.5 h-px rounded-full" style={{ backgroundColor: "rgba(168, 85, 247, 0.48)" }} />
+                <span className="text-[8px] leading-none font-mono text-white/42">Conf</span>
               </div>
             </div>
           </div>

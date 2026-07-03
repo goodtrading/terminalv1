@@ -19,6 +19,16 @@ import {
   type BingXNormalizedRiskOrder,
 } from "./bingxRiskOrders";
 import { buildBingXRiskDebugShape } from "./bingxRiskDebug";
+import {
+  buildAccountDataQuality,
+  deriveConnectionState,
+  filterDisplayOpenOrders,
+  mapOpenOrderRow,
+  mapPositionRow,
+  parseFinancialNumber,
+  SNAPSHOT_STALE_MS,
+  type BingxConnectionState,
+} from "./bingxNormalize";
 
 export type { BingXNormalizedRiskOrder } from "./bingxRiskOrders";
 
@@ -32,7 +42,9 @@ export type BingXAccountSyncStatus =
   | "parser_mismatch";
 
 export interface BingXNormalizedPosition {
+  id: string;
   symbol: string;
+  positionSide?: "LONG" | "SHORT" | "BOTH";
   side: "long" | "short" | "flat" | "unknown";
   quantity: number;
   entryPrice?: number;
@@ -73,8 +85,27 @@ export interface BingXReadOnlySnapshot {
   exchange: "bingx";
   mode: "read-only";
   connected: boolean;
+  connectionState: BingxConnectionState;
   health: BingXReadOnlyHealth;
   lastSyncTime: number;
+  freshness: {
+    lastSyncTime: number;
+    ageMs: number;
+    stale: boolean;
+    staleAfterMs: number;
+  };
+  dataQuality?: {
+    status: "complete" | "partial" | "missing" | "stale";
+    missingFields: string[];
+    warnings: string[];
+  };
+  partialFailures?: {
+    positions?: string;
+    orders?: string;
+  };
+  positionsUnavailable?: boolean;
+  openOrdersUnavailable?: boolean;
+  unknownOrders?: BingXNormalizedOrder[];
   account?: {
     equityUsdt?: number;
     balanceUsdt?: number;
@@ -139,67 +170,105 @@ const SNAPSHOT_CACHE_MS = 4_000;
 const HEALTH_CACHE_MS = 10_000;
 const HIGH_LATENCY_MS = 8_000;
 
+type SnapshotSyncFn = (
+  connectionId: string,
+  userId: number,
+  symbol?: string,
+) => Promise<BingXReadOnlySnapshot>;
+
+let snapshotSyncOverride: SnapshotSyncFn | null = null;
+
+/** Test seam — mock upstream BingX sync without HTTP. */
+export function __setSnapshotSyncForTests(fn: SnapshotSyncFn | null): void {
+  snapshotSyncOverride = fn;
+}
+
+export function __getSnapshotCacheMsForTests(): number {
+  return SNAPSHOT_CACHE_MS;
+}
+
 const snapshotCache = new Map<string, { at: number; data: BingXReadOnlySnapshot }>();
 const healthCache = new Map<string, { at: number; data: BingXReadOnlyHealthResult }>();
 
-function coerceNumber(v: unknown): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string" && v.trim()) {
-    const n = Number(v);
-    if (Number.isFinite(n)) return n;
-  }
-  return 0;
+function buildSnapshotFreshness(lastSyncTime: number, now = Date.now()) {
+  const ageMs = Math.max(0, now - lastSyncTime);
+  return {
+    lastSyncTime,
+    ageMs,
+    stale: ageMs > SNAPSHOT_STALE_MS,
+    staleAfterMs: SNAPSHOT_STALE_MS,
+  };
 }
 
-function normalizeMarginMode(raw: unknown): "cross" | "isolated" | "unknown" {
-  const s = String(raw ?? "").toLowerCase();
-  if (s.includes("cross")) return "cross";
-  if (s.includes("isol")) return "isolated";
-  return "unknown";
-}
-
-function normalizeOrderSide(raw: string): BingXNormalizedOrder["side"] {
-  const s = raw.toLowerCase();
-  if (s.includes("buy") || s.includes("long")) return "buy";
-  if (s.includes("sell") || s.includes("short")) return "sell";
-  return "unknown";
-}
-
-function normalizeOrderType(raw: string): BingXNormalizedOrder["type"] {
-  const s = raw.toLowerCase();
-  if (s.includes("limit")) return "limit";
-  if (s.includes("market")) return "market";
-  if (s.includes("stop") && !s.includes("profit")) return "stop";
-  if (s.includes("profit") || s.includes("tp")) return "take_profit";
-  return "unknown";
-}
-
-function normalizeOrderStatus(raw: string): BingXNormalizedOrder["status"] {
-  const s = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  if (!s) return "open";
-
-  if (s.startsWith("partial") || s.startsWith("partially")) {
-    return "partially_filled";
+function applySnapshotFreshness(
+  snapshot: BingXReadOnlySnapshot,
+  now = Date.now(),
+): BingXReadOnlySnapshot {
+  const freshness = buildSnapshotFreshness(snapshot.lastSyncTime, now);
+  const authError =
+    snapshot.error?.code === "INVALID_API_KEY" ||
+    snapshot.error?.code === "INVALID_SIGNATURE" ||
+    snapshot.error?.code === "INSUFFICIENT_PERMISSION";
+  let connectionState = deriveConnectionState({
+    connected: snapshot.connected,
+    health: snapshot.health,
+    lastSyncTime: snapshot.lastSyncTime,
+    now,
+    authError,
+  });
+  if (freshness.stale && snapshot.connected && connectionState === "CONNECTED") {
+    connectionState = "STALE";
   }
 
-  if (
-    s === "new" ||
-    s === "open" ||
-    s === "working" ||
-    s === "active" ||
-    s === "pending" ||
-    s === "accepted" ||
-    s === "submitted"
-  ) {
-    return "open";
+  let dataQuality = snapshot.dataQuality;
+  if (freshness.stale) {
+    if (dataQuality) {
+      dataQuality = {
+        ...dataQuality,
+        status: dataQuality.status === "complete" ? "stale" : dataQuality.status,
+        warnings: [...dataQuality.warnings, "Snapshot is stale."],
+      };
+    } else {
+      dataQuality = {
+        status: "stale",
+        missingFields: [],
+        warnings: ["Snapshot is stale."],
+      };
+    }
   }
 
-  if (s === "filled") return "filled";
-  if (s === "canceled" || s === "cancelled") return "cancelled";
-  if (s === "expired") return "expired";
-  if (s === "rejected") return "rejected";
+  return {
+    ...snapshot,
+    freshness,
+    connectionState,
+    dataQuality,
+  };
+}
 
-  return "unknown";
+function emptyReadOnlySnapshot(
+  connectionId: string,
+  overrides: Partial<BingXReadOnlySnapshot> = {},
+): BingXReadOnlySnapshot {
+  const now = Date.now();
+  const base: BingXReadOnlySnapshot = {
+    connectionId,
+    exchange: "bingx",
+    mode: "read-only",
+    connected: false,
+    connectionState: "DISCONNECTED",
+    health: "error",
+    connectionHealth: "error",
+    accountSync: { status: "unavailable" },
+    lastSyncTime: now,
+    freshness: buildSnapshotFreshness(now, now),
+    positions: [],
+    openOrders: [],
+    riskOrders: [],
+    permissions: { read: false, trade: false, withdraw: false },
+    warnings: [],
+  };
+  const merged = { ...base, ...overrides };
+  return applySnapshotFreshness(merged, now);
 }
 
 function logBingXLimitDiagnostic(payload: Record<string, unknown>): void {
@@ -292,33 +361,13 @@ function mapPositions(
   rows: Awaited<ReturnType<typeof getPositions>>,
 ): BingXNormalizedPosition[] {
   return rows
-    .filter((p) => p.side !== "flat" && p.positionAmt > 0)
-    .map((p) => {
-      const qty = p.positionAmt;
-      const entry = p.entryPrice;
-      const mark = p.markPrice;
-      const notional =
-        mark != null && mark > 0 ? qty * mark : entry != null && entry > 0 ? qty * entry : undefined;
-      let roePct: number | undefined;
-      if (p.unrealizedPnl != null && notional != null && notional > 0) {
-        roePct = (p.unrealizedPnl / notional) * 100;
-      }
-      return {
-        symbol: p.symbol,
-        side: p.side === "long" || p.side === "short" ? p.side : "unknown",
-        quantity: qty,
-        entryPrice: entry,
-        markPrice: mark,
-        liquidationPrice: p.liquidationPrice,
-        leverage: p.leverage,
-        marginMode: normalizeMarginMode(p.marginMode),
-        unrealizedPnlUsdt: p.unrealizedPnl,
-        roePct: roePct != null && Number.isFinite(roePct) ? Math.round(roePct * 100) / 100 : undefined,
-        notionalUsdt: notional,
+    .map((p) =>
+      mapPositionRow(p as unknown as Record<string, unknown>, {
         stopLossPrice: p.stopLossPrice,
         takeProfitPrice: p.takeProfitPrice,
-      };
-    });
+      }),
+    )
+    .filter((p): p is BingXNormalizedPosition => p != null);
 }
 
 function mapOrders(
@@ -327,61 +376,55 @@ function mapOrders(
   logBingXLimitDiagnostic({
     stage: "map_orders_input",
     count: rows.length,
-    orders: rows.map((o) => ({
-      orderId: o.orderId,
-      symbol: o.symbol,
-      type: o.type,
-      status: o.status,
-      price: o.price ?? null,
-      triggerPrice: o.triggerPrice ?? null,
-      stopPrice: o.stopPrice ?? null,
-    })),
   });
 
-  return rows.map((o) => {
-    const type = normalizeOrderType(o.type);
-    const trigger = o.triggerPrice ?? o.stopPrice;
-    const limitPrice = o.price;
-    const typeLower = (o.type ?? "").toLowerCase();
-    const isConditional =
-      type === "stop" ||
-      type === "take_profit" ||
-      /stop|take_profit|trigger|trailing|tpsl|conditional|plan/.test(typeLower);
-    const effectivePrice = isConditional
-      ? trigger ?? limitPrice
-      : limitPrice ?? trigger;
-    const mapped = {
-      id: o.orderId,
-      symbol: o.symbol,
-      side: normalizeOrderSide(o.side),
-      type,
-      status: normalizeOrderStatus(o.status),
-      price: effectivePrice,
-      triggerPrice: trigger,
-      stopPrice: o.stopPrice,
-      quantity: o.quantity,
-      reduceOnly: o.reduceOnly,
-      createdTime: undefined,
-    };
+  const mapped = rows
+    .map((o) => mapOpenOrderRow(o as unknown as Record<string, unknown>))
+    .filter((o): o is NonNullable<typeof o> => o != null);
+
+  const { openOrders, unknownOrders } = filterDisplayOpenOrders(mapped);
+
+  if (unknownOrders.length > 0) {
     logBingXLimitDiagnostic({
-      stage: "map_orders_output_row",
-      id: mapped.id,
-      symbol: mapped.symbol,
-      rawType: o.type,
-      type: mapped.type,
-      rawStatus: o.status,
-      status: mapped.status,
-      rawPrice: o.price ?? null,
-      price: mapped.price ?? null,
-      triggerPrice: mapped.triggerPrice ?? null,
-      isConditional,
+      stage: "map_orders_unknown",
+      count: unknownOrders.length,
     });
-    return mapped;
-  });
+  }
+
+  return openOrders.map((o) => ({
+    id: o.id,
+    symbol: o.symbol,
+    side: o.side,
+    type: o.type,
+    status: o.status,
+    price: o.price,
+    triggerPrice: o.triggerPrice,
+    stopPrice: o.stopPrice,
+    quantity: o.quantity,
+    reduceOnly: o.reduceOnly,
+    createdTime: undefined,
+  }));
 }
 
-function finiteOrUndefined(n: number): number | undefined {
-  return Number.isFinite(n) ? n : undefined;
+function mapUnknownOrders(
+  rows: Awaited<ReturnType<typeof getOpenOrders>>,
+): BingXNormalizedOrder[] {
+  const mapped = rows
+    .map((o) => mapOpenOrderRow(o as unknown as Record<string, unknown>))
+    .filter((o): o is NonNullable<typeof o> => o != null);
+  const { unknownOrders } = filterDisplayOpenOrders(mapped);
+  return unknownOrders.map((o) => ({
+    id: o.id,
+    symbol: o.symbol,
+    side: o.side,
+    type: o.type,
+    status: "unknown" as const,
+    price: o.price,
+    triggerPrice: o.triggerPrice,
+    stopPrice: o.stopPrice,
+    quantity: o.quantity,
+    reduceOnly: o.reduceOnly,
+  }));
 }
 
 function buildAccountFromBalances(
@@ -390,6 +433,7 @@ function buildAccountFromBalances(
 ): {
   account?: BingXReadOnlySnapshot["account"];
   accountSync: BingXReadOnlySnapshot["accountSync"];
+  dataQuality: NonNullable<BingXReadOnlySnapshot["dataQuality"]>;
 } {
   if (parseHint === "parser_mismatch") {
     return {
@@ -398,6 +442,7 @@ function buildAccountFromBalances(
         message:
           "Connected, but balance data could not be parsed. Report this if your futures wallet has funds.",
       },
+      dataQuality: buildAccountDataQuality({ parseHint: "parser_mismatch" }),
     };
   }
 
@@ -409,33 +454,62 @@ function buildAccountFromBalances(
         message:
           "Connected, but account balance is unavailable. Check futures read permissions or account type.",
       },
+      dataQuality: buildAccountDataQuality({}),
     };
   }
 
-  const balanceUsdt = coerceNumber(primary.walletBalance);
-  const availableMarginUsdt = coerceNumber(primary.availableBalance);
-  const equityUsdt = coerceNumber(primary.equity ?? primary.walletBalance);
-  const unrealizedPnlUsdt =
-    primary.unrealizedPnl != null ? coerceNumber(primary.unrealizedPnl) : 0;
-  const marginUsedUsdt = Math.max(0, equityUsdt - availableMarginUsdt);
+  const balanceParsed = parseFinancialNumber(primary.walletBalance);
+  const availableParsed = parseFinancialNumber(primary.availableBalance);
+  const equityParsed = parseFinancialNumber(primary.equity ?? primary.walletBalance);
+  const unrealizedParsed =
+    primary.unrealizedPnl != null
+      ? parseFinancialNumber(primary.unrealizedPnl)
+      : { present: false, valid: false, value: null };
 
-  const accountSync: BingXReadOnlySnapshot["accountSync"] =
+  const balanceUsdt = balanceParsed.valid ? balanceParsed.value ?? undefined : undefined;
+  const availableMarginUsdt = availableParsed.valid ? availableParsed.value ?? undefined : undefined;
+  const equityUsdt = equityParsed.valid ? equityParsed.value ?? undefined : undefined;
+  const unrealizedPnlUsdt = unrealizedParsed.valid ? unrealizedParsed.value ?? undefined : undefined;
+
+  const marginUsedUsdt =
+    equityUsdt != null && availableMarginUsdt != null
+      ? Math.max(0, equityUsdt - availableMarginUsdt)
+      : undefined;
+
+  const dataQuality = buildAccountDataQuality({
+    equity: equityUsdt,
+    balance: balanceUsdt,
+    availableMargin: availableMarginUsdt,
+    unrealizedPnl: unrealizedPnlUsdt,
+    parseHint,
+  });
+
+  const allZero =
     equityUsdt === 0 &&
     availableMarginUsdt === 0 &&
     balanceUsdt === 0 &&
-    unrealizedPnlUsdt === 0
+    (unrealizedPnlUsdt == null || unrealizedPnlUsdt === 0);
+
+  const accountSync: BingXReadOnlySnapshot["accountSync"] =
+    allZero && balanceParsed.valid && equityParsed.valid
       ? { status: "empty", message: "Futures wallet balance is zero." }
-      : { status: "loaded" };
+      : dataQuality.status === "missing"
+        ? {
+            status: "unavailable",
+            message: "Balance fields missing from BingX response.",
+          }
+        : { status: "loaded" };
 
   return {
     account: {
-      equityUsdt: finiteOrUndefined(equityUsdt),
-      balanceUsdt: finiteOrUndefined(balanceUsdt),
-      availableMarginUsdt: finiteOrUndefined(availableMarginUsdt),
-      marginUsedUsdt: finiteOrUndefined(marginUsedUsdt),
-      unrealizedPnlUsdt: finiteOrUndefined(unrealizedPnlUsdt),
+      equityUsdt,
+      balanceUsdt,
+      availableMarginUsdt,
+      marginUsedUsdt,
+      unrealizedPnlUsdt,
     },
     accountSync,
+    dataQuality,
   };
 }
 
@@ -487,45 +561,19 @@ async function syncSnapshotCore(
   symbol?: string,
 ): Promise<BingXReadOnlySnapshot> {
   if (!isBingxApiConnectionEnabled()) {
-    return {
-      connectionId,
-      exchange: "bingx",
-      mode: "read-only",
-      connected: false,
-      health: "error",
-      connectionHealth: "error",
-      accountSync: { status: "unavailable" },
-      lastSyncTime: Date.now(),
-      positions: [],
-      openOrders: [],
-      riskOrders: [],
-      permissions: { read: false, trade: false, withdraw: false },
-      warnings: [],
+    return emptyReadOnlySnapshot(connectionId, {
       error: {
         code: "BINGX_API_DISABLED",
         message: "BingX API connection is disabled on the server.",
       },
-    };
+    });
   }
 
   const check = assertConnection(connectionId, userId);
   if (!check.ok) {
-    return {
-      connectionId,
-      exchange: "bingx",
-      mode: "read-only",
-      connected: false,
-      health: "error",
-      connectionHealth: "error",
-      accountSync: { status: "unavailable" },
-      lastSyncTime: Date.now(),
-      positions: [],
-      openOrders: [],
-      riskOrders: [],
-      permissions: { read: false, trade: false, withdraw: false },
-      warnings: [],
+    return emptyReadOnlySnapshot(connectionId, {
       error: { code: check.code, message: check.message },
-    };
+    });
   }
 
   const credentials = getCredentialsForUser(check.connectionId, check.userId)!;
@@ -534,6 +582,11 @@ async function syncSnapshotCore(
 
   let account: BingXReadOnlySnapshot["account"];
   let accountSync: BingXReadOnlySnapshot["accountSync"] = { status: "unavailable" };
+  let dataQuality: NonNullable<BingXReadOnlySnapshot["dataQuality"]> = {
+    status: "missing",
+    missingFields: [],
+    warnings: [],
+  };
   try {
     const balanceResult = await getBalances(credentials);
     const built = buildAccountFromBalances(
@@ -542,6 +595,7 @@ async function syncSnapshotCore(
     );
     account = built.account;
     accountSync = built.accountSync;
+    dataQuality = built.dataQuality;
     if (accountSync.status !== "loaded" && accountSync.message) {
       warnings.push(accountSync.message);
     }
@@ -556,66 +610,71 @@ async function syncSnapshotCore(
     );
     const accountSyncStatus: BingXAccountSyncStatus =
       mapped.code === "INSUFFICIENT_PERMISSION" ? "permission_denied" : "unavailable";
-    return {
-      connectionId: check.connectionId,
-      exchange: "bingx",
-      mode: "read-only",
-      connected: false,
-      health: "error",
-      connectionHealth: "error",
+    return emptyReadOnlySnapshot(check.connectionId, {
+      connectionState: mapped.code === "INVALID_API_KEY" || mapped.code === "INVALID_SIGNATURE"
+        ? "UNAUTHORIZED"
+        : "ERROR",
       accountSync: {
         status: accountSyncStatus,
         message: mapped.message,
       },
-      lastSyncTime: Date.now(),
-      positions: [],
-      openOrders: [],
-      riskOrders: [],
-      permissions: { read: false, trade: false, withdraw: false },
-      warnings: [],
       error: { code: mapped.code, message: mapped.message },
-    };
+    });
   }
 
   const sym = symbol?.trim();
   let positions: BingXNormalizedPosition[] = [];
   let openOrders: BingXNormalizedOrder[] = [];
+  let unknownOrders: BingXNormalizedOrder[] = [];
+  let positionsUnavailable = false;
+  let openOrdersUnavailable = false;
+  const partialFailures: BingXReadOnlySnapshot["partialFailures"] = {};
+  let rawOrders: Awaited<ReturnType<typeof getOpenOrders>> = [];
 
   try {
     positions = mapPositions(await getPositions(credentials, sym));
   } catch {
     connectionHealth = "degraded";
+    positionsUnavailable = true;
+    partialFailures.positions = "BINGX_SNAPSHOT_PARTIAL";
     warnings.push("Positions could not be loaded.");
   }
 
   try {
-    openOrders = mapOrders(await getOpenOrders(credentials, sym));
+    rawOrders = await getOpenOrders(credentials, sym);
+    openOrders = mapOrders(rawOrders);
+    unknownOrders = mapUnknownOrders(rawOrders);
     logBingXLimitDiagnostic({
       stage: "snapshot_open_orders",
       symbol: sym ?? null,
       count: openOrders.length,
-      orders: openOrders.map((o) => ({
-        id: o.id,
-        symbol: o.symbol,
-        type: o.type,
-        status: o.status,
-        price: o.price ?? null,
-        triggerPrice: o.triggerPrice ?? null,
-      })),
+      unknown: unknownOrders.length,
     });
   } catch {
     connectionHealth = "degraded";
+    openOrdersUnavailable = true;
+    partialFailures.orders = "BINGX_SNAPSHOT_PARTIAL";
     warnings.push("Open orders could not be loaded.");
   }
+
+  const syncTime = Date.now();
+  const freshness = {
+    lastSyncTime: syncTime,
+    ageMs: 0,
+    stale: false,
+    staleAfterMs: SNAPSHOT_STALE_MS,
+  };
 
   const health: BingXReadOnlyHealth =
     accountSync.status === "loaded" && connectionHealth === "healthy"
       ? "healthy"
       : accountSync.status === "loaded"
         ? connectionHealth
-        : connectionHealth === "error"
-          ? "error"
-          : "degraded";
+        : "degraded";
+
+  if (dataQuality.status === "partial" || dataQuality.status === "missing") {
+    dataQuality = { ...dataQuality, status: health === "healthy" ? "partial" : dataQuality.status };
+  }
 
   updateConnectionHealthForUser(
     check.connectionId,
@@ -624,19 +683,32 @@ async function syncSnapshotCore(
   );
 
   const riskOrders = buildRiskOrdersFromNormalized(positions, openOrders);
+  const connectionState = deriveConnectionState({
+    connected: true,
+    health,
+    lastSyncTime: syncTime,
+    now: syncTime,
+  });
 
   return {
     connectionId: check.connectionId,
     exchange: "bingx",
     mode: "read-only",
     connected: true,
+    connectionState,
     health,
     connectionHealth,
     accountSync,
-    lastSyncTime: Date.now(),
+    lastSyncTime: syncTime,
+    freshness,
+    dataQuality,
+    partialFailures: Object.keys(partialFailures).length ? partialFailures : undefined,
+    positionsUnavailable,
+    openOrdersUnavailable,
     account,
     positions,
     openOrders,
+    unknownOrders: unknownOrders.length ? unknownOrders : undefined,
     riskOrders,
     permissions: { read: true, trade: false, withdraw: false },
     warnings,
@@ -670,12 +742,15 @@ export async function getBingXReadOnlySnapshot(
   const cached = snapshotCache.get(cacheKey);
   const now = Date.now();
   if (!options?.bypassCache && cached && now - cached.at < SNAPSHOT_CACHE_MS) {
-    return cached.data;
+    return applySnapshotFreshness(cached.data, now);
   }
 
-  const data = await syncSnapshotCore(connectionId, userId, symbol);
-  snapshotCache.set(cacheKey, { at: now, data });
-  return data;
+  const data = snapshotSyncOverride
+    ? await snapshotSyncOverride(connectionId, userId, symbol)
+    : await syncSnapshotCore(connectionId, userId, symbol);
+  const fresh = applySnapshotFreshness(data, now);
+  snapshotCache.set(cacheKey, { at: now, data: fresh });
+  return fresh;
 }
 
 export async function getBingXReadOnlyHealth(
@@ -784,7 +859,7 @@ export async function getBingXReadOnlyHealth(
     health = "degraded";
   }
   if (!balanceLoaded) {
-    health = health === "error" ? "error" : "degraded";
+    health = "degraded";
     warnings.push(
       "API connected but futures balance was not loaded. Check read permissions or account type.",
     );
@@ -792,7 +867,7 @@ export async function getBingXReadOnlyHealth(
 
   const latencyMs = Date.now() - started;
   if (latencyMs > HIGH_LATENCY_MS) {
-    health = health === "error" ? "error" : "degraded";
+    health = "degraded";
     warnings.push(`High API latency (${latencyMs}ms).`);
   }
 
@@ -815,13 +890,20 @@ export async function getBingXReadOnlyHealth(
   return result;
 }
 
+export function __applySnapshotFreshnessForTests(
+  snapshot: BingXReadOnlySnapshot,
+  now = Date.now(),
+): BingXReadOnlySnapshot {
+  return applySnapshotFreshness(snapshot, now);
+}
+
 export function clearBingXReadOnlyCache(connectionId?: string, userId?: number): void {
   if (!connectionId && userId == null) {
     snapshotCache.clear();
     healthCache.clear();
     return;
   }
-  for (const key of snapshotCache.keys()) {
+  for (const key of Array.from(snapshotCache.keys())) {
     if (connectionId && key.includes(`:${connectionId}:`)) {
       snapshotCache.delete(key);
       continue;

@@ -1,4 +1,6 @@
 import {
+  BINGX_READ_ONLY_FREEZE_CODE,
+  isBingxReadOnlyFreezeActive,
   getLiveTradingEnvFlags,
   isApiTradingEnabled,
   isBingxMarketOrdersAllowed,
@@ -75,6 +77,16 @@ export function checkLiveMarketOrderAllowed(): LiveTradingGuardResult {
 export function checkLiveTradingActionAllowed(
   action: LiveTradingAction,
 ): LiveTradingGuardResult {
+  if (isBingxReadOnlyFreezeActive()) {
+    return {
+      allowed: false,
+      code: "LIVE_TRADING_BLOCKED",
+      message: "BingX live execution is frozen during read-only stabilization.",
+      action,
+      blockers: [BINGX_READ_ONLY_FREEZE_CODE],
+    };
+  }
+
   if (isKillSwitchActive()) {
     return {
       allowed: false,

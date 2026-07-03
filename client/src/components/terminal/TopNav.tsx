@@ -12,6 +12,8 @@ import type { HealthTone } from "./health/healthUi";
 import { DesktopAssetSelector } from "@/components/desktop/DesktopAssetSelector";
 import { DesktopPanelVisibilityToggle } from "@/components/desktop/DesktopPanelVisibilityToggle";
 import { DesktopFocusModeIndicator } from "@/components/desktop/DesktopFocusModeIndicator";
+import { TimezoneSelector } from "@/components/terminal/TimezoneSelector";
+import { AlertBell } from "@/components/alerts/AlertBell";
 
 interface TopNavProps {
   activeTab: string;
@@ -40,7 +42,7 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
   const showDesktopLayoutControls = isDesktopApp();
   const layoutControlsLoggedRef = useRef(false);
 
-  const tabs = ["TERMINAL", "OPTIONS", "FLOWS", "VOLATILITY", "REPORTS"];
+  const tabs = ["TERMINAL", "OPTIONS", "FLOWS", "VOLATILITY", "REPORTS", "ALERTS"];
   const dominantExpiry = (terminalState?.positioning as any)?.dominantExpiry || null;
   const expiryLabel = dominantExpiry || "N/A";
 
@@ -126,6 +128,7 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <AlertBell onOpenCenter={() => onTabChange("ALERTS")} />
           <TopNavUserMenu />
         </div>
       </div>
@@ -140,6 +143,7 @@ export function TopNav({ activeTab, onTabChange, panelsVisible = true, onToggleP
           <ContextChip label="Expiry" value={expiryLabel} testId="text-dominant-expiry" />
           <ContextChip label="TF" value="15M" />
           <ContextChip label="Feed" value="DERIBIT" />
+          <TimezoneSelector compact />
           {showDesktopLayoutControls && onTogglePanels ? (
             <>
               <DesktopPanelVisibilityToggle

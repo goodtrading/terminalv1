@@ -97,16 +97,15 @@ export function useDrawingToolbarPosition(
 
   const onDragHandlePointerMove = useCallback(
     (event: React.PointerEvent<HTMLElement>) => {
-      if (!dragRef.current) return;
+      const drag = dragRef.current;
+      if (!drag) return;
       event.preventDefault();
-      const dx = event.clientX - dragRef.current.startX;
-      const dy = event.clientY - dragRef.current.startY;
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      const nextX = drag.originX + dx;
+      const nextY = drag.originY + dy;
       setPosition((prev) =>
-        clampDrawingToolbarPosition(
-          { ...prev, x: dragRef.current!.originX + dx, y: dragRef.current!.originY + dy },
-          chartWidth,
-          chartHeight,
-        ),
+        clampDrawingToolbarPosition({ ...prev, x: nextX, y: nextY }, chartWidth, chartHeight),
       );
     },
     [chartWidth, chartHeight],

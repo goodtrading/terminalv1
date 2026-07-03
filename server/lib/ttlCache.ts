@@ -34,6 +34,38 @@ function nowMs() {
   return Date.now();
 }
 
+function startRefresh<T>(
+  key: string,
+  options: CacheFetchOptions,
+  loader: () => Promise<T>,
+  entry: CacheEntry<T>,
+): void {
+  if (entry.inFlight) return;
+
+  entry.misses += 1;
+  const inFlight = loader()
+    .then((value) => {
+      if (!isValidCachedValue(value, options)) {
+        throw new Error(options.invalidMessage ?? `Invalid cache payload for ${key}`);
+      }
+      const refreshedAt = nowMs();
+      entry.value = value;
+      entry.updatedAt = refreshedAt;
+      entry.expiresAt = refreshedAt + options.ttlMs;
+      return value;
+    })
+    .catch((error) => {
+      entry.errors += 1;
+      throw error;
+    })
+    .finally(() => {
+      entry.inFlight = undefined;
+    });
+
+  entry.inFlight = inFlight;
+  cache.set(key, entry as CacheEntry<unknown>);
+}
+
 export async function cachedFetch<T>(
   key: string,
   options: CacheFetchOptions,
@@ -44,6 +76,19 @@ export async function cachedFetch<T>(
 
   if (existing?.value != null && existing.expiresAt > now && isValidCachedValue(existing.value, options)) {
     existing.hits += 1;
+    return existing.value as T & { degraded?: boolean; warning?: string };
+  }
+
+  const hasStaleValue =
+    existing?.value != null &&
+    isValidCachedValue(existing.value, options) &&
+    withinStaleWindow(existing, options.staleTtlMs, now);
+
+  if (hasStaleValue && existing) {
+    existing.staleHits += 1;
+    if (!existing.inFlight) {
+      startRefresh(key, options, loader, existing);
+    }
     return existing.value as T & { degraded?: boolean; warning?: string };
   }
 
@@ -76,37 +121,8 @@ export async function cachedFetch<T>(
       errors: 0,
     } satisfies CacheEntry<T>);
 
-  entry.misses += 1;
-  const inFlight = loader()
-    .then((value) => {
-      if (!isValidCachedValue(value, options)) {
-        throw new Error(options.invalidMessage ?? `Invalid cache payload for ${key}`);
-      }
-      const refreshedAt = nowMs();
-      entry.value = value;
-      entry.updatedAt = refreshedAt;
-      entry.expiresAt = refreshedAt + options.ttlMs;
-      return value;
-    })
-    .catch((error) => {
-      entry.errors += 1;
-      if (
-        entry.value != null &&
-        isValidCachedValue(entry.value, options) &&
-        withinStaleWindow(entry, options.staleTtlMs, nowMs())
-      ) {
-        entry.staleHits += 1;
-        return withStaleWarning(entry.value, error);
-      }
-      throw error;
-    })
-    .finally(() => {
-      entry.inFlight = undefined;
-    });
-
-  entry.inFlight = inFlight;
-  cache.set(key, entry as CacheEntry<unknown>);
-  return (await inFlight) as T & { degraded?: boolean; warning?: string };
+  startRefresh(key, options, loader, entry);
+  return (await entry.inFlight!) as T & { degraded?: boolean; warning?: string };
 }
 
 function withinStaleWindow<T>(entry: CacheEntry<T>, staleTtlMs: number | undefined, now: number): boolean {

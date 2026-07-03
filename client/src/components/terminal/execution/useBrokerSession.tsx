@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTerminalAuth } from "@/contexts/TerminalAuthContext";
+import { queryClient } from "@/lib/queryClient";
 import type {
   BingxLoginStatusResponse,
   BingXConnectResponse,
@@ -437,6 +438,15 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
     if (!authReady) return;
     if (!user) {
       setSavedConnections([]);
+      void queryClient.removeQueries({
+        predicate: (q) => {
+          const key = q.queryKey[0];
+          return (
+            typeof key === "string" &&
+            (key.startsWith("/api/bingx") || key.startsWith("/api/live"))
+          );
+        },
+      });
       setSession((prev) => {
         if (
           prev.connectionMode === "read-only" ||

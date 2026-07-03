@@ -1,8 +1,8 @@
 [package]
 name = "app"
-version = "0.1.8"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.1.9"
+description = "GoodTrading Terminal desktop application"
+authors = ["GoodTrading"]
 license = ""
 repository = ""
 edition = "2021"
@@ -23,4 +23,5 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.2", features = [] }
 tauri-plugin-log = "2"
+tauri-plugin-notification = "2"
 tauri-plugin-shell = "2.3.5"

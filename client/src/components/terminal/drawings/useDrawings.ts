@@ -1,14 +1,20 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { Drawing, DrawingPoint, DrawingTool, SmartToolKind } from "./types";
 import { DEFAULT_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_OPACITY, getToolPointCount } from "./types";
 import {
-  getDrawingUserScope,
   loadDrawingSettings,
   loadDrawings,
   saveDrawingSettings,
   saveDrawings,
-  type DrawingUserSettings,
 } from "./persistence";
+import {
+  DEFAULT_DRAWING_SETTINGS_V2,
+  drawingFieldsToPositionStyle,
+  logDrawingColorModal,
+  positionStyleForTool,
+  positionStyleToDrawingFields,
+  type DrawingUserSettingsV2,
+} from "@/lib/drawingPersistence";
 import { getChartSettings } from "../chart/chartSettingsStore";
 import { getPositionMetrics, isPositionDrawing, nextPositionLevels } from "./positionUtils";
 import { hitTestPositionAnchor } from "./positionInteraction";
@@ -59,7 +65,7 @@ const DEFAULT_TOOL_STYLES: Record<DrawingTool, { color: string; lineWidth: numbe
   shortPosition: { color: "#ef4444", lineWidth: 1, opacity: 0.9 },
 };
 
-function mergeToolStyles(saved?: DrawingUserSettings["toolStyles"]) {
+function mergeToolStyles(saved?: DrawingUserSettingsV2["toolStyles"]) {
   const next = { ...DEFAULT_TOOL_STYLES };
   if (!saved) return next;
   (Object.keys(next) as DrawingTool[]).forEach((tool) => {
@@ -68,22 +74,98 @@ function mergeToolStyles(saved?: DrawingUserSettings["toolStyles"]) {
   return next;
 }
 
-export function useDrawings(symbol: string, _timeframe?: string, userId?: number | null) {
-  const userScope = useMemo(() => getDrawingUserScope(userId), [userId]);
+function buildPersistedSettings(
+  userSettings: DrawingUserSettingsV2,
+  toolStyles: Record<DrawingTool, { color: string; lineWidth: number; opacity: number }>,
+): DrawingUserSettingsV2 {
+  return {
+    ...userSettings,
+    version: 2,
+    updatedAt: Date.now(),
+    toolStyles,
+  };
+}
+
+export function useDrawings(
+  symbol: string,
+  _timeframe?: string,
+  userScope: string | null = null,
+  authReady = false,
+) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const drawingsRef = useRef<Drawing[]>([]);
+  const userSettingsRef = useRef<DrawingUserSettingsV2>(DEFAULT_DRAWING_SETTINGS_V2);
+  const toolStylesRef = useRef(DEFAULT_TOOL_STYLES);
+  const userScopeRef = useRef<string | null>(userScope);
 
-  const [drawings, setDrawings] = useState<Drawing[]>(() =>
-    sanitizeDrawings(loadDrawings(symbol, userScope)),
-  );
+  const [drawings, setDrawings] = useState<Drawing[]>([]);
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [activeTool, setActiveTool] = useState<DrawingTool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingDrawing, setPendingDrawing] = useState<Drawing | null>(null);
   const [draggingAnchor, setDraggingAnchor] = useState<{ id: string; pointIndex: number } | null>(null);
+  const [userSettings, setUserSettings] = useState<DrawingUserSettingsV2>(DEFAULT_DRAWING_SETTINGS_V2);
   const [toolStyles, setToolStyles] = useState<Record<DrawingTool, { color: string; lineWidth: number; opacity: number }>>(
-    () => mergeToolStyles(loadDrawingSettings(userScope)?.toolStyles),
+    DEFAULT_TOOL_STYLES,
   );
-  const longShortDefaultsRef = useRef(loadDrawingSettings(userScope)?.longShort);
+
+  drawingsRef.current = drawings;
+  userSettingsRef.current = userSettings;
+  toolStylesRef.current = toolStyles;
+
+  const flushPersistence = useCallback(
+    (scope = userScopeRef.current) => {
+      if (!scope || !authReady) return;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      if (settingsTimerRef.current) {
+        clearTimeout(settingsTimerRef.current);
+        settingsTimerRef.current = null;
+      }
+      saveDrawings(symbol, scope, _timeframe, drawingsRef.current);
+      saveDrawingSettings(scope, buildPersistedSettings(userSettingsRef.current, toolStylesRef.current));
+    },
+    [authReady, symbol, _timeframe],
+  );
+
+  useEffect(() => {
+    if (!authReady || !userScope) {
+      setSettingsHydrated(false);
+      return;
+    }
+
+    const previousScope = userScopeRef.current;
+    if (previousScope && previousScope !== userScope) {
+      flushPersistence(previousScope);
+    }
+    userScopeRef.current = userScope;
+
+    const settings = loadDrawingSettings(userScope);
+    setUserSettings(settings);
+    setToolStyles(mergeToolStyles(settings.toolStyles));
+    setDrawings(sanitizeDrawings(loadDrawings(symbol, userScope, _timeframe)));
+    setSelectedId(null);
+    setPendingDrawing(null);
+    setDraggingAnchor(null);
+    setSettingsHydrated(true);
+
+    if (import.meta.env.DEV) {
+      console.debug("[drawing-settings:hydrate]", {
+        userKey: userScope,
+        settings,
+      });
+    }
+  }, [authReady, userScope, symbol, _timeframe, flushPersistence]);
+
+  useEffect(() => {
+    const clean = sanitizeDrawings(drawings);
+    if (clean.length !== drawings.length) {
+      setDrawings(clean);
+    }
+  }, [drawings]);
 
   useEffect(() => {
     const onDrawingDefaults = () => {
@@ -107,45 +189,38 @@ export function useDrawings(symbol: string, _timeframe?: string, userId?: number
   }, []);
 
   useEffect(() => {
-    const saved = loadDrawingSettings(userScope);
-    longShortDefaultsRef.current = saved?.longShort;
-    setToolStyles(mergeToolStyles(saved?.toolStyles));
-    setDrawings(sanitizeDrawings(loadDrawings(symbol, userScope)));
-    setSelectedId(null);
-    setPendingDrawing(null);
-    setDraggingAnchor(null);
-  }, [symbol, userScope]);
-
-  useEffect(() => {
-    const clean = sanitizeDrawings(drawings);
-    if (clean.length !== drawings.length) {
-      setDrawings(clean);
-      return;
-    }
+    if (!userScope || !settingsHydrated) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      saveDrawings(symbol, userScope, _timeframe, clean);
+      saveDrawings(symbol, userScope, _timeframe, drawingsRef.current);
     }, SAVE_DEBOUNCE_MS);
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [drawings, symbol, userScope, _timeframe]);
+  }, [drawings, symbol, userScope, _timeframe, settingsHydrated]);
 
   useEffect(() => {
+    if (!userScope || !settingsHydrated) return;
     if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
     settingsTimerRef.current = setTimeout(() => {
-      saveDrawingSettings(userScope, {
-        version: 1,
-        userId: userScope,
-        updatedAt: Date.now(),
-        toolStyles,
-        longShort: longShortDefaultsRef.current,
-      });
+      saveDrawingSettings(userScope, buildPersistedSettings(userSettings, toolStyles));
     }, SAVE_DEBOUNCE_MS);
     return () => {
       if (settingsTimerRef.current) clearTimeout(settingsTimerRef.current);
     };
-  }, [toolStyles, userScope]);
+  }, [userSettings, toolStyles, userScope, settingsHydrated]);
+
+  useEffect(() => {
+    const onFlush = () => flushPersistence();
+    window.addEventListener("gt-drawing-persist-flush", onFlush);
+    return () => window.removeEventListener("gt-drawing-persist-flush", onFlush);
+  }, [flushPersistence]);
+
+  useEffect(() => {
+    return () => {
+      flushPersistence(userScopeRef.current);
+    };
+  }, [flushPersistence]);
 
   const addDrawing = useCallback((d: Omit<Drawing, "id" | "createdAt">) => {
     const full: Drawing = {
@@ -165,15 +240,38 @@ export function useDrawings(symbol: string, _timeframe?: string, userId?: number
       prev
         .map((d) => {
           if (d.id !== id) return d;
-          const merged = { ...d, ...updates } as Drawing;
-          if (isPositionDrawing(merged) && (updates.targetColor || updates.stopColor || updates.showLabels != null)) {
-            longShortDefaultsRef.current = {
-              ...longShortDefaultsRef.current,
-              targetColor: merged.targetColor ?? longShortDefaultsRef.current?.targetColor,
-              stopColor: merged.stopColor ?? longShortDefaultsRef.current?.stopColor,
-              showLabels: merged.showLabels ?? longShortDefaultsRef.current?.showLabels,
-              labelPrecision: merged.labelPrecision ?? longShortDefaultsRef.current?.labelPrecision,
-            };
+          let merged = { ...d, ...updates } as Drawing;
+          if (isPositionDrawing(merged)) {
+            if (updates.opacity != null || updates.targetOpacity != null || updates.stopOpacity != null) {
+              const fill = merged.targetOpacity ?? merged.stopOpacity ?? merged.opacity;
+              merged = {
+                ...merged,
+                opacity: fill,
+                targetOpacity: merged.targetOpacity ?? fill,
+                stopOpacity: merged.stopOpacity ?? fill,
+              };
+            }
+            if (
+              updates.targetColor ||
+              updates.stopColor ||
+              updates.opacity != null ||
+              updates.targetOpacity != null ||
+              updates.stopOpacity != null
+            ) {
+              logDrawingColorModal({
+                targetFillColor: merged.targetColor,
+                stopFillColor: merged.stopColor,
+                targetOpacity: merged.targetOpacity ?? merged.opacity,
+                stopOpacity: merged.stopOpacity ?? merged.opacity,
+              });
+            }
+            setUserSettings((settings) => ({
+              ...settings,
+              [merged.tool === "longPosition" ? "longPosition" : "shortPosition"]: drawingFieldsToPositionStyle(
+                merged,
+                positionStyleForTool(settings, merged.tool),
+              ),
+            }));
           }
           return merged;
         })
@@ -429,7 +527,8 @@ export function useDrawings(symbol: string, _timeframe?: string, userId?: number
         } as Drawing);
       } else if (activeTool === "longPosition" || activeTool === "shortPosition") {
         const levels = nextPositionLevels(activeTool, price, price);
-        const ls = longShortDefaultsRef.current;
+        const style = positionStyleForTool(userSettingsRef.current, activeTool);
+        const fields = positionStyleToDrawingFields(style);
         setPendingDrawing({
           ...base,
           tool: activeTool,
@@ -437,10 +536,13 @@ export function useDrawings(symbol: string, _timeframe?: string, userId?: number
           entryPrice: price,
           targetPrice: levels.targetPrice,
           stopPrice: levels.stopPrice,
-          showLabels: ls?.showLabels ?? true,
-          labelPrecision: ls?.labelPrecision ?? 2,
-          targetColor: ls?.targetColor ?? "#22c55e",
-          stopColor: ls?.stopColor ?? "#ef4444",
+          showLabels: fields.showLabels,
+          labelPrecision: fields.labelPrecision,
+          targetColor: fields.targetColor,
+          stopColor: fields.stopColor,
+          opacity: fields.opacity,
+          targetOpacity: fields.targetOpacity,
+          stopOpacity: fields.stopOpacity,
           accountSize: 10000,
           riskPercent: 1,
           leverage: 1,
@@ -453,7 +555,7 @@ export function useDrawings(symbol: string, _timeframe?: string, userId?: number
         } as Drawing);
       }
     },
-    [activeTool, addDrawing, toolStyles]
+    [activeTool, addDrawing, toolStyles, userSettings]
   );
 
   const setToolStyle = useCallback((tool: DrawingTool, updates: Partial<{ color: string; lineWidth: number; opacity: number }>) => {
@@ -690,6 +792,7 @@ export function useDrawings(symbol: string, _timeframe?: string, userId?: number
     cancelPending,
     updatePositionLevels,
     movePositionDrawing,
+    flushPersistence,
     getPositionMetrics,
   };
 }

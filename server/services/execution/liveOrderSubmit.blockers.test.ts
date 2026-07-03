@@ -12,6 +12,7 @@ import {
   validateLiveSubmitReadiness,
   validateLiveSubmitShape,
 } from "./liveOrderSubmitGuards";
+import { assertBingxWriteNotFrozen, BINGX_READ_ONLY_FREEZE_CODE } from "../exchanges/bingx/bingxReadOnlyFreeze";
 import { LIVE_LIMIT_CONFIRMATION_TEXT } from "./liveOrderSubmitTypes";
 import type { LiveOrderSubmitRequest } from "./liveOrderSubmitTypes";
 
@@ -63,6 +64,7 @@ const ENV_KEYS = [
   "BINGX_ENABLE_ORDER_SUBMIT",
   "BINGX_ALLOW_MARKET_ORDERS",
   "LIVE_TRADING_KILL_SWITCH",
+  "BINGX_READ_ONLY_FREEZE",
 ];
 
 saveEnv(ENV_KEYS);
@@ -148,6 +150,17 @@ test("I — readiness not ready_for_live blocks", () => {
     blockers: ["No BingX connection"],
   });
   assert.ok(blockers.some((b) => /not ready_for_live/i.test(b)));
+});
+
+test("J — read-only freeze blocks even when live env on", () => {
+  setLiveOnEnv();
+  process.env.BINGX_READ_ONLY_FREEZE = "true";
+  const freeze = assertBingxWriteNotFrozen();
+  assert.equal(freeze.ok, false);
+  if (!freeze.ok) {
+    assert.ok(freeze.blockers.includes(BINGX_READ_ONLY_FREEZE_CODE));
+  }
+  restoreEnv(ENV_KEYS);
 });
 
 test("live env on passes env guard when kill switch off", () => {

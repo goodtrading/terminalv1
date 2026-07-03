@@ -12,12 +12,14 @@ import { useSweepHistory } from "@/hooks/useSweepHistory";
 import { pushSweepEvent } from "@/lib/sweepHistory";
 import { LearnHelper, LearnExplanation } from "./Tooltip";
 import { useQuery } from "@tanstack/react-query";
+import { formatTerminalTime } from "@/lib/timezone";
+import { useTimezonePreference } from "@/hooks/useTimezonePreference";
+import { formatGex } from "@/lib/formatGex";
 import {
-  collectOperationalLevelsFromState,
-  horizonShort,
-  prioritizeLevelsForPlaybook,
-} from "@/lib/levelTiming";
-import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
+  buildTradingStateInput,
+  deriveTradingState,
+  type TerminalOperationalSnapshot,
+} from "@/lib/deriveTradingState";
 
 // Import vacuum engine types
 interface VacuumAnalysisResult {
@@ -81,13 +83,15 @@ function StatusValue({ label, value, color }: { label: string; value: string; co
 }
 
 function getStatusColor(val: string): string {
-  if (val === "EXECUTE") return "green";
+  if (val === "READY" || val === "ACTIVE") return "green";
   if (val === "AVOID") return "red";
-  if (val === "WAIT" || val === "PREPARE") return "yellow";
+  if (val === "WAIT" || val === "WATCH") return "yellow";
+  if (val === "EXECUTE") return "green";
+  if (val === "PREPARE") return "yellow";
   return "";
 }
 
-function getDirectionColor(val: string): string {
+function getBiasColor(val: string): string {
   if (val === "LONG") return "green";
   if (val === "SHORT") return "red";
   return "gray";
@@ -96,7 +100,23 @@ function getDirectionColor(val: string): string {
 function getRiskColor(val: string): string {
   if (val === "LOW") return "green";
   if (val === "MEDIUM") return "yellow";
-  if (val === "HIGH") return "red";
+  if (val === "HIGH") return "orange";
+  if (val === "EXTREME") return "red";
+  return "";
+}
+
+function getExecutionColor(val: string): string {
+  if (val === "NORMAL SIZE") return "green";
+  if (val === "REDUCED SIZE") return "yellow";
+  if (val === "PROBE ONLY") return "yellow";
+  if (val === "NO TRADE") return "gray";
+  return "";
+}
+
+function getConfidenceColor(val: string): string {
+  if (val === "HIGH") return "green";
+  if (val === "MEDIUM") return "yellow";
+  if (val === "LOW") return "gray";
   return "";
 }
 
@@ -106,26 +126,6 @@ function getShortGammaPocketStatusColor(status: string): string {
   if (status === "EXPANDING") return "purple";
   if (status === "IDLE") return "yellow";
   return "gray";
-}
-
-function deriveEdge(positioning: any, market: any): string {
-  const trade = positioning?.tradeDecisionEngine;
-  const squeeze = positioning?.squeezeProbabilityEngine;
-  const bias = positioning?.institutionalBiasEngine;
-  const confidence = bias?.biasConfidence ?? 0;
-  const sqProb = squeeze?.squeezeProbability ?? 0;
-
-  let score = 0;
-  if (trade?.tradeState === "EXECUTE") score += 2;
-  else if (trade?.tradeState === "PREPARE") score += 1;
-  if (confidence >= 80) score += 2;
-  else if (confidence >= 50) score += 1;
-  if (sqProb >= 70) score += 1;
-  if (market?.gammaRegime === "SHORT GAMMA") score += 1;
-
-  if (score >= 5) return "HIGH";
-  if (score >= 3) return "MEDIUM";
-  return "LOW";
 }
 
 // Short Gamma Pockets Panel Component
@@ -208,24 +208,22 @@ function ShortGammaPocketsPanel() {
 }
 
 // Liquidity Map Panel Component
-function LiquidityMapPanel() {
+function LiquidityMapPanel({ vacuumData }: { vacuumData?: VacuumAnalysisResult | null }) {
   const { data: terminalData } = useTerminalState();
   const heatmap = (terminalData?.positioning as any)?.liquidityHeatmap;
-  const { data: vacuumData } = useQuery<VacuumAnalysisResult>({
+  const { data: vacuumQueryData } = useQuery<VacuumAnalysisResult>({
     queryKey: ["/api/vacuum"],
     refetchInterval: 10_000,
     staleTime: 5_000,
-    enabled: !!terminalData?.positioning,
+    enabled: !!terminalData?.positioning && vacuumData == null,
     retry: false,
     throwOnError: false,
   });
+  const vacuum = vacuumData ?? vacuumQueryData;
   const lines: string[] = heatmap?.liquidityMapLines || [];
   const pressure = heatmap?.liquidityPressure || "BALANCED";
   const source = heatmap?.heatmapSummary?.source || "--";
   const pressureColor = pressure === "BID_HEAVY" ? "green" : pressure === "ASK_HEAVY" ? "red" : "yellow";
-
-  // Use new vacuum engine data
-  const vacuum = vacuumData;
   const vacuumRisk = vacuum?.vacuumRisk || "LOW";
   const vacuumScore = vacuum?.vacuumScore || 0;
   const vacuumType = vacuum?.vacuumType || "NONE";
@@ -412,10 +410,13 @@ function LiquidityImbalanceBlock({ positioning }: { positioning: any }) {
 }
 
 function getStatusHelper(val: string): string {
+  if (val === "READY") return "Setup aligned; operative zone in range.";
+  if (val === "ACTIVE") return "Price interacting with a key structural level.";
+  if (val === "WATCH") return "Preliminary bias; awaiting confirmation.";
+  if (val === "WAIT") return "No clear edge yet or incomplete structure.";
+  if (val === "AVOID") return "Conditions are unfavorable for trading.";
   if (val === "EXECUTE") return "Conditions are aligned for a trade.";
   if (val === "PREPARE") return "Setup is forming, not ready yet.";
-  if (val === "WAIT") return "No clear edge yet.";
-  if (val === "AVOID") return "Conditions are unfavorable for trading.";
   return "";
 }
 
@@ -569,16 +570,66 @@ function StructuralScenariosPanel({
 }
 
 function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebarProps) {
+  useTimezonePreference();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const { data: state, isLoading: terminalStateLoading } = useTerminalState();
   const sweepHistory = useSweepHistory();
 
   const market = state?.market;
   const positioning = state?.positioning;
-  const tradeDecision = (positioning as any)?.tradeDecisionEngine;
   const scenarios = state?.market && (state as any).scenarios ? (state as any).scenarios : [];
 
-  const edge = useMemo(() => deriveEdge(positioning, market), [positioning, market]);
+  const { data: vacuumData } = useQuery<VacuumAnalysisResult>({
+    queryKey: ["/api/vacuum"],
+    refetchInterval: 10_000,
+    staleTime: 5_000,
+    enabled: !!state?.positioning,
+    retry: false,
+    throwOnError: false,
+  });
+
+  const operational = useMemo((): TerminalOperationalSnapshot => {
+    const input = buildTradingStateInput({
+      market: state?.market,
+      exposure: state?.exposure,
+      positioning: positioning as Parameters<typeof buildTradingStateInput>[0]["positioning"],
+      options: state?.options,
+      ticker: state?.ticker,
+      tickerStatus: state?.tickerStatus,
+      scenarios,
+      vacuumRisk: vacuumData?.vacuumRisk ?? null,
+    });
+    return deriveTradingState(input);
+  }, [state, positioning, scenarios, vacuumData?.vacuumRisk]);
+
+  const tradingStateDebugRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const signature = JSON.stringify({
+      status: operational.status,
+      bias: operational.bias,
+      risk: operational.risk,
+      execution: operational.execution,
+      confidence: operational.confidence,
+      waitingForClarity: operational.waitingForClarity,
+      blockers: operational.blockers,
+    });
+    if (tradingStateDebugRef.current === signature) return;
+    tradingStateDebugRef.current = signature;
+    console.debug("[OperationalSnapshot][derived]", {
+      result: operational,
+      input: buildTradingStateInput({
+        market: state?.market,
+        exposure: state?.exposure,
+        positioning: positioning as Parameters<typeof buildTradingStateInput>[0]["positioning"],
+        options: state?.options,
+        ticker: state?.ticker,
+        tickerStatus: state?.tickerStatus,
+        scenarios,
+        vacuumRisk: vacuumData?.vacuumRisk ?? null,
+      }),
+    });
+  }, [operational, state, positioning, scenarios, vacuumData?.vacuumRisk]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -605,36 +656,6 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
     });
   }, [positioning]);
 
-  const tradeSetup = useMemo(() => {
-    const exposure = state?.exposure;
-    let condition = "WEAK";
-    if (market?.gammaRegime === "LONG GAMMA" && exposure?.gammaPressure?.startsWith("+")) {
-      condition = "CONFIRMED";
-    } else if (market?.gammaRegime || exposure?.gammaPressure) {
-      condition = "DEVELOPING";
-    }
-
-    let flowState = "STABLE";
-    let volRisk = "MEDIUM";
-    if (market?.gammaRegime === "LONG GAMMA") volRisk = "LOW";
-    if (market?.gammaRegime === "SHORT GAMMA") { volRisk = "HIGH"; flowState = "VOLATILE"; }
-
-    return { condition, flowState, volRisk };
-  }, [market, state?.exposure]);
-
-  const timingGroups = useMemo(() => {
-    const spot = (state as any)?.options?.spot ?? (state as any)?.ticker?.price;
-    if (typeof spot !== "number" || !Number.isFinite(spot)) {
-      return { activeTactical: [], intraday: [], structural: [] };
-    }
-    const levels = collectOperationalLevelsFromState(
-      state,
-      spot,
-      60,
-    );
-    return prioritizeLevelsForPlaybook(levels);
-  }, [state]);
-
   const handleScenarioClick = (scenario: TradingScenario) => {
     const newId = selectedId === scenario.id ? null : scenario.id;
     setSelectedId(newId);
@@ -643,15 +664,9 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
     }
   };
 
-  const statusVal = tradeDecision?.tradeState || "WAIT";
-  const directionVal = tradeDecision?.tradeDirection || "NEUTRAL";
-  const riskVal = tradeDecision?.riskLevel || "MEDIUM";
-  const sizeVal = tradeDecision?.positionSizeSuggestion || "NO_TRADE";
-
-  const marketModeEngine = (positioning as any)?.marketModeEngine;
-  const marketMode = marketModeEngine?.marketMode || "FRAGILE_TRANSITION";
-  const marketModeConfidence = marketModeEngine?.marketModeConfidence ?? 0;
-  const marketModeReason: string[] = marketModeEngine?.marketModeReason || [];
+  const marketMode = operational.regimeState;
+  const marketModeConfidence = operational.confidenceScore;
+  const marketModeReason = operational.drivers;
 
   const modeColorMap: Record<string, { text: string; bg: string; border: string }> = {
     GAMMA_PIN: { text: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
@@ -662,7 +677,7 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
     FRAGILE_TRANSITION: { text: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/20" },
   };
   const modeColors = modeColorMap[marketMode] || modeColorMap.FRAGILE_TRANSITION;
-  const modeDisplay = marketMode.replace(/_/g, " ");
+  const modeDisplay = operational.regimeDisplay;
   const modeSubtitleMap: Record<string, string> = {
     GAMMA_PIN: "Dealer-controlled market",
     MEAN_REVERSION: "Range trading conditions",
@@ -706,14 +721,25 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
       <SidebarPanel title="Trading State">
         <div className="flex flex-col divide-y divide-white/[0.04]">
           <div>
-            <StatusValue label="Status" value={statusVal} color={getStatusColor(statusVal)} />
-            <LearnHelper text={getStatusHelper(statusVal)} />
+            <StatusValue label="Status" value={operational.status} color={getStatusColor(operational.status)} />
+            <LearnHelper text={getStatusHelper(operational.status)} />
           </div>
-          <StatusValue label="Direction" value={directionVal} color={getDirectionColor(directionVal)} />
-          <StatusValue label="Risk" value={riskVal} color={getRiskColor(riskVal)} />
-          <StatusValue label="Size" value={sizeVal} color={sizeVal === "FULL" ? "green" : sizeVal === "NO_TRADE" ? "red" : "yellow"} />
-          <StatusValue label="Edge" value={edge} color={getRiskColor(edge)} />
-          <LearnExplanation text="STATUS: wait/execute. EDGE: conviction level. SIZE: position sizing. RISK: current risk level." />
+          <StatusValue label="Bias" value={operational.bias} color={getBiasColor(operational.bias)} />
+          <StatusValue label="Risk" value={operational.risk} color={getRiskColor(operational.risk)} />
+          <StatusValue
+            label="Execution"
+            value={operational.execution}
+            color={getExecutionColor(operational.execution)}
+          />
+          <StatusValue
+            label="Confidence"
+            value={operational.confidence}
+            color={getConfidenceColor(operational.confidence)}
+          />
+          <p className="text-[10px] text-white/55 font-mono leading-snug pt-2">
+            {operational.reason}
+          </p>
+          <LearnExplanation text="Operational market summary from gamma, flips, scenarios, and structure. Not an automatic entry signal." />
         </div>
       </SidebarPanel>
 
@@ -721,73 +747,30 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
         <div className="flex flex-col divide-y divide-white/[0.04]">
           <StatusValue
             label="Market Condition"
-            value={tradeSetup.condition}
-            color={tradeSetup.condition === "CONFIRMED" ? "green" : tradeSetup.condition === "DEVELOPING" ? "yellow" : "red"}
+            value={operational.marketCondition}
+            color={
+              operational.marketCondition === "CONFIRMED"
+                ? "green"
+                : operational.marketCondition === "DEVELOPING"
+                  ? "yellow"
+                  : "red"
+            }
           />
-          <StatusValue label="Flow State" value={tradeSetup.flowState} />
+          <StatusValue label="Flow State" value={operational.flowState} />
           <div>
             <StatusValue
               label="Volatility Risk"
-              value={tradeSetup.volRisk}
-              color={getRiskColor(tradeSetup.volRisk)}
+              value={operational.componentVolatilityRisk}
+              color={getRiskColor(operational.componentVolatilityRisk)}
             />
-            <LearnHelper text={getVolRiskHelper(tradeSetup.volRisk)} />
+            <LearnHelper text={getVolRiskHelper(operational.componentVolatilityRisk)} />
           </div>
           <LearnExplanation text="MARKET CONDITION: setup confirmation. FLOW STATE: dealer flow. VOLATILITY RISK: expected vol level." />
         </div>
       </SidebarPanel>
 
-      <SidebarPanel title="Operational Timing">
-        <div className="flex flex-col gap-2">
-          <div>
-            <div className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Active Levels</div>
-            <div className="mt-1 flex flex-col gap-1">
-              {timingGroups.activeTactical.length === 0 ? (
-                <DesktopEmptyState
-                  compact
-                  status="waiting"
-                  title="No active tactical levels"
-                  description="Levels appear when the playbook identifies actionable price zones near spot."
-                />
-              ) : (
-                timingGroups.activeTactical.map((l, i) => (
-                  <div key={`act-${i}-${l.price}`} className="text-[10px] font-mono text-white/70 flex items-center justify-between">
-                    <span>{Math.round(l.price)} — {horizonShort(l.timingMeta!.horizon)} — {l.timingMeta!.urgency.toUpperCase()}</span>
-                    <span className={cn("text-[9px]", l.timingMeta!.state === "active" ? "text-green-400" : "text-white/45")}>
-                      {l.timingMeta!.state.toUpperCase()} · {l.timingMeta!.score}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          <div>
-            <div className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Intraday Levels</div>
-            <div className="mt-1 flex flex-col gap-1">
-              {timingGroups.intraday.slice(0, 4).map((l, i) => (
-                <div key={`intra-${i}-${l.price}`} className="text-[10px] font-mono text-white/60 flex items-center justify-between">
-                  <span>{Math.round(l.price)} — {horizonShort(l.timingMeta!.horizon)} — {l.label}</span>
-                  <span className="text-[9px] text-white/45">{l.timingMeta!.score}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div>
-            <div className="text-[9px] uppercase tracking-wider text-white/35 font-medium">Structural Levels</div>
-            <div className="mt-1 flex flex-col gap-1">
-              {timingGroups.structural.slice(0, 4).map((l, i) => (
-                <div key={`str-${i}-${l.price}`} className="text-[10px] font-mono text-white/55 flex items-center justify-between">
-                  <span>{Math.round(l.price)} — {horizonShort(l.timingMeta!.horizon)} — {l.timingMeta!.urgency.toUpperCase()}</span>
-                  <span className="text-[9px] text-white/40">{l.timingMeta!.state.toUpperCase()}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </SidebarPanel>
-
       <SidebarPanel title="Liquidity Map">
-        <LiquidityMapPanel />
+        <LiquidityMapPanel vacuumData={vacuumData} />
         <LearnExplanation text="PRESSURE: bid/ask imbalance. VACUUM RISK/TYPE/SCORE: thin liquidity zones and breakout potential. ACCEL ZONES/BIAS: gamma acceleration zones and directional bias." />
       </SidebarPanel>
 
@@ -820,25 +803,17 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
               strikesLength: opts?.strikes?.length,
             });
           }
-          const fmtGex = (val: number | undefined) => {
-            if (typeof val !== "number" || !Number.isFinite(val)) return "--";
-            const abs = Math.abs(val);
-            if (abs >= 1e9) return (val / 1e9).toFixed(2) + "B";
-            if (abs >= 1e6) return (val / 1e6).toFixed(2) + "M";
-            if (abs >= 1e3) return (val / 1e3).toFixed(1) + "K";
-            return val.toFixed(0);
-          };
           const fmtPrice = (p: number | undefined | null) => {
             if (typeof p !== "number" || !Number.isFinite(p)) return "--";
             return p >= 1000 ? p.toFixed(0) : p.toFixed(2);
           };
-          const totalGexStr = fmtGex(opts?.totalGex);
+          const totalGexStr = formatGex(opts?.totalGex);
           const regime = opts?.gammaRegime ?? "NEUTRAL";
           const flipStr = fmtPrice(opts?.gammaFlip ?? null);
           const topMagnets = Array.isArray(opts?.topMagnets) ? opts!.topMagnets.slice(0, 3) : [];
           const asOf =
             typeof opts?.asOf === "string" && opts.asOf
-              ? new Date(opts.asOf).toLocaleTimeString(undefined, { hour12: false })
+              ? formatTerminalTime(opts.asOf)
               : "--";
           const regimeColor =
             regime === "LONG_GAMMA" ? "green" : regime === "SHORT_GAMMA" ? "red" : "gray";
@@ -873,7 +848,7 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
                   <div className="mt-0.5 flex flex-col gap-0.5">
                     {topMagnets.map((m, i) => (
                       <p key={i} className="text-[10px] font-mono text-white/60">
-                        {fmtPrice(m.strike)} @ {fmtGex(m.totalGex)}
+                        {fmtPrice(m.strike)} @ {formatGex(m.totalGex)}
                       </p>
                     ))}
                   </div>
@@ -893,90 +868,6 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
                 </span>
                 <span className="text-[10px] font-mono text-white/60">{asOf}</span>
               </div>
-            </div>
-          );
-        })()}
-      </SidebarPanel>
-
-      <SidebarPanel title="WALL STRENGTH">
-        {(() => {
-          const opts = (state as any)?.options as any;
-          const activeCallWall = opts?.activeCallWall as number | undefined;
-          const activePutWall = opts?.activePutWall as number | undefined;
-          const walls = Array.isArray(opts?.gammaWallStrength)
-            ? (opts.gammaWallStrength as Array<{ strike: number; strengthScore: number }>)
-            : [];
-
-          const findStrength = (strike: number | undefined) => {
-            if (typeof strike !== "number" || !Number.isFinite(strike)) return 0;
-            const match = walls.find((w) => w.strike === strike);
-            return match?.strengthScore ?? 0;
-          };
-
-          const classifyWall = (
-            strength: number,
-            hasWall: boolean
-          ): { state: string; scoreStr: string; color: string; guidance: string } => {
-            if (!hasWall) {
-              return {
-                state: "N/A",
-                scoreStr: "--",
-                color: "gray",
-                guidance: "No active wall detected in the intraday range.",
-              };
-            }
-            if (strength <= 0) {
-              return {
-                state: "BROKEN",
-                scoreStr: "0%",
-                color: "red",
-                guidance: "Wall concentration has shifted away; treat this wall as structurally broken.",
-              };
-            }
-            const pct = (strength * 100).toFixed(1) + "%";
-            if (strength >= 0.08) {
-              return {
-                state: "DEFENDED",
-                scoreStr: pct,
-                color: "green",
-                guidance: "Strong gamma concentration at this wall; expect firm initial defense on tests.",
-              };
-            }
-            if (strength >= 0.03) {
-              return {
-                state: "ABSORBING",
-                scoreStr: pct,
-                color: "orange",
-                guidance: "Wall is absorbing flow with moderate concentration; breakout risk is rising.",
-              };
-            }
-            return {
-              state: "PASSIVE",
-              scoreStr: pct,
-              color: "gray",
-              guidance: "Wall exists but gamma concentration is modest; treat as a soft reference level.",
-            };
-          };
-
-          const callStrength = findStrength(activeCallWall);
-          const putStrength = findStrength(activePutWall);
-          const callInfo = classifyWall(callStrength, !!activeCallWall);
-          const putInfo = classifyWall(putStrength, !!activePutWall);
-
-          const guidance =
-            activeCallWall || activePutWall
-              ? (callInfo.state !== "N/A" ? callInfo.guidance : putInfo.guidance)
-              : "No active gamma walls detected; rely more on magnets and gravity map.";
-
-          return (
-            <div className="flex flex-col gap-1.5">
-              <StatusValue label="Call Wall Status" value={callInfo.state} color={callInfo.color} />
-              <StatusValue label="Call Wall Strength" value={callInfo.scoreStr} color={callInfo.color} />
-              <StatusValue label="Put Wall Status" value={putInfo.state} color={putInfo.color} />
-              <StatusValue label="Put Wall Strength" value={putInfo.scoreStr} color={putInfo.color} />
-              <p className="text-[10px] text-white/60 font-mono leading-snug mt-1">
-                {guidance}
-              </p>
             </div>
           );
         })()}
@@ -1326,7 +1217,7 @@ function RightSidebar({ onScenarioSelect, onActiveScenarioChange }: RightSidebar
                   <ul className="mt-1.5 space-y-1 max-h-[140px] overflow-y-auto">
                     {sweepHistory.slice(0, 8).map((e, i) => (
                       <li key={`${e.timestamp}-${e.type}-${e.zone}-${i}`} className="text-[9px] font-mono text-white/50 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                        <span className="text-white/35">{new Date(e.timestamp).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                        <span className="text-white/35">{formatTerminalTime(e.timestamp)}</span>
                         <span className={e.direction === "UP" ? "text-green-400/80" : e.direction === "DOWN" ? "text-red-400/80" : "text-purple-400/80"}>{e.direction}</span>
                         <span className="text-amber-400/80">{e.type.replace(/_/g, " ")}</span>
                         {e.confidence > 0 && <span className="text-white/40">{e.confidence}%</span>}

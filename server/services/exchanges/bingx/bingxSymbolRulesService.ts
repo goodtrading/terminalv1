@@ -256,42 +256,53 @@ export function validateQuantityAgainstRules(
     return { valid: false, error: "Invalid quantity" };
   }
 
-  // Normalize quantity
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    return { valid: false, error: "Invalid entry price" };
+  }
+
+  // Normalize quantity (floor to step — authoritative for submit)
   let normalizedQty: number;
   try {
     normalizedQty = normalizeQuantity(rawQty, rules.stepSize, rules.quantityPrecision);
-  } catch (err) {
+  } catch {
     return { valid: false, error: "Failed to normalize quantity" };
   }
 
-  // Check minimum quantity
-  if (normalizedQty < rules.minQty) {
-    const requiredMinNotional = rules.minQty * entryPrice;
+  if (normalizedQty <= 0) {
     return {
       valid: false,
-      error: `Order quantity below BingX minimum. Min qty: ${rules.minQty} BTC. Required notional approx: ${requiredMinNotional.toFixed(2)} USDT`,
-      normalizedQty,
-      requiredMinNotional,
+      error: `Order quantity below BingX minimum step size (${rules.stepSize})`,
+      requiredMinNotional: rules.minNotional,
     };
   }
 
-  // Check maximum quantity
-  if (normalizedQty > rules.maxQty) {
-    return {
-      valid: false,
-      error: `Order quantity exceeds BingX maximum. Max qty: ${rules.maxQty}`,
-      normalizedQty,
-    };
-  }
-
-  // Check minimum notional
   const notional = normalizedQty * entryPrice;
+
+  // Minimum notional on normalized order (notional = normalizedQty × effectivePrice)
   if (notional < rules.minNotional) {
     return {
       valid: false,
       error: `Order notional below BingX minimum. Min notional: ${rules.minNotional} USDT`,
       normalizedQty,
       requiredMinNotional: rules.minNotional,
+    };
+  }
+
+  if (normalizedQty < rules.minQty) {
+    const requiredMinNotional = rules.minQty * entryPrice;
+    return {
+      valid: false,
+      error: `Order quantity below BingX minimum. Min qty: ${rules.minQty}. Required notional approx: ${requiredMinNotional.toFixed(2)} USDT`,
+      normalizedQty,
+      requiredMinNotional: Math.max(rules.minNotional, requiredMinNotional),
+    };
+  }
+
+  if (normalizedQty > rules.maxQty) {
+    return {
+      valid: false,
+      error: `Order quantity exceeds BingX maximum. Max qty: ${rules.maxQty}`,
+      normalizedQty,
     };
   }
 

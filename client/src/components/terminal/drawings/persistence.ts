@@ -1,15 +1,24 @@
 /**
  * Persist drawings and drawing UI settings per user + symbol.
  * Keys:
- * - goodtrading:drawings:v1:{userId}:{symbol}
- * - goodtrading:drawing-settings:v1:{userId}
+ * - goodtrading:drawings:v2:{userId}:{symbol}
+ * - goodtrading:drawing-settings:v2:{userId} (see lib/drawingPersistence.ts)
  */
 
 import type { Drawing, DrawingPoint, DrawingTool } from "./types";
 import { DEFAULT_COLOR, DEFAULT_LINE_WIDTH, DEFAULT_OPACITY } from "./types";
+import {
+  getDrawingSettingsStorageKey,
+  loadDrawingSettingsV2,
+  normalizeFillOpacity,
+  normalizeHexColor,
+  saveDrawingSettingsV2,
+  type DrawingUserSettingsV2,
+} from "@/lib/drawingPersistence";
 
-const DRAWINGS_PREFIX = "goodtrading:drawings:v1:";
-const SETTINGS_PREFIX = "goodtrading:drawing-settings:v1:";
+const DRAWINGS_V2_PREFIX = "goodtrading:drawings:v2:";
+const DRAWINGS_V1_PREFIX = "goodtrading:drawings:v1:";
+const SETTINGS_V1_PREFIX = "goodtrading:drawing-settings:v1:";
 const LEGACY_PREFIX = "goodtrading:drawings:";
 
 const VALID_TOOLS = [
@@ -23,44 +32,27 @@ const VALID_TOOLS = [
   "shortPosition",
 ] as const;
 
-export type DrawingUserSettings = {
-  version: 1;
-  userId: string;
-  updatedAt: number;
-  toolStyles?: Partial<
-    Record<
-      DrawingTool,
-      {
-        color: string;
-        lineWidth: number;
-        opacity: number;
-      }
-    >
-  >;
-  longShort?: {
-    targetColor?: string;
-    stopColor?: string;
-    showLabels?: boolean;
-    labelPrecision?: number;
-  };
-  toolbar?: {
-    x?: number;
-    y?: number;
-    collapsed?: boolean;
-  };
-};
+export type { DrawingUserSettingsV2 as DrawingUserSettings } from "@/lib/drawingPersistence";
+export {
+  getStableDrawingUserKey,
+  resolveDrawingUserScope,
+  loadDrawingSettingsV2 as loadDrawingSettings,
+  saveDrawingSettingsV2 as saveDrawingSettings,
+  getDrawingSettingsStorageKey,
+  clearDrawingSettingsV2ForDev,
+} from "@/lib/drawingPersistence";
 
 export function getDrawingUserScope(userId: number | string | null | undefined): string {
   if (userId == null || userId === "") return "guest";
   return String(userId);
 }
 
-function drawingsKey(userScope: string, symbol: string): string {
-  return `${DRAWINGS_PREFIX}${userScope}:${symbol}`;
+function drawingsKeyV2(userScope: string, symbol: string): string {
+  return `${DRAWINGS_V2_PREFIX}${userScope}:${symbol}`;
 }
 
-function settingsKey(userScope: string): string {
-  return `${SETTINGS_PREFIX}${userScope}`;
+function drawingsKeyV1(userScope: string, symbol: string): string {
+  return `${DRAWINGS_V1_PREFIX}${userScope}:${symbol}`;
 }
 
 function isValidDrawing(d: Drawing): boolean {
@@ -116,8 +108,19 @@ function applyPositionFields(out: Drawing, obj: Record<string, unknown>): void {
   if (entryPrice != null) out.entryPrice = entryPrice;
   if (targetPrice != null) out.targetPrice = targetPrice;
   if (stopPrice != null) out.stopPrice = stopPrice;
-  if (typeof obj.targetColor === "string") out.targetColor = obj.targetColor;
-  if (typeof obj.stopColor === "string") out.stopColor = obj.stopColor;
+  if (typeof obj.targetColor === "string") {
+    out.targetColor = normalizeHexColor(obj.targetColor, "#22c55e");
+  }
+  if (typeof obj.stopColor === "string") {
+    out.stopColor = normalizeHexColor(obj.stopColor, "#ef4444");
+  }
+  if (typeof obj.targetOpacity === "number") out.targetOpacity = normalizeFillOpacity(obj.targetOpacity);
+  if (typeof obj.stopOpacity === "number") out.stopOpacity = normalizeFillOpacity(obj.stopOpacity);
+  if (typeof obj.opacity === "number") {
+    out.opacity = normalizeFillOpacity(obj.opacity);
+    if (out.targetOpacity == null) out.targetOpacity = out.opacity;
+    if (out.stopOpacity == null) out.stopOpacity = out.opacity;
+  }
   if (typeof obj.showLabels === "boolean") out.showLabels = obj.showLabels;
   if (typeof obj.labelPrecision === "number") out.labelPrecision = obj.labelPrecision;
   if (typeof obj.accountSize === "number") out.accountSize = obj.accountSize;
@@ -256,14 +259,25 @@ export function loadDrawings(
   _timeframe?: string,
 ): Drawing[] {
   try {
-    const key = drawingsKey(userScope, symbol);
-    let result = parseDrawingsRaw(localStorage.getItem(key));
+    const keyV2 = drawingsKeyV2(userScope, symbol);
+    let result = parseDrawingsRaw(localStorage.getItem(keyV2));
+    if (result.length === 0) {
+      const v1Raw = localStorage.getItem(drawingsKeyV1(userScope, symbol));
+      result = parseDrawingsRaw(v1Raw);
+      if (result.length > 0) {
+        try {
+          localStorage.setItem(keyV2, JSON.stringify(result));
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     if (result.length === 0 && userScope !== "guest") {
       const legacy = loadLegacySymbolDrawings(symbol);
       if (legacy.length > 0) {
         result = legacy;
         try {
-          localStorage.setItem(key, JSON.stringify(legacy));
+          localStorage.setItem(keyV2, JSON.stringify(legacy));
         } catch {
           /* ignore */
         }
@@ -286,32 +300,12 @@ export function saveDrawings(
 ): void {
   try {
     const payload = drawings.map((d) => ({ ...d, selected: false }));
-    localStorage.setItem(drawingsKey(userScope, symbol), JSON.stringify(payload));
+    localStorage.setItem(drawingsKeyV2(userScope, symbol), JSON.stringify(payload));
   } catch (e) {
     console.warn("[Drawings] Failed to save:", e);
   }
 }
 
-export function loadDrawingSettings(userScope: string): DrawingUserSettings | null {
-  try {
-    const raw = localStorage.getItem(settingsKey(userScope));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as DrawingUserSettings;
-    if (!parsed || parsed.version !== 1) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-export function saveDrawingSettings(userScope: string, settings: DrawingUserSettings): void {
-  try {
-    localStorage.setItem(settingsKey(userScope), JSON.stringify(settings));
-  } catch (e) {
-    console.warn("[Drawings] Failed to save settings:", e);
-  }
-}
-
 export function getDrawingToolbarStorageKey(userScope: string): string {
-  return `${SETTINGS_PREFIX}${userScope}:toolbar-pos`;
+  return `${SETTINGS_V1_PREFIX}${userScope}:toolbar-pos`;
 }

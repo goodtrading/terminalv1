@@ -42,6 +42,7 @@ import type {
   LiveOrderSubmitResult,
 } from "./liveOrderSubmitTypes";
 import type { LiveOrderPreviewResult } from "./liveOrderPreviewTypes";
+import { assertBingxWriteNotFrozen } from "../exchanges/bingx/bingxReadOnlyFreeze";
 import { isLiveLimitTestMode } from "./riskGuard";
 
 function normalizeSymbol(symbol: string): string {
@@ -116,6 +117,18 @@ export async function submitBingXLiveLimitOrder(
   }
 
   const clientOrderId = generateLiveClientOrderId();
+
+  const freeze = assertBingxWriteNotFrozen();
+  if (!freeze.ok) {
+    const result = baseBlockedResult(
+      request,
+      freeze.blockers,
+      "LIVE ORDER BLOCKED — read-only freeze",
+    );
+    result.clientOrderId = clientOrderId;
+    await emitLiveOrderSubmitBlocked(uid, request, result);
+    return result;
+  }
 
   const shapeBlockers = validateLiveSubmitShape(request);
   if (shapeBlockers.length > 0) {

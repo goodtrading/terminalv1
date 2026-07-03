@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect } from "react";
+import { useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel, TerminalValue } from "./TerminalPanel";
 import {
@@ -10,19 +10,15 @@ import {
   type TerminalStateOptionsGammaExtras,
 } from "@shared/schema";
 import { cn } from "@/lib/utils";
+import { formatTerminalDateTime } from "@/lib/timezone";
+import { useTimezonePreference } from "@/hooks/useTimezonePreference";
 import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
-
-interface Alert {
-  id: number;
-  title: string;
-  message: string;
-  timestamp: string;
-  type: "info" | "warning" | "error";
-}
+import { formatGex } from "@/lib/formatGex";
 
 const STALE_THRESHOLD_MIN = 10;
 
 function OptionsDataFreshness({ market }: { market: (MarketState & { optionsLastUpdated?: number }) | undefined }) {
+  useTimezonePreference();
   const ts = market?.optionsLastUpdated;
   if (ts == null) return null;
   const minAgo = Math.floor((Date.now() - ts) / 60000);
@@ -38,12 +34,13 @@ function OptionsDataFreshness({ market }: { market: (MarketState & { optionsLast
       <span className={cn(
         "text-[10px] font-mono",
         isStale ? "text-amber-500/90" : "text-white/60"
-      )}>Last update: {label}</span>
+      )}>Last update: {formatTerminalDateTime(ts)} ({label})</span>
     </div>
   );
 }
 
 export function LeftSidebar() {
+  useTimezonePreference();
   const { data: market } = useQuery<MarketState>({ 
     queryKey: ["/api/market-state"],
     refetchInterval: 15_000,
@@ -91,63 +88,6 @@ export function LeftSidebar() {
     });
   }
 
-  // Derived alerts logic
-  const alerts = useMemo(() => {
-    const list: Alert[] = [];
-    
-    if (market?.gammaRegime === "SHORT GAMMA") {
-      list.push({
-        id: 1,
-        title: "VOLATILITY RISK",
-        message: "Short Gamma regime active. Expect accelerated moves.",
-        timestamp: new Date().toLocaleTimeString(),
-        type: "warning"
-      });
-    }
-
-    if (flow?.hedgeFlowIntensity === "HIGH") {
-      list.push({
-        id: 2,
-        title: "HIGH FLOW INTENSITY",
-        message: `Dealer hedging flow is accelerating (${flow.hedgeFlowBias}).`,
-        timestamp: new Date().toLocaleTimeString(),
-        type: "error"
-      });
-    }
-
-    if (dealer?.gammaPressure && parseFloat(dealer.gammaPressure) > 0.7) {
-      list.push({
-        id: 3,
-        title: "GAMMA PRESSURE",
-        message: `High directional pressure detected: ${dealer.gammaPressure}`,
-        timestamp: new Date().toLocaleTimeString(),
-        type: "warning"
-      });
-    }
-
-    if (dealer && dealer.gammaConcentration > 0.8) {
-      list.push({
-        id: 4,
-        title: "GAMMA CONCENTRATION",
-        message: "Dealer exposure is highly concentrated near spot.",
-        timestamp: new Date().toLocaleTimeString(),
-        type: "info"
-      });
-    }
-
-    if (flow?.accelerationRisk === "HIGH") {
-      list.push({
-        id: 5,
-        title: "ACCELERATION RISK",
-        message: "High risk of non-linear price movement.",
-        timestamp: new Date().toLocaleTimeString(),
-        type: "error"
-      });
-    }
-
-    return list;
-  }, [market, flow, dealer]);
-
   const formatExposure = (v: number | undefined | null): { display: string; raw: string; intensity: "LOW" | "MEDIUM" | "HIGH" | "EXTREME" } => {
     if (v == null || !Number.isFinite(v)) {
       return { display: "--", raw: "n/a", intensity: "LOW" };
@@ -175,7 +115,7 @@ export function LeftSidebar() {
     return { display, raw, intensity };
   };
 
-  const dealerPrevRef = useRef<DealerExposure | undefined>();
+  const dealerPrevRef = useRef<DealerExposure | undefined>(undefined);
   useEffect(() => {
     if (!dealer) return;
     const prev = dealerPrevRef.current;
@@ -233,53 +173,19 @@ export function LeftSidebar() {
   ]);
 
   return (
-    <div className="h-full flex flex-col gap-1 overflow-y-auto p-1 border-r border-terminal-border bg-terminal-bg shrink-0 min-w-0 w-[280px] max-[1400px]:w-[240px] max-[1000px]:hidden">
-      
-      <TerminalPanel title="ALERT CENTER">
-        <div className="p-2 space-y-2">
-          {alerts.length === 0 ? (
-            <div className="py-3 px-2 border border-dashed border-white/10 rounded-sm text-center bg-terminal-panel/30">
-              <div className="terminal-text-label mb-1 text-[9px]">NO ACTIVE ALERTS</div>
-              <div className="text-[9px] terminal-text-muted leading-tight">System monitoring flow conditions...</div>
-            </div>
-          ) : (
-            alerts.map((alert) => (
-              <div 
-                key={alert.id} 
-                className={cn(
-                  "p-2 terminal-card border-l-2",
-                  alert.type === "warning" ? "border-l-yellow-500" : 
-                  alert.type === "error" ? "border-l-terminal-negative" : "border-l-blue-500"
-                )}
-              >
-                <div className="flex justify-between items-start mb-0.5">
-                  <span className={cn(
-                    "text-[9px] font-bold uppercase tracking-tight leading-none",
-                    alert.type === "warning" ? "text-yellow-500" : 
-                    alert.type === "error" ? "text-terminal-negative" : "text-blue-400"
-                  )}>{alert.title}</span>
-                  <span className="text-[7px] font-mono terminal-text-muted leading-none">{alert.timestamp}</span>
-                </div>
-                <div className="text-[9px] terminal-text-secondary font-bold leading-tight">
-                  {alert.message}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </TerminalPanel>
+    <div className="h-full flex flex-col gap-1 overflow-y-auto p-1 border-r border-terminal-border bg-terminal-bg shrink-0 min-w-0 w-[252px] max-[1400px]:w-[224px] max-[1000px]:hidden">
 
       <TerminalPanel title="MARKET STATE">
         <TerminalValue label="Gamma Regime" value={market?.gammaRegime ?? "--"} trend={market?.gammaRegime === "LONG GAMMA" ? "positive" : "negative"} isBadge tooltip="Gamma Regime" />
         <TerminalValue
           label="Total GEX"
-          value={
+          value={formatGex(
             typeof market?.totalGex === "number" && Number.isFinite(market.totalGex)
-              ? `${(market.totalGex / 1e9).toFixed(2)}B`
+              ? market.totalGex
               : typeof opts?.totalGex === "number" && Number.isFinite(opts.totalGex)
-                ? `${(opts.totalGex / 1e9).toFixed(2)}B`
-                : "--"
-          }
+                ? opts.totalGex
+                : undefined,
+          )}
           trend={
             (typeof market?.totalGex === "number" && market.totalGex > 0) ||
             (typeof opts?.totalGex === "number" && opts.totalGex > 0)
@@ -458,7 +364,7 @@ export function LeftSidebar() {
         <TerminalValue label="Charm Bias" value={dealer?.charmBias ?? "--"} trend={dealer?.charmBias === "BULLISH" ? "positive" : "negative"} isBadge tooltip="Charm Bias" />
         <TerminalValue label="Gamma Pressure" value={dealer?.gammaPressure ?? "--"} />
         <TerminalValue label="Gamma Concen." value={dealer ? dealer.gammaConcentration.toFixed(2) : "--"} />
-        <TerminalValue label="Last Dealer Update" value={dealer?.timestamp ? new Date(dealer.timestamp).toLocaleTimeString() : "--"} />
+        <TerminalValue label="Last Dealer Update" value={dealer?.timestamp ? formatTerminalDateTime(dealer.timestamp) : "--"} />
       </TerminalPanel>
 
       <TerminalPanel title="DEALER HEDGING FLOW">

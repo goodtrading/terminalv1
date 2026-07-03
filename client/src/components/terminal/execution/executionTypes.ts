@@ -54,7 +54,9 @@ export type BingXAccountSyncStatus =
   | "parser_mismatch";
 
 export interface BingXNormalizedPosition {
+  id?: string;
   symbol: string;
+  positionSide?: "LONG" | "SHORT" | "BOTH";
   side: "long" | "short" | "flat" | "unknown";
   quantity: number;
   entryPrice?: number;
@@ -103,13 +105,42 @@ export interface BingXNormalizedRiskOrder {
   source: "bingx";
 }
 
+export type BingxConnectionState =
+  | "DISCONNECTED"
+  | "CONNECTING"
+  | "CONNECTED"
+  | "DEGRADED"
+  | "STALE"
+  | "UNAUTHORIZED"
+  | "RATE_LIMITED"
+  | "ERROR";
+
 export interface BingXReadOnlySnapshot {
   connectionId: string;
   exchange: "bingx";
   mode: "read-only";
   connected: boolean;
+  connectionState?: BingxConnectionState;
   health: BingXReadOnlyHealth;
   lastSyncTime: number;
+  freshness?: {
+    lastSyncTime: number;
+    ageMs: number;
+    stale: boolean;
+    staleAfterMs: number;
+  };
+  dataQuality?: {
+    status: "complete" | "partial" | "missing" | "stale";
+    missingFields: string[];
+    warnings: string[];
+  };
+  partialFailures?: {
+    positions?: string;
+    orders?: string;
+  };
+  positionsUnavailable?: boolean;
+  openOrdersUnavailable?: boolean;
+  unknownOrders?: BingXNormalizedOrder[];
   account?: {
     equityUsdt?: number;
     balanceUsdt?: number;

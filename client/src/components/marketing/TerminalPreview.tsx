@@ -266,11 +266,11 @@ export function TerminalPreview() {
     <MarketingSectionShell
       className="py-16 sm:py-20"
       title="Una terminal diseñada para contexto, timing y ejecución"
-      subtitle="Definí el régimen con gamma, ubicá zonas críticas en el gráfico y ejecutá con order flow, paper trading o conexión broker desde una sola terminal."
+      subtitle="Definí el régimen con gamma, ubicá zonas críticas en el gráfico y practicá escenarios con paper trading desde la Terminal Web."
     >
       <p className="-mt-6 mb-8 max-w-3xl text-sm text-[#6b7280]">
         GoodTrading integra gamma y niveles directamente sobre el gráfico para tomar decisiones
-        operativas.
+        operativas sin salir del entorno web.
       </p>
 
       <div className="relative overflow-hidden rounded-[22px] border border-[#1e1e1e] bg-[#0b0b0b] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">

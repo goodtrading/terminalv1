@@ -7,7 +7,7 @@ export function ChartTimeframeSelector() {
 
   return (
     <div
-      className="flex items-center gap-0.5 rounded border border-white/10 bg-black/55 px-1 py-0.5 backdrop-blur-sm"
+      className="flex h-6 items-center gap-0.5 rounded-[2px] border border-white/10 bg-black/42 px-0.5 py-0"
       title="Timeframe"
       role="group"
       aria-label="Chart timeframe"
@@ -18,9 +18,9 @@ export function ChartTimeframeSelector() {
           type="button"
           onClick={() => setChartTimeframe(t.id)}
           className={cn(
-            "min-w-[2.25rem] px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider rounded-sm transition-colors",
+            "h-[22px] min-w-[2rem] px-1.5 py-0 text-[9px] leading-none font-mono uppercase tracking-wider rounded-[2px] transition-colors",
             tf === t.id
-              ? "bg-red-950/70 text-red-300 border border-red-500/40"
+              ? "bg-red-950/60 text-red-300 border border-red-500/35"
               : "text-white/50 hover:text-white/90 border border-transparent hover:bg-white/[0.06]",
           )}
         >

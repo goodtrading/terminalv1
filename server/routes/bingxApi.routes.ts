@@ -1,5 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { requireSaasAuth } from "../middleware/saasAuth";
+import { requireBingxTerminalPlan } from "../middleware/bingxTerminalGuard";
+import { bingxRateLimit } from "../middleware/bingxRateLimit";
 import {
   getAccountSnapshot,
   isBingxApiConnectionEnabled,
@@ -147,7 +149,12 @@ function sanitizeConnectBody(body: unknown): {
 }
 
 export function registerBingxApiRoutes(app: Express): void {
-  app.post("/api/bingx/connect", requireSaasAuth, async (req: Request, res: Response) => {
+  app.post(
+    "/api/bingx/connect",
+    requireSaasAuth,
+    requireBingxTerminalPlan,
+    bingxRateLimit({ scope: "bingx.connect", max: 3, windowMs: 60_000 }),
+    async (req: Request, res: Response) => {
     logBingxConnectRouteEntered(req);
 
     try {
@@ -302,7 +309,12 @@ export function registerBingxApiRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/bingx/connections", requireSaasAuth, async (req: Request, res: Response) => {
+  app.get(
+    "/api/bingx/connections",
+    requireSaasAuth,
+    requireBingxTerminalPlan,
+    bingxRateLimit({ scope: "bingx.connections", max: 30, windowMs: 60_000 }),
+    async (req: Request, res: Response) => {
     try {
       const userId = requireUserId(req, res, "/api/bingx/connections");
       if (userId == null) return;
@@ -327,6 +339,8 @@ export function registerBingxApiRoutes(app: Express): void {
   app.get(
     "/api/bingx/read-only/snapshot",
     requireSaasAuth,
+    requireBingxTerminalPlan,
+    bingxRateLimit({ scope: "bingx.snapshot", max: 15, windowMs: 60_000 }),
     async (req: Request, res: Response) => {
       try {
         const userId = requireUserId(req, res, "/api/bingx/read-only/snapshot");
@@ -385,7 +399,7 @@ export function registerBingxApiRoutes(app: Express): void {
         }
 
         void emitBingXSnapshotSyncedIfAllowed(userId, connectionId, {
-          symbol: snapshot.symbol,
+          symbol,
           health: snapshot.health,
         });
 
@@ -425,6 +439,8 @@ export function registerBingxApiRoutes(app: Express): void {
   app.get(
     "/api/bingx/read-only/debug-shape",
     requireSaasAuth,
+    requireBingxTerminalPlan,
+    bingxRateLimit({ scope: "bingx.debug", max: 6, windowMs: 60_000 }),
     async (req: Request, res: Response) => {
       try {
         if (!isBingxRiskDebugEnabled()) {
@@ -497,6 +513,8 @@ export function registerBingxApiRoutes(app: Express): void {
   app.get(
     "/api/bingx/read-only/health",
     requireSaasAuth,
+    requireBingxTerminalPlan,
+    bingxRateLimit({ scope: "bingx.health", max: 12, windowMs: 60_000 }),
     async (req: Request, res: Response) => {
       try {
         const userId = requireUserId(req, res, "/api/bingx/read-only/health");
@@ -564,7 +582,12 @@ export function registerBingxApiRoutes(app: Express): void {
     },
   );
 
-  app.get("/api/bingx/account", requireSaasAuth, async (req: Request, res: Response) => {
+  app.get(
+    "/api/bingx/account",
+    requireSaasAuth,
+    requireBingxTerminalPlan,
+    bingxRateLimit({ scope: "bingx.account", max: 15, windowMs: 60_000 }),
+    async (req: Request, res: Response) => {
     try {
       const userId = requireUserId(req, res, "/api/bingx/account");
       if (userId == null) return;
@@ -603,6 +626,8 @@ export function registerBingxApiRoutes(app: Express): void {
   app.delete(
     "/api/bingx/connections/:id",
     requireSaasAuth,
+    requireBingxTerminalPlan,
+    bingxRateLimit({ scope: "bingx.delete", max: 5, windowMs: 60_000 }),
     (req: Request, res: Response) => {
       try {
         const userId = requireUserId(req, res, "/api/bingx/connections/:id");

@@ -23,6 +23,7 @@ import {
   isMaxAccountRiskConfigured,
   isMaxOrderSizeConfigured,
   isSlRequiredPolicyConfigured,
+  isBingxReadOnlyFreezeActive,
 } from "./riskGuard";
 import type {
   LiveReadinessCheck,
@@ -138,6 +139,9 @@ export async function getLiveTradingReadiness(
   }
   if (isKillSwitchActive()) {
     flagBlockers.push("LIVE_TRADING_KILL_SWITCH=true");
+  }
+  if (isBingxReadOnlyFreezeActive()) {
+    flagBlockers.push("BINGX_READ_ONLY_FREEZE_ACTIVE");
   }
 
   const initialConnected = getFirstConnectedConnectionForUser(uid);
@@ -367,6 +371,17 @@ export async function getLiveTradingReadiness(
 
   checks.push(
     check(
+      "read_only_freeze",
+      "Read-only freeze",
+      isBingxReadOnlyFreezeActive() ? "fail" : "pass",
+      isBingxReadOnlyFreezeActive()
+        ? "BINGX_READ_ONLY_FREEZE active — live execution disabled during stabilization."
+        : "Read-only freeze off.",
+    ),
+  );
+
+  checks.push(
+    check(
       "market_orders_policy",
       "Market orders disabled",
       !isBingxMarketOrdersAllowed() ? "pass" : "fail",
@@ -515,6 +530,7 @@ export async function getLiveTradingReadiness(
     hasConnection;
 
   const readyForLive =
+    !isBingxReadOnlyFreezeActive() &&
     flags.liveTradingEnabled &&
     flags.apiTradingEnabled &&
     flags.orderSubmitEnabled &&
@@ -542,6 +558,7 @@ export async function getLiveTradingReadiness(
     warnings: Array.from(new Set(warnings)),
     readyForDryRun,
     readyForLive,
+    readOnlyFreezeActive: isBingxReadOnlyFreezeActive(),
   };
 
   void emitLiveReadinessCheckedIfAllowed(uid, ex, {

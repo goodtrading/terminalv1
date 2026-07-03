@@ -2,6 +2,7 @@ import { apiUrl } from "../../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getMarketEngineInternals } from "@/stores/marketEngineStore";
+import { readTerminalActivePanels } from "@/lib/terminalActivePanelsPrefs";
 import type {
   BingXReadOnlyHealthResponse,
   BingXReadOnlySnapshot,
@@ -235,16 +236,7 @@ export function useTerminalHealth() {
     ? Math.floor((Date.now() - obUpdatedAt) / 1000)
     : null;
 
-  const heatmapActive = useMemo(() => {
-    try {
-      const raw = localStorage.getItem("terminal-activePanels");
-      if (!raw) return false;
-      const parsed = JSON.parse(raw) as string[];
-      return Array.isArray(parsed) && parsed.includes("HEATMAP");
-    } catch {
-      return false;
-    }
-  }, [marketTick]);
+  const heatmapActive = useMemo(() => readTerminalActivePanels().has("HEATMAP"), [marketTick]);
 
   const pendingPaper = useMemo(
     () =>

@@ -3,11 +3,32 @@ import type { Drawing, DrawingPoint } from "./types";
 import { drawDebug, getChartViewportVersion } from "./debug";
 import { createDrawingProjection } from "./projection";
 import { getPositionMetrics, isPositionDrawing } from "./positionUtils";
+import {
+  hexToRgba as fillHexToRgba,
+  logDrawingColorRender,
+  resolvePositionFillOpacities,
+} from "@/lib/drawingPersistence";
 
 const LABEL_OFFSET_STOP = -12;
 const LABEL_OFFSET_ENTRY = 0;
 const LABEL_OFFSET_TARGET = 12;
 const LABEL_BASE_PADDING = 12;
+const DEV_RENDER_LOG_CACHE = new Map<string, string>();
+
+function logPositionRenderOnce(
+  drawingId: string,
+  zone: "target" | "stop",
+  fillColor: string,
+  opacity: number,
+  resolvedCanvasColor: string,
+): void {
+  if (!import.meta.env.DEV) return;
+  const sig = `${zone}:${fillColor}:${opacity}:${resolvedCanvasColor}`;
+  const key = `${drawingId}:${zone}`;
+  if (DEV_RENDER_LOG_CACHE.get(key) === sig) return;
+  DEV_RENDER_LOG_CACHE.set(key, sig);
+  logDrawingColorRender({ zone, fillColor, opacity, resolvedCanvasColor });
+}
 
 function formatCompact(n: number, decimals: number): string {
   if (Math.abs(n) >= 1e6) return n.toExponential(1);
@@ -308,10 +329,17 @@ export function DrawingsCanvas({
         const stopBottom = Math.max(entryY, stopY);
         const targetColor = d.targetColor ?? "#22c55e";
         const stopColor = d.stopColor ?? "#ef4444";
+        const { targetOpacity, stopOpacity } = resolvePositionFillOpacities(d);
 
-        ctx.fillStyle = hexToRgba(targetColor, 0.2);
+        const targetFill = fillHexToRgba(targetColor, targetOpacity);
+        const stopFill = fillHexToRgba(stopColor, stopOpacity);
+        logPositionRenderOnce(d.id, "target", targetColor, targetOpacity, targetFill);
+        logPositionRenderOnce(d.id, "stop", stopColor, stopOpacity, stopFill);
+
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = targetFill;
         ctx.fillRect(left, targetTop, right - left, targetBottom - targetTop);
-        ctx.fillStyle = hexToRgba(stopColor, 0.24);
+        ctx.fillStyle = stopFill;
         ctx.fillRect(left, stopTop, right - left, stopBottom - stopTop);
 
         ctx.strokeStyle = hexToRgba("#ffffff", 0.85);
