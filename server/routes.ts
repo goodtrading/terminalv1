@@ -6,9 +6,12 @@ import { getTerminalState } from "./terminal-state";
 import { DeribitOptionsGateway } from "./deribit-gateway";
 import { OrderBookGateway } from "./orderbook-gateway";
 import { buildTaskPlan } from "./ai/task-agent";
-import { buildLiveMarketContext } from "./ai/buildLiveMarketContext";
-import { generateAIResponse } from "./lib/openaiClient";
 import { z } from "zod";
+import { registerAiChatRoutes } from "./routes/aiChat.routes";
+import { registerCalibrationRoutes } from "./routes/calibration.routes";
+import { registerAiProviderStatusRoutes } from "./routes/aiProviderStatus.routes";
+import { isGoodTradingAiEnabled } from "./ai/goodTradingAi/features";
+import { isGoodTradingAiCalibrationEnabled } from "./ai/goodTradingAi/calibration/features";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
 import {
   getOrderBook,
@@ -304,8 +307,14 @@ export async function registerRoutes(
       alertsFlowEnabled: isAlertsFlowEnabled(),
       alertsWebNotificationsEnabled: isAlertsWebNotificationsEnabled(),
       alertsMobilePushEnabled: isAlertsMobilePushEnabled(),
+      goodTradingAiEnabled: isGoodTradingAiEnabled(),
+      goodTradingAiCalibrationEnabled: isGoodTradingAiCalibrationEnabled(),
     });
   });
+
+  registerAiChatRoutes(app);
+  registerCalibrationRoutes(app);
+  registerAiProviderStatusRoutes(app);
 
   app.get("/api/desktop/update", (_req: Request, res: Response) => {
     res.json(buildDesktopUpdatePayload());
@@ -761,63 +770,6 @@ export async function registerRoutes(
     } catch (err: any) {
       console.error("AI task-agent error:", err);
       res.status(500).json({ error: "AI agent failure" });
-    }
-  });
-
-  app.post("/api/ai/chat", async (req: Request, res: Response) => {
-    const aiChatSchema = z.object({
-      message: z.string().trim().min(1).max(4000),
-      includeLiveContext: z.boolean().optional().default(true),
-      marketContext: z.any().optional(),
-    });
-
-    try {
-      const parsed = aiChatSchema.safeParse(req.body ?? {});
-      if (!parsed.success) {
-        return res.status(400).json({ error: "INVALID_AI_REQUEST" });
-      }
-
-      const { message, includeLiveContext, marketContext } = parsed.data;
-
-      const apiKey = process.env.OPENAI_API_KEY;
-      if (!apiKey) {
-        return res.status(503).json({ error: "OPENAI_API_KEY_MISSING" });
-      }
-
-      let finalMarketContext: any = undefined;
-      if (marketContext != null) {
-        if (typeof marketContext === "object" && !Array.isArray(marketContext)) {
-          // Guard against accidental huge payloads.
-          const sizeBytes = Buffer.byteLength(JSON.stringify(marketContext), "utf8");
-          if (sizeBytes <= 25_000) finalMarketContext = marketContext;
-        } else {
-          return res.status(400).json({ error: "INVALID_AI_REQUEST" });
-        }
-      }
-
-      if (!finalMarketContext && includeLiveContext) {
-        try {
-          finalMarketContext = await buildLiveMarketContext();
-        } catch (ctxErr: any) {
-          finalMarketContext = undefined;
-        }
-      }
-
-      const responseText = await generateAIResponse({
-        message,
-        marketContext: finalMarketContext,
-      });
-
-      return res.json({ response: responseText });
-    } catch (err: any) {
-      // Produce structured error payload with exact failure cause.
-      if (err) console.error("AI_CHAT_ERROR:", err.message ?? String(err));
-      const details = err?.message || String(err) || "Unknown backend error";
-
-      return res.status(500).json({
-        error: "AI_CHAT_ERROR",
-        details: details || "Unknown backend error",
-      });
     }
   });
 

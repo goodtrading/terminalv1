@@ -1,0 +1,3 @@
+# Local calibration store (dev). Do not commit secrets.
+*
+!.gitignore

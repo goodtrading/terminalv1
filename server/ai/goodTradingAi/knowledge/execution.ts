@@ -1,0 +1,125 @@
+import { ke, type GoodTradingKnowledgeEntry } from "./types";
+
+export const EXECUTION_ENTRIES: readonly GoodTradingKnowledgeEntry[] = [
+  ke({
+    id: "gt_exec_plan_before_click",
+    title: "Plan antes del click",
+    category: "execution",
+    kind: "RULE",
+    concepts: ["plan", "execution plan", "checklist"],
+    aliases: ["pre-trade plan"],
+    statement: "Antes de ejecutar: hipótesis, confirmaciones, invalidación, tamaño y gestión.",
+    explanation:
+      "Sin checklist, el order flow se convierte en impulso. El mentor prioriza proceso.",
+    relatedEntryIds: ["gt_const_invalidation_required", "gt_risk_invalidation_first"],
+  }),
+  ke({
+    id: "gt_exec_no_fixed_rr",
+    title: "R:R no es fórmula universal",
+    category: "execution",
+    kind: "RULE",
+    concepts: ["r:r", "reward risk", "risk reward"],
+    aliases: ["rr ratio"],
+    statement: "No hay R:R mágico universal; depende de edge, winrate hipotético y costos.",
+    explanation:
+      "Forzar 1:3 en un mercado de mean-reversion corto puede ser incongruente. Primero invalidación, luego asimetría realista.",
+    prohibitedInterpretations: ["Solo operar si R:R ≥ 3 siempre"],
+    relatedEntryIds: ["gt_risk_invalidation_first", "gt_const_no_universal_percent"],
+  }),
+  ke({
+    id: "gt_exec_scale_logic",
+    title: "Escalar con lógica",
+    category: "execution",
+    kind: "HEURISTIC",
+    concepts: ["scaling", "escalar", "pyramiding"],
+    aliases: ["add to winners"],
+    statement: "Escalar posiciones exige reglas; agregar a perdedoras sin tesis nueva es anti-proceso.",
+    explanation:
+      "Educativamente: adds solo si la hipótesis se fortalece y el riesgo total sigue acotado.",
+    relatedEntryIds: ["gt_risk_position_sizing_context", "gt_exec_plan_before_click"],
+  }),
+  ke({
+    id: "gt_exec_reduce_on_invalid_partial",
+    title: "Reducir ante degradación",
+    category: "execution",
+    kind: "HEURISTIC",
+    concepts: ["reduce", "partial exit", "degradación tesis"],
+    aliases: ["thesis degradation"],
+    statement: "Si la tesis se degrada sin invalidación total, reducir es opción de proceso válida.",
+    explanation:
+      "No es 'miedo': es gestión de incertidumbre creciente.",
+    relatedEntryIds: ["gt_const_hypothesis_not_certainty", "gt_risk_invalidation_first"],
+  }),
+  ke({
+    id: "gt_exec_avoid_mid_noise",
+    title: "Evitar ruido de medio rango",
+    category: "execution",
+    kind: "HEURISTIC",
+    concepts: ["chop", "ruido", "mid range"],
+    aliases: ["avoid chop"],
+    statement: "En chop sin acceptance clara, forzar lecturas de order flow suele destruir edge educativo.",
+    explanation:
+      "A veces la mejor ejecución es no ejecutar.",
+    relatedEntryIds: ["gt_const_insufficient_info", "gt_of_acceptance_rejection"],
+  }),
+  ke({
+    id: "gt_exec_anti_revenge",
+    title: "Anti-patrón: revenge trading",
+    category: "execution",
+    kind: "ANTI_PATTERN",
+    concepts: ["revenge", "venganza", "tilt"],
+    aliases: ["tilt trading"],
+    statement: "Operar para recuperar una pérdida inmediata viola el proceso.",
+    explanation:
+      "El mentor lo marca como fallo de riesgo/psicología, no como 'más setups'.",
+    relatedEntryIds: ["gt_risk_session_limits", "gt_const_process_over_outcome"],
+  }),
+  ke({
+    id: "gt_exec_session_context",
+    title: "Contexto de sesión",
+    category: "execution",
+    kind: "HEURISTIC",
+    concepts: ["sesión", "session", "killzone"],
+    aliases: ["session timing"],
+    statement: "La calidad de ejecución depende de sesión/liquidez horaria (heurística).",
+    explanation:
+      "No hay 'mejor hora universal' absoluta; hay perfiles de liquidez distintos.",
+    relatedEntryIds: ["gt_liq_thin_book", "gt_const_no_universal_percent"],
+  }),
+  ke({
+    id: "gt_cross_gamma_liquidity",
+    title: "Cross: Gamma × Liquidez",
+    category: "cross",
+    kind: "HEURISTIC",
+    concepts: ["gamma liquidez", "gamma liquidity", "combinación gamma liquidez"],
+    aliases: ["regime meets book"],
+    statement: "Gamma sugiere régimen; liquidez muestra dónde el régimen se fricciona o acelera.",
+    explanation:
+      "Ejemplo: short gamma + thin book eleva riesgo de expansión; long gamma + wall persistente eleva escenarios de mean-reversion — ambos hipotéticos.",
+    relatedEntryIds: ["gt_gamma_not_spot_liquidity", "gt_liq_wall_not_reversal", "gt_const_multi_lens"],
+  }),
+  ke({
+    id: "gt_cross_liquidity_orderflow",
+    title: "Cross: Liquidez × Order flow",
+    category: "cross",
+    kind: "HEURISTIC",
+    concepts: ["liquidez order flow", "liquidity orderflow"],
+    aliases: ["book meets tape"],
+    statement: "Liquidez sin flujo es mapa estático; flujo sin liquidez es presión sin ancla.",
+    explanation:
+      "La combinación explica absorption, sweep y fallos de breakout.",
+    relatedEntryIds: ["gt_of_absorption_central", "gt_liq_sweep_reclaim", "gt_liq_consumed_vs_defended"],
+  }),
+  ke({
+    id: "gt_cross_gamma_orderflow",
+    title: "Cross: Gamma × Order flow",
+    category: "cross",
+    kind: "HEURISTIC",
+    concepts: ["gamma order flow", "gamma flujo"],
+    aliases: ["regime meets flow"],
+    statement: "El order flow confirma o niega el comportamiento esperado bajo un régimen de gamma hipotético.",
+    explanation:
+      "No universal: un régimen no dicta cada print.",
+    relatedEntryIds: ["gt_of_cross_with_gamma", "gt_gamma_pos_neg_hypothesis"],
+  }),
+];

@@ -300,6 +300,10 @@ export default function AdminPage() {
             </Link>
             <span className="text-terminal-muted">/</span>
             <span className="text-white tracking-wider">Admin Panel</span>
+            <span className="text-terminal-muted">/</span>
+            <Link href="/admin/ai-lab" className="text-terminal-accent hover:underline">
+              AI Lab
+            </Link>
           </div>
           <button
             type="button"

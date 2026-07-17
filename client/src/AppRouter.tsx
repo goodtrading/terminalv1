@@ -5,6 +5,7 @@ import BlockedAccessScreen from "@/pages/auth/BlockedAccessScreen";
 import DesktopEntryRedirect from "@/pages/auth/DesktopEntryRedirect";
 import AdminPage from "@/pages/admin/AdminPage";
 import { AdminRoute } from "@/pages/admin/AdminRoute";
+import CalibrationLabPage from "@/pages/admin/CalibrationLabPage";
 import HomePage from "@/pages/marketing/HomePage";
 import LoginPage from "@/pages/marketing/LoginPage";
 import RegisterPage from "@/pages/marketing/RegisterPage";
@@ -24,6 +25,14 @@ function AdminPageRoute() {
   return (
     <AdminRoute>
       <AdminPage />
+    </AdminRoute>
+  );
+}
+
+function CalibrationLabRoute() {
+  return (
+    <AdminRoute>
+      <CalibrationLabPage />
     </AdminRoute>
   );
 }
@@ -53,6 +62,7 @@ function WebRouter() {
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
       <Route path="/admin" component={AdminPageRoute} />
+      <Route path="/admin/ai-lab" component={CalibrationLabRoute} />
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/" component={HomePage} />
       <Route component={NotFound} />
@@ -76,6 +86,7 @@ function DesktopRouter() {
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
       <Route path="/admin" component={AdminPageRoute} />
+      <Route path="/admin/ai-lab" component={CalibrationLabRoute} />
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/products" component={DesktopEntryRedirect} />
       <Route path="/download/desktop" component={DesktopEntryRedirect} />

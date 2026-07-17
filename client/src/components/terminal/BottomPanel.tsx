@@ -177,7 +177,7 @@ export function BottomPanel() {
 
       {/* Content */}
       <div className={`flex-1 min-h-0 overflow-hidden ${collapsed ? "hidden" : ""}`}>
-        {/* Keep AIChatPanel mounted so auto-alert detection can continue while hidden */}
+        {/* AI-1 Mentor panel — no auto-alerts / live-market coupling */}
         <div className={activeTab === "ai" ? "h-full min-h-0" : "hidden"}>
           <AIChatPanel />
         </div>

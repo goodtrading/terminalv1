@@ -1,0 +1,127 @@
+import { ke, type GoodTradingKnowledgeEntry } from "./types";
+
+export const DELTA_CVD_ENTRIES: readonly GoodTradingKnowledgeEntry[] = [
+  ke({
+    id: "gt_dc_delta_definition",
+    title: "Delta (futuros / flujo)",
+    category: "delta_cvd",
+    kind: "DEFINITION",
+    concepts: ["delta", "volume delta"],
+    aliases: ["delta futuros"],
+    statement: "Delta de flujo resume agresiones compra menos venta en una ventana.",
+    explanation:
+      "No confundir con delta de opciones. En Mentor, 'delta' en order flow = presión agresiva neta.",
+    relatedEntryIds: ["gt_of_delta_not_signal", "gt_dc_cvd_definition"],
+  }),
+  ke({
+    id: "gt_dc_cvd_definition",
+    title: "CVD",
+    category: "delta_cvd",
+    kind: "DEFINITION",
+    concepts: ["cvd", "cumulative volume delta"],
+    aliases: ["cumulative delta"],
+    statement: "CVD acumula delta en el tiempo para visualizar presión neta persistente.",
+    explanation:
+      "Útil para ver si la presión acompaña o diverge del precio. No es señal automática.",
+    relatedEntryIds: ["gt_of_cvd_not_signal", "gt_dc_divergence_heuristic"],
+  }),
+  ke({
+    id: "gt_dc_divergence_heuristic",
+    title: "Divergencia precio-CVD",
+    category: "delta_cvd",
+    kind: "HEURISTIC",
+    concepts: ["divergencia", "divergence", "cvd divergence"],
+    aliases: ["price cvd divergence"],
+    statement: "Divergencias pueden sugerir fatiga; requieren confirmación e invalidación.",
+    explanation:
+      "Sin nivel y acceptance, la divergencia es ruido elegante.",
+    prohibitedInterpretations: ["Divergencia = reversión segura"],
+    relatedEntryIds: ["gt_of_cvd_not_signal", "gt_const_confirmation_is_evidence"],
+  }),
+  ke({
+    id: "gt_dc_window_matters",
+    title: "La ventana temporal importa",
+    category: "delta_cvd",
+    kind: "RULE",
+    concepts: ["ventana", "timeframe delta", "session delta"],
+    aliases: ["delta window"],
+    statement: "Delta/CVD cambian de significado según la ventana (micro vs sesión).",
+    explanation:
+      "Comparar ventanas distintas sin declararlo genera contradicciones falsas.",
+    relatedEntryIds: ["gt_dc_delta_definition", "gt_const_language_discipline"],
+  }),
+  ke({
+    id: "gt_dc_with_trend",
+    title: "Delta a favor de tendencia",
+    category: "delta_cvd",
+    kind: "HEURISTIC",
+    concepts: ["delta tendencia", "delta with trend"],
+    aliases: ["aligned delta"],
+    statement: "Delta alineado con la tendencia sugiere continuidad relativa; no garantiza extensión.",
+    explanation:
+      "Si el precio sube con delta positivo persistente, la hipótesis de iniciativa gana peso — hasta que falle.",
+    relatedEntryIds: ["gt_of_initiative_vs_responsive", "gt_of_delta_not_signal"],
+  }),
+  ke({
+    id: "gt_dc_against_at_level",
+    title: "Delta en contra en nivel clave",
+    category: "delta_cvd",
+    kind: "HEURISTIC",
+    concepts: ["delta en nivel", "delta against level"],
+    aliases: ["hostile delta at support"],
+    statement: "Delta agresivo contra un nivel defendido informa el test de absorption/defensa.",
+    explanation:
+      "Es el puente clásico delta↔liquidez↔absorption.",
+    relatedEntryIds: ["gt_of_absorption_central", "gt_cross_delta_liquidity"],
+  }),
+  ke({
+    id: "gt_dc_reset_sessions",
+    title: "Resets de sesión",
+    category: "delta_cvd",
+    kind: "DEFINITION",
+    concepts: ["session reset", "reset cvd"],
+    aliases: ["cvd reset"],
+    statement: "Muchos CVD se resetean por sesión; comparar días exige cuidado metodológico.",
+    explanation:
+      "Un 'CVD alto' sin saber el reset es ambiguo.",
+    relatedEntryIds: ["gt_dc_window_matters", "gt_dc_cvd_definition"],
+  }),
+  ke({
+    id: "gt_dc_anti_alone",
+    title: "Anti-patrón: operar solo con CVD",
+    category: "delta_cvd",
+    kind: "ANTI_PATTERN",
+    concepts: ["solo cvd", "cvd only"],
+    aliases: ["cvd monoculture"],
+    statement: "Tomar decisiones solo con CVD ignora estructura, liquidez y riesgo.",
+    explanation:
+      "Viola el principio de multi-lente y contexto>señal.",
+    relatedEntryIds: ["gt_const_multi_lens", "gt_of_cvd_not_signal"],
+  }),
+  ke({
+    id: "gt_cross_delta_liquidity",
+    title: "Cross: Delta × Liquidez",
+    category: "cross",
+    kind: "HEURISTIC",
+    concepts: ["delta liquidez", "delta liquidity", "combinación delta"],
+    aliases: ["delta at wall"],
+    statement: "Delta agresivo contra liquidez persistente es el núcleo educativo de absorption tests.",
+    explanation:
+      "Combinación no universal: si la liquidez se pulla, el mismo delta implica continuación, no absorción.",
+    conditions: ["Nivel relevante", "Persistencia del pasivo"],
+    invalidations: ["Pulling del pasivo + acceptance del agresor"],
+    relatedEntryIds: ["gt_of_absorption_central", "gt_liq_consumed_vs_defended", "gt_dc_against_at_level"],
+  }),
+  ke({
+    id: "gt_cross_delta_gamma",
+    title: "Cross: Delta × Gamma",
+    category: "cross",
+    kind: "HEURISTIC",
+    concepts: ["delta gamma", "cvd gamma"],
+    aliases: ["flow under gamma regime"],
+    statement: "Interpretar delta bajo hipótesis de régimen gamma evita lecturas monoculares.",
+    explanation:
+      "Ej.: expansiones con delta fuerte son más coherentes (como hipótesis) en short gamma que en long gamma calmado.",
+    relatedEntryIds: ["gt_gamma_pos_neg_hypothesis", "gt_of_cross_with_gamma"],
+  }),
+];

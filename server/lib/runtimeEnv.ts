@@ -33,6 +33,16 @@ export function isAlertsMobilePushEnabled(): boolean {
   return envBool("ALERTS_MOBILE_PUSH_ENABLED", false);
 }
 
+/** Experimental GoodTrading AI (Mentor). Default OFF. */
+export function isGoodTradingAiEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_ENABLED", false);
+}
+
+/** Internal Calibration Lab. Default OFF. Independent of Mentor flag. */
+export function isGoodTradingAiCalibrationEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_CALIBRATION_ENABLED", false);
+}
+
 export function envInt(key: string, fallback: number): number {
   const v = process.env[key];
   if (v == null || v === "") return fallback;

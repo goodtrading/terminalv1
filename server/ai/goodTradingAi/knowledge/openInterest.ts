@@ -1,0 +1,126 @@
+import { ke, type GoodTradingKnowledgeEntry } from "./types";
+
+export const OPEN_INTEREST_ENTRIES: readonly GoodTradingKnowledgeEntry[] = [
+  ke({
+    id: "gt_oi_definition",
+    title: "Qué es Open Interest",
+    category: "open_interest",
+    kind: "DEFINITION",
+    concepts: ["oi", "open interest", "interés abierto"],
+    aliases: ["contratos abiertos"],
+    statement: "OI mide contratos abiertos; sube con posiciones nuevas y baja con cierres/netting.",
+    explanation:
+      "OI no es volumen. Informa compromiso relativo en strikes/vencimientos.",
+    relatedEntryIds: ["gt_oi_vs_volume", "gt_gamma_oi_link"],
+  }),
+  ke({
+    id: "gt_oi_vs_volume",
+    title: "OI vs volumen",
+    category: "open_interest",
+    kind: "RULE",
+    concepts: ["oi vs volume", "volumen vs oi"],
+    aliases: ["oi not volume"],
+    statement: "Volumen cuenta actividad; OI cuenta stock de posiciones abiertas.",
+    explanation:
+      "Alto volumen con OI plano puede ser rotación/cierre. No interpretar igual.",
+    relatedEntryIds: ["gt_oi_definition", "gt_oi_build_up"],
+  }),
+  ke({
+    id: "gt_oi_build_up",
+    title: "Build-up de OI",
+    category: "open_interest",
+    kind: "HEURISTIC",
+    concepts: ["oi build up", "aumento oi", "build-up"],
+    aliases: ["rising oi"],
+    statement: "OI creciente con movimiento de precio sugiere posiciones nuevas acompañando el move (hipótesis).",
+    explanation:
+      "No universal: depende de instrumento y si es options u futures. Evitar reglas de textbook rígidas.",
+    prohibitedInterpretations: ["OI up + price up = siempre continuar"],
+    relatedEntryIds: ["gt_oi_unwind", "gt_const_hypothesis_not_certainty"],
+  }),
+  ke({
+    id: "gt_oi_unwind",
+    title: "Unwind de OI",
+    category: "open_interest",
+    kind: "HEURISTIC",
+    concepts: ["oi unwind", "caída oi", "closing positions"],
+    aliases: ["falling oi"],
+    statement: "OI decreciente puede indicar cierre/netting; el path del precio necesita otras lentes.",
+    explanation:
+      "Un squeeze de short covering puede subir precio con OI cayendo. Multi-lente obligatorio.",
+    relatedEntryIds: ["gt_oi_build_up", "gt_const_multi_lens"],
+  }),
+  ke({
+    id: "gt_oi_walls_link",
+    title: "OI y walls",
+    category: "open_interest",
+    kind: "HEURISTIC",
+    concepts: ["oi wall", "oi call wall", "oi put wall"],
+    aliases: ["open interest walls"],
+    statement: "Concentraciones de OI ayudan a ubicar walls de opciones como referencias.",
+    explanation:
+      "El wall no nace solo del label 'call/put wall': hay OI + greeks + modelo.",
+    relatedEntryIds: ["gt_gamma_walls_reference", "gt_oi_definition"],
+  }),
+  ke({
+    id: "gt_oi_near_expiry",
+    title: "OI cerca de vencimiento",
+    category: "open_interest",
+    kind: "HEURISTIC",
+    concepts: ["expiry", "vencimiento", "oi expiry"],
+    aliases: ["near expiry oi"],
+    statement: "Cerca de vencimiento, OI concentrado puede intensificar efectos de pinning/rolleyes (hipótesis).",
+    explanation:
+      "También aumenta ruido e inestabilidad de mapas. Humildad metodológica.",
+    relatedEntryIds: ["gt_gamma_pinning_heuristic", "gt_gamma_model_limits"],
+  }),
+  ke({
+    id: "gt_oi_not_direction",
+    title: "OI no da dirección sola",
+    category: "open_interest",
+    kind: "RULE",
+    concepts: ["oi direction", "oi señal"],
+    aliases: ["oi not directional"],
+    statement: "OI por sí solo no indica long o short del 'mercado'.",
+    explanation:
+      "OI es stock; la direccionalidad requiere precio, flujo y estructura.",
+    prohibitedInterpretations: ["OI alto = alcista"],
+    relatedEntryIds: ["gt_oi_definition", "gt_const_context_over_signal"],
+  }),
+  ke({
+    id: "gt_oi_anti_textbook",
+    title: "Anti-patrón: reglas OI de textbook rígidas",
+    category: "open_interest",
+    kind: "ANTI_PATTERN",
+    concepts: ["textbook oi", "reglas oi rígidas"],
+    aliases: ["oi four quadrant absolutism"],
+    statement: "Aplicar la matriz precio↑/↓ × OI↑/↓ como verdad universal es anti-patrón.",
+    explanation:
+      "Sirve como checklist hipotético, no como algoritmo.",
+    relatedEntryIds: ["gt_oi_build_up", "gt_oi_unwind", "gt_const_language_discipline"],
+  }),
+  ke({
+    id: "gt_cross_gamma_oi",
+    title: "Cross: Gamma × OI",
+    category: "cross",
+    kind: "HEURISTIC",
+    concepts: ["gamma oi cross", "combinación gamma oi"],
+    aliases: ["gex oi combo"],
+    statement: "OI ubica dónde; gamma sugiere cómo podría comportarse la cobertura allí (hipótesis).",
+    explanation:
+      "Combinación educativa central, no universal ni suficiente para ejecutar.",
+    relatedEntryIds: ["gt_gamma_oi_link", "gt_oi_walls_link", "gt_gamma_walls_reference"],
+  }),
+  ke({
+    id: "gt_cross_oi_orderflow",
+    title: "Cross: OI × Order flow",
+    category: "cross",
+    kind: "HEURISTIC",
+    concepts: ["oi order flow", "oi flujo"],
+    aliases: ["oi with flow"],
+    statement: "OI marca mapa de opciones; el order flow valida o niega acceptance en el subyacente.",
+    explanation:
+      "Sin flujo, el mapa de OI es estático. Sin OI, el flujo carece de anclas de opciones.",
+    relatedEntryIds: ["gt_of_acceptance_rejection", "gt_oi_walls_link"],
+  }),
+];
