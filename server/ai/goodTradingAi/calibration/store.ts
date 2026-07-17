@@ -2,18 +2,26 @@
  * Local file persistence for Calibration Lab (dev/internal).
  * Path: server/ai/goodTradingAi/calibration/data/ (gitignored ideally via .gitignore note).
  * NOT for multi-instance production without a real store.
+ *
+ * CJS-safe: resolve via process.cwd() — esbuild empties import.meta in the Railway
+ * CommonJS bundle, so fileURLToPath(import.meta.url) crashes healthcheck at boot.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import type {
   CalibrationReview,
   KnowledgeChangeProposal,
   GoodTradingGoldenCase,
 } from "@shared/goodTradingAiCalibration";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-export const CALIBRATION_DATA_DIR = join(__dirname, "data");
+export const CALIBRATION_DATA_DIR = join(
+  process.cwd(),
+  "server",
+  "ai",
+  "goodTradingAi",
+  "calibration",
+  "data",
+);
 
 type StoreShape = {
   reviews: CalibrationReview[];

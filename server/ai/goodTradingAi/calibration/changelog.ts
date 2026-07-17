@@ -1,13 +1,21 @@
 /**
  * Server-side changelog for knowledge editorial changes.
  * Not exposed to normal users.
+ *
+ * CJS-safe: resolve via process.cwd() — esbuild empties import.meta in the Railway
+ * CommonJS bundle, so fileURLToPath(import.meta.url) crashes healthcheck at boot.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-export const CHANGELOG_DIR = join(__dirname, "..", "knowledge", "changelog");
+export const CHANGELOG_DIR = join(
+  process.cwd(),
+  "server",
+  "ai",
+  "goodTradingAi",
+  "knowledge",
+  "changelog",
+);
 
 export type ChangelogEntry = {
   id: string;
