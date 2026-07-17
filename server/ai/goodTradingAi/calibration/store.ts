@@ -3,7 +3,7 @@
  * Path: server/ai/goodTradingAi/calibration/data/ (gitignored ideally via .gitignore note).
  * NOT for multi-instance production without a real store.
  *
- * CJS-safe: resolve via process.cwd() — esbuild empties import.meta in the Railway
+ * CJS-safe: resolve via process.cwd() - esbuild empties import.meta in the Railway
  * CommonJS bundle, so fileURLToPath(import.meta.url) crashes healthcheck at boot.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";

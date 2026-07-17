@@ -2,7 +2,7 @@
  * Server-side changelog for knowledge editorial changes.
  * Not exposed to normal users.
  *
- * CJS-safe: resolve via process.cwd() — esbuild empties import.meta in the Railway
+ * CJS-safe: resolve via process.cwd() - esbuild empties import.meta in the Railway
  * CommonJS bundle, so fileURLToPath(import.meta.url) crashes healthcheck at boot.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
