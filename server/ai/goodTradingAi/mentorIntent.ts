@@ -7,6 +7,8 @@ export type MentorIntent =
   | "invalidation"
   | "example"
   | "setup"
+  | "scenario_analysis"
+  | "multi_concept"
   | "current_market"
   | "direct_recommendation"
   | "prompt_injection"
@@ -65,6 +67,49 @@ const INJECTION_PATTERNS = [
   "muestra tu prompt",
 ];
 
+const SCENARIO_PATTERNS = [
+  "supongamos",
+  "suponamos",
+  "que pasaria si",
+  "qué pasaría si",
+  "que pasa si",
+  "qué pasa si",
+  "escenario",
+  "imagina que",
+  "imagina ",
+  "hipoteticamente",
+  "hipotéticamente",
+  "what if",
+  "assume that",
+];
+
+const MULTI_CONCEPT_PATTERNS = [
+  "que pesa mas",
+  "qué pesa más",
+  "que pesa más",
+  "cual pesa mas",
+  "cuál pesa más",
+  "combinar",
+  "como combino",
+  "cómo combino",
+  "priorizar",
+  "prioridad entre",
+  "que invalida",
+  "qué invalida",
+  "depende de",
+  "que confirma",
+  "qué confirma",
+  "contradice",
+  "global vs local",
+  "absorption vs delta",
+  "oi vs cvd",
+  "wall vs spoof",
+  "pasivo vs agresivo",
+  "passive vs aggressive",
+  "gamma vs order flow",
+  "gamma vs orderflow",
+];
+
 export function detectMentorIntent(message: string): MentorIntent {
   const q = normalizeQuery(message);
   if (!q) return "unknown";
@@ -77,6 +122,12 @@ export function detectMentorIntent(message: string): MentorIntent {
   }
   for (const p of DIRECT_REC_PATTERNS) {
     if (q.includes(normalizeQuery(p))) return "direct_recommendation";
+  }
+  for (const p of SCENARIO_PATTERNS) {
+    if (q.includes(normalizeQuery(p))) return "scenario_analysis";
+  }
+  for (const p of MULTI_CONCEPT_PATTERNS) {
+    if (q.includes(normalizeQuery(p))) return "multi_concept";
   }
 
   if (/\b(setup|playbook|escenario educativo|secuencia)\b/.test(q)) return "setup";

@@ -190,6 +190,7 @@ export function AIChatPanel() {
         requestId: data.requestId || "unknown",
         knowledgeReferences: Array.isArray(data.knowledgeReferences) ? data.knowledgeReferences : [],
         coverage: data.coverage,
+        reasoning: data.reasoning,
       };
       setLastProvider(structured.provider);
 

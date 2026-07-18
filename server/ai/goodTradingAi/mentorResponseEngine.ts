@@ -117,6 +117,35 @@ function summaryForIntent(
     };
   }
 
+  if (intent === "scenario_analysis") {
+    extraWarnings.push(
+      "Escenario hipotético educativo: sin órdenes de compra/venta ni lectura de mercado en vivo.",
+    );
+    return {
+      summary:
+        "Escenario educativo — primero plantearía la hipótesis, después qué evidencia necesito confirmar, " +
+        "y recién entonces el si X entonces Y metodológico (nunca buy/sell). " +
+        (entries.length
+          ? `Lentes a encadenar: ${titles}.`
+          : "Aportá conceptos del Brain (flip, absorption, walls, invalidación)."),
+      extraWarnings,
+    };
+  }
+
+  if (intent === "multi_concept") {
+    extraWarnings.push(
+      "Prioridad multi-lente: requisitos y dependencias pesan más que confirmaciones aisladas.",
+    );
+    return {
+      summary:
+        "Cuando varios conceptos compiten, primero miraría requisitos e invalidación, después dependencias, " +
+        "luego soportes y relaciones (p. ej. Global Flip enmarca; Local Flip refina; Order Flow valida acceptance; " +
+        "Absorption no se sustituye por delta solo). " +
+        (entries.length ? `Piezas recuperadas: ${titles}.` : ""),
+      extraWarnings,
+    };
+  }
+
   if (coverage === "limited" || entries.length === 0) {
     extraWarnings.push(
       "Cobertura limitada: no invento hechos ni lecturas de mercado fuera del registro metodológico.",
@@ -139,13 +168,21 @@ function summaryForIntent(
           ? "Comparación metodológica"
           : intent === "example"
             ? "Ejemplo educativo"
-            : "Modo Mentor";
+            : intent === "definition"
+              ? "Primero miraría la definición en contexto"
+              : "Modo Mentor";
+
+  const first = entries[0];
+  const mentorLead = first
+    ? `Primero miraría «${first.title}» porque ${first.statement} Después cruzaría las piezas recuperadas sin asumir dirección.`
+    : "";
 
   return {
     summary:
       `${lead} — cobertura ${coverage === "high" ? "alta" : "media"}. ` +
-      `Principios/reglas recuperados: ${titles}. ` +
-      "Usá las observaciones como marco de estudio; distinguí hechos, reglas y heurísticas. " +
+      (mentorLead ? `${mentorLead} ` : "") +
+      `Cadena de estudio: ${titles}. ` +
+      "Usá las observaciones como marco; distinguí hechos, reglas y heurísticas. " +
       "No es análisis del mercado en vivo ni una orden operativa.",
     extraWarnings,
   };

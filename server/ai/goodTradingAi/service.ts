@@ -11,6 +11,8 @@ import { createAIProvider, type AIProvider, type CreateAIProviderDeps } from "./
 import { validateMentorResponse } from "./responseValidator";
 import { loadGoodTradingOpenAIConfig } from "./openaiConfig";
 import { MockGoodTradingAIProvider } from "./mockProvider";
+import { detectMentorIntent } from "./mentorIntent";
+import { buildMentorReasoning } from "./reasoning/reasoningEngine";
 
 const MANDATORY_SERVICE_WARNINGS = [
   "GoodTrading AI Modo Mentor — contenido educativo únicamente.",
@@ -118,18 +120,45 @@ export class GoodTradingAIService {
       ...executed.warnings,
     ]);
 
+    // AI-4: attach deterministic reasoning server-side (OpenAI must not invent the graph).
+    const intent = detectMentorIntent(request.message);
+    const knowledgeIds = (executed.knowledgeReferences ?? []).map((r) => r.id);
+    const { reasoning, mentorSummary } = buildMentorReasoning({
+      message: request.message,
+      summary: executed.summary,
+      knowledgeIds,
+      intent,
+    });
+
+    const useMentorTone =
+      executed.provider.mocked === true ||
+      intent === "scenario_analysis" ||
+      intent === "multi_concept" ||
+      (reasoning.contradictions?.length ?? 0) > 0;
+
+    const summary =
+      useMentorTone && mentorSummary && mentorSummary.trim().length > 40
+        ? mentorSummary
+        : executed.summary;
+
+    if (reasoning.contradictions?.length) {
+      for (const c of reasoning.contradictions) {
+        if (!warnings.includes(c)) warnings.push(c);
+      }
+    }
+
     const provisional: GoodTradingAIChatResponse = {
       schemaVersion: "1.0",
       requestId,
       mode: "mentor",
-      summary: executed.summary,
+      summary,
       observations: executed.observations,
       educationalNote: executed.educationalNote,
       warnings,
       provider: executed.provider,
       usage: {
         inputChars: request.message.length,
-        outputChars: executed.summary.length,
+        outputChars: summary.length,
         knowledgeHits: executed.knowledgeHits ?? executed.observations.length,
         inputTokens: executed.usageExtras?.inputTokens,
         outputTokens: executed.usageExtras?.outputTokens,
@@ -140,6 +169,7 @@ export class GoodTradingAIService {
       conversationId: request.conversationId,
       knowledgeReferences: executed.knowledgeReferences,
       coverage: executed.coverage,
+      reasoning,
     };
 
     const { response } = validateMentorResponse(provisional);

@@ -2,6 +2,7 @@ import type {
   GoodTradingAIChatResponse,
   GoodTradingAIKnowledgeReference,
 } from "@shared/goodTradingAi";
+import { validateReasoningBlock } from "./reasoning/reasoningValidator";
 
 export type ValidationIssue = { code: string; message: string };
 
@@ -123,6 +124,48 @@ export function validateMentorResponse(
       "Respuesta educativa de Modo Mentor. No es asesoramiento financiero personalizado ni un análisis del mercado en vivo.";
   }
 
+  const allowedIds = refs.map((r) => r.id);
+  let reasoning = response.reasoning;
+  if (reasoning) {
+    const vr = validateReasoningBlock({
+      reasoning: {
+        title: reasoning.title,
+        steps: reasoning.steps.map((s) => ({
+          index: s.index,
+          label: s.label,
+          detail: s.detail,
+          knowledgeId: s.knowledgeId,
+          role: (s.role as import("./reasoning/reasoningSteps").ReasoningStepRole) ?? "relatedTo",
+        })),
+        conclusion: reasoning.conclusion,
+        contradictions: reasoning.contradictions ?? [],
+        chainIds: reasoning.chainIds ?? [],
+        scenarioMode: reasoning.scenarioMode,
+        multiConceptMode: reasoning.multiConceptMode,
+      },
+      summary,
+      allowedKnowledgeIds: allowedIds,
+    });
+    for (const i of vr.issues) issues.push(i);
+    reasoning = vr.reasoning
+      ? {
+          title: vr.reasoning.title,
+          steps: vr.reasoning.steps.map((s) => ({
+            index: s.index,
+            label: s.label,
+            detail: s.detail,
+            knowledgeId: s.knowledgeId,
+            role: s.role,
+          })),
+          conclusion: vr.reasoning.conclusion,
+          contradictions: vr.reasoning.contradictions,
+          chainIds: vr.reasoning.chainIds,
+          scenarioMode: vr.reasoning.scenarioMode,
+          multiConceptMode: vr.reasoning.multiConceptMode,
+        }
+      : undefined;
+  }
+
   const out: GoodTradingAIChatResponse = {
     ...response,
     summary: summary.trim(),
@@ -131,6 +174,7 @@ export function validateMentorResponse(
     observations: observations.slice(0, 20),
     knowledgeReferences: refs.slice(0, 20),
     coverage,
+    reasoning,
   };
 
   const ok =

@@ -5,6 +5,7 @@ import type {
   GoodTradingAICoverage,
   GoodTradingAIKnowledgeReference,
   GoodTradingAIObservation,
+  GoodTradingAIReasoning,
 } from "@shared/goodTradingAi";
 
 export type StructuredAssistant = {
@@ -16,6 +17,7 @@ export type StructuredAssistant = {
   requestId: string;
   knowledgeReferences?: GoodTradingAIKnowledgeReference[];
   coverage?: GoodTradingAICoverage;
+  reasoning?: GoodTradingAIReasoning;
 };
 
 function coverageLabel(c?: GoodTradingAICoverage): string {
@@ -23,6 +25,8 @@ function coverageLabel(c?: GoodTradingAICoverage): string {
   if (c === "medium") return "Media";
   return "Limitada";
 }
+
+const CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
 
 /** Presentational Mentor message bubble (also used by UI tests). */
 export function MentorStructuredMessage({
@@ -33,6 +37,7 @@ export function MentorStructuredMessage({
   timestamp: number;
 }) {
   const refs = structured.knowledgeReferences ?? [];
+  const reasoning = structured.reasoning;
   return (
     <div
       className="max-w-[92%] whitespace-pre-wrap break-words rounded px-2 py-1 border border-white/10 bg-black/30 text-white/80"
@@ -60,6 +65,35 @@ export function MentorStructuredMessage({
               <div className="text-white/65">{obs.detail}</div>
             </div>
           ))}
+        </div>
+      ) : null}
+      {reasoning && reasoning.steps.length > 0 ? (
+        <div
+          className="border-t border-white/10 pt-2 mt-2 flex flex-col gap-1.5"
+          data-testid="mentor-reasoning"
+          aria-label="Cómo razoné"
+        >
+          <div className="text-[9px] font-mono text-white/50 uppercase tracking-wide">
+            Cómo razoné
+          </div>
+          {reasoning.steps.map((step, i) => (
+            <div key={`${step.index}-${step.label}`} className="text-[11px] leading-snug" data-testid={`mentor-reason-step-${step.index}`}>
+              <div className="text-white/85">
+                <span className="font-mono text-emerald-200/80 mr-1">{CIRCLED[i] ?? `${step.index}.`}</span>
+                {step.label}
+              </div>
+              <div className="text-white/60 pl-5">{step.detail}</div>
+              {i < reasoning.steps.length - 1 ? (
+                <div className="text-white/25 font-mono text-[10px] pl-2" aria-hidden>
+                  ↓
+                </div>
+              ) : null}
+            </div>
+          ))}
+          <div className="text-[11px] text-white/75 pt-1" data-testid="mentor-reasoning-conclusion">
+            <span className="font-mono text-emerald-200/80 mr-1">★</span>
+            Conclusión — {reasoning.conclusion}
+          </div>
         </div>
       ) : null}
       {refs.length > 0 ? (

@@ -80,6 +80,27 @@ export type GoodTradingAIKnowledgeReference = z.infer<typeof goodTradingAiKnowle
 export const goodTradingAiCoverageSchema = z.enum(["high", "medium", "limited"]);
 export type GoodTradingAICoverage = z.infer<typeof goodTradingAiCoverageSchema>;
 
+/** AI-4: deterministic Mentors reasoning chain (client-safe; no full graph). */
+export const goodTradingAiReasoningStepSchema = z.object({
+  index: z.number().int().positive().max(20),
+  label: z.string().min(1).max(160),
+  detail: z.string().min(1).max(800),
+  knowledgeId: z.string().min(1).max(80).optional(),
+  role: z.string().min(1).max(40).optional(),
+});
+export type GoodTradingAIReasoningStep = z.infer<typeof goodTradingAiReasoningStepSchema>;
+
+export const goodTradingAiReasoningSchema = z.object({
+  title: z.string().min(1).max(120),
+  steps: z.array(goodTradingAiReasoningStepSchema).max(12),
+  conclusion: z.string().min(1).max(1000),
+  contradictions: z.array(z.string().min(1).max(500)).max(8).optional(),
+  chainIds: z.array(z.string().min(1).max(80)).max(20).optional(),
+  scenarioMode: z.boolean().optional(),
+  multiConceptMode: z.boolean().optional(),
+});
+export type GoodTradingAIReasoning = z.infer<typeof goodTradingAiReasoningSchema>;
+
 export const goodTradingAiProviderMetaSchema = z.object({
   id: z.string().min(1).max(64),
   model: z.string().min(1).max(64),
@@ -115,6 +136,8 @@ export const goodTradingAiChatResponseSchema = z.object({
   knowledgeReferences: z.array(goodTradingAiKnowledgeReferenceSchema).max(20).optional(),
   /** AI-2: retrieval coverage label. */
   coverage: goodTradingAiCoverageSchema.optional(),
+  /** AI-4: Cómo llegué a esta conclusión (optional, backward compatible). */
+  reasoning: goodTradingAiReasoningSchema.optional(),
 });
 export type GoodTradingAIChatResponse = z.infer<typeof goodTradingAiChatResponseSchema>;
 

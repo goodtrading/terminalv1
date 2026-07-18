@@ -1,4 +1,5 @@
-import type { GoodTradingKnowledgeEntry } from "./types";
+import type { GoodTradingKnowledgeEntry, KnowledgeRelationKind } from "./types";
+import { KNOWLEDGE_RELATION_KINDS } from "./types";
 
 export type RegistryValidationIssue = {
   code: string;
@@ -12,6 +13,57 @@ export type RegistryValidationResult = {
   setupCount: number;
   issues: RegistryValidationIssue[];
 };
+
+function relationIds(e: GoodTradingKnowledgeEntry, kind: KnowledgeRelationKind): string[] {
+  return e[kind] ?? [];
+}
+
+function detectDirectedCycles(
+  entries: readonly GoodTradingKnowledgeEntry[],
+  edgeKinds: KnowledgeRelationKind[],
+): RegistryValidationIssue[] {
+  const issues: RegistryValidationIssue[] = [];
+  const adj = new Map<string, Set<string>>();
+  for (const e of entries) {
+    const outs = adj.get(e.id) ?? new Set<string>();
+    for (const kind of edgeKinds) {
+      for (const t of relationIds(e, kind)) outs.add(t);
+    }
+    adj.set(e.id, outs);
+  }
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const stack: string[] = [];
+
+  const dfs = (node: string): boolean => {
+    if (visiting.has(node)) {
+      const cycleStart = stack.indexOf(node);
+      const cycle = cycleStart >= 0 ? stack.slice(cycleStart).concat(node) : [node];
+      issues.push({
+        code: "RELATION_CYCLE",
+        message: `Cycle in requires/dependsOn/parentConcept: ${cycle.join(" → ")}`,
+        entryId: node,
+      });
+      return true;
+    }
+    if (visited.has(node)) return false;
+    visiting.add(node);
+    stack.push(node);
+    for (const next of Array.from(adj.get(node) ?? [])) {
+      if (dfs(next)) return true;
+    }
+    stack.pop();
+    visiting.delete(node);
+    visited.add(node);
+    return false;
+  };
+
+  for (const e of entries) {
+    if (!visited.has(e.id)) dfs(e.id);
+  }
+  return issues;
+}
 
 /**
  * Validate once at test/boot — not on every request.
@@ -65,6 +117,24 @@ export function validateKnowledgeRegistry(
         });
       }
     }
+    for (const kind of KNOWLEDGE_RELATION_KINDS) {
+      for (const target of relationIds(e, kind)) {
+        if (!ids.has(target)) {
+          issues.push({
+            code: "BROKEN_TYPED_RELATION",
+            message: `${kind} → missing id ${target}`,
+            entryId: e.id,
+          });
+        }
+        if (target === e.id) {
+          issues.push({
+            code: "SELF_RELATION",
+            message: `${kind} self-reference`,
+            entryId: e.id,
+          });
+        }
+      }
+    }
     if (e.kind === "SETUP") {
       const s = e as GoodTradingKnowledgeEntry & { relatedKnowledgeIds?: string[] };
       for (const rel of s.relatedKnowledgeIds ?? []) {
@@ -78,6 +148,11 @@ export function validateKnowledgeRegistry(
       }
     }
   }
+
+  // Directed structural edges only — relatedTo/supports/contradicts may be symmetric.
+  issues.push(
+    ...detectDirectedCycles(entries, ["requires", "dependsOn", "parentConcept"]),
+  );
 
   const setupCount = entries.filter((e) => e.kind === "SETUP").length;
   if (entries.length < 70) {

@@ -9,10 +9,11 @@ import { RISK_ENTRIES } from "./risk";
 import { SETUP_ENTRIES } from "./setups";
 import { TEACHING_ENTRIES } from "./teaching";
 import { GLOSSARY_ENTRIES } from "./glossary";
+import { applyKnowledgeGraphOverlays } from "./knowledgeGraphLinks";
 import type { GoodTradingKnowledgeEntry, KnowledgeCategory, KnowledgeKind } from "./types";
 import { validateKnowledgeRegistry } from "./validateRegistry";
 
-const RAW_ENTRIES: GoodTradingKnowledgeEntry[] = [
+const RAW_BASE: GoodTradingKnowledgeEntry[] = [
   ...CONSTITUTION_ENTRIES,
   ...LIQUIDITY_ENTRIES,
   ...ORDER_FLOW_ENTRIES,
@@ -26,6 +27,8 @@ const RAW_ENTRIES: GoodTradingKnowledgeEntry[] = [
   ...GLOSSARY_ENTRIES,
 ];
 
+const RAW_ENTRIES: GoodTradingKnowledgeEntry[] = applyKnowledgeGraphOverlays(RAW_BASE);
+
 Object.freeze(RAW_ENTRIES);
 for (const e of RAW_ENTRIES) {
   Object.freeze(e);
@@ -33,6 +36,14 @@ for (const e of RAW_ENTRIES) {
   Object.freeze(e.aliases);
   Object.freeze(e.prerequisites);
   Object.freeze(e.relatedEntryIds);
+  Object.freeze(e.supports);
+  Object.freeze(e.dependsOn);
+  Object.freeze(e.requires);
+  Object.freeze(e.invalidates);
+  Object.freeze(e.contradicts);
+  Object.freeze(e.relatedTo);
+  Object.freeze(e.parentConcept);
+  Object.freeze(e.childConcept);
 }
 
 const BY_ID = new Map<string, GoodTradingKnowledgeEntry>();
@@ -58,7 +69,7 @@ for (const e of RAW_ENTRIES) {
   const keys = new Set<string>();
   for (const c of e.concepts) keys.add(normKey(c));
   for (const a of e.aliases) keys.add(normKey(a));
-  for (const k of keys) {
+  for (const k of Array.from(keys)) {
     if (!k) continue;
     const list = BY_CONCEPT.get(k) ?? [];
     list.push(e);
@@ -66,8 +77,8 @@ for (const e of RAW_ENTRIES) {
   }
 }
 
-for (const [, list] of BY_CATEGORY) Object.freeze(list);
-for (const [, list] of BY_CONCEPT) Object.freeze(list);
+for (const [, list] of Array.from(BY_CATEGORY.entries())) Object.freeze(list);
+for (const [, list] of Array.from(BY_CONCEPT.entries())) Object.freeze(list);
 
 let validated = false;
 let lastValidation = validateKnowledgeRegistry(RAW_ENTRIES);
