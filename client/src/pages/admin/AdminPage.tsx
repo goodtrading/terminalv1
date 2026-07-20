@@ -304,6 +304,18 @@ export default function AdminPage() {
             <Link href="/admin/ai-lab" className="text-terminal-accent hover:underline">
               AI Lab
             </Link>
+            <span className="text-terminal-muted">/</span>
+            <Link href="/admin/knowledge-inbox" className="text-terminal-accent hover:underline">
+              Knowledge Inbox
+            </Link>
+            <span className="text-terminal-muted">/</span>
+            <Link href="/admin/knowledge-health" className="text-terminal-accent hover:underline">
+              Knowledge Health
+            </Link>
+            <span className="text-terminal-muted">/</span>
+            <Link href="/admin/market-snapshot" className="text-terminal-accent hover:underline">
+              Market Snapshot
+            </Link>
           </div>
           <button
             type="button"

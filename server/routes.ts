@@ -10,6 +10,9 @@ import { z } from "zod";
 import { registerAiChatRoutes } from "./routes/aiChat.routes";
 import { registerCalibrationRoutes } from "./routes/calibration.routes";
 import { registerAiProviderStatusRoutes } from "./routes/aiProviderStatus.routes";
+import { registerExtractorRoutes } from "./routes/extractor.routes";
+import { registerCurationRoutes } from "./routes/curation.routes";
+import { registerMarketSnapshotRoutes } from "./routes/marketSnapshot.routes";
 import { isGoodTradingAiEnabled } from "./ai/goodTradingAi/features";
 import { isGoodTradingAiCalibrationEnabled } from "./ai/goodTradingAi/calibration/features";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
@@ -315,6 +318,9 @@ export async function registerRoutes(
   registerAiChatRoutes(app);
   registerCalibrationRoutes(app);
   registerAiProviderStatusRoutes(app);
+  registerExtractorRoutes(app);
+  registerCurationRoutes(app);
+  registerMarketSnapshotRoutes(app);
 
   app.get("/api/desktop/update", (_req: Request, res: Response) => {
     res.json(buildDesktopUpdatePayload());

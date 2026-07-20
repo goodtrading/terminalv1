@@ -1,0 +1,89 @@
+/**
+ * Opt-in Redis production smoke (AI-6.4.2 / 6.4.3a).
+ *
+ * Requires:
+ *   GOODTRADING_AI_ALLOW_REDIS_SMOKE=true  (alias: ALLOW_REDIS_SMOKE)
+ *   REDIS_PRIVATE_URL or REDIS_URL (or REDISHOST+REDISPORT)
+ *
+ * Uses isolated prefix smoke:{id}: — never FLUSH / KEYS / production prefix.
+ * Never prints URL/password. Exit 2 if refused; 1 if failed; 0 if ok.
+ *
+ *   GOODTRADING_AI_ALLOW_REDIS_SMOKE=true npm run goodtrading-ai:telemetry:redis:smoke
+ */
+import {
+  assertRedisSmokeAuthorized,
+  runRedisProductionSmoke,
+} from "../server/ai/goodTradingAi/market/telemetry/redisSmokeRunner.ts";
+import { containsRedisSecretLeak } from "../server/ai/goodTradingAi/market/telemetry/redisSecretRedaction.ts";
+import { auditRailwayRedisConfig } from "../server/ai/goodTradingAi/market/telemetry/redisRailwayAudit.ts";
+
+async function main(): Promise<void> {
+  const audit = auditRailwayRedisConfig();
+  console.log(
+    JSON.stringify({
+      event: "redis_smoke_gate",
+      classification: audit.classification,
+      allowRedisSmoke: audit.allowRedisSmoke,
+      repositoryMode: audit.repositoryMode,
+      setEnvNames: audit.setEnvNames,
+      note: "env VALUES never printed",
+    }),
+  );
+
+  const gate = assertRedisSmokeAuthorized();
+  if (!gate.ok) {
+    console.error(
+      JSON.stringify({
+        event: "redis_smoke_refused",
+        code: gate.code,
+        reason: gate.reason,
+        latencyVerdict: "NOT_MEASURED",
+        sharedRepository: "NOT_MEASURED",
+      }),
+    );
+    process.exit(2);
+  }
+
+  const report = await runRedisProductionSmoke();
+  const payload = {
+    event: report.ok ? "redis_smoke_ok" : "redis_smoke_fail",
+    smokeId: report.smokeId,
+    prefix: report.prefix,
+    urlEnvName: report.urlEnvName,
+    tls: report.tls,
+    connectOk: report.connectOk,
+    casOk: report.casOk,
+    concurrentFinalSequence: report.concurrentFinalSequence,
+    namespaceIsolationOk: report.namespaceIsolationOk,
+    sharedRepository: report.sharedRepository,
+    latency: report.latency,
+    cleanupOk: report.cleanupOk,
+    errorCode: report.errorCode,
+    notes: report.notes,
+  };
+  const text = JSON.stringify(payload);
+  if (containsRedisSecretLeak(text)) {
+    console.error(
+      JSON.stringify({
+        event: "redis_smoke_fail",
+        errorCode: "REDIS_SECRET_LEAK_BLOCKED",
+        message: "Refusing to print payload that may contain secrets",
+      }),
+    );
+    process.exit(1);
+  }
+  console.log(text);
+  process.exit(report.ok ? 0 : 1);
+}
+
+main().catch((e) => {
+  console.error(
+    JSON.stringify({
+      event: "redis_smoke_fail",
+      errorCode: "REDIS_UNKNOWN",
+      message: "smoke crashed (details redacted)",
+    }),
+  );
+  void e;
+  process.exit(1);
+});

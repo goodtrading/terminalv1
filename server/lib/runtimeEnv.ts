@@ -43,6 +43,42 @@ export function isGoodTradingAiCalibrationEnabledEnv(): boolean {
   return envBool("GOODTRADING_AI_CALIBRATION_ENABLED", false);
 }
 
+/** Internal Knowledge Acquisition Inbox. Default OFF. Independent of Mentor/Calibration. */
+export function isGoodTradingAiExtractorEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_EXTRACTOR_ENABLED", false);
+}
+
+/** Internal Knowledge Curation Lab. Default OFF. Independent of Mentor/Calibration/Extractor. */
+export function isGoodTradingAiCurationEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_CURATION_ENABLED", false);
+}
+
+/** Internal Market Snapshot Debug. Default OFF. No live feeds (AI-8 later). */
+export function isGoodTradingAiMarketSnapshotEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_MARKET_SNAPSHOT_ENABLED", false);
+}
+
+/** Live internal adapters for Market Snapshot. Default OFF. Requires snapshot flag too. */
+export function isGoodTradingAiMarketLiveEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_MARKET_LIVE_ENABLED", false);
+}
+
+/** Client→server compact market telemetry ingest. Default OFF. */
+export function isGoodTradingAiMarketTelemetryEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_MARKET_TELEMETRY_ENABLED", false);
+}
+
+/** Internal auto-publish from runtime bridge. Default OFF. Admin/debug only. */
+export function isGoodTradingAiMarketTelemetryAutoPublishInternalEnv(): boolean {
+  return envBool("GOODTRADING_AI_MARKET_TELEMETRY_AUTO_PUBLISH_INTERNAL", false);
+}
+
+/** memory (default) | redis — `shared` accepted as deprecated alias for redis. */
+export function getGoodTradingAiTelemetryRepositoryModeEnv(): "memory" | "redis" {
+  const v = process.env.GOODTRADING_AI_TELEMETRY_REPOSITORY?.trim().toLowerCase();
+  return v === "redis" || v === "shared" ? "redis" : "memory";
+}
+
 export function envInt(key: string, fallback: number): number {
   const v = process.env[key];
   if (v == null || v === "") return fallback;

@@ -57,6 +57,7 @@ import {
   logBookmapRailwayEnableAudit,
 } from "@/lib/bookmapRailwayEnableAudit";
 import { useBookmapTrades } from "@/hooks/useBookmapTrades";
+import { useBookmapTelemetryRuntimeBridge } from "@/lib/marketTelemetry/useBookmapTelemetryRuntimeBridge";
 import { formatBookmapRangeShort } from "@/lib/bookmapPriceScaleUtils";
 import {
   prepareEngineTradeDots,
@@ -1044,6 +1045,13 @@ export function LiquidityHeatmapPanel({
   const bookmapTradeAgg = useBookmapTrades(trades, tradeTick, tradeVersion, {
     enabled: tradeAggEnabled,
     scope: "session",
+  });
+
+  // AI-6.4 — Runtime Bridge owner (React effect, NOT canvas/frame loop). Registers reduced summary only.
+  useBookmapTelemetryRuntimeBridge({
+    symbol,
+    summary: bookmapTradeAgg.summary,
+    enabled: tradeAggEnabled && bookmapTradeAgg.enabled,
   });
 
   const cvdSamples = useMemo(
