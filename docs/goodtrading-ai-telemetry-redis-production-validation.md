@@ -92,3 +92,10 @@ Dangerous Redis outage cases are exercised with **FakeRedis** (`UNAVAILABLE` →
 ## CI
 
 `redisProductionValidation.test.ts` — FakeRedis / gate / redaction only. Real smoke is opt-in outside CI.
+
+
+## Persistent proof vs process-local facts (AI-6.4.4b)
+
+Process-local smoke facts (setRedisSmokeValidationFacts) live only in the current Node process and reset on restart.
+
+For durable operator evidence after a real Railway smoke, see **[goodtrading-ai-telemetry-redis-validation-proof.md](./goodtrading-ai-telemetry-redis-validation-proof.md)** � persistent Redis proof key, TTL, status exposure, and one-shot ALLOW disable guidance.

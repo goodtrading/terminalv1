@@ -151,6 +151,7 @@ describe("AI-6.4.2 fake smoke runner", () => {
     assert.equal(report.cleanupOk, true);
     assert.equal(report.ok, true);
     assert.equal(report.sharedRepository, "SHARED_REPOSITORY_NOT_CONFIRMED");
+    assert.equal(report.proofPersisted, false);
     assert.ok(report.latency.samples >= 50);
     assert.ok(["PASS", "ACCEPTABLE_WITH_WARNING", "FAIL"].includes(report.latency.verdict));
     // Production facts must stay false for fake

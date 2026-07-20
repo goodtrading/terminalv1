@@ -40,6 +40,10 @@ import { redisSmokeFactsForStatus } from "../ai/goodTradingAi/market/telemetry/r
 import { toSafeRedisError } from "../ai/goodTradingAi/market/telemetry/redisSecretRedaction";
 import { auditRailwayRedisProvisioning } from "../ai/goodTradingAi/market/telemetry/redisProvisioningAudit";
 import {
+  loadRedisValidationProofForStatus,
+  redisValidationProofForStatus,
+} from "../ai/goodTradingAi/market/telemetry/redisValidationProof";
+import {
   buildSimulatedSnapshot,
   buildStubSnapshot,
   toAdminPayload,
@@ -57,7 +61,7 @@ export function registerMarketSnapshotRoutes(app: Express): void {
   const base = "/api/internal/ai/market";
   const guards = [requireMarketSnapshotAccess, marketSnapshotRateLimit];
 
-  app.get(`${base}/status`, ...guards, (_req: Request, res: Response) => {
+  app.get(`${base}/status`, ...guards, async (_req: Request, res: Response) => {
     const store = getMarketTelemetryStore();
     const repoMode = getGoodTradingAiTelemetryRepositoryMode();
     const railway = auditRailwayTelemetryTopology({
@@ -65,7 +69,29 @@ export function registerMarketSnapshotRoutes(app: Express): void {
     });
     const sharedAudit = auditSharedTelemetryInfra();
     const railwayRedis = auditRailwayRedisConfig();
-    const smokeFacts = redisSmokeFactsForStatus();
+    const processSmoke = redisSmokeFactsForStatus();
+    let persistentProofStatus = redisValidationProofForStatus(null);
+    try {
+      const proof = await loadRedisValidationProofForStatus();
+      persistentProofStatus = redisValidationProofForStatus(proof);
+    } catch {
+      /* status must not fail if Redis proof unread */
+    }
+    // Prefer persistent proof over process-local facts (survives redeploy)
+    const smokeFacts = {
+      ...processSmoke,
+      smokeValidated: persistentProofStatus.smokeValidated || processSmoke.smokeValidated,
+      sharedRepository: persistentProofStatus.proofPresent
+        ? persistentProofStatus.sharedRepository
+        : processSmoke.sharedRepository,
+      latencyVerdict: persistentProofStatus.proofPresent
+        ? persistentProofStatus.latencyVerdict
+        : processSmoke.latencyVerdict,
+      measuredAtMs: persistentProofStatus.validatedAtMs ?? processSmoke.measuredAtMs,
+      // Never echo smokeId from persistent proof blob; process-local only if this process ran smoke
+      smokeId: processSmoke.smokeValidated ? processSmoke.smokeId : null,
+      proof: persistentProofStatus,
+    };
     const provisioning = auditRailwayRedisProvisioning({
       railwayCliPresent: false,
     });
@@ -85,7 +111,10 @@ export function registerMarketSnapshotRoutes(app: Express): void {
         redisError = sharedAudit.multiInstanceBlocker ?? "redis blocked";
       }
     }
-    const readiness = buildTelemetryMentorReadiness({ redisError });
+    const readiness = buildTelemetryMentorReadiness({
+      redisError,
+      smokeValidated: smokeFacts.smokeValidated,
+    });
     res.json({
       enabled: isGoodTradingAiMarketSnapshotEnabled(),
       liveEnabled: isGoodTradingAiMarketLiveEnabled(),
@@ -110,6 +139,7 @@ export function registerMarketSnapshotRoutes(app: Express): void {
         evidence: provisioning.evidence,
       },
       redisSmoke: smokeFacts,
+      redisValidationProof: persistentProofStatus,
       sharedInfra: {
         redis: sharedAudit.redis,
         postgres: sharedAudit.postgres,
@@ -124,7 +154,7 @@ export function registerMarketSnapshotRoutes(app: Express): void {
       canUseTelemetryForMentor: canUseTelemetryForMentor(),
       mentorReadiness: readiness,
       namespaces: store.stats().namespaces,
-      note: "AI-6.4.2. Mentor disconnected. smokeValidated only when real smoke ran. /health independent of Redis.",
+      note: "AI-6.4.4b. Mentor disconnected. smokeValidated from persistent Redis proof when present. /health independent of Redis. Telemetry OFF for general users.",
     });
   });
 

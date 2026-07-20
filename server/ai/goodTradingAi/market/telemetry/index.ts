@@ -96,3 +96,18 @@ export type {
   RailwayRedisProvisioningClass,
   RailwayRedisProvisioningAudit,
 } from "./redisProvisioningAudit";
+export {
+  buildRedisValidationProof,
+  buildRedisValidationProofKey,
+  parseRedisValidationProof,
+  serializeRedisValidationProof,
+  writeRedisValidationProof,
+  readRedisValidationProof,
+  redisValidationProofForStatus,
+  loadRedisValidationProofForStatus,
+  latencyVerdictToClass,
+  REDIS_VALIDATION_PROOF_TTL_MS,
+  REDIS_VALIDATION_PROOF_SCHEMA_VERSION,
+  redisValidationProofSchema,
+} from "./redisValidationProof";
+export type { RedisValidationProof, LatencyClass } from "./redisValidationProof";

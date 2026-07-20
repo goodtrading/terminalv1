@@ -1,11 +1,15 @@
 /**
- * Opt-in Redis production smoke (AI-6.4.2 / 6.4.3a).
+ * Opt-in Redis production smoke (AI-6.4.2 / 6.4.3a / AI-6.4.4b).
  *
- * Requires:
+ * Requires (prefer Railway shell so env inheritance picks linked Redis):
  *   GOODTRADING_AI_ALLOW_REDIS_SMOKE=true  (alias: ALLOW_REDIS_SMOKE)
  *   REDIS_PRIVATE_URL or REDIS_URL (or REDISHOST+REDISPORT)
  *
- * Uses isolated prefix smoke:{id}: â€” never FLUSH / KEYS / production prefix.
+ * On success, writes a persistent validation proof (see
+ * docs/goodtrading-ai-telemetry-redis-validation-proof.md). Payload includes
+ * proofPersisted + reminder to disable ALLOW after one run.
+ *
+ * Uses isolated prefix smoke:{id}: — never FLUSH / KEYS / production prefix.
  * Never prints URL/password. Exit 2 if refused; 1 if failed; 0 if ok.
  *
  *   GOODTRADING_AI_ALLOW_REDIS_SMOKE=true npm run goodtrading-ai:telemetry:redis:smoke
@@ -58,6 +62,8 @@ async function main(): Promise<void> {
     sharedRepository: report.sharedRepository,
     latency: report.latency,
     cleanupOk: report.cleanupOk,
+    proofPersisted: report.proofPersisted,
+    reminder: "Disable GOODTRADING_AI_ALLOW_REDIS_SMOKE (or ALLOW_REDIS_SMOKE) after one successful run. See docs/goodtrading-ai-telemetry-redis-validation-proof.md",
     errorCode: report.errorCode,
     notes: report.notes,
   };

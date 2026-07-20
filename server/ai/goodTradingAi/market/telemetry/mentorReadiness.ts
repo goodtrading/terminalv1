@@ -38,6 +38,7 @@ export function buildTelemetryMentorReadiness(opts?: {
   redisError?: string;
   /** @deprecated alias of redisError */
   sharedError?: string;
+  smokeValidated?: boolean;
 }): TelemetryMentorReadiness {
   const audit = auditSharedTelemetryInfra();
   const railwayRedis = auditRailwayRedisConfig();
@@ -47,16 +48,17 @@ export function buildTelemetryMentorReadiness(opts?: {
   });
   const redisError = opts?.redisError ?? opts?.sharedError;
   const smoke = redisSmokeFactsForStatus();
+  const smokeValidated = opts?.smokeValidated ?? smoke.smokeValidated;
 
   const blockers: string[] = [
     MENTOR_INTEGRATION_NOT_ENABLED,
-    "AI-6.4.2 policy: Mentor must stay disconnected (mentorEligible=false)",
+    "AI-6.4.4b policy: Mentor must stay disconnected (mentorEligible=false)",
   ];
   if (audit.multiInstanceBlocker && configured === "redis") {
     blockers.push(audit.multiInstanceBlocker);
   }
   if (redisError) blockers.push(`redis repo: ${redisError}`);
-  if (configured === "redis" && !smoke.smokeValidated) {
+  if (configured === "redis" && !smokeValidated) {
     blockers.push("REDIS_SMOKE_NOT_VALIDATED");
   }
 
@@ -86,10 +88,10 @@ export function buildTelemetryMentorReadiness(opts?: {
     repositorySafety: railway.repositorySafety,
     redis: {
       configClassification: railwayRedis.classification,
-      smokeValidated: smoke.smokeValidated,
+      smokeValidated,
       sharedRepository: smoke.sharedRepository,
       latencyVerdict: smoke.latencyVerdict,
     },
-    note: "Client telemetry may degrade; server live snapshot without telemetry remains available. Mentor NO-GO.",
+    note: "Client telemetry may degrade; server live snapshot without telemetry remains available. Mentor NO-GO. Persistent proof required for smokeValidated across processes.",
   };
 }

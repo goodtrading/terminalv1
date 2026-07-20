@@ -22,6 +22,10 @@ import {
   type SharedRepositoryVerdict,
 } from "./redisSmokeValidation";
 import { auditRailwayRedisConfig } from "./redisRailwayAudit";
+import {
+  buildRedisValidationProof,
+  writeRedisValidationProof,
+} from "./redisValidationProof";
 
 export type RedisSmokeGateResult =
   | { ok: true; reason: "authorized" }
@@ -86,6 +90,7 @@ export type RedisSmokeReport = {
     p99Ms: number | null;
   };
   cleanupOk: boolean;
+  proofPersisted: boolean;
   errorCode: string | null;
   notes: string[];
 };
@@ -140,6 +145,7 @@ export async function runRedisProductionSmoke(opts?: {
       p99Ms: null,
     },
     cleanupOk: false,
+    proofPersisted: false,
     errorCode: null,
     notes,
   };
@@ -343,17 +349,45 @@ export async function runRedisProductionSmoke(opts?: {
       await repo.removeSession(userId, concurrentSession);
       await repo.removeSession(userId, isoSession);
       report.cleanupOk = true;
+
+      // Persist validation proof under stable admin key (prod prefix), not smoke:{id}:
+      report.ok =
+        report.connectOk &&
+        report.casOk &&
+        report.concurrentFinalSequence === 13 &&
+        report.namespaceIsolationOk === true &&
+        report.cleanupOk &&
+        (!isFake
+          ? report.sharedRepository === "SHARED_REPOSITORY_CONFIRMED" &&
+            report.latency.verdict !== "FAIL"
+          : true);
+
+      if (report.ok && !isFake) {
+        const proofPrefix =
+          env.GOODTRADING_AI_TELEMETRY_REDIS_PREFIX?.trim() || "gt:ai:telem";
+        const proof = buildRedisValidationProof({
+          smokeId,
+          urlEnvName: report.urlEnvName,
+          sharedRepository: report.sharedRepository,
+          latencyVerdict: report.latency.verdict,
+          latencySamples: report.latency.samples,
+          latencyP50Ms: report.latency.p50Ms,
+          latencyP95Ms: report.latency.p95Ms,
+          latencyP99Ms: report.latency.p99Ms,
+          casConcurrentFinalSequence: report.concurrentFinalSequence,
+          namespaceIsolationOk: report.namespaceIsolationOk,
+          cleanupOk: true,
+          smokeValidated: true,
+          notes: ["Persisted by authorized real smoke (AI-6.4.4b)"],
+        });
+        const written = await writeRedisValidationProof(client, proofPrefix, proof);
+        report.proofPersisted = written.ok;
+        if (!written.ok) notes.push("proof write refused or failed");
+      }
     });
 
-    report.ok =
-      report.connectOk &&
-      report.casOk &&
-      report.concurrentFinalSequence === 13 &&
-      report.namespaceIsolationOk === true &&
-      report.cleanupOk;
-
     setRedisSmokeValidationFacts({
-      smokeValidated: report.ok && !isFake,
+      smokeValidated: report.ok && !isFake && report.proofPersisted,
       smokeId,
       smokePrefix: report.prefix,
       sharedRepository: report.sharedRepository,
@@ -362,9 +396,9 @@ export async function runRedisProductionSmoke(opts?: {
       namespaceIsolationOk: report.namespaceIsolationOk,
       measuredAtMs: Date.now(),
       notes: isFake
-        ? ["Fake/injected client — smokeValidated left false for production facts"]
-        : report.ok
-          ? ["Real Redis smoke OK"]
+        ? ["Fake/injected client — smokeValidated left false; proof not persisted"]
+        : report.ok && report.proofPersisted
+          ? ["Real Redis smoke OK + proof persisted"]
           : notes,
     });
   } catch (e) {
