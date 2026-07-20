@@ -98,4 +98,4 @@ Dangerous Redis outage cases are exercised with **FakeRedis** (`UNAVAILABLE` →
 
 Process-local smoke facts (setRedisSmokeValidationFacts) live only in the current Node process and reset on restart.
 
-For durable operator evidence after a real Railway smoke, see **[goodtrading-ai-telemetry-redis-validation-proof.md](./goodtrading-ai-telemetry-redis-validation-proof.md)** � persistent Redis proof key, TTL, status exposure, and one-shot ALLOW disable guidance.
+For durable operator evidence after a real Railway smoke, see **[goodtrading-ai-telemetry-redis-validation-proof.md](./goodtrading-ai-telemetry-redis-validation-proof.md)** — persistent Redis proof key, TTL, status exposure, and one-shot ALLOW disable guidance.
