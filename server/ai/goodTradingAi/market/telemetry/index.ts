@@ -107,11 +107,27 @@ export {
   redisValidationProofForStatus,
   loadRedisValidationProofForStatus,
   latencyVerdictToClass,
+  toPerformanceVerdict,
+  deriveValidationStatus,
   REDIS_VALIDATION_PROOF_TTL_MS,
   REDIS_VALIDATION_PROOF_SCHEMA_VERSION,
   redisValidationProofSchema,
 } from "./redisValidationProof";
-export type { RedisValidationProof, LatencyClass } from "./redisValidationProof";
+export type {
+  RedisValidationProof,
+  LatencyClass,
+  CorrectnessVerdict as ProofCorrectnessVerdict,
+  ValidationStatus as ProofValidationStatus,
+  RedisValidationProofStatus,
+} from "./redisValidationProof";
+export {
+  classifyPerformanceP95,
+  performancePassedForVerdict,
+  REDIS_PERFORMANCE_THRESHOLDS_VERSION,
+  REDIS_PERFORMANCE_POLICY_V1_ACTIVE,
+  REDIS_PERFORMANCE_POLICY_V1_PROPOSED,
+} from "./redisPerformancePolicy";
+export type { PerformanceVerdict, RedisPerformanceMetricLayer } from "./redisPerformancePolicy";
 export {
   runRedisLatencyDiagnostic,
   runFakeRedisLatencyDiagnostic,

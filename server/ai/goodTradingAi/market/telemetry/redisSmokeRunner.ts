@@ -15,18 +15,24 @@ import { RedisMarketTelemetryRepository } from "./redisMarketTelemetryRepository
 import { makeTelemetryEntry } from "./telemetryStore";
 import { toSafeRedisError, redactRedisSecrets } from "./redisSecretRedaction";
 import {
-  classifyLatencyP95,
+  classifyPerformanceP95,
   percentile,
   setRedisSmokeValidationFacts,
-  type LatencyVerdict,
+  type CorrectnessVerdict,
+  type PerformanceVerdict,
   type SharedRepositoryVerdict,
+  type ValidationStatus,
 } from "./redisSmokeValidation";
 import { auditRailwayRedisConfig } from "./redisRailwayAudit";
 import {
   buildRedisValidationProof,
+  deriveValidationStatus,
   writeRedisValidationProof,
 } from "./redisValidationProof";
-
+import {
+  performancePassedForVerdict,
+  REDIS_PERFORMANCE_THRESHOLDS_VERSION,
+} from "./redisPerformancePolicy";
 export type RedisSmokeGateResult =
   | { ok: true; reason: "authorized" }
   | { ok: false; reason: string; code: "SMOKE_REFUSED" };
@@ -72,6 +78,7 @@ function smokeTelemetry(seq: number, sessionId: string, symbol = "BTCUSDT") {
 }
 
 export type RedisSmokeReport = {
+  /** Correctness PASS only — HIGH performance does not set ok=false. */
   ok: boolean;
   smokeId: string;
   prefix: string;
@@ -82,17 +89,24 @@ export type RedisSmokeReport = {
   concurrentFinalSequence: number | null;
   namespaceIsolationOk: boolean | null;
   sharedRepository: SharedRepositoryVerdict;
+  correctnessVerdict: CorrectnessVerdict;
+  performanceVerdict: PerformanceVerdict;
+  validationStatus: ValidationStatus;
+  performancePassed: boolean;
   latency: {
-    verdict: LatencyVerdict;
+    verdict: PerformanceVerdict;
     samples: number;
     p50Ms: number | null;
     p95Ms: number | null;
     p99Ms: number | null;
+    thresholdsVersion: typeof REDIS_PERFORMANCE_THRESHOLDS_VERSION;
   };
   cleanupOk: boolean;
   proofPersisted: boolean;
   errorCode: string | null;
   notes: string[];
+  /** Exit hint: 0 correctness PASS; 1 FAIL; 2 refused (gate). */
+  exitCodeHint: 0 | 1 | 2;
 };
 
 function buildSmokePrefix(smokeId: string): string {
@@ -140,23 +154,30 @@ export async function runRedisProductionSmoke(opts?: {
     concurrentFinalSequence: null,
     namespaceIsolationOk: null,
     sharedRepository: "NOT_MEASURED",
+    correctnessVerdict: "NOT_MEASURED",
+    performanceVerdict: "NOT_MEASURED",
+    validationStatus: "NOT_VALIDATED",
+    performancePassed: false,
     latency: {
       verdict: "NOT_MEASURED",
       samples: 0,
       p50Ms: null,
       p95Ms: null,
       p99Ms: null,
+      thresholdsVersion: REDIS_PERFORMANCE_THRESHOLDS_VERSION,
     },
     cleanupOk: false,
     proofPersisted: false,
     errorCode: null,
     notes,
+    exitCodeHint: 1,
   };
 
   if (!opts?.skipGate) {
     const gate = assertRedisSmokeAuthorized(env);
     if (!gate.ok) {
       report.errorCode = gate.code;
+      report.exitCodeHint = 2;
       notes.push(gate.reason);
       return report;
     }
@@ -338,14 +359,22 @@ export async function runRedisProductionSmoke(opts?: {
       const p50 = percentile(times, 50);
       const p95 = percentile(times, 95);
       const p99 = percentile(times, 99);
-      const verdict = classifyLatencyP95(p95);
+      const performanceVerdict = classifyPerformanceP95(p95);
+      report.performanceVerdict = performanceVerdict;
+      report.performancePassed = performancePassedForVerdict(performanceVerdict);
       report.latency = {
-        verdict,
+        verdict: performanceVerdict,
         samples: times.length,
         p50Ms: Math.round(p50 * 100) / 100,
         p95Ms: Math.round(p95 * 100) / 100,
         p99Ms: Math.round(p99 * 100) / 100,
+        thresholdsVersion: REDIS_PERFORMANCE_THRESHOLDS_VERSION,
       };
+      if (performanceVerdict === "HIGH") {
+        notes.push(
+          `PERFORMANCE_HIGH p95=${report.latency.p95Ms}ms (thresholds ${REDIS_PERFORMANCE_THRESHOLDS_VERSION}) — correctness may still PASS`,
+        );
+      }
 
       // Cleanup smoke keys via known sessions (no KEYS)
       await repo.removeSession(userId, sessionId);
@@ -353,20 +382,30 @@ export async function runRedisProductionSmoke(opts?: {
       await repo.removeSession(userId, isoSession);
       report.cleanupOk = true;
 
-      report.ok =
+      // Correctness only — HIGH performance does NOT fail ok.
+      const correctnessPass =
         report.connectOk &&
         report.casOk &&
         report.concurrentFinalSequence === 13 &&
         report.namespaceIsolationOk === true &&
         report.cleanupOk &&
         (!isFake
-          ? report.sharedRepository === "SHARED_REPOSITORY_CONFIRMED" &&
-            report.latency.verdict !== "FAIL"
-          : true);
+          ? report.sharedRepository === "SHARED_REPOSITORY_CONFIRMED"
+          : true) &&
+        report.latency.samples > 0 &&
+        report.performanceVerdict !== "FAIL" &&
+        report.performanceVerdict !== "NOT_MEASURED";
+
+      report.correctnessVerdict = correctnessPass ? "PASS" : "FAIL";
+      report.validationStatus = deriveValidationStatus({
+        correctness: report.correctnessVerdict,
+        performance: report.performanceVerdict,
+      });
+      report.ok = correctnessPass;
+      report.exitCodeHint = correctnessPass ? 0 : 1;
     });
 
-    // Persist proof on the still-open smoke client under the prod admin prefix.
-    // AI-6.4.4d: withRepo must not quit the client before this write.
+    // Persist proof when correctness PASS (including HIGH performance).
     if (report.ok && (!isFake || opts?.persistProofWithInjectedClient)) {
       try {
         const proofPrefix =
@@ -375,7 +414,10 @@ export async function runRedisProductionSmoke(opts?: {
           smokeId,
           urlEnvName: report.urlEnvName === "NONE" ? "REDIS_URL" : report.urlEnvName,
           sharedRepository: report.sharedRepository,
-          latencyVerdict: report.latency.verdict,
+          correctnessVerdict: "PASS",
+          connectOk: report.connectOk,
+          casOk: report.casOk,
+          performanceVerdict: report.performanceVerdict,
           latencySamples: report.latency.samples,
           latencyP50Ms: report.latency.p50Ms,
           latencyP95Ms: report.latency.p95Ms,
@@ -384,7 +426,11 @@ export async function runRedisProductionSmoke(opts?: {
           namespaceIsolationOk: report.namespaceIsolationOk,
           cleanupOk: true,
           smokeValidated: true,
-          notes: ["Persisted by authorized real smoke (AI-6.4.4d)"],
+          notes: [
+            "Persisted by authorized smoke (AI-6.4.4g)",
+            `validationStatus=${report.validationStatus}`,
+            `performancePassed=${report.performancePassed}`,
+          ],
         });
         const written = await writeRedisValidationProof(client, proofPrefix, proof);
         report.proofPersisted = written.ok;
@@ -402,6 +448,10 @@ export async function runRedisProductionSmoke(opts?: {
       smokeId,
       smokePrefix: report.prefix,
       sharedRepository: report.sharedRepository,
+      correctnessVerdict: report.correctnessVerdict,
+      performanceVerdict: report.performanceVerdict,
+      validationStatus: report.validationStatus,
+      performancePassed: report.performancePassed,
       latency: report.latency,
       casConcurrentFinalSequence: report.concurrentFinalSequence,
       namespaceIsolationOk: report.namespaceIsolationOk,
@@ -409,18 +459,28 @@ export async function runRedisProductionSmoke(opts?: {
       notes: isFake && !opts?.persistProofWithInjectedClient
         ? ["Fake/injected client — smokeValidated left false; proof not persisted"]
         : report.ok && report.proofPersisted
-          ? ["Real Redis smoke OK + proof persisted"]
+          ? [
+              "Real Redis smoke correctness PASS + proof persisted",
+              `performance=${report.performanceVerdict}`,
+              `validationStatus=${report.validationStatus}`,
+            ]
           : notes,
     });
   } catch (e) {
     const safe = toSafeRedisError(e);
     report.errorCode = safe.code;
+    report.correctnessVerdict = "FAIL";
+    report.validationStatus = "VALIDATION_FAILED";
+    report.exitCodeHint = 1;
     notes.push(safe.message);
   } finally {
-    try {
-      await client.quit();
-    } catch {
-      /* ignore */
+    // Injected/Fake clients are owned by the caller — do not quit them.
+    if (!opts?.injectClient) {
+      try {
+        await client.quit();
+      } catch {
+        /* ignore */
+      }
     }
   }
 

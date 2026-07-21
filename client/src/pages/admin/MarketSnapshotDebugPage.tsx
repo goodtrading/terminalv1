@@ -144,17 +144,34 @@ export default function MarketSnapshotDebugPage() {
       setAutoPublishInternal(!!status.autoPublishInternal);
       const st = status.mentorReadiness?.stages;
       const smoke = status.redisSmoke;
+      const proof = (status as { redisValidationProof?: {
+        badges?: { redisValidated?: boolean; performanceWarning?: boolean; fullyReady?: boolean };
+        validationStatus?: string;
+        performanceVerdict?: string;
+        performancePassed?: boolean;
+      }; redisBadges?: { redisValidated?: boolean; performanceWarning?: boolean } }).redisValidationProof;
+      const badges = (status as { redisBadges?: { redisValidated?: boolean; performanceWarning?: boolean } }).redisBadges
+        ?? proof?.badges;
       const redisBit = status.redis
         ? ` · redis=${status.redis.configured ? "cfg" : "off"}/${status.redis.urlEnvName ?? "no-url"}`
         : "";
+      const badgeBit = badges
+        ? ` · badges=${badges.redisValidated ? "REDIS_VALIDATED" : "REDIS_NOT_VALIDATED"}${
+            badges.performanceWarning ? "+PERFORMANCE_WARNING" : ""
+          }/never_FULLY_READY`
+        : "";
       const smokeBit = smoke
-        ? ` · smoke=${smoke.smokeValidated ? "OK" : "no"}/${smoke.latencyVerdict ?? "NOT_MEASURED"}/${smoke.sharedRepository ?? "NOT_MEASURED"}`
+        ? ` · smoke=${smoke.smokeValidated ? "OK" : "no"}/${
+            (smoke as { performanceVerdict?: string }).performanceVerdict ??
+            smoke.latencyVerdict ??
+            "NOT_MEASURED"
+          }/${smoke.sharedRepository ?? "NOT_MEASURED"}`
         : "";
       setRuntimeStages(
         st
           ? `repoMode=${status.repositoryConfigured ?? status.repositoryMode ?? "?"} · class=${status.redisConfigClassification ?? "?"} · producer=${st.producer} · registry=${st.registry} · repo=${st.repository} · merge=${st.snapshotMerge}${
               status.redisError || status.sharedError ? ` · redisError` : ""
-            }${redisBit}${smokeBit}`
+            }${redisBit}${badgeBit}${smokeBit}`
           : null,
       );
 

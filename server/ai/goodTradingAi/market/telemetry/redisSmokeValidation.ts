@@ -1,13 +1,30 @@
 /**
- * AI-6.4.2 — In-process smoke validation facts (never invent; only set when smoke ran).
+ * AI-6.4.2 / 6.4.4g — In-process smoke validation facts (never invent; only set when smoke ran).
  * Process-local — not persisted; status exposes only when true/measured.
+ * Correctness ≠ performance: HIGH latency does not fail correctness.
  */
+import {
+  classifyPerformanceP95,
+  type PerformanceVerdict,
+} from "./redisPerformancePolicy";
 
+export type CorrectnessVerdict = "PASS" | "FAIL" | "NOT_MEASURED";
+
+export type ValidationStatus =
+  | "VALIDATED"
+  | "VALIDATED_WITH_PERFORMANCE_WARNING"
+  | "VALIDATION_FAILED"
+  | "NOT_VALIDATED";
+
+/** @deprecated Prefer PerformanceVerdict (GOOD/ACCEPTABLE/HIGH). */
 export type LatencyVerdict =
   | "PASS"
   | "ACCEPTABLE_WITH_WARNING"
   | "FAIL"
-  | "NOT_MEASURED";
+  | "NOT_MEASURED"
+  | PerformanceVerdict;
+
+export type { PerformanceVerdict };
 
 export type SharedRepositoryVerdict =
   | "SHARED_REPOSITORY_CONFIRMED"
@@ -19,8 +36,13 @@ export type RedisSmokeValidationFacts = {
   smokeId: string | null;
   smokePrefix: string | null;
   sharedRepository: SharedRepositoryVerdict;
+  correctnessVerdict: CorrectnessVerdict;
+  performanceVerdict: PerformanceVerdict;
+  validationStatus: ValidationStatus;
+  performancePassed: boolean;
   latency: {
-    verdict: LatencyVerdict;
+    /** Performance verdict (GOOD/ACCEPTABLE/HIGH/…) */
+    verdict: PerformanceVerdict;
     samples: number;
     p50Ms: number | null;
     p95Ms: number | null;
@@ -38,6 +60,10 @@ const DEFAULT_FACTS: RedisSmokeValidationFacts = {
   smokeId: null,
   smokePrefix: null,
   sharedRepository: "NOT_MEASURED",
+  correctnessVerdict: "NOT_MEASURED",
+  performanceVerdict: "NOT_MEASURED",
+  validationStatus: "NOT_VALIDATED",
+  performancePassed: false,
   latency: {
     verdict: "NOT_MEASURED",
     samples: 0,
@@ -52,7 +78,11 @@ const DEFAULT_FACTS: RedisSmokeValidationFacts = {
   notes: ["Smoke not run in this process — facts default NOT_MEASURED / false"],
 };
 
-let facts: RedisSmokeValidationFacts = { ...DEFAULT_FACTS, latency: { ...DEFAULT_FACTS.latency }, notes: [...DEFAULT_FACTS.notes] };
+let facts: RedisSmokeValidationFacts = {
+  ...DEFAULT_FACTS,
+  latency: { ...DEFAULT_FACTS.latency },
+  notes: [...DEFAULT_FACTS.notes],
+};
 
 export function getRedisSmokeValidationFacts(): RedisSmokeValidationFacts {
   return {
@@ -85,12 +115,19 @@ export function setRedisSmokeValidationFacts(
   return getRedisSmokeValidationFacts();
 }
 
-/** Latency thresholds for telemetry put (ms). */
+/**
+ * @deprecated Use classifyPerformanceP95 — maps to legacy LatencyVerdict names.
+ * HIGH latency returns FAIL here only for backward-compat callers; prefer performance API.
+ */
 export function classifyLatencyP95(p95Ms: number): LatencyVerdict {
-  if (p95Ms <= 25) return "PASS";
-  if (p95Ms <= 80) return "ACCEPTABLE_WITH_WARNING";
-  return "FAIL";
+  const p = classifyPerformanceP95(p95Ms);
+  if (p === "GOOD") return "PASS";
+  if (p === "ACCEPTABLE") return "ACCEPTABLE_WITH_WARNING";
+  if (p === "HIGH") return "FAIL";
+  return p;
 }
+
+export { classifyPerformanceP95 };
 
 export function percentile(sortedAsc: number[], p: number): number {
   if (sortedAsc.length === 0) return 0;
@@ -105,7 +142,11 @@ export function percentile(sortedAsc: number[], p: number): number {
 export function redisSmokeFactsForStatus(): {
   smokeValidated: boolean;
   sharedRepository: SharedRepositoryVerdict;
-  latencyVerdict: LatencyVerdict;
+  correctnessVerdict: CorrectnessVerdict;
+  performanceVerdict: PerformanceVerdict;
+  validationStatus: ValidationStatus;
+  performancePassed: boolean;
+  latencyVerdict: PerformanceVerdict;
   latencyP50Ms: number | null;
   latencyP95Ms: number | null;
   latencyP99Ms: number | null;
@@ -119,6 +160,10 @@ export function redisSmokeFactsForStatus(): {
   return {
     smokeValidated: f.smokeValidated === true,
     sharedRepository: f.sharedRepository,
+    correctnessVerdict: f.correctnessVerdict,
+    performanceVerdict: f.performanceVerdict,
+    validationStatus: f.validationStatus,
+    performancePassed: f.performancePassed === true,
     latencyVerdict: f.latency.verdict,
     latencyP50Ms: f.latency.p50Ms,
     latencyP95Ms: f.latency.p95Ms,

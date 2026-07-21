@@ -85,10 +85,30 @@ export function registerMarketSnapshotRoutes(app: Express): void {
         ? persistentProofStatus.sharedRepository
         : processSmoke.sharedRepository,
       latencyVerdict: persistentProofStatus.proofPresent
-        ? persistentProofStatus.latencyVerdict
+        ? persistentProofStatus.performanceVerdict
         : processSmoke.latencyVerdict,
+      correctnessVerdict: persistentProofStatus.proofPresent
+        ? persistentProofStatus.correctnessVerdict
+        : processSmoke.correctnessVerdict,
+      performanceVerdict: persistentProofStatus.proofPresent
+        ? persistentProofStatus.performanceVerdict
+        : processSmoke.performanceVerdict,
+      validationStatus: persistentProofStatus.proofPresent
+        ? persistentProofStatus.validationStatus
+        : processSmoke.validationStatus,
+      performancePassed: persistentProofStatus.proofPresent
+        ? persistentProofStatus.performancePassed
+        : processSmoke.performancePassed,
+      latencyP50Ms: persistentProofStatus.proofPresent
+        ? persistentProofStatus.latencyP50Ms
+        : processSmoke.latencyP50Ms,
+      latencyP95Ms: persistentProofStatus.proofPresent
+        ? persistentProofStatus.latencyP95Ms
+        : processSmoke.latencyP95Ms,
+      latencyP99Ms: persistentProofStatus.proofPresent
+        ? persistentProofStatus.latencyP99Ms
+        : processSmoke.latencyP99Ms,
       measuredAtMs: persistentProofStatus.validatedAtMs ?? processSmoke.measuredAtMs,
-      // Never echo smokeId from persistent proof blob; process-local only if this process ran smoke
       smokeId: processSmoke.smokeValidated ? processSmoke.smokeId : null,
       proof: persistentProofStatus,
     };
@@ -114,6 +134,7 @@ export function registerMarketSnapshotRoutes(app: Express): void {
     const readiness = buildTelemetryMentorReadiness({
       redisError,
       smokeValidated: smokeFacts.smokeValidated,
+      proofStatus: persistentProofStatus,
     });
     res.json({
       enabled: isGoodTradingAiMarketSnapshotEnabled(),
@@ -140,6 +161,7 @@ export function registerMarketSnapshotRoutes(app: Express): void {
       },
       redisSmoke: smokeFacts,
       redisValidationProof: persistentProofStatus,
+      redisBadges: persistentProofStatus.badges,
       sharedInfra: {
         redis: sharedAudit.redis,
         postgres: sharedAudit.postgres,
@@ -154,7 +176,7 @@ export function registerMarketSnapshotRoutes(app: Express): void {
       canUseTelemetryForMentor: canUseTelemetryForMentor(),
       mentorReadiness: readiness,
       namespaces: store.stats().namespaces,
-      note: "AI-6.4.4b. Mentor disconnected. smokeValidated from persistent Redis proof when present. /health independent of Redis. Telemetry OFF for general users.",
+      note: "AI-6.4.4g. Correctness ≠ performance. REDIS VALIDATED + PERFORMANCE WARNING possible. Never FULLY READY. Mentor disconnected. Telemetry OFF for general users.",
     });
   });
 

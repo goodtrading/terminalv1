@@ -60,10 +60,16 @@ async function main(): Promise<void> {
     concurrentFinalSequence: report.concurrentFinalSequence,
     namespaceIsolationOk: report.namespaceIsolationOk,
     sharedRepository: report.sharedRepository,
+    correctnessVerdict: report.correctnessVerdict,
+    performanceVerdict: report.performanceVerdict,
+    validationStatus: report.validationStatus,
+    performancePassed: report.performancePassed,
     latency: report.latency,
     cleanupOk: report.cleanupOk,
     proofPersisted: report.proofPersisted,
-    reminder: "Disable GOODTRADING_AI_ALLOW_REDIS_SMOKE (or ALLOW_REDIS_SMOKE) after one successful run. See docs/goodtrading-ai-telemetry-redis-validation-proof.md",
+    mentorEligible: false,
+    reminder:
+      "Disable GOODTRADING_AI_ALLOW_REDIS_SMOKE after one run. HIGH latency ? correctness FAIL. See docs/goodtrading-ai-redis-validation-semantics.md",
     errorCode: report.errorCode,
     notes: report.notes,
   };
@@ -79,7 +85,10 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   console.log(text);
-  process.exit(report.ok ? 0 : 1);
+  // 0 = correctness PASS (proof may persist even if PERFORMANCE HIGH)
+  // 1 = correctness FAIL
+  // 2 = refused (handled above)
+  process.exit(report.exitCodeHint);
 }
 
 main().catch((e) => {

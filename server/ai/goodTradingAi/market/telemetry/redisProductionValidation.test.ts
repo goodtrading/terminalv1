@@ -153,8 +153,9 @@ describe("AI-6.4.2 fake smoke runner", () => {
     assert.equal(report.sharedRepository, "SHARED_REPOSITORY_NOT_CONFIRMED");
     assert.equal(report.proofPersisted, false);
     assert.ok(report.latency.samples >= 50);
-    assert.ok(["PASS", "ACCEPTABLE_WITH_WARNING", "FAIL"].includes(report.latency.verdict));
-    // Production facts must stay false for fake
+    assert.ok(["GOOD", "ACCEPTABLE", "HIGH"].includes(report.latency.verdict));
+    assert.equal(report.correctnessVerdict, "PASS");
+    assert.equal(report.exitCodeHint, 0);    // Production facts must stay false for fake
     assert.equal(getRedisSmokeValidationFacts().smokeValidated, false);
   });
   it("gate refuse leaves NOT_MEASURED facts", async () => {
@@ -173,15 +174,21 @@ describe("AI-6.4.2 fake smoke runner", () => {
   });
 });
 
-describe("AI-6.4.2 latency helpers", () => {
+describe("AI-6.4.2 / 6.4.4g latency helpers", () => {
   it("percentile", () => {
     const xs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
     assert.equal(percentile(xs, 50), 5);
   });
-  it("classify PASS/WARN/FAIL", () => {
+  it("legacy classifyLatencyP95 names", () => {
     assert.equal(classifyLatencyP95(10), "PASS");
     assert.equal(classifyLatencyP95(40), "ACCEPTABLE_WITH_WARNING");
     assert.equal(classifyLatencyP95(100), "FAIL");
+  });
+  it("classifyPerformanceP95: 138ms is HIGH not GOOD", async () => {
+    const { classifyPerformanceP95 } = await import("./redisPerformancePolicy.ts");
+    assert.equal(classifyPerformanceP95(10), "GOOD");
+    assert.equal(classifyPerformanceP95(40), "ACCEPTABLE");
+    assert.equal(classifyPerformanceP95(138), "HIGH");
   });
 });
 
