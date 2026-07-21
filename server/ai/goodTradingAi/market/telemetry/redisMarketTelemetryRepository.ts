@@ -26,11 +26,15 @@ export type RedisPutOutcome =
   | "DUPLICATE"
   | "REPLAY"
   | "CONFLICT"
+  | "INVALID_EXISTING_RECORD"
   | "UNAVAILABLE";
 
 function casToPutResult(outcome: RedisPutOutcome): TelemetryPutResult {
   switch (outcome) {
     case "STORED":
+      return { accepted: true, casOk: true, reason: "STORED" };
+    case "INVALID_EXISTING_RECORD":
+      // Repair write succeeded — same client contract as STORED (accepted).
       return { accepted: true, casOk: true, reason: "STORED" };
     case "DUPLICATE":
       return { accepted: false, casOk: false, reason: "DUPLICATE_SEQUENCE" };
@@ -89,15 +93,22 @@ export class RedisMarketTelemetryRepository implements MarketTelemetryRepository
       const ttlMs = this.cfg.ttlMs;
       record.expiresAtMs = Date.now() + ttlMs;
       const payload = serializeRedisRecord(record);
-      const outcome = await this.client.casPut(key, payload, record.sequence, ttlMs);
-      if (outcome === "STORED") {
-        const sessKey = buildTelemetrySessionIndexKey(
-          this.cfg.prefix,
-          entry.userId,
-          entry.sessionId,
-        );
-        await this.client.sadd(sessKey, key);
-        await this.client.expire(sessKey, Math.ceil(ttlMs / 1000) + 1);
+      const sessKey = buildTelemetrySessionIndexKey(
+        this.cfg.prefix,
+        entry.userId,
+        entry.sessionId,
+      );
+      // AI-6.4.4f: one EVAL = CAS + SADD + EXPIRE (1 RTT). No post-CAS sadd/expire.
+      const outcome = await this.client.atomicPut({
+        recordKey: key,
+        sessionIndexKey: sessKey,
+        sequence: record.sequence,
+        payload,
+        recordTtlMs: ttlMs,
+        sessionIndexTtlSeconds: Math.ceil(ttlMs / 1000) + 1,
+        recordKeyForIndex: key,
+      });
+      if (outcome === "STORED" || outcome === "INVALID_EXISTING_RECORD") {
         this.sizeEstimate += 1;
       }
       return casToPutResult(outcome);

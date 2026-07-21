@@ -9,6 +9,7 @@ import { buildCompactMarketTelemetry, canUseTelemetryForMentor } from "@shared/g
 import {
   FakeRedisClient,
   TELEMETRY_CAS_LUA,
+  TELEMETRY_ATOMIC_PUT_LUA,
   RedisMarketTelemetryRepository,
   buildTelemetryRepositoryKey,
   buildTelemetrySessionIndexKey,
@@ -263,7 +264,9 @@ describe("AI-6.4.1 FakeRedis CAS", () => {
     const r = await repo.putAsync(makeTelemetryEntry({ telemetry: makeTel(1), userId: 1 }));
     assert.equal(r.accepted, true);
     assert.equal(r.reason, "STORED");
-    assert.equal(fake.casCalls, 1);
+    assert.equal(fake.atomicPutCalls, 1);
+    assert.equal(fake.lastAtomicPutRoundTrips, 1);
+    assert.equal(fake.networkRoundTrips, 1);
   });
   it("DUPLICATE does not renew TTL", async () => {
     const { fake, repo } = makeRepo();
@@ -336,9 +339,71 @@ describe("AI-6.4.1 FakeRedis CAS", () => {
       repo.put(makeTelemetryEntry({ telemetry: makeTel(1), userId: 1 })),
     );
   });
-  it("Lua script has no FLUSH/KEYS", () => {
+  it("Lua scripts have no FLUSH/KEYS", () => {
     assert.ok(!/FLUSH|KEYS\s/i.test(TELEMETRY_CAS_LUA));
     assert.ok(TELEMETRY_CAS_LUA.includes("PX"));
+    assert.ok(!/FLUSH|KEYS\s/i.test(TELEMETRY_ATOMIC_PUT_LUA));
+    assert.ok(TELEMETRY_ATOMIC_PUT_LUA.includes("PX"));
+    assert.ok(TELEMETRY_ATOMIC_PUT_LUA.includes("SADD"));
+    assert.ok(TELEMETRY_ATOMIC_PUT_LUA.includes("EXPIRE"));
+  });
+  it("AI-6.4.4f atomic put is one network round-trip", async () => {
+    const { fake, repo } = makeRepo();
+    fake.networkRoundTrips = 0;
+    await repo.putAsync(makeTelemetryEntry({ telemetry: makeTel(1), userId: 1 }));
+    assert.equal(fake.networkRoundTrips, 1);
+    assert.equal(fake.lastAtomicPutRoundTrips, 1);
+    assert.equal(fake.atomicPutCalls, 1);
+    assert.equal(fake.casCalls, 0);
+  });
+  it("AI-6.4.4f concurrent 10,12,11,12,9,13 → final 13", async () => {
+    const { repo } = makeRepo();
+    const sid = "sess_conc_atomic01";
+    const seqs = [10, 12, 11, 12, 9, 13];
+    await Promise.all(
+      seqs.map((seq) =>
+        repo.putAsync(
+          makeTelemetryEntry({ telemetry: makeTel(seq, "BTCUSDT", sid), userId: 42 }),
+        ),
+      ),
+    );
+    const got = await repo.getAsync(42, sid, "BTCUSDT", "real");
+    assert.equal(got?.lastSequence, 13);
+  });
+  it("AI-6.4.4f two repos share same FakeRedis", async () => {
+    const fake = new FakeRedisClient();
+    const a = makeRepo(fake).repo;
+    const b = makeRepo(fake).repo;
+    const sid = "sess_share_repos01";
+    await a.putAsync(makeTelemetryEntry({ telemetry: makeTel(3, "BTCUSDT", sid), userId: 7 }));
+    const got = await b.getAsync(7, sid, "BTCUSDT", "real");
+    assert.equal(got?.lastSequence, 3);
+    const r = await b.putAsync(
+      makeTelemetryEntry({ telemetry: makeTel(5, "BTCUSDT", sid), userId: 7 }),
+    );
+    assert.equal(r.accepted, true);
+    const got2 = await a.getAsync(7, sid, "BTCUSDT", "real");
+    assert.equal(got2?.lastSequence, 5);
+  });
+  it("AI-6.4.4f INVALID_EXISTING_RECORD repairs and accepts", async () => {
+    const { fake, repo } = makeRepo();
+    const t = makeTel(1);
+    const entry = makeTelemetryEntry({ telemetry: t, userId: 11 });
+    const key = buildTelemetryRepositoryKey({
+      prefix: "gt:ai:telem:t",
+      userId: 11,
+      sessionId: entry.sessionId,
+      symbol: entry.symbol,
+      namespace: entry.namespace ?? "real",
+    });
+    await fake.set(key, "not-json", { PX: 12_000 });
+    fake.networkRoundTrips = 0;
+    const r = await repo.putAsync(entry);
+    assert.equal(r.accepted, true);
+    assert.equal(r.reason, "STORED");
+    assert.equal(fake.networkRoundTrips, 1);
+    const got = await repo.getAsync(11, t.sessionId, t.symbol, "real");
+    assert.equal(got?.lastSequence, 1);
   });
 });
 
