@@ -51,7 +51,7 @@ export {
   resetRedisEnvContractWarningsForTests,
   REDIS_URL_ENV_PRIORITY,
 } from "./redisConfig";
-export { FakeRedisClient, RealRedisClient, TELEMETRY_CAS_LUA, createRealRedisClient } from "./redisClient";
+export { FakeRedisClient, RealRedisClient, TELEMETRY_CAS_LUA, createRealRedisClient, getRedisClientLifecycleCounters, resetRedisClientLifecycleCounters } from "./redisClient";
 export {
   RedisMarketTelemetryRepository,
   repoPut,
@@ -111,3 +111,15 @@ export {
   redisValidationProofSchema,
 } from "./redisValidationProof";
 export type { RedisValidationProof, LatencyClass } from "./redisValidationProof";
+export {
+  runRedisLatencyDiagnostic,
+  runFakeRedisLatencyDiagnostic,
+  classifyRedisRouteClass,
+  isAllowRedisDiagnosticEnv,
+  diagnosticReportForLog,
+} from "./redisLatencyDiagnostic";
+export type {
+  RedisLatencyDiagnosticReport,
+  LatencyBlockStats,
+  RedisRouteClass,
+} from "./redisLatencyDiagnostic";

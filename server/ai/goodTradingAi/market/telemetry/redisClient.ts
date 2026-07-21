@@ -222,11 +222,36 @@ export class FakeRedisClient implements TelemetryRedisClient {
   }
 }
 
+/** Safe lifecycle counters for latency diagnostics (no secrets). */
+const lifecycleCounters = {
+  creates: 0,
+  connects: 0,
+  quits: 0,
+  ensureReconnects: 0,
+};
+
+export function getRedisClientLifecycleCounters(): {
+  creates: number;
+  connects: number;
+  quits: number;
+  ensureReconnects: number;
+} {
+  return { ...lifecycleCounters };
+}
+
+export function resetRedisClientLifecycleCounters(): void {
+  lifecycleCounters.creates = 0;
+  lifecycleCounters.connects = 0;
+  lifecycleCounters.quits = 0;
+  lifecycleCounters.ensureReconnects = 0;
+}
+
 export class RealRedisClient implements TelemetryRedisClient {
   private client: RedisClientType;
   private openFlag = false;
 
   constructor(private readonly cfg: RedisTelemetryConfig) {
+    lifecycleCounters.creates += 1;
     this.client = createClient({
       url: cfg.url,
       socket: {
@@ -238,6 +263,7 @@ export class RealRedisClient implements TelemetryRedisClient {
 
   async connect(): Promise<void> {
     if (this.openFlag) return;
+    lifecycleCounters.connects += 1;
     await this.client.connect();
     this.openFlag = true;
   }
@@ -311,6 +337,7 @@ export class RealRedisClient implements TelemetryRedisClient {
 
   async quit(): Promise<void> {
     if (this.openFlag) {
+      lifecycleCounters.quits += 1;
       try {
         await this.client.quit();
       } catch {
@@ -329,7 +356,10 @@ export class RealRedisClient implements TelemetryRedisClient {
   }
 
   private async ensure(): Promise<void> {
-    if (!this.openFlag) await this.connect();
+    if (!this.openFlag) {
+      lifecycleCounters.ensureReconnects += 1;
+      await this.connect();
+    }
   }
 }
 
