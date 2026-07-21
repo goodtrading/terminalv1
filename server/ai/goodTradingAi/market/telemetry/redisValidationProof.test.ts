@@ -144,10 +144,21 @@ describe("AI-6.4.4b proof FakeRedis persist", () => {
       smokeValidated: true,
     });
     const w = await writeRedisValidationProof(fake, "gt:ai:telem:t", proof);
-    assert.equal(w.ok, true);
+    assert.equal(w.ok, true, w.reason);
     const got = await readRedisValidationProof(fake, "gt:ai:telem:t");
     assert.equal(got?.smokeId, "round1");
     assert.equal(got?.smokeValidated, true);
+    const key = buildRedisValidationProofKey("gt:ai:telem:t");
+    const pttl = await fake.pttl(key);
+    assert.ok(pttl > 60_000, "proof TTL must be >> telemetry 10-15s");
+    assert.ok(
+      Math.abs(pttl - REDIS_VALIDATION_PROOF_TTL_MS) < 5_000,
+      "proof TTL ~7d",
+    );
+    const st = redisValidationProofForStatus(got);
+    assert.equal(st.smokeValidated, true);
+    assert.equal(st.proofPresent, true);
+    assert.equal(st.mentorEligible, false);
     await fake.quit();
   });
   it("refuses write when smokeValidated false", async () => {
@@ -170,5 +181,28 @@ describe("AI-6.4.4b proof FakeRedis persist", () => {
     assert.equal(w.ok, false);
     assert.equal(await readRedisValidationProof(fake, "gt:ai:telem:t"), null);
     await fake.quit();
+  });
+});
+
+describe("AI-6.4.4d smoke runner proof persist regression", () => {
+  it("persists proof after successful FakeRedis smoke when opted in", async () => {
+    const { runRedisProductionSmoke } = await import("./redisSmokeRunner.ts");
+    const {
+      resetRedisSmokeValidationFactsForTests,
+      getRedisSmokeValidationFacts,
+    } = await import("./redisSmokeValidation.ts");
+    resetRedisSmokeValidationFactsForTests();
+    const fake = new FakeRedisClient();
+    const report = await runRedisProductionSmoke({
+      skipGate: true,
+      injectClient: fake,
+      persistProofWithInjectedClient: true,
+      latencyIterations: 50,
+    });
+    assert.equal(report.ok, true);
+    assert.equal(report.proofPersisted, true, report.notes.join("; "));
+    assert.equal(report.errorCode, null);
+    // Process facts stay false for injectClient (production honesty).
+    assert.equal(getRedisSmokeValidationFacts().smokeValidated, false);
   });
 });

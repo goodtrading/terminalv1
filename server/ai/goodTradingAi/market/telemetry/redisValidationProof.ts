@@ -130,15 +130,46 @@ export async function writeRedisValidationProof(
   client: TelemetryRedisClient,
   telemetryPrefix: string,
   proof: RedisValidationProof,
-): Promise<{ ok: boolean; keyNameOnly: string }> {
-  const key = buildRedisValidationProofKey(telemetryPrefix);
-  const safe = redisValidationProofSchema.parse({ ...proof, mentorEligible: false });
-  if (!safe.smokeValidated) {
-    return { ok: false, keyNameOnly: "admin:redis_validation_proof" };
+): Promise<{ ok: boolean; keyNameOnly: string; reason?: string }> {
+  const keyNameOnly = "admin:redis_validation_proof";
+  let safe: RedisValidationProof;
+  try {
+    safe = redisValidationProofSchema.parse({ ...proof, mentorEligible: false });
+  } catch {
+    return { ok: false, keyNameOnly, reason: "proof schema validation failed" };
   }
-  const ttlMs = Math.max(1_000, safe.expiresAtMs - Date.now());
-  await client.set(key, serializeRedisValidationProof(safe), { PX: ttlMs });
-  return { ok: true, keyNameOnly: "admin:redis_validation_proof" };
+  if (!safe.smokeValidated) {
+    return { ok: false, keyNameOnly, reason: "smokeValidated must be true to persist" };
+  }
+  // Force mentorEligible false at write boundary (cannot be forged true).
+  safe = { ...safe, mentorEligible: false };
+  const ttlMs = Math.max(1_000, Math.floor(safe.expiresAtMs - Date.now()));
+  // Prefer EX (seconds) for multi-day TTL — more portable across Redis builds than huge PX.
+  const ttlSec = Math.max(1, Math.ceil(ttlMs / 1000));
+  const payload = serializeRedisValidationProof(safe);
+  const key = buildRedisValidationProofKey(telemetryPrefix);
+
+  // SET without PX, then EXPIRE — avoids PX overflow / client option quirks on long TTLs.
+  const setResult = await client.set(key, payload);
+  if (setResult !== "OK") {
+    return { ok: false, keyNameOnly, reason: "redis SET did not return OK" };
+  }
+  const expired = await client.expire(key, ttlSec);
+  if (!expired) {
+    // Key may exist without TTL — refuse to claim persistence without bounded TTL.
+    await client.del(key);
+    return { ok: false, keyNameOnly, reason: "redis EXPIRE failed after SET" };
+  }
+  const raw = await client.get(key);
+  if (!raw || !parseRedisValidationProof(raw)) {
+    return { ok: false, keyNameOnly, reason: "proof readback failed after write" };
+  }
+  const pttl = await client.pttl(key);
+  // Allow clock skew; require roughly day-scale TTL (not telemetry 10–15s).
+  if (pttl < 60_000) {
+    return { ok: false, keyNameOnly, reason: "proof TTL too short after write" };
+  }
+  return { ok: true, keyNameOnly };
 }
 
 export async function readRedisValidationProof(

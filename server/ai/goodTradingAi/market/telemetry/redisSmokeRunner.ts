@@ -105,12 +105,10 @@ async function withRepo(
   cfg: RedisTelemetryConfig,
   fn: (repo: RedisMarketTelemetryRepository) => Promise<void>,
 ): Promise<void> {
+  // Caller owns client lifecycle — do NOT quit here.
+  // (AI-6.4.4d: previous repo.quit() closed the shared client and broke proof SET.)
   const repo = new RedisMarketTelemetryRepository(client, cfg);
-  try {
-    await fn(repo);
-  } finally {
-    await repo.quit();
-  }
+  await fn(repo);
 }
 
 /**
@@ -122,6 +120,11 @@ export async function runRedisProductionSmoke(opts?: {
   injectClient?: TelemetryRedisClient;
   latencyIterations?: number;
   skipGate?: boolean;
+  /**
+   * Test-only: persist proof even with injectClient (FakeRedis regression).
+   * Never claims SHARED_REPOSITORY_CONFIRMED; only exercises proof write path.
+   */
+  persistProofWithInjectedClient?: boolean;
 }): Promise<RedisSmokeReport> {
   const env = opts?.env ?? process.env;
   const smokeId = randomBytes(6).toString("hex");
@@ -350,7 +353,6 @@ export async function runRedisProductionSmoke(opts?: {
       await repo.removeSession(userId, isoSession);
       report.cleanupOk = true;
 
-      // Persist validation proof under stable admin key (prod prefix), not smoke:{id}:
       report.ok =
         report.connectOk &&
         report.casOk &&
@@ -361,13 +363,17 @@ export async function runRedisProductionSmoke(opts?: {
           ? report.sharedRepository === "SHARED_REPOSITORY_CONFIRMED" &&
             report.latency.verdict !== "FAIL"
           : true);
+    });
 
-      if (report.ok && !isFake) {
+    // Persist proof on the still-open smoke client under the prod admin prefix.
+    // AI-6.4.4d: withRepo must not quit the client before this write.
+    if (report.ok && (!isFake || opts?.persistProofWithInjectedClient)) {
+      try {
         const proofPrefix =
           env.GOODTRADING_AI_TELEMETRY_REDIS_PREFIX?.trim() || "gt:ai:telem";
         const proof = buildRedisValidationProof({
           smokeId,
-          urlEnvName: report.urlEnvName,
+          urlEnvName: report.urlEnvName === "NONE" ? "REDIS_URL" : report.urlEnvName,
           sharedRepository: report.sharedRepository,
           latencyVerdict: report.latency.verdict,
           latencySamples: report.latency.samples,
@@ -378,13 +384,18 @@ export async function runRedisProductionSmoke(opts?: {
           namespaceIsolationOk: report.namespaceIsolationOk,
           cleanupOk: true,
           smokeValidated: true,
-          notes: ["Persisted by authorized real smoke (AI-6.4.4b)"],
+          notes: ["Persisted by authorized real smoke (AI-6.4.4d)"],
         });
         const written = await writeRedisValidationProof(client, proofPrefix, proof);
         report.proofPersisted = written.ok;
-        if (!written.ok) notes.push("proof write refused or failed");
+        if (!written.ok) {
+          notes.push(written.reason ?? "proof write refused or failed");
+        }
+      } catch (e) {
+        notes.push(toSafeRedisError(e).message);
+        report.proofPersisted = false;
       }
-    });
+    }
 
     setRedisSmokeValidationFacts({
       smokeValidated: report.ok && !isFake && report.proofPersisted,
@@ -395,7 +406,7 @@ export async function runRedisProductionSmoke(opts?: {
       casConcurrentFinalSequence: report.concurrentFinalSequence,
       namespaceIsolationOk: report.namespaceIsolationOk,
       measuredAtMs: Date.now(),
-      notes: isFake
+      notes: isFake && !opts?.persistProofWithInjectedClient
         ? ["Fake/injected client — smokeValidated left false; proof not persisted"]
         : report.ok && report.proofPersisted
           ? ["Real Redis smoke OK + proof persisted"]
@@ -405,6 +416,7 @@ export async function runRedisProductionSmoke(opts?: {
     const safe = toSafeRedisError(e);
     report.errorCode = safe.code;
     notes.push(safe.message);
+  } finally {
     try {
       await client.quit();
     } catch {
