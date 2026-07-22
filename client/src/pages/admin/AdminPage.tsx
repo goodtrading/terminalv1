@@ -316,6 +316,14 @@ export default function AdminPage() {
             <Link href="/admin/market-snapshot" className="text-terminal-accent hover:underline">
               Market Snapshot
             </Link>
+            <span className="text-terminal-muted">/</span>
+            <Link href="/admin/decision-graph" className="text-terminal-accent hover:underline">
+              Decision Graph
+            </Link>
+            <span className="text-terminal-muted">/</span>
+            <Link href="/admin/human-methodology-review" className="text-terminal-accent hover:underline">
+              Human Methodology Review
+            </Link>
           </div>
           <button
             type="button"

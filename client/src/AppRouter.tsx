@@ -9,6 +9,8 @@ import CalibrationLabPage from "@/pages/admin/CalibrationLabPage";
 import KnowledgeInboxPage from "@/pages/admin/KnowledgeInboxPage";
 import KnowledgeHealthPage from "@/pages/admin/KnowledgeHealthPage";
 import MarketSnapshotDebugPage from "@/pages/admin/MarketSnapshotDebugPage";
+import DecisionGraphDebugPage from "@/pages/admin/DecisionGraphDebugPage";
+import HumanMethodologyReviewPage from "@/pages/admin/HumanMethodologyReviewPage";
 import HomePage from "@/pages/marketing/HomePage";
 import LoginPage from "@/pages/marketing/LoginPage";
 import RegisterPage from "@/pages/marketing/RegisterPage";
@@ -64,6 +66,22 @@ function MarketSnapshotDebugRoute() {
   );
 }
 
+function DecisionGraphDebugRoute() {
+  return (
+    <AdminRoute>
+      <DecisionGraphDebugPage />
+    </AdminRoute>
+  );
+}
+
+function HumanMethodologyReviewRoute() {
+  return (
+    <AdminRoute>
+      <HumanMethodologyReviewPage />
+    </AdminRoute>
+  );
+}
+
 function TerminalRoute() {
   return (
     <BlockedAccessScreen>
@@ -93,6 +111,8 @@ function WebRouter() {
       <Route path="/admin/knowledge-inbox" component={KnowledgeInboxRoute} />
       <Route path="/admin/knowledge-health" component={KnowledgeHealthRoute} />
       <Route path="/admin/market-snapshot" component={MarketSnapshotDebugRoute} />
+      <Route path="/admin/decision-graph" component={DecisionGraphDebugRoute} />
+      <Route path="/admin/human-methodology-review" component={HumanMethodologyReviewRoute} />
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/" component={HomePage} />
       <Route component={NotFound} />
@@ -120,6 +140,8 @@ function DesktopRouter() {
       <Route path="/admin/knowledge-inbox" component={KnowledgeInboxRoute} />
       <Route path="/admin/knowledge-health" component={KnowledgeHealthRoute} />
       <Route path="/admin/market-snapshot" component={MarketSnapshotDebugRoute} />
+      <Route path="/admin/decision-graph" component={DecisionGraphDebugRoute} />
+      <Route path="/admin/human-methodology-review" component={HumanMethodologyReviewRoute} />
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/products" component={DesktopEntryRedirect} />
       <Route path="/download/desktop" component={DesktopEntryRedirect} />

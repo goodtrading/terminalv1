@@ -68,6 +68,16 @@ export function isGoodTradingAiMarketTelemetryEnabledEnv(): boolean {
   return envBool("GOODTRADING_AI_MARKET_TELEMETRY_ENABLED", false);
 }
 
+/** AI-7 Deterministic Decision Graph Engine. Default OFF. Not Mentor-live. */
+export function isGoodTradingAiDecisionGraphEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_DECISION_GRAPH_ENABLED", false);
+}
+
+/** AI-7.2 Human Methodology Review (blind). Default OFF. Not Mentor-live. */
+export function isGoodTradingAiDecisionReviewEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_DECISION_REVIEW_ENABLED", false);
+}
+
 /** Internal auto-publish from runtime bridge. Default OFF. Admin/debug only. */
 export function isGoodTradingAiMarketTelemetryAutoPublishInternalEnv(): boolean {
   return envBool("GOODTRADING_AI_MARKET_TELEMETRY_AUTO_PUBLISH_INTERNAL", false);

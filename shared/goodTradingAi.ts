@@ -138,6 +138,35 @@ export const goodTradingAiChatResponseSchema = z.object({
   coverage: goodTradingAiCoverageSchema.optional(),
   /** AI-4: Cómo llegué a esta conclusión (optional, backward compatible). */
   reasoning: goodTradingAiReasoningSchema.optional(),
+  /**
+   * AI-7: optional client-safe Decision Graph projection.
+   * Attached only via internal/mock helpers — never built by OpenAI; not live chat wiring.
+   */
+  decisionGraph: z
+    .object({
+      schemaVersion: z.literal("1.0"),
+      templateId: z.string().min(1).max(80),
+      templateVersion: z.string().min(1).max(40),
+      contextTrust: z.string().min(1).max(40),
+      quality: z.string().min(1).max(40),
+      primaryOutcome: z.string().min(1).max(40).nullable(),
+          pathSummaries: z
+            .array(
+              z.object({
+                id: z.string(),
+                outcome: z.string(),
+                priority: z.string(),
+                stepLabels: z.array(z.string()).max(12),
+              }),
+            )
+            .max(2),
+      confirmationLabels: z.array(z.string()).max(8),
+      invalidationLabels: z.array(z.string()).max(8),
+      conflictCodes: z.array(z.string()).max(8),
+      warnings: z.array(z.string()).max(12),
+      mentorEligible: z.literal(false),
+    })
+    .optional(),
 });
 export type GoodTradingAIChatResponse = z.infer<typeof goodTradingAiChatResponseSchema>;
 
