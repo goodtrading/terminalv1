@@ -18,6 +18,9 @@ server/storage/*.json
 releases/desktop/*.exe
 releases/desktop/*.msi
 !releases/desktop/.gitkeep
-# AI-7.2 Human Methodology Review private answers
+/** AI-7.2 Human Methodology Review private answers */
 server/storage/human-decision-review/
 **/human-decision-review/private/
+# AI-7.3 Critical Calibration Memory (never Brain)
+server/storage/critical-calibration/
+**/critical-calibration/private/

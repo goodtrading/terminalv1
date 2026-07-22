@@ -11,6 +11,7 @@ import KnowledgeHealthPage from "@/pages/admin/KnowledgeHealthPage";
 import MarketSnapshotDebugPage from "@/pages/admin/MarketSnapshotDebugPage";
 import DecisionGraphDebugPage from "@/pages/admin/DecisionGraphDebugPage";
 import HumanMethodologyReviewPage from "@/pages/admin/HumanMethodologyReviewPage";
+import CriticalCalibrationLabPage from "@/pages/admin/CriticalCalibrationLabPage";
 import HomePage from "@/pages/marketing/HomePage";
 import LoginPage from "@/pages/marketing/LoginPage";
 import RegisterPage from "@/pages/marketing/RegisterPage";
@@ -82,6 +83,14 @@ function HumanMethodologyReviewRoute() {
   );
 }
 
+function CriticalCalibrationLabRoute() {
+  return (
+    <AdminRoute>
+      <CriticalCalibrationLabPage />
+    </AdminRoute>
+  );
+}
+
 function TerminalRoute() {
   return (
     <BlockedAccessScreen>
@@ -113,6 +122,7 @@ function WebRouter() {
       <Route path="/admin/market-snapshot" component={MarketSnapshotDebugRoute} />
       <Route path="/admin/decision-graph" component={DecisionGraphDebugRoute} />
       <Route path="/admin/human-methodology-review" component={HumanMethodologyReviewRoute} />
+      <Route path="/admin/critical-calibration" component={CriticalCalibrationLabRoute} />
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/" component={HomePage} />
       <Route component={NotFound} />
@@ -142,6 +152,7 @@ function DesktopRouter() {
       <Route path="/admin/market-snapshot" component={MarketSnapshotDebugRoute} />
       <Route path="/admin/decision-graph" component={DecisionGraphDebugRoute} />
       <Route path="/admin/human-methodology-review" component={HumanMethodologyReviewRoute} />
+      <Route path="/admin/critical-calibration" component={CriticalCalibrationLabRoute} />
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/products" component={DesktopEntryRedirect} />
       <Route path="/download/desktop" component={DesktopEntryRedirect} />

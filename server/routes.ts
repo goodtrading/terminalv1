@@ -15,6 +15,7 @@ import { registerCurationRoutes } from "./routes/curation.routes";
 import { registerMarketSnapshotRoutes } from "./routes/marketSnapshot.routes";
 import { registerDecisionGraphRoutes } from "./routes/decisionGraph.routes";
 import { registerDecisionHumanReviewRoutes } from "./routes/decisionHumanReview.routes";
+import { registerCriticalCalibrationRoutes } from "./routes/criticalCalibration.routes";
 import { isGoodTradingAiEnabled } from "./ai/goodTradingAi/features";
 import { isGoodTradingAiCalibrationEnabled } from "./ai/goodTradingAi/calibration/features";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
@@ -325,6 +326,7 @@ export async function registerRoutes(
   registerMarketSnapshotRoutes(app);
   registerDecisionGraphRoutes(app);
   registerDecisionHumanReviewRoutes(app);
+  registerCriticalCalibrationRoutes(app);
 
   app.get("/api/desktop/update", (_req: Request, res: Response) => {
     res.json(buildDesktopUpdatePayload());

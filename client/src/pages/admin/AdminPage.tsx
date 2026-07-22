@@ -324,6 +324,10 @@ export default function AdminPage() {
             <Link href="/admin/human-methodology-review" className="text-terminal-accent hover:underline">
               Human Methodology Review
             </Link>
+            <span className="text-terminal-muted">/</span>
+            <Link href="/admin/critical-calibration" className="text-terminal-accent hover:underline">
+              Critical Calibration
+            </Link>
           </div>
           <button
             type="button"

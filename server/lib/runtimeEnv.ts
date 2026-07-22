@@ -78,6 +78,11 @@ export function isGoodTradingAiDecisionReviewEnabledEnv(): boolean {
   return envBool("GOODTRADING_AI_DECISION_REVIEW_ENABLED", false);
 }
 
+/** AI-7.3 Critical Mentor Calibration Lab. Default OFF. Never mutates Brain. */
+export function isGoodTradingAiCriticalCalibrationEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_CRITICAL_CALIBRATION_ENABLED", false);
+}
+
 /** Internal auto-publish from runtime bridge. Default OFF. Admin/debug only. */
 export function isGoodTradingAiMarketTelemetryAutoPublishInternalEnv(): boolean {
   return envBool("GOODTRADING_AI_MARKET_TELEMETRY_AUTO_PUBLISH_INTERNAL", false);

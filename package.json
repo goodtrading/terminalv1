@@ -36,6 +36,7 @@
     "test:goodtrading-ai:decision": "tsx --test --test-concurrency=1 --test-force-exit server/ai/goodTradingAi/decision/decision.test.ts server/routes/decisionGraph.routes.test.ts",
     "test:goodtrading-ai:decision:human-review": "tsx --test --test-concurrency=1 --test-force-exit server/ai/goodTradingAi/decision/humanReview/humanReview.test.ts server/routes/decisionHumanReview.routes.test.ts",
     "test:goodtrading-ai:decision:calibration": "tsx --test --test-concurrency=1 --test-force-exit server/ai/goodTradingAi/decision/calibration/decision.calibration.test.ts",
+    "test:goodtrading-ai:critical-calibration": "tsx --test --test-concurrency=1 --test-force-exit server/ai/goodTradingAi/criticalCalibration/criticalCalibration.test.ts server/ai/goodTradingAi/criticalCalibration/ai731.semantics.test.ts server/routes/criticalCalibration.routes.test.ts",
     "goodtrading-ai:calibration:apply": "tsx scripts/goodtrading-ai-calibration-apply.ts",
     "goodtrading-ai:calibrate": "tsx scripts/goodtrading-ai-calibrate.ts",
     "goodtrading-ai:openai:smoke": "tsx scripts/goodtrading-ai-openai-smoke.ts",
