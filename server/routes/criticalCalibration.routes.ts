@@ -38,6 +38,16 @@ import {
 } from "@shared/goodTradingAiCriticalCalibration";
 import { evaluateDecisionGraph } from "../ai/goodTradingAi/decision/decisionGraphEngine";
 import { retrieveKnowledge } from "../ai/goodTradingAi/knowledge/retrieve";
+import {
+  assessStorageHealth,
+  assertHumanSessionsAllowed,
+} from "../ai/goodTradingAi/durableCalibration/health";
+import { getDurableRepos } from "../ai/goodTradingAi/durableCalibration/factory";
+import {
+  exportCalibrationBackup,
+  importCalibrationBackup,
+} from "../ai/goodTradingAi/durableCalibration/backup";
+import { attemptLegitimateRecovery } from "../ai/goodTradingAi/durableCalibration/recovery";
 
 const reviewBodySchema = z.object({ scenario: syntheticScenarioSchema, engineOutcome: decisionPathOutcomeSchema.nullable().optional(), humanOutcome: decisionPathOutcomeSchema.nullable().optional() }).strict();
 
@@ -45,8 +55,56 @@ export function registerCriticalCalibrationRoutes(app: Express): void {
   const base = "/api/internal/ai/critical-calibration";
   const guards = [requireCriticalCalibrationAccess];
 
-  app.get(`${base}/status`, ...guards, (_req: Request, res: Response) => {
-    res.json({ enabled: isGoodTradingAiCriticalCalibrationEnabled(), mentorEligible: false, openAi: false, chatLiveWiring: false, note: "AI-7.3 Critical Calibration Lab — synthetic, never mutates Brain." });
+  app.get(`${base}/status`, ...guards, async (_req: Request, res: Response) => {
+    const storage = await assessStorageHealth({ priorHumanLossSuspected: true });
+    res.json({
+      enabled: isGoodTradingAiCriticalCalibrationEnabled(),
+      mentorEligible: false,
+      openAi: false,
+      chatLiveWiring: false,
+      note: "AI-7.3 Critical Calibration Lab — synthetic, never mutates Brain.",
+      storage,
+    });
+  });
+
+  app.get(`${base}/storage/health`, ...guards, async (_req: Request, res: Response) => {
+    const storage = await assessStorageHealth({ priorHumanLossSuspected: true });
+    res.json({ storage, mentorEligible: false, brainMutate: false });
+  });
+
+  app.post(`${base}/storage/verify`, ...guards, async (_req: Request, res: Response) => {
+    await getDurableRepos();
+    const storage = await assessStorageHealth({ priorHumanLossSuspected: true });
+    res.json({
+      ok: storage.repositoryDurable && storage.repositoryWritable && storage.repositoryReadable,
+      storage,
+      mentorEligible: false,
+      brainMutate: false,
+    });
+  });
+
+  app.get(`${base}/backup/export`, ...guards, async (_req: Request, res: Response) => {
+    await getDurableRepos();
+    const backup = await exportCalibrationBackup();
+    res.json({ backup, mentorEligible: false, brainMutate: false });
+  });
+
+  app.post(`${base}/backup/import`, ...guards, async (req: Request, res: Response) => {
+    try {
+      await getDurableRepos();
+      const result = await importCalibrationBackup(req.body?.backup ?? req.body, {
+        dryRun: req.body?.dryRun !== false,
+      });
+      res.json({ result, mentorEligible: false, brainMutate: false });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "IMPORT_FAILED";
+      res.status(400).json({ code: msg, mentorEligible: false });
+    }
+  });
+
+  app.get(`${base}/recovery/attempt`, ...guards, async (_req: Request, res: Response) => {
+    const recovery = await attemptLegitimateRecovery();
+    res.json({ recovery, mentorEligible: false, brainMutate: false, inventRecovery: false });
   });
 
   app.post(`${base}/scenarios/generate`, ...guards, (req: Request, res: Response) => {
@@ -156,25 +214,43 @@ export function registerCriticalCalibrationRoutes(app: Express): void {
     });
   });
 
-  app.post(`${base}/sessions/start`, ...guards, (req: Request, res: Response) => {
-    const kind = req.body?.kind != null ? calibrationSessionKindSchema.parse(req.body.kind) : "HUMAN";
-    const started = startCriticalCalibrationSession({
-      seed: typeof req.body?.seed === "string" ? req.body.seed : "73001",
-      initialQuestionCount: typeof req.body?.initialQuestionCount === "number" ? req.body.initialQuestionCount : 15,
-      kind,
-      label: typeof req.body?.label === "string" ? req.body.label : undefined,
-    });
-    for (const q of started.blindQuestions) assertBlindPacketSafe(q);
-    res.json({
-      sessionId: started.session.id,
-      questionCount: started.blindQuestions.length,
-      blindQuestions: started.blindQuestions,
-      progress: getSessionProgress(started.session.id),
-      mentorEligible: false,
-      brainMutate: false,
-      autoApply: false,
-      realMarketData: false,
-    });
+  app.post(`${base}/sessions/start`, ...guards, async (req: Request, res: Response) => {
+    try {
+      const repos = await getDurableRepos();
+      const storage = await assessStorageHealth({ priorHumanLossSuspected: true });
+      const kind = req.body?.kind != null ? calibrationSessionKindSchema.parse(req.body.kind) : "HUMAN";
+      if (kind === "HUMAN") {
+        assertHumanSessionsAllowed(storage);
+      } else if (!storage.humanSessionsAllowed && !storage.technicalOnlyNonDurable && storage.status === "UNAVAILABLE") {
+        res.status(503).json({ code: "STORAGE_UNAVAILABLE", storage, mentorEligible: false });
+        return;
+      }
+      const started = startCriticalCalibrationSession({
+        seed: typeof req.body?.seed === "string" ? req.body.seed : "73001",
+        initialQuestionCount: typeof req.body?.initialQuestionCount === "number" ? req.body.initialQuestionCount : 15,
+        kind,
+        label: typeof req.body?.label === "string" ? req.body.label : undefined,
+      });
+      await repos.criticalCalibration.saveSession(started.session);
+      for (const q of started.blindQuestions) assertBlindPacketSafe(q);
+      res.json({
+        sessionId: started.session.id,
+        questionCount: started.blindQuestions.length,
+        blindQuestions: started.blindQuestions,
+        progress: getSessionProgress(started.session.id),
+        mentorEligible: false,
+        brainMutate: false,
+        autoApply: false,
+        realMarketData: false,
+        storage,
+        nonDurable: !storage.repositoryDurable,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "ERROR";
+      const status = msg === "UNSAFE_EPHEMERAL_STORAGE" ? 503 : 400;
+      const storage = await assessStorageHealth({ priorHumanLossSuspected: true });
+      res.status(status).json({ code: msg, storage, mentorEligible: false, brainMutate: false });
+    }
   });
 
   app.get(`${base}/sessions/:id/questions/:qid/blind`, ...guards, (req: Request, res: Response) => {
@@ -188,8 +264,9 @@ export function registerCriticalCalibrationRoutes(app: Express): void {
     }
   });
 
-  app.post(`${base}/sessions/:id/answers`, ...guards, (req: Request, res: Response) => {
+  app.post(`${base}/sessions/:id/answers`, ...guards, async (req: Request, res: Response) => {
     try {
+      const repos = await getDurableRepos();
       const obs = submitCalibrationAnswer({
         sessionId: req.params.id,
         questionId: String(req.body?.questionId ?? ""),
@@ -204,6 +281,9 @@ export function registerCriticalCalibrationRoutes(app: Express): void {
         revisionOf: typeof req.body?.revisionOf === "string" ? req.body.revisionOf : undefined,
         postRevealAction: req.body?.postRevealAction != null ? calibrationPostRevealActionSchema.parse(req.body.postRevealAction) : undefined,
       });
+      await repos.criticalCalibration.saveObservation(obs);
+      const session = repos.ccMemory.getSession(req.params.id);
+      if (session) await repos.criticalCalibration.saveSession(session);
       res.json({
         observation: obs,
         progress: getSessionProgress(req.params.id),

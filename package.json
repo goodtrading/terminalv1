@@ -60,7 +60,8 @@
     "prepare:desktop-release": "node scripts/prepare-desktop-release.mjs",
     "print:desktop-release-command": "node scripts/print-github-release-command.mjs",
     "doctor:desktop": "node scripts/doctor-desktop-release.mjs",
-    "release:desktop": "npm run build:desktop && node scripts/prepare-desktop-release.mjs"
+    "release:desktop": "npm run build:desktop && node scripts/prepare-desktop-release.mjs",
+    "test:goodtrading-ai:durable-calibration-storage": "tsx --test --test-concurrency=1 --test-force-exit server/ai/goodTradingAi/durableCalibration/durableCalibrationStorage.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

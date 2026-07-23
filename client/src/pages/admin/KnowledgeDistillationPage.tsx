@@ -14,6 +14,7 @@ import {
   fetchLatest,
   fetchProposals,
   runDistillation,
+  runStrictDistillation,
 } from "@/lib/knowledgeDistillation/knowledgeDistillationApi";
 
 type Mode =
@@ -40,6 +41,8 @@ export default function KnowledgeDistillationPage() {
   const [scores, setScores] = useState<unknown[]>([]);
   const [proposals, setProposals] = useState<unknown[]>([]);
   const [evolution, setEvolution] = useState<unknown>(null);
+  const [sessionIdsRaw, setSessionIdsRaw] = useState("");
+  const [strictPreview, setStrictPreview] = useState<string | null>(null);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -60,7 +63,19 @@ export default function KnowledgeDistillationPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await runDistillation();
+      const ids = sessionIdsRaw
+        .split(/[\s,]+/)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (!ids.length) {
+        setError("Provide explicit HUMAN sourceSessionIds (strict /runs). Empty-body /run is deprecated.");
+        return;
+      }
+      const preview = await runStrictDistillation({ sourceSessionIds: ids, dryRun: true });
+      setStrictPreview(JSON.stringify(preview.preview ?? preview, null, 2));
+      const ok = window.confirm("Confirm strict distillation once for these session IDs?");
+      if (!ok) return;
+      const res = await runStrictDistillation({ sourceSessionIds: ids, dryRun: false, persist: true });
       setLatest(res.result);
       setMode("distillation");
     } catch (e) {
@@ -68,7 +83,7 @@ export default function KnowledgeDistillationPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sessionIdsRaw]);
 
   const onLatest = useCallback(async () => {
     setLoading(true);
@@ -221,9 +236,23 @@ export default function KnowledgeDistillationPage() {
             Refresh Status
           </button>
           <button type="button" disabled={loading} onClick={() => void onRun()} className="border border-terminal-accent text-terminal-accent px-2 py-1 text-[11px]">
-            Run Distillation
+            Run Distillation (strict session IDs)
           </button>
         </div>
+
+        <label className="block text-[11px] space-y-1">
+          <span>sourceSessionIds (HUMAN completed, comma/space separated)</span>
+          <input
+            className="w-full bg-terminal-bg border border-terminal-border px-2 py-1"
+            value={sessionIdsRaw}
+            onChange={(e) => setSessionIdsRaw(e.target.value)}
+            placeholder="uuid-1 uuid-2"
+            data-testid="kd-source-session-ids"
+          />
+        </label>
+        {strictPreview && (
+          <pre className="border border-terminal-border p-2 text-[10px] overflow-auto max-h-32">{strictPreview}</pre>
+        )}
 
         {mode === "overview" && (
           <section className="border border-terminal-border p-3 text-xs space-y-2" data-testid="kd-overview">

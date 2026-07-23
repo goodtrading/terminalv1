@@ -19,6 +19,12 @@ import {
   resumeSession,
   startSession,
   submitAnswer,
+  fetchStorageHealth,
+  verifyPersistence,
+  exportCalibrationBackup,
+  importCalibrationBackup,
+  runDistillationFromSession,
+  type StorageHealth,
   type BatchGenerateResult,
   type BlindQuestionPacket,
   type QueueSummary,
@@ -95,6 +101,9 @@ export default function CriticalCalibrationLabPage() {
   const [confidence, setConfidence] = useState<"LOW" | "MEDIUM" | "HIGH">("MEDIUM");
   const [postNote, setPostNote] = useState("");
   const [report, setReport] = useState<unknown>(null);
+  const [storage, setStorage] = useState<StorageHealth | null>(null);
+  const [backupJson, setBackupJson] = useState("");
+  const [kdPreview, setKdPreview] = useState<string | null>(null);
 
   void isLocalStorageAnswerAuthority();
 
@@ -108,6 +117,12 @@ export default function CriticalCalibrationLabPage() {
       const s = await fetchStatus();
       setEnabled(s.enabled);
       setStatusNote(s.note ?? "");
+      try {
+        const health = await fetchStorageHealth();
+        setStorage(health.storage);
+      } catch {
+        /* storage badge optional if endpoint fails */
+      }
     } catch (e) {
       setEnabled(false);
       setError(e instanceof Error ? e.message : "Status unavailable");
@@ -407,21 +422,103 @@ export default function CriticalCalibrationLabPage() {
           </button>
         </div>
 
+        {kdPreview && (
+          <pre className="border border-terminal-border p-2 text-[10px] overflow-auto max-h-40" data-testid="cc-kd-preview">
+            {kdPreview}
+          </pre>
+        )}
         {mode === "overview" && (
           <section className="space-y-3 border border-terminal-border p-3" data-testid="cc-overview">
             <p className="text-xs text-terminal-muted">
               Flujo: Status → Batch seed 73001 → Active-learning queue → Sesión ciega 15Q → Submit → Reveal → Progress.
               Sugerencia: 5 preguntas por tanda.
             </p>
+            <div
+              className="text-[11px] border px-2 py-1"
+              data-testid="cc-storage-badge"
+              data-status={storage?.status ?? "UNKNOWN"}
+            >
+              Storage: {storage?.status ?? "…"} · mode={storage?.mode ?? "?"} · durable=
+              {String(storage?.repositoryDurable ?? false)} · humanAllowed=
+              {String(storage?.humanSessionsAllowed ?? false)}
+            </div>
             <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() =>
+                  void (async () => {
+                    setLoading(true);
+                    try {
+                      const v = await verifyPersistence();
+                      setStorage(v.storage);
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Verify failed");
+                    } finally {
+                      setLoading(false);
+                    }
+                  })()
+                }
+                className="border border-terminal-border px-2 py-1"
+              >
+                Verify Persistence
+              </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() =>
+                  void (async () => {
+                    setLoading(true);
+                    try {
+                      const ex = await exportCalibrationBackup();
+                      setBackupJson(JSON.stringify(ex.backup, null, 2));
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Export failed");
+                    } finally {
+                      setLoading(false);
+                    }
+                  })()
+                }
+                className="border border-terminal-border px-2 py-1"
+              >
+                Export Backup
+              </button>
+              <button
+                type="button"
+                disabled={loading || !backupJson}
+                onClick={() =>
+                  void (async () => {
+                    setLoading(true);
+                    try {
+                      const parsed = JSON.parse(backupJson);
+                      await importCalibrationBackup(parsed, true);
+                      setError(null);
+                      setStatusNote("Import dry-run OK (no overwrite)");
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Import dry-run failed");
+                    } finally {
+                      setLoading(false);
+                    }
+                  })()
+                }
+                className="border border-terminal-border px-2 py-1"
+              >
+                Import Dry-Run
+              </button>
               <button type="button" disabled={loading} onClick={() => void onGenerateBatch()} className="border border-terminal-accent text-terminal-accent px-2 py-1">
                 Generate / Reuse Batch
               </button>
               <button type="button" disabled={loading} onClick={() => void onBuildQueue()} className="border border-terminal-border px-2 py-1">
                 Build AL Queue
               </button>
-              <button type="button" disabled={loading} onClick={() => void onStartSession()} className="border border-terminal-border px-2 py-1">
-                Start Blind Session (15)
+              <button
+                type="button"
+                disabled={loading || storage?.humanSessionsAllowed === false}
+                onClick={() => void onStartSession()}
+                className="border border-terminal-border px-2 py-1 disabled:opacity-40"
+                title={storage?.humanSessionsAllowed === false ? "Blocked: UNSAFE_EPHEMERAL_STORAGE" : "Start HUMAN session"}
+              >
+                Start Blind Session HUMAN (15)
               </button>
               {activeHuman && (
                 <button type="button" disabled={loading} onClick={() => void onResume(activeHuman.sessionId)} className="border border-emerald-600 text-emerald-300 px-2 py-1">
@@ -452,6 +549,32 @@ export default function CriticalCalibrationLabPage() {
                       {s.kind === "TECHNICAL" && !s.archived && (
                         <button type="button" className="underline text-amber-300" onClick={() => void onArchiveTech(s.sessionId)}>
                           Archive tech
+                        </button>
+                      )}
+                      {s.kind === "HUMAN" && s.status === "COMPLETED" && (
+                        <button
+                          type="button"
+                          className="underline text-sky-300"
+                          disabled={loading || storage?.distillationAllowed === false}
+                          onClick={() =>
+                            void (async () => {
+                              setLoading(true);
+                              try {
+                                const preview = await runDistillationFromSession([s.sessionId], { dryRun: true });
+                                setKdPreview(JSON.stringify(preview.preview ?? preview, null, 2));
+                                const ok = window.confirm("Confirm Run Distillation once for this HUMAN session?");
+                                if (!ok) return;
+                                await runDistillationFromSession([s.sessionId], { dryRun: false });
+                                setStatusNote("Distillation run submitted for session");
+                              } catch (e) {
+                                setError(e instanceof Error ? e.message : "Distillation failed");
+                              } finally {
+                                setLoading(false);
+                              }
+                            })()
+                          }
+                        >
+                          Run Distillation
                         </button>
                       )}
                     </li>

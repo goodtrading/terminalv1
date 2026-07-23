@@ -271,3 +271,65 @@ export function archiveTechnicalSession(sessionId: string, signal?: AbortSignal)
 export function fetchReport(signal?: AbortSignal) {
   return ccFetch<{ report: unknown; mentorEligible: false; brainMutated: false }>("/report", { signal });
 }
+
+export type StorageHealth = {
+  status: "DURABLE_READY" | "DURABLE_DEGRADED" | "UNSAFE_EPHEMERAL" | "UNAVAILABLE";
+  repositoryDurable: boolean;
+  repositoryWritable: boolean;
+  repositoryReadable: boolean;
+  humanSessionsAllowed: boolean;
+  distillationAllowed: boolean;
+  technicalOnlyNonDurable: boolean;
+  mode: "file" | "postgres" | "volume";
+};
+
+export function fetchStorageHealth(signal?: AbortSignal) {
+  return ccFetch<{ storage: StorageHealth; mentorEligible: false }>("/storage/health", { signal });
+}
+
+export function verifyPersistence(signal?: AbortSignal) {
+  return ccFetch<{ ok: boolean; storage: StorageHealth; mentorEligible: false }>("/storage/verify", {
+    method: "POST",
+    body: "{}",
+    signal,
+  });
+}
+
+export function exportCalibrationBackup(signal?: AbortSignal) {
+  return ccFetch<{ backup: unknown; mentorEligible: false }>("/backup/export", { signal });
+}
+
+export function importCalibrationBackup(backup: unknown, dryRun = true, signal?: AbortSignal) {
+  return ccFetch<{ result: unknown; mentorEligible: false }>("/backup/import", {
+    method: "POST",
+    body: JSON.stringify({ backup, dryRun }),
+    signal,
+  });
+}
+
+export function runDistillationFromSession(
+  sourceSessionIds: string[],
+  opts?: { dryRun?: boolean },
+  signal?: AbortSignal,
+) {
+  return fetch(apiUrl("/api/internal/ai/knowledge-distillation/runs"), {
+    credentials: "include",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sourceSessionIds,
+      dryRun: opts?.dryRun ?? false,
+      persist: true,
+      duplicatePolicy: "ALLOW_NEW_RUN",
+    }),
+    signal,
+  }).then(async (res) => {
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      throw new Error(
+        typeof body.code === "string" ? body.code : typeof body.message === "string" ? body.message : `HTTP ${res.status}`,
+      );
+    }
+    return body;
+  });
+}

@@ -36,9 +36,29 @@ export function fetchKdStatus() {
 }
 
 export function runDistillation() {
-  return kdFetch<{ result: unknown; mentorEligible: false; brainMutate: false }>("/run", {
+  return kdFetch<{ result: unknown; mentorEligible: false; brainMutate: false; warning?: string }>("/run", {
     method: "POST",
     body: "{}",
+  });
+}
+
+export function runStrictDistillation(body: {
+  sourceSessionIds: string[];
+  dryRun?: boolean;
+  persist?: boolean;
+  duplicatePolicy?: "REJECT" | "ALLOW_NEW_RUN";
+}) {
+  return kdFetch<{
+    result: unknown;
+    dryRun: boolean;
+    sourceSessionIds: string[];
+    fingerprint: string;
+    preview?: { observationCount: number; humanSessionCount: number };
+    mentorEligible: false;
+    brainMutate: false;
+  }>("/runs", {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 
