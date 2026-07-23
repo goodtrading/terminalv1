@@ -14,7 +14,7 @@ import { AppRouter } from "@/AppRouter";
 
 function App() {
   useEffect(() => {
-    document.title = "GoodTrading Terminal";
+    document.title = "GoodTrading Terminal | Order Flow, Gamma y Bitcoin";
     if (!isDesktopBuild) return;
     void initDesktopStorage();
     const handleShutdown = () => {
