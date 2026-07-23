@@ -66,14 +66,13 @@ export function MarketingFooter() {
 
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-[#6b7280]">
-              Productos
+              Aprender
             </p>
             <nav className="mt-4 flex flex-col gap-2.5">
-              <FooterLink href="/products">Terminal Web</FooterLink>
-              <FooterLink onClick={() => openDesktopDownload("footer_products")}>
-                App Desktop
-              </FooterLink>
-              <span className="text-sm text-[#6b7280]">App Móvil · Próximamente</span>
+              <FooterLink href="/terminal-trading-cripto">Terminal de trading cripto</FooterLink>
+              <FooterLink href="/order-flow-bitcoin">Order Flow en Bitcoin</FooterLink>
+              <FooterLink href="/gamma-exposure-bitcoin">Gamma Exposure de Bitcoin</FooterLink>
+              <FooterLink href="/heatmap-liquidez-bitcoin">Heatmap de liquidez</FooterLink>
             </nav>
           </div>
 

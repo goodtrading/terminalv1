@@ -16,6 +16,10 @@ import KnowledgeDistillationPage from "@/pages/admin/KnowledgeDistillationPage";
 import KnowledgeEvolutionPage from "@/pages/admin/KnowledgeEvolutionPage";
 import KnowledgeProvenancePage from "@/pages/admin/KnowledgeProvenancePage";
 import HomePage from "@/pages/marketing/HomePage";
+import TerminalTradingCriptoPage from "@/pages/marketing/TerminalTradingCriptoPage";
+import OrderFlowBitcoinPage from "@/pages/marketing/OrderFlowBitcoinPage";
+import GammaExposureBitcoinPage from "@/pages/marketing/GammaExposureBitcoinPage";
+import HeatmapLiquidezBitcoinPage from "@/pages/marketing/HeatmapLiquidezBitcoinPage";
 import LoginPage from "@/pages/marketing/LoginPage";
 import RegisterPage from "@/pages/marketing/RegisterPage";
 import ForgotPasswordPage from "@/pages/marketing/ForgotPasswordPage";
@@ -138,6 +142,10 @@ function WebRouter() {
       <Route path="/checkout" component={PricingPage} />
       <Route path="/products" component={ProductsPage} />
       <Route path="/download/desktop" component={DownloadDesktopPage} />
+      <Route path="/terminal-trading-cripto" component={TerminalTradingCriptoPage} />
+      <Route path="/order-flow-bitcoin" component={OrderFlowBitcoinPage} />
+      <Route path="/gamma-exposure-bitcoin" component={GammaExposureBitcoinPage} />
+      <Route path="/heatmap-liquidez-bitcoin" component={HeatmapLiquidezBitcoinPage} />
       <Route path="/account" component={AccountPage} />
       <Route path="/my-account" component={MyAccountRedirect} />
       <Route path="/terms" component={TermsPage} />

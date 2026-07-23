@@ -31,6 +31,10 @@ export function AccessCTA({ className }: AccessCTAProps) {
             <h1 className="text-4xl font-bold leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-6xl">
               Leé Bitcoin con ventaja institucional
             </h1>
+            <p className="max-w-3xl text-base leading-relaxed text-[#9ca3af] sm:text-lg">
+              Terminal de trading cripto para analizar Bitcoin con Order Flow, gamma, opciones y
+              herramientas de lectura institucional.
+            </p>
             <p className="max-w-3xl text-lg leading-relaxed text-[#b0b8c4] sm:text-xl">
               Gamma, opciones, estructura y niveles operativos en una sola terminal para contexto,
               timing y ejecución.

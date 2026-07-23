@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { nanoid } from "nanoid";
+import { injectPublicSeoHtml } from "./seo/injectPublicSeoHtml";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,7 +68,10 @@ export async function setupVite(server: Server, app: Express) {
         req.url,
         fs.readFileSync(path.resolve(__dirname, "../client/index.html"), "utf-8"),
       )
-      .then((html) => res.type("html").send(html))
+      .then((html) => {
+        const withSeo = injectPublicSeoHtml(html, req.path);
+        res.type("html").send(withSeo);
+      })
       .catch(next);
   });
 }

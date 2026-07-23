@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
+import { injectPublicSeoHtml } from "./seo/injectPublicSeoHtml";
 
 export function serveStatic(app: Express) {
   const distPath = path.resolve(__dirname, "public");
@@ -9,6 +10,9 @@ export function serveStatic(app: Express) {
       `Could not find the build directory: ${distPath}, make sure to build the client first`,
     );
   }
+
+  const indexPath = path.resolve(distPath, "index.html");
+  const indexHtml = fs.readFileSync(indexPath, "utf-8");
 
   app.use(express.static(distPath));
 
@@ -20,6 +24,7 @@ export function serveStatic(app: Express) {
         message: "API route not found.",
       });
     }
-    res.sendFile(path.resolve(distPath, "index.html"));
+    const html = injectPublicSeoHtml(indexHtml, req.path);
+    res.status(200).type("html").send(html);
   });
 }
