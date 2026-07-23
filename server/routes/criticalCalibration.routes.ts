@@ -24,7 +24,18 @@ import {
   submitCalibrationAnswer,
   revealAfterCalibrationSubmit,
   assertBlindPacketSafe,
+  summarizeQueue,
+  listSessionSummaries,
+  resumeCriticalCalibrationSession,
+  archiveTechnicalSession,
+  getSessionProgress,
 } from "../ai/goodTradingAi/criticalCalibration/sessionService";
+import {
+  calibrationAnswerTypeSchema,
+  calibrationObservationKindSchema,
+  calibrationPostRevealActionSchema,
+  calibrationSessionKindSchema,
+} from "@shared/goodTradingAiCriticalCalibration";
 import { evaluateDecisionGraph } from "../ai/goodTradingAi/decision/decisionGraphEngine";
 import { retrieveKnowledge } from "../ai/goodTradingAi/knowledge/retrieve";
 
@@ -118,29 +129,51 @@ export function registerCriticalCalibrationRoutes(app: Express): void {
     const mutationDepth = typeof req.body?.mutationDepth === "number" ? req.body.mutationDepth : 1;
     const maxMutationsPerBase = typeof req.body?.maxMutationsPerBase === "number" ? req.body.maxMutationsPerBase : 3;
     const batch = generateBatchWithMutations({ seed, scenarioCount, mutationDepth, maxMutationsPerBase });
-    res.json({ ...batch, mentorEligible: false, realMarketData: false });
+    res.json({
+      seed: batch.seed,
+      scenarioCount: batch.scenarioCount,
+      expandedCount: batch.expandedCount,
+      mutationDepth: batch.mutationDepth,
+      maxMutationsPerBase: batch.maxMutationsPerBase,
+      realMarketData: false,
+      mentorEligible: false,
+      brainMutate: false,
+      autoApply: false,
+      synthetic: true,
+      warning: "SYNTHETIC_ONLY_NO_LIVE_MARKET_DATA",
+    });
   });
 
   app.post(`${base}/questions/active-learning`, ...guards, (req: Request, res: Response) => {
     const seed = typeof req.body?.seed === "string" ? req.body.seed : "73001";
     const queue = buildActiveLearningQueue({ seed, scenarioCount: typeof req.body?.scenarioCount === "number" ? req.body.scenarioCount : 120 });
     getCriticalCalibrationMemory().saveQuestionQueue(queue.questions);
-    res.json({ questions: queue.questions, count: queue.questions.length, mentorEligible: false });
+    res.json({
+      count: queue.questions.length,
+      summary: summarizeQueue(queue.questions),
+      mentorEligible: false,
+      realMarketData: false,
+    });
   });
 
   app.post(`${base}/sessions/start`, ...guards, (req: Request, res: Response) => {
+    const kind = req.body?.kind != null ? calibrationSessionKindSchema.parse(req.body.kind) : "HUMAN";
     const started = startCriticalCalibrationSession({
       seed: typeof req.body?.seed === "string" ? req.body.seed : "73001",
       initialQuestionCount: typeof req.body?.initialQuestionCount === "number" ? req.body.initialQuestionCount : 15,
+      kind,
+      label: typeof req.body?.label === "string" ? req.body.label : undefined,
     });
     for (const q of started.blindQuestions) assertBlindPacketSafe(q);
     res.json({
       sessionId: started.session.id,
       questionCount: started.blindQuestions.length,
       blindQuestions: started.blindQuestions,
+      progress: getSessionProgress(started.session.id),
       mentorEligible: false,
       brainMutate: false,
       autoApply: false,
+      realMarketData: false,
     });
   });
 
@@ -160,10 +193,24 @@ export function registerCriticalCalibrationRoutes(app: Express): void {
       const obs = submitCalibrationAnswer({
         sessionId: req.params.id,
         questionId: String(req.body?.questionId ?? ""),
-        humanNote: String(req.body?.humanNote ?? ""),
+        humanNote: typeof req.body?.humanNote === "string" ? req.body.humanNote : undefined,
+        answerText: typeof req.body?.answerText === "string" ? req.body.answerText : undefined,
+        answerType: req.body?.answerType != null ? calibrationAnswerTypeSchema.parse(req.body.answerType) : undefined,
+        conditions: Array.isArray(req.body?.conditions) ? req.body.conditions : undefined,
+        minimumConfirmations: Array.isArray(req.body?.minimumConfirmations) ? req.body.minimumConfirmations : undefined,
+        invalidations: Array.isArray(req.body?.invalidations) ? req.body.invalidations : undefined,
         confidence: req.body?.confidence,
+        observationKind: req.body?.observationKind != null ? calibrationObservationKindSchema.parse(req.body.observationKind) : undefined,
+        revisionOf: typeof req.body?.revisionOf === "string" ? req.body.revisionOf : undefined,
+        postRevealAction: req.body?.postRevealAction != null ? calibrationPostRevealActionSchema.parse(req.body.postRevealAction) : undefined,
       });
-      res.json({ observation: obs, mentorEligible: false, revealed: false });
+      res.json({
+        observation: obs,
+        progress: getSessionProgress(req.params.id),
+        mentorEligible: false,
+        revealed: false,
+        brainMutate: false,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "ERROR";
       res.status(400).json({ code: msg, mentorEligible: false });
@@ -173,12 +220,50 @@ export function registerCriticalCalibrationRoutes(app: Express): void {
   app.post(`${base}/sessions/:id/questions/:qid/reveal`, ...guards, (req: Request, res: Response) => {
     try {
       const revealed = revealAfterCalibrationSubmit(req.params.id, req.params.qid);
-      res.json({ ...revealed, mentorEligible: false, brainMutated: false });
+      res.json({ ...revealed, progress: getSessionProgress(req.params.id), mentorEligible: false, brainMutated: false });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "ERROR";
       const status = msg === "ANSWER_REQUIRED_BEFORE_REVEAL" ? 409 : 400;
       res.status(status).json({ code: msg, mentorEligible: false });
     }
+  });
+
+  app.get(`${base}/sessions`, ...guards, (_req: Request, res: Response) => {
+    res.json({ sessions: listSessionSummaries(), mentorEligible: false });
+  });
+
+  app.get(`${base}/sessions/:id`, ...guards, (req: Request, res: Response) => {
+    try {
+      const resumed = resumeCriticalCalibrationSession(req.params.id);
+      res.json({ ...resumed, mentorEligible: false });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "ERROR";
+      res.status(msg === "SESSION_NOT_FOUND" ? 404 : 400).json({ code: msg, mentorEligible: false });
+    }
+  });
+
+  app.get(`${base}/sessions/:id/progress`, ...guards, (req: Request, res: Response) => {
+    try {
+      res.json({ progress: getSessionProgress(req.params.id), mentorEligible: false });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "ERROR";
+      res.status(msg === "SESSION_NOT_FOUND" ? 404 : 400).json({ code: msg, mentorEligible: false });
+    }
+  });
+
+  app.post(`${base}/sessions/:id/archive`, ...guards, (req: Request, res: Response) => {
+    try {
+      const progress = archiveTechnicalSession(req.params.id);
+      res.json({ progress, mentorEligible: false, brainMutate: false });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "ERROR";
+      res.status(msg === "SESSION_NOT_FOUND" ? 404 : 400).json({ code: msg, mentorEligible: false });
+    }
+  });
+
+  app.get(`${base}/questions/summary`, ...guards, (_req: Request, res: Response) => {
+    const questions = getCriticalCalibrationMemory().listQuestions();
+    res.json({ summary: summarizeQueue(questions), mentorEligible: false });
   });
 
 }

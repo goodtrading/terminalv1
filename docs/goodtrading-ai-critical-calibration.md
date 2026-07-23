@@ -42,3 +42,10 @@ Educational calibration only. Proposals never auto-apply to the knowledge regist
 - Observations before high-impact proposal ACCEPT; autoApply/brainMutate false
 - Session: /api/internal/ai/critical-calibration/sessions/start (blind until submit)
 - Batch seed example: 73001 / 120 scenarios
+
+## AI-7.3.3 Blind Session UI
+- Admin UI: /admin/critical-calibration modes Overview | Batch | Queue | Blind Session | Report
+- credentials:include only; no JWT prompt; no localStorage answer authority
+- Flow: status → batch/generate (seed 73001) → questions/active-learning → sessions/start → answer → reveal
+- Proposal debt: SAFE_FOR_CALIBRATION_SESSION / NOT_SAFE_FOR_BRAIN_APPLICATION / PROPOSAL_SCHEMA_NOT_READY_FOR_BRAIN_APPLICATION
+- No Approve-to-Brain button; mentorEligible=false; brainMutate=false; realMarketData=false

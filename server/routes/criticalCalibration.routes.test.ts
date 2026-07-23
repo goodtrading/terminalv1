@@ -27,6 +27,9 @@ describe("AI-7.3 critical calibration routes source", () => {
     assert.ok(src.includes("/report"));
     assert.ok(src.includes("/metrics"));
     assert.ok(src.includes("/sessions/start"));
+    assert.ok(src.includes("/sessions/:id/archive") || src.includes("/archive"));
+    assert.ok(src.includes("/questions/summary") || src.includes("questions/summary"));
+    assert.ok(src.includes("listSessionSummaries") || src.includes("/sessions"));
     assert.ok(src.includes("/questions/active-learning"));
     assert.ok(src.includes("/batch/generate"));
     assert.ok(src.includes("requireCriticalCalibrationAccess"));

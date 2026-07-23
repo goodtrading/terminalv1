@@ -30,6 +30,12 @@ export type CriticalCalibrationSessionRecord = {
   autoApply: false;
   appendOnly: true;
   version: typeof CRITICAL_CALIBRATION_SCHEMA_VERSION;
+  /** HUMAN = Ignacio production; TECHNICAL = automated/tech probes. */
+  kind: "HUMAN" | "TECHNICAL";
+  revealedQuestionIds: string[];
+  deferredQuestionIds: string[];
+  archived: boolean;
+  label?: string;
 };
 
 function defaultRootDir(): string {

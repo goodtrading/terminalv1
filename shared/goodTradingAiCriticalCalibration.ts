@@ -219,13 +219,48 @@ export const calibrationQuestionSchema = z.object({
 });
 export type CalibrationQuestion = z.infer<typeof calibrationQuestionSchema>;
 
+/** Structured answer kinds for blind calibration UI (AI-7.3.3). */
+export const calibrationAnswerTypeSchema = z.enum([
+  "PRIORITIZE",
+  "REQUIRE_CONFIRMATION",
+  "REQUIRE_INVALIDATION",
+  "DEPENDS",
+  "MULTIPLE_VALID",
+  "INSUFFICIENT_EVIDENCE",
+]);
+export type CalibrationAnswerType = z.infer<typeof calibrationAnswerTypeSchema>;
+
+export const calibrationObservationKindSchema = z.enum(["ANSWER", "ADDENDUM", "REVISION"]);
+export type CalibrationObservationKind = z.infer<typeof calibrationObservationKindSchema>;
+
+export const calibrationPostRevealActionSchema = z.enum([
+  "AGREE",
+  "DISAGREE",
+  "NEEDS_CONDITIONS",
+  "NEEDS_MORE_EVIDENCE",
+  "DEFER",
+  "ADD_NOTE",
+]);
+export type CalibrationPostRevealAction = z.infer<typeof calibrationPostRevealActionSchema>;
+
+export const calibrationSessionKindSchema = z.enum(["HUMAN", "TECHNICAL"]);
+export type CalibrationSessionKind = z.infer<typeof calibrationSessionKindSchema>;
+
 export const calibrationObservationSchema = z.object({
   id: z.string().min(3).max(80),
   sessionId: z.string().min(3).max(80),
   questionId: z.string().min(3).max(80),
+  /** Primary free-text answer (UI answerText maps here). */
   humanNote: z.string().min(1).max(2000),
+  answerType: calibrationAnswerTypeSchema.optional(),
+  conditions: z.array(z.string().min(1).max(240)).max(12).optional(),
+  minimumConfirmations: z.array(z.string().min(1).max(240)).max(12).optional(),
+  invalidations: z.array(z.string().min(1).max(240)).max(12).optional(),
   confidence: z.enum(["LOW", "MEDIUM", "HIGH"]),
   allowsDepends: z.boolean(),
+  observationKind: calibrationObservationKindSchema.default("ANSWER"),
+  revisionOf: z.string().min(3).max(80).optional(),
+  postRevealAction: calibrationPostRevealActionSchema.optional(),
   createdAtMs: z.number().int().positive(),
   mentorEligible: z.literal(false),
 }).strict();
