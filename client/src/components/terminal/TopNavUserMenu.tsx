@@ -41,6 +41,7 @@ export function TopNavUserMenu() {
 
   const planLabel = access?.subscription?.planName ?? (authenticated ? "ACTIVE" : "SIGNED OUT");
   const checkFeedback = manualCheckFeedbackLabel(desktopUpdate.manualCheckFeedback);
+  const showAdminPanel = isAdminUser(user);
 
   if (saasDisabled || !user) {
     return (
@@ -80,7 +81,7 @@ export function TopNavUserMenu() {
             </div>
             <div className="flex items-center gap-2 text-[10px] text-terminal-muted uppercase tracking-wide">
               <span>{planLabel}</span>
-              {isAdminUser(user) && (
+              {showAdminPanel && (
                 <span className="rounded border border-terminal-accent/40 px-1 py-0.5 text-terminal-accent">
                   Admin
                 </span>
@@ -90,23 +91,6 @@ export function TopNavUserMenu() {
           </DropdownMenuLabel>
 
           <DropdownMenuSeparator className="bg-terminal-border" />
-
-          {isDesktopApp() && isAdminUser(user) && (
-            <DropdownMenuItem
-              className="cursor-pointer focus:bg-terminal-bg focus:text-white"
-              onSelect={() => {
-                setMenuOpen(false);
-                navigate("/admin");
-              }}
-            >
-              <Shield className="mr-2 h-3.5 w-3.5" />
-              Admin panel
-            </DropdownMenuItem>
-          )}
-
-          {isDesktopApp() && isAdminUser(user) && (
-            <DropdownMenuSeparator className="bg-terminal-border" />
-          )}
 
           {isDesktopApp() && (
             <DropdownMenuItem
@@ -147,6 +131,20 @@ export function TopNavUserMenu() {
             <Stethoscope className="mr-2 h-3.5 w-3.5" />
             System diagnostics
           </DropdownMenuItem>
+
+          {showAdminPanel && (
+            <DropdownMenuItem
+              className="cursor-pointer focus:bg-terminal-bg focus:text-white"
+              data-testid="menu-admin-panel"
+              onSelect={() => {
+                setMenuOpen(false);
+                navigate("/admin");
+              }}
+            >
+              <Shield className="mr-2 h-3.5 w-3.5" />
+              Admin Panel
+            </DropdownMenuItem>
+          )}
 
           <DropdownMenuSeparator className="bg-terminal-border" />
 
