@@ -83,6 +83,21 @@ export function isGoodTradingAiCriticalCalibrationEnabledEnv(): boolean {
   return envBool("GOODTRADING_AI_CRITICAL_CALIBRATION_ENABLED", false);
 }
 
+/** AI-7.3.4 Knowledge Distillation. Default OFF. Never mutates Brain. No OpenAI. */
+export function isGoodTradingAiKnowledgeDistillationEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_KNOWLEDGE_DISTILLATION_ENABLED", false);
+}
+
+/** AI-7.3.5 Knowledge Evolution. Default OFF. Never mutates Brain. No OpenAI. */
+export function isGoodTradingAiKnowledgeEvolutionEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_KNOWLEDGE_EVOLUTION_ENABLED", false);
+}
+
+/** AI-7.3.6 Knowledge Provenance. Default OFF. Append-only. Never mutates Brain. No OpenAI. */
+export function isGoodTradingAiKnowledgeProvenanceEnabledEnv(): boolean {
+  return envBool("GOODTRADING_AI_KNOWLEDGE_PROVENANCE_ENABLED", false);
+}
+
 /** Internal auto-publish from runtime bridge. Default OFF. Admin/debug only. */
 export function isGoodTradingAiMarketTelemetryAutoPublishInternalEnv(): boolean {
   return envBool("GOODTRADING_AI_MARKET_TELEMETRY_AUTO_PUBLISH_INTERNAL", false);

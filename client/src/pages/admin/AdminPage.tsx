@@ -328,6 +328,18 @@ export default function AdminPage() {
             <Link href="/admin/critical-calibration" className="text-terminal-accent hover:underline">
               Critical Calibration
             </Link>
+            <span className="text-terminal-muted">/</span>
+            <Link href="/admin/knowledge-distillation" className="text-terminal-accent hover:underline">
+              Knowledge Distillation
+            </Link>
+            <span className="text-terminal-muted">/</span>
+            <Link href="/admin/knowledge-evolution" className="text-terminal-accent hover:underline">
+              Knowledge Evolution
+            </Link>
+            <span className="text-terminal-muted">/</span>
+            <Link href="/admin/knowledge-provenance" className="text-terminal-accent hover:underline">
+              Knowledge Provenance
+            </Link>
           </div>
           <button
             type="button"

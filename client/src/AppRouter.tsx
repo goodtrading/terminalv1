@@ -12,6 +12,9 @@ import MarketSnapshotDebugPage from "@/pages/admin/MarketSnapshotDebugPage";
 import DecisionGraphDebugPage from "@/pages/admin/DecisionGraphDebugPage";
 import HumanMethodologyReviewPage from "@/pages/admin/HumanMethodologyReviewPage";
 import CriticalCalibrationLabPage from "@/pages/admin/CriticalCalibrationLabPage";
+import KnowledgeDistillationPage from "@/pages/admin/KnowledgeDistillationPage";
+import KnowledgeEvolutionPage from "@/pages/admin/KnowledgeEvolutionPage";
+import KnowledgeProvenancePage from "@/pages/admin/KnowledgeProvenancePage";
 import HomePage from "@/pages/marketing/HomePage";
 import LoginPage from "@/pages/marketing/LoginPage";
 import RegisterPage from "@/pages/marketing/RegisterPage";
@@ -91,6 +94,30 @@ function CriticalCalibrationLabRoute() {
   );
 }
 
+function KnowledgeDistillationRoute() {
+  return (
+    <AdminRoute>
+      <KnowledgeDistillationPage />
+    </AdminRoute>
+  );
+}
+
+function KnowledgeEvolutionRoute() {
+  return (
+    <AdminRoute>
+      <KnowledgeEvolutionPage />
+    </AdminRoute>
+  );
+}
+
+function KnowledgeProvenanceRoute() {
+  return (
+    <AdminRoute>
+      <KnowledgeProvenancePage />
+    </AdminRoute>
+  );
+}
+
 function TerminalRoute() {
   return (
     <BlockedAccessScreen>
@@ -123,6 +150,9 @@ function WebRouter() {
       <Route path="/admin/decision-graph" component={DecisionGraphDebugRoute} />
       <Route path="/admin/human-methodology-review" component={HumanMethodologyReviewRoute} />
       <Route path="/admin/critical-calibration" component={CriticalCalibrationLabRoute} />
+      <Route path="/admin/knowledge-distillation" component={KnowledgeDistillationRoute} />
+      <Route path="/admin/knowledge-evolution" component={KnowledgeEvolutionRoute} />
+      <Route path="/admin/knowledge-provenance" component={KnowledgeProvenanceRoute} />
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/" component={HomePage} />
       <Route component={NotFound} />
@@ -153,6 +183,9 @@ function DesktopRouter() {
       <Route path="/admin/decision-graph" component={DecisionGraphDebugRoute} />
       <Route path="/admin/human-methodology-review" component={HumanMethodologyReviewRoute} />
       <Route path="/admin/critical-calibration" component={CriticalCalibrationLabRoute} />
+      <Route path="/admin/knowledge-distillation" component={KnowledgeDistillationRoute} />
+      <Route path="/admin/knowledge-evolution" component={KnowledgeEvolutionRoute} />
+      <Route path="/admin/knowledge-provenance" component={KnowledgeProvenanceRoute} />
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/products" component={DesktopEntryRedirect} />
       <Route path="/download/desktop" component={DesktopEntryRedirect} />

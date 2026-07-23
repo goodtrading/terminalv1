@@ -24,3 +24,9 @@ server/storage/human-decision-review/
 # AI-7.3 Critical Calibration Memory (never Brain)
 server/storage/critical-calibration/
 **/critical-calibration/private/
+server/storage/knowledge-distillation/
+**/knowledge-distillation/private/
+server/storage/knowledge-evolution/
+**/knowledge-evolution/private/
+server/storage/knowledge-provenance/
+**/knowledge-provenance/private/
