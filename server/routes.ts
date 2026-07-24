@@ -1665,6 +1665,12 @@ export async function registerRoutes(
   const { registerExecutionRoutes } = await import("./routes/execution.routes");
   const { registerBrokerRoutes } = await import("./routes/broker.routes");
   const { registerBingxApiRoutes } = await import("./routes/bingxApi.routes");
+  const { registerBingxAccountRoutes } = await import(
+    "./routes/bingxAccount.routes"
+  );
+  const { registerDecisionContextRoutes } = await import(
+    "./routes/decisionContext.routes"
+  );
   const { registerSystemRoutes } = await import("./routes/system.routes");
   const { registerLiveRoutes } = await import("./routes/live.routes");
   const { registerRiskMirrorRoutes } = await import("./routes/riskMirror.routes");
@@ -1674,7 +1680,11 @@ export async function registerRoutes(
   registerExecutionRoutes(app);
   registerBrokerRoutes(app);
   registerBingxApiRoutes(app);
+  registerBingxAccountRoutes(app);
+  registerDecisionContextRoutes(app);
   console.log("[routes] bingx read-only registered");
+  console.log("[routes] bingx account read-model registered");
+  console.log("[routes] decision context recorder registered");
   registerSystemRoutes(app);
   registerLiveRoutes(app);
   console.log("[routes] system registered");

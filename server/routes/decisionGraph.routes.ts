@@ -15,6 +15,7 @@ import { knowledgeRegistry } from "../ai/goodTradingAi/knowledge/registry";
 import { retrieveKnowledge } from "../ai/goodTradingAi/knowledge/retrieve";
 import { marketSnapshotSchema } from "@shared/goodTradingAiMarket";
 import { validateMarketSnapshot } from "../ai/goodTradingAi/market/snapshotValidator";
+import { registerKnownDecisionGraph } from "../ai/goodTradingAi/decisionContext";
 
 const evaluateBodySchema = z
   .object({
@@ -103,6 +104,10 @@ export function registerDecisionGraphRoutes(app: Express): void {
     }
 
     // Never return full internal graph to client — clientSafe only (+ limited admin debug fields)
+    // AI-8.1 passive ref registry — summaries only; does not create a new graph for recorder
+    registerKnownDecisionGraph(result.clientSafe, {
+      evaluatedAtMs: result.graph?.evaluatedAtMs ?? Date.now(),
+    });
     res.json({
       ok: true,
       durationMs: result.durationMs,

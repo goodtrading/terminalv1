@@ -52,6 +52,7 @@ import {
   buildLiveInternalSnapshot,
   getMarketSourceCapabilities,
 } from "../ai/goodTradingAi/market/live";
+import { registerKnownMarketSnapshot } from "../ai/goodTradingAi/decisionContext";
 
 function userOf(req: Request) {
   return req.saasUser ?? req.user;
@@ -196,6 +197,7 @@ export function registerMarketSnapshotRoutes(app: Express): void {
         : "BTCUSDT";
     const started = Date.now();
     const { snapshot, issues } = buildStubSnapshot(symbol);
+    registerKnownMarketSnapshot(snapshot);
     const payload = toAdminPayload(snapshot);
     res.json({
       ...payload,
@@ -229,6 +231,7 @@ export function registerMarketSnapshotRoutes(app: Express): void {
         sessionId,
         userId: user?.id,
       });
+      registerKnownMarketSnapshot(result.snapshot);
       const payload = toAdminPayload(result.snapshot);
       res.json({
         ...payload,
@@ -256,6 +259,7 @@ export function registerMarketSnapshotRoutes(app: Express): void {
     }
     const started = Date.now();
     const { snapshot, issues } = buildSimulatedSnapshot(parsed.data);
+    registerKnownMarketSnapshot(snapshot);
     const payload = toAdminPayload(snapshot);
     res.json({
       ...payload,

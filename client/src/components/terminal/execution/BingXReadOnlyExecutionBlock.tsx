@@ -18,6 +18,7 @@ import { ExecutionVenueStrip } from "./ExecutionVenueStrip";
 import { ReadOnlyRiskMirrorPanel } from "../riskMirror/ReadOnlyRiskMirrorPanel";
 import { LiveTradingReadinessBlock } from "../health/LiveTradingReadinessBlock";
 import { useLiveTradingReadiness } from "../health/useLiveTradingReadiness";
+import { BingxAccountActivityPanel } from "../bingxAccount";
 
 type BingXReadOnlyExecutionBlockProps = {
   session: BrokerSessionState;
@@ -412,6 +413,13 @@ export function BingXReadOnlyExecutionBlock({
           </p>
         </section>
       ) : null}
+
+      <section className="rounded border border-slate-500/30 bg-slate-950/30 p-2 space-y-1.5">
+        <div className="text-[8px] font-bold uppercase tracking-widest text-slate-400">
+          Trading activity (AI-8.0 read model)
+        </div>
+        <BingxAccountActivityPanel connectionId={connectionId} symbol={symbol} />
+      </section>
 
       <section className="rounded border border-red-500/30 bg-red-950/15 p-2 space-y-1">
         <div className="text-[8px] font-bold uppercase tracking-widest text-red-300/90">
