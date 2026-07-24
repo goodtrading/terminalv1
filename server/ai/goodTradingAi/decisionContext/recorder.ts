@@ -8,6 +8,7 @@ import type {
   BingxAccountSnapshot,
   BingxTradingActionEvent,
 } from "@shared/goodTradingAiBingxAccount";
+import { isBingxRecorderEligibleEvent } from "@shared/goodTradingAiBingxAccount";
 import { buildTraderActionContext } from "../../../integrations/bingx/account/aiBoundary";
 import type {
   DecisionJournal,
@@ -138,8 +139,11 @@ export async function recordFromBingxReconciliation(args: {
   }
   if (!canCaptureDecisionContext()) return [];
 
-  const events = (args.snapshot.reconciliation?.events ?? []).filter((e) =>
-    isPositionEventForDecision(e.type),
+  // AI-8.1.3 — Only POSITION_* action events that are recorder-eligible and
+  // not baseline markers. Pre-existing baseline exposure never creates a
+  // TradeDecision (falseTradeDecisionsCreated must be 0).
+  const events = (args.snapshot.reconciliation?.events ?? []).filter(
+    (e) => isBingxRecorderEligibleEvent(e) && isPositionEventForDecision(e.type),
   );
   if (!events.length) return [];
 
@@ -169,6 +173,7 @@ export async function recordSinglePositionEvent(args: {
     throw new Error(UNSAFE_NON_DURABLE_DECISION_CONTEXT_STORE);
   }
   if (!canCaptureDecisionContext()) return null;
+  if (!isBingxRecorderEligibleEvent(args.event)) return null;
   if (!isPositionEventForDecision(args.event.type)) return null;
 
   const store = getDecisionContextRepository();

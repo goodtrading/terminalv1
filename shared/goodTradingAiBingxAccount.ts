@@ -46,8 +46,28 @@ export const bingxTradingActionTypeSchema = z.enum([
   "MARGIN_MODE_OBSERVED",
   "LEVERAGE_OBSERVED",
   "ACCOUNT_STATE_UNCERTAIN",
+  // AI-8.1.3 — baseline (initial snapshot) markers. NOT human actions.
+  // Never recorder-eligible; must not create TradeDecisions.
+  "ACCOUNT_BASELINE_CAPTURED",
+  "EXISTING_POSITION_BASELINE",
+  "EXISTING_OPEN_ORDER_BASELINE",
 ]);
 export type BingxTradingActionType = z.infer<typeof bingxTradingActionTypeSchema>;
+
+/**
+ * AI-8.1.3 — Baseline event types describe pre-existing state observed on the
+ * first snapshot of a connection. They represent NO new human decision, so they
+ * are never treated as trading-action events and are never recorder-eligible.
+ */
+export const BINGX_BASELINE_EVENT_TYPES = [
+  "ACCOUNT_BASELINE_CAPTURED",
+  "EXISTING_POSITION_BASELINE",
+  "EXISTING_OPEN_ORDER_BASELINE",
+] as const;
+
+export function isBingxBaselineEventType(type: string): boolean {
+  return (BINGX_BASELINE_EVENT_TYPES as readonly string[]).includes(type);
+}
 
 export const bingxBalanceSnapshotSchema = z.object({
   asset: z.string().min(1).max(32),
@@ -217,8 +237,43 @@ export const bingxTradingActionEventSchema = z.object({
   mentorEligible: z.literal(false),
   aiConsumptionEnabled: z.literal(false),
   reconciliationVersion: z.number().int().nonnegative(),
+  /**
+   * AI-8.1.3 — Whether this event represents a real trader action (a human
+   * decision). Baseline / uncertainty markers are false. Defaults true so
+   * pre-8.1.3 event literals remain valid.
+   */
+  isActionEvent: z.boolean().default(true),
+  /**
+   * AI-8.1.3 — Whether the Decision Context Recorder may consume this event.
+   * Baseline markers and non-position events are false.
+   */
+  recorderEligible: z.boolean().default(true),
+  /** AI-8.1.3 — True for initial-snapshot baseline markers only. */
+  baseline: z.boolean().default(false),
 });
 export type BingxTradingActionEvent = z.infer<typeof bingxTradingActionEventSchema>;
+
+/**
+ * AI-8.1.3 — Single source of truth for recorder eligibility. The Decision
+ * Context Recorder must only act on events for which this returns true:
+ * a POSITION_* action event that is recorder-eligible and not a baseline.
+ */
+export function isBingxRecorderEligibleEvent(event: {
+  type: string;
+  isActionEvent?: boolean;
+  recorderEligible?: boolean;
+  baseline?: boolean;
+}): boolean {
+  if (event.baseline === true) return false;
+  if (event.isActionEvent === false) return false;
+  if (event.recorderEligible === false) return false;
+  return (
+    event.type === "POSITION_OPENED" ||
+    event.type === "POSITION_INCREASED" ||
+    event.type === "POSITION_REDUCED" ||
+    event.type === "POSITION_CLOSED"
+  );
+}
 
 export const bingxReconciliationResultSchema = z.object({
   version: z.number().int().nonnegative(),

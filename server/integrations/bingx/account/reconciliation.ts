@@ -33,6 +33,22 @@ function eventId(
     .slice(0, 24);
 }
 
+// Position-lifecycle events the Decision Context Recorder may consume.
+const RECORDER_ELIGIBLE_TYPES: ReadonlySet<string> = new Set([
+  "POSITION_OPENED",
+  "POSITION_INCREASED",
+  "POSITION_REDUCED",
+  "POSITION_CLOSED",
+]);
+
+// Non-action markers: observed uncertainty / baseline — never a human decision.
+const NON_ACTION_TYPES: ReadonlySet<string> = new Set([
+  "ACCOUNT_STATE_UNCERTAIN",
+  "ACCOUNT_BASELINE_CAPTURED",
+  "EXISTING_POSITION_BASELINE",
+  "EXISTING_OPEN_ORDER_BASELINE",
+]);
+
 function makeEvent(args: {
   sequence: number;
   type: BingxTradingActionType;
@@ -44,7 +60,14 @@ function makeEvent(args: {
   accountId: string;
   reconciliationVersion: number;
   exchangeTimestamp?: string;
+  /** AI-8.1.3 — initial-snapshot baseline marker (never a human action). */
+  baseline?: boolean;
 }): BingxTradingActionEvent {
+  const baseline = args.baseline === true;
+  // Real human action vs. observed baseline/uncertainty marker.
+  const isActionEvent = !baseline && !NON_ACTION_TYPES.has(args.type);
+  // Recorder only consumes position-lifecycle action events (never baseline).
+  const recorderEligible = isActionEvent && RECORDER_ELIGIBLE_TYPES.has(args.type);
   return {
     eventId: eventId(
       args.type,
@@ -67,6 +90,9 @@ function makeEvent(args: {
     mentorEligible: false,
     aiConsumptionEnabled: false,
     reconciliationVersion: args.reconciliationVersion,
+    isActionEvent,
+    recorderEligible,
+    baseline,
   };
 }
 
@@ -95,19 +121,38 @@ export function reconcileAccountSnapshots(
   const accountId = current.accountId;
 
   if (!previous) {
-    for (const p of current.positions) {
-      if (p.side === "flat" || p.quantity <= 0) continue;
+    // AI-8.1.3 — First snapshot of a connection. Pre-existing positions/orders
+    // are NOT new human decisions: capture them as a baseline, never as
+    // POSITION_OPENED / ORDER_OPENED. Baseline events are non-action and
+    // never recorder-eligible, so the recorder creates zero TradeDecisions.
+    const openPositions = current.positions.filter(
+      (p) => p.side !== "flat" && p.quantity > 0,
+    );
+    events.push(
+      makeEvent({
+        sequence: seq++,
+        type: "ACCOUNT_BASELINE_CAPTURED",
+        confidence: "CONFIRMED",
+        summary: `Initial account baseline captured (${openPositions.length} open position(s), ${current.openOrders.length} open order(s))`,
+        capturedAt,
+        accountId,
+        reconciliationVersion,
+        baseline: true,
+      }),
+    );
+    for (const p of openPositions) {
       events.push(
         makeEvent({
           sequence: seq++,
-          type: "POSITION_OPENED",
-          confidence: "DERIVED",
+          type: "EXISTING_POSITION_BASELINE",
+          confidence: "CONFIRMED",
           symbol: p.symbol,
           positionSide: p.side === "long" || p.side === "short" ? p.side : "unknown",
-          summary: `Observed open ${p.side} ${p.quantity} ${p.symbol}`,
+          summary: `Pre-existing ${p.side} ${p.quantity} ${p.symbol} at baseline (not a new action)`,
           capturedAt,
           accountId,
           reconciliationVersion,
+          baseline: true,
         }),
       );
     }
@@ -115,19 +160,20 @@ export function reconcileAccountSnapshots(
       events.push(
         makeEvent({
           sequence: seq++,
-          type: "ORDER_OPENED",
-          confidence: "DERIVED",
+          type: "EXISTING_OPEN_ORDER_BASELINE",
+          confidence: "CONFIRMED",
           symbol: o.symbol,
-          summary: `Observed open order ${o.side} ${o.symbol}`,
+          summary: `Pre-existing open order ${o.side} ${o.symbol} at baseline (not a new action)`,
           capturedAt,
           accountId,
           reconciliationVersion,
+          baseline: true,
         }),
       );
     }
     if (current.completeness !== "COMPLETE") {
       uncertain = true;
-      notes.push("Initial snapshot incomplete; events marked DERIVED/UNCERTAIN.");
+      notes.push("Initial baseline snapshot incomplete; captured as baseline.");
       events.push(
         makeEvent({
           sequence: seq++,
@@ -140,6 +186,7 @@ export function reconcileAccountSnapshots(
         }),
       );
     }
+    notes.push("Baseline snapshot: existing exposure recorded without action events.");
     return {
       version: reconciliationVersion,
       currentCapturedAt: capturedAt,

@@ -450,6 +450,9 @@ export function BingXConnectionModal({
   const [apiError, setApiError] = useState<string | null>(null);
   const [apiWarning, setApiWarning] = useState<string | null>(null);
   const [encryptionAvailable, setEncryptionAvailable] = useState<boolean | null>(null);
+  // AI-8.1.3 — durable connection storage status (DURABLE_READY | FILE_MODE | ...).
+  const [storageStatus, setStorageStatus] = useState<string | null>(null);
+  const [storageDurable, setStorageDurable] = useState<boolean | null>(null);
 
   const phase = session.exchange === "bingx" ? session.phase : "not_connected";
   const demoAvailable = loginStatus?.demoAvailable ?? false;
@@ -573,9 +576,23 @@ export function BingXConnectionModal({
         if (!cancelled && data && typeof data.encryptionAvailable === "boolean") {
           setEncryptionAvailable(data.encryptionAvailable);
         }
+        if (!cancelled && data && data.storage && typeof data.storage === "object") {
+          const storage = data.storage as {
+            status?: string;
+            durable?: boolean;
+          };
+          setStorageStatus(storage.status ?? null);
+          setStorageDurable(
+            typeof storage.durable === "boolean" ? storage.durable : null,
+          );
+        }
       })
       .catch(() => {
-        if (!cancelled) setEncryptionAvailable(null);
+        if (!cancelled) {
+          setEncryptionAvailable(null);
+          setStorageStatus(null);
+          setStorageDurable(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -718,6 +735,21 @@ export function BingXConnectionModal({
                 {isSecureConnected ? (
                   <span className="rounded border border-emerald-500/35 bg-emerald-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase text-emerald-300">
                     Read-only
+                  </span>
+                ) : null}
+                {storageDurable === true || storageStatus === "DURABLE_READY" ? (
+                  <span
+                    className="rounded border border-sky-500/35 bg-sky-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest text-sky-300"
+                    title="Connections are stored durably in the database."
+                  >
+                    Durable
+                  </span>
+                ) : storageStatus === "UNSAFE_FILE" ? (
+                  <span
+                    className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest text-amber-300"
+                    title="Durable storage not configured — saving is disabled in production."
+                  >
+                    Storage not durable
                   </span>
                 ) : null}
               </div>

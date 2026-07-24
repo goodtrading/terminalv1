@@ -1682,6 +1682,15 @@ export async function registerRoutes(
   registerBingxApiRoutes(app);
   registerBingxAccountRoutes(app);
   registerDecisionContextRoutes(app);
+  // AI-8.1.3 — Hydrate durable BingX connections from Postgres (no-op in file mode).
+  void import("./services/exchanges/bingx/bingxCredentialStore")
+    .then(({ hydrateBingxConnections }) => hydrateBingxConnections())
+    .catch((err) =>
+      console.error(
+        "[routes] bingx connection hydration failed",
+        err instanceof Error ? err.message : err,
+      ),
+    );
   console.log("[routes] bingx read-only registered");
   console.log("[routes] bingx account read-model registered");
   console.log("[routes] decision context recorder registered");

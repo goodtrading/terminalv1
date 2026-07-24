@@ -24,6 +24,7 @@ import {
   listConnectionsForUserRefreshed,
   saveConnectionForUser,
 } from "../services/exchanges/bingx/bingxCredentialStore";
+import { assessBingxConnectionStorageHealth } from "../services/exchanges/bingx/bingxConnectionRepository";
 import type { BingXConnectResponseConnection } from "../services/exchanges/bingx/bingxTypes";
 import {
   emitAuditEvent,
@@ -320,11 +321,18 @@ export function registerBingxApiRoutes(app: Express): void {
       if (userId == null) return;
 
       const connections = await listConnectionsForUserRefreshed(userId);
+      const storageHealth = await assessBingxConnectionStorageHealth();
 
       res.json({
         success: true,
         connections,
         encryptionAvailable: hasEncryptionKey(),
+        storage: {
+          status: storageHealth.status,
+          mode: storageHealth.mode,
+          durable: storageHealth.durable,
+          unsafeNonDurable: storageHealth.unsafeNonDurable,
+        },
       });
     } catch (error: unknown) {
       console.error("[API] GET /api/bingx/connections error:", error);
@@ -335,6 +343,43 @@ export function registerBingxApiRoutes(app: Express): void {
       });
     }
   });
+
+  // AI-8.1.3 — Sanitized durable connection storage health (no ids/ciphertext).
+  app.get(
+    "/api/bingx/connections/storage-health",
+    requireSaasAuth,
+    requireBingxTerminalPlan,
+    bingxRateLimit({ scope: "bingx.storage-health", max: 20, windowMs: 60_000 }),
+    async (req: Request, res: Response) => {
+      try {
+        const userId = requireUserId(
+          req,
+          res,
+          "/api/bingx/connections/storage-health",
+        );
+        if (userId == null) return;
+        const health = await assessBingxConnectionStorageHealth();
+        res.json({
+          success: true,
+          status: health.status,
+          mode: health.mode,
+          durable: health.durable,
+          postgresAvailable: health.postgresAvailable,
+          unsafeNonDurable: health.unsafeNonDurable,
+          connectionCount: health.connectionCount,
+          code: health.code,
+          evidence: health.evidence,
+        });
+      } catch (error: unknown) {
+        console.error("[API] GET /api/bingx/connections/storage-health error:", error);
+        res.status(500).json({
+          success: false,
+          code: "BINGX_STORAGE_HEALTH_FAILED",
+          message: "Failed to assess connection storage health.",
+        });
+      }
+    },
+  );
 
   app.get(
     "/api/bingx/read-only/snapshot",

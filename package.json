@@ -21,6 +21,8 @@
     "test:bingx-rate-limit": "tsx --test server/middleware/bingxRateLimit.test.ts",
     "test:bingx-b1": "tsx --test server/services/exchanges/bingx/bingxNormalize.test.ts server/services/exchanges/bingx/bingxReadOnlyFreeze.test.ts server/services/exchanges/bingx/bingxReadOnlyFreeze.submit.test.ts server/services/exchanges/bingx/bingxAccessService.test.ts server/services/exchanges/bingx/bingxOwnership.test.ts server/services/exchanges/bingx/bingxOwnership.integration.test.ts server/services/exchanges/bingx/bingxReadOnlyService.structure.test.ts server/services/exchanges/bingx/bingxReadOnlyCache.test.ts server/services/exchanges/bingx/bingxRateLimit.e2e.test.ts server/middleware/bingxRateLimit.test.ts server/services/execution/liveOrderSubmit.blockers.test.ts",
     "test:bingx-account": "tsx --test --test-force-exit server/integrations/bingx/account/bingxAccount.test.ts server/integrations/bingx/account/bingxAccount.ui.contract.test.ts",
+    "test:bingx-baseline-reconciliation": "tsx --test --test-force-exit server/integrations/bingx/account/bingxBaseline.reconciliation.test.ts",
+    "test:bingx-connection-durable": "tsx --test --test-force-exit server/services/exchanges/bingx/bingxConnectionDurable.test.ts",
     "test:decision-context": "tsx --test --test-force-exit server/ai/goodTradingAi/decisionContext/decisionContext.test.ts server/ai/goodTradingAi/decisionContext/decisionContext.wiring.test.ts",
     "test:decision-context:durable": "tsx --test --test-force-exit server/ai/goodTradingAi/decisionContext/decisionContext.durable.test.ts",
     "test:bingx-ownership": "tsx --test server/services/exchanges/bingx/bingxOwnership.test.ts",

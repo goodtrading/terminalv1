@@ -15,6 +15,17 @@ import type {
   StoredBingXConnection,
 } from "./bingxTypes";
 import { maskApiKey } from "./bingxSigner";
+import {
+  cacheReadAllConnections,
+  cacheReplaceConnections,
+  ensureBingxConnectionsHydrated,
+  isBingxConnectionPostgresMode,
+  isUnsafeNonDurableBingxConnectionStore,
+  migrateFileConnectionsToPostgres,
+  reloadBingxConnectionCacheFromPostgres,
+  UNSAFE_NON_DURABLE_BINGX_CONNECTION_STORE,
+  type BingxConnectionMigrationResult,
+} from "./bingxConnectionRepository";
 
 const STORAGE_DIR = path.resolve(process.cwd(), "server", "storage");
 const STORAGE_FILE = path.join(STORAGE_DIR, "bingx-connections.json");
@@ -46,6 +57,11 @@ function ensureStorageDir(): void {
 }
 
 function readFile(): StorageFile {
+  // AI-8.1.3 — In postgres mode connections are durable in Postgres and served
+  // from a synchronous cache hydrated at boot. The file store is dev/local only.
+  if (isBingxConnectionPostgresMode()) {
+    return { connections: cacheReadAllConnections() };
+  }
   const filePath = resolveStorageFile();
   ensureStorageDir();
   if (!fs.existsSync(filePath)) {
@@ -84,6 +100,11 @@ function readFile(): StorageFile {
 }
 
 function writeFile(data: StorageFile): void {
+  // AI-8.1.3 — Postgres mode: update the sync cache and durably persist.
+  if (isBingxConnectionPostgresMode()) {
+    cacheReplaceConnections(data.connections);
+    return;
+  }
   const filePath = resolveStorageFile();
   ensureStorageDir();
   try {
@@ -215,6 +236,16 @@ export function saveConnectionForUser(input: {
   lastHealth?: BingXConnectionHealth;
   capability: ReturnType<typeof resolveConnectionCapability>;
 }): SaveConnectionForUserResult {
+  // AI-8.1.3 — Never persist credentials to an ephemeral filesystem in
+  // production. Saving is blocked until the durable Postgres repository is used.
+  if (isUnsafeNonDurableBingxConnectionStore()) {
+    return {
+      ok: false,
+      code: UNSAFE_NON_DURABLE_BINGX_CONNECTION_STORE,
+      message:
+        "Durable connection storage is required in production. Set GOODTRADING_BINGX_CONNECTION_REPOSITORY=postgres.",
+    };
+  }
   if (!hasEncryptionKey()) {
     return {
       ok: false,
@@ -376,6 +407,47 @@ export function getCredentials(id: string): BingXApiCredentials | null {
   const row = getConnection(id);
   if (!row || typeof row.userId !== "number") return null;
   return getCredentialsForUser(id, row.userId);
+}
+
+/**
+ * AI-8.1.3 — Hydrate the durable connection cache from Postgres at boot.
+ * No-op outside postgres mode. Never throws (logs on failure internally).
+ */
+export async function hydrateBingxConnections(): Promise<void> {
+  await ensureBingxConnectionsHydrated();
+}
+
+/** Read connections directly from the JSON file store (migration source). */
+function readFileConnectionsRaw(): StoredBingXConnection[] {
+  const filePath = resolveStorageFile();
+  try {
+    if (!fs.existsSync(filePath)) return [];
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as StorageFile;
+    if (!Array.isArray(parsed.connections)) return [];
+    return parsed.connections.filter(
+      (c) =>
+        c &&
+        typeof c === "object" &&
+        typeof (c as StoredBingXConnection).id === "string" &&
+        typeof (c as StoredBingXConnection).userId === "number",
+    ) as StoredBingXConnection[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * AI-8.1.3 — Controlled file → Postgres migration. Expected sourceRecords=0 in
+ * production (no ephemeral connection saved). Idempotent by connection id.
+ */
+export async function migrateBingxConnectionsFromFileToPostgres(): Promise<BingxConnectionMigrationResult> {
+  const source = readFileConnectionsRaw();
+  const result = await migrateFileConnectionsToPostgres(source);
+  if (result.ran && result.migrated > 0) {
+    // Refresh the cache so migrated rows are immediately visible.
+    await reloadBingxConnectionCacheFromPostgres();
+  }
+  return result;
 }
 
 /** @deprecated Use deleteConnectionForUser */

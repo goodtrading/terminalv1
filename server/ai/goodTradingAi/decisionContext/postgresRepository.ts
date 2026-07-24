@@ -155,22 +155,8 @@ export class PostgresDecisionContextRepository implements DecisionContextReposit
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const claim = await client.query(
-        `INSERT INTO gt_ai_decision_context_event_dedup
-          (trader_action_event_id, decision_id)
-         VALUES ($1, $2)
-         ON CONFLICT (trader_action_event_id) DO NOTHING
-         RETURNING trader_action_event_id`,
-        [decision.context.traderActionEventId, decision.decisionId],
-      );
-      if (!claim.rows[0]) {
-        await client.query("ROLLBACK");
-        const existing = await this.findByActionEvent(
-          decision.context.traderActionEventId,
-        );
-        if (existing) return existing;
-        throw new Error("DECISION_EVENT_DEDUP_CONFLICT");
-      }
+      // Parent row first — dedup has FK → gt_ai_trade_decisions(decision_id).
+      // Claim remains transactional: on conflict we ROLLBACK the whole unit.
       await client.query(
         `INSERT INTO gt_ai_trade_decisions
           (decision_id, user_id, account_id, symbol, position_side, account_mode,
@@ -193,6 +179,22 @@ export class PostgresDecisionContextRepository implements DecisionContextReposit
           fp,
         ],
       );
+      const claim = await client.query(
+        `INSERT INTO gt_ai_decision_context_event_dedup
+          (trader_action_event_id, decision_id)
+         VALUES ($1, $2)
+         ON CONFLICT (trader_action_event_id) DO NOTHING
+         RETURNING trader_action_event_id`,
+        [decision.context.traderActionEventId, decision.decisionId],
+      );
+      if (!claim.rows[0]) {
+        await client.query("ROLLBACK");
+        const existing = await this.findByActionEvent(
+          decision.context.traderActionEventId,
+        );
+        if (existing) return existing;
+        throw new Error("DECISION_EVENT_DEDUP_CONFLICT");
+      }
       await client.query(
         `INSERT INTO gt_ai_decision_contexts
           (decision_id, trader_action_event_id, context, context_fingerprint, created_at)
