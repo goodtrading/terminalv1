@@ -48,6 +48,12 @@ import {
   importCalibrationBackup,
 } from "../ai/goodTradingAi/durableCalibration/backup";
 import { attemptLegitimateRecovery } from "../ai/goodTradingAi/durableCalibration/recovery";
+import {
+  startCrossCaseValidationSession,
+  CROSS_CASE_SESSION_LABEL,
+} from "../ai/goodTradingAi/knowledgeDistillation/crossCaseValidation";
+import type { ChallengeItem } from "@shared/goodTradingAiKnowledgeDistillation";
+import type { IndependentEvidenceAudit } from "@shared/goodTradingAiIndependentEvidence";
 
 const reviewBodySchema = z.object({ scenario: syntheticScenarioSchema, engineOutcome: decisionPathOutcomeSchema.nullable().optional(), humanOutcome: decisionPathOutcomeSchema.nullable().optional() }).strict();
 
@@ -250,6 +256,91 @@ export function registerCriticalCalibrationRoutes(app: Express): void {
       const status = msg === "UNSAFE_EPHEMERAL_STORAGE" ? 503 : 400;
       const storage = await assessStorageHealth({ priorHumanLossSuspected: true });
       res.status(status).json({ code: msg, storage, mentorEligible: false, brainMutate: false });
+    }
+  });
+
+  /** AI-7.3.13 — exactly 5 blind cross-case questions from Independent Evidence Audit. Never auto-answers. */
+  app.post(`${base}/sessions/start-cross-case`, ...guards, async (req: Request, res: Response) => {
+    try {
+      const repos = await getDurableRepos();
+      const storage = await assessStorageHealth({ priorHumanLossSuspected: true });
+      assertHumanSessionsAllowed(storage);
+      const audits = repos.knowledgeDistillation.listIndependentEvidenceAudits
+        ? await repos.knowledgeDistillation.listIndependentEvidenceAudits()
+        : [];
+      const auditId = typeof req.body?.sourceAuditId === "string" ? req.body.sourceAuditId : undefined;
+      const audit =
+        (auditId ? audits.find((a) => a.id === auditId) : undefined) ??
+        audits[audits.length - 1];
+      if (!audit || audit.schema !== "DistillationIndependentEvidenceAudit/v1") {
+        res.status(404).json({ code: "SOURCE_AUDIT_NOT_FOUND", mentorEligible: false });
+        return;
+      }
+      const runIds = await repos.knowledgeDistillation.listRunIds();
+      const sourceRunId =
+        (typeof req.body?.sourceRunId === "string" ? req.body.sourceRunId : undefined) ??
+        audit.sourceRunId ??
+        runIds.find((id) => id.includes("strict")) ??
+        runIds[runIds.length - 1];
+      if (!sourceRunId) {
+        res.status(404).json({ code: "NO_SOURCE_RUN", mentorEligible: false });
+        return;
+      }
+      const sourceRun = await repos.knowledgeDistillation.getRun(sourceRunId);
+      const challenges = ((sourceRun as { challenges?: ChallengeItem[] } | null)?.challenges ??
+        []) as ChallengeItem[];
+      const priorQs = await repos.criticalCalibration.listQuestions();
+      const started = startCrossCaseValidationSession({
+        audit: audit as IndependentEvidenceAudit,
+        challenges,
+        sourceRunId,
+        priorPrompts: priorQs.map((q) => q.prompt),
+        label:
+          typeof req.body?.label === "string" ? req.body.label : CROSS_CASE_SESSION_LABEL,
+        repositoryDurable: storage.repositoryDurable,
+      });
+      await repos.criticalCalibration.saveSession(started.session);
+      await repos.criticalCalibration.saveQuestionQueue([
+        ...(await repos.criticalCalibration.listQuestions()).filter(
+          (q) => !started.session.questionIds.includes(q.id),
+        ),
+        ...started.session.questionIds
+          .map((id) => getCriticalCalibrationMemory().listQuestions().find((q) => q.id === id)!)
+          .filter(Boolean),
+      ]);
+      for (const q of started.blindQuestions) assertBlindPacketSafe(q);
+      res.json({
+        sessionId: started.session.id,
+        questionCount: started.questionCount,
+        answeredCount: 0,
+        blindQuestions: started.blindQuestions,
+        sourceAuditId: started.session.sourceAuditId,
+        sourceRunId: started.session.sourceRunId,
+        relationDistribution: started.drafts.reduce(
+          (acc, d) => {
+            acc[d.relationToOriginal] = (acc[d.relationToOriginal] ?? 0) + 1;
+            return acc;
+          },
+          {} as Record<string, number>,
+        ),
+        progress: getSessionProgress(started.session.id),
+        mentorEligible: false,
+        brainMutate: false,
+        autoApply: false,
+        autoReveal: false,
+        realMarketData: false,
+        excludeTechnical: true,
+        excludeHoldout: true,
+        repositoryDurable: storage.repositoryDurable,
+        storage,
+        label: started.session.label,
+        /** Hypotheses never returned in blind payload — ids only for admin linkage. */
+        hypothesisIds: started.hypotheses.map((h) => h.id),
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "ERROR";
+      const status = msg === "UNSAFE_EPHEMERAL_STORAGE" ? 503 : 400;
+      res.status(status).json({ code: msg, mentorEligible: false, brainMutate: false });
     }
   });
 

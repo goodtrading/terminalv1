@@ -36,6 +36,15 @@ export type CriticalCalibrationSessionRecord = {
   deferredQuestionIds: string[];
   archived: boolean;
   label?: string;
+  /** AI-7.3.13 — optional cross-case round linkage (never mutates prior sessions). */
+  sourceAuditId?: string;
+  sourceRunId?: string;
+  excludeTechnical?: true;
+  excludeHoldout?: true;
+  realMarketData?: false;
+  autoReveal?: false;
+  repositoryDurable?: boolean;
+  roundKind?: "CROSS_CASE_VALIDATION";
 };
 
 function defaultRootDir(): string {

@@ -15,6 +15,7 @@ import type {
   DistillationRunResult,
 } from "@shared/goodTradingAiKnowledgeDistillation";
 import type { IndependentEvidenceAudit } from "@shared/goodTradingAiIndependentEvidence";
+import type { CrossCaseValidationAudit } from "@shared/goodTradingAiCrossCaseValidation";
 import type { HumanReviewSessionRecord } from "../decision/humanReview/repository";
 import type { HoldoutSnapshot } from "../decision/humanReview/holdout";
 import type {
@@ -69,4 +70,8 @@ export interface KnowledgeDistillationRepository {
   saveIndependentEvidenceAudit?(audit: IndependentEvidenceAudit): Promise<string>;
   listIndependentEvidenceAudits?(sourceRunId?: string): Promise<IndependentEvidenceAudit[]>;
   getIndependentEvidenceAudit?(id: string): Promise<IndependentEvidenceAudit | null>;
+  /** AI-7.3.13 — append-only cross-case validation audit; never overwrites. */
+  saveCrossCaseValidationAudit?(audit: CrossCaseValidationAudit): Promise<string>;
+  listCrossCaseValidationAudits?(sourceRunId?: string): Promise<CrossCaseValidationAudit[]>;
+  getCrossCaseValidationAudit?(id: string): Promise<CrossCaseValidationAudit | null>;
 }

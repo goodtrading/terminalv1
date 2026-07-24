@@ -15,6 +15,7 @@ import type {
   DistillationRunResult,
 } from "@shared/goodTradingAiKnowledgeDistillation";
 import type { IndependentEvidenceAudit } from "@shared/goodTradingAiIndependentEvidence";
+import type { CrossCaseValidationAudit } from "@shared/goodTradingAiCrossCaseValidation";
 import { canAcceptProposal } from "../criticalCalibration/proposalEngine";
 import type { HumanReviewSessionRecord } from "../decision/humanReview/repository";
 import type { HoldoutSnapshot } from "../decision/humanReview/holdout";
@@ -239,5 +240,24 @@ export class PostgresKnowledgeDistillationRepository implements KnowledgeDistill
   }
   getIndependentEvidenceAudit(id: string) {
     return getDoc<IndependentEvidenceAudit>(NS_KD, "independent_evidence_audits", id);
+  }
+  async saveCrossCaseValidationAudit(audit: CrossCaseValidationAudit) {
+    const existing = await getDoc(NS_KD, "cross_case_validation_audits", audit.id);
+    if (existing) throw new Error("AUDIT_APPEND_ONLY_REFUSES_OVERWRITE");
+    await upsertDoc({
+      namespace: NS_KD,
+      collection: "cross_case_validation_audits",
+      id: audit.id,
+      payload: audit,
+    });
+    return audit.id;
+  }
+  async listCrossCaseValidationAudits(sourceRunId?: string) {
+    const all = await listDocs<CrossCaseValidationAudit>(NS_KD, "cross_case_validation_audits");
+    if (!sourceRunId) return all;
+    return all.filter((a) => a.sourceRunId === sourceRunId);
+  }
+  getCrossCaseValidationAudit(id: string) {
+    return getDoc<CrossCaseValidationAudit>(NS_KD, "cross_case_validation_audits", id);
   }
 }

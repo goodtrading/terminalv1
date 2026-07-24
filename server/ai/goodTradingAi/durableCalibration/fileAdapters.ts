@@ -164,4 +164,23 @@ export class FileKnowledgeDistillationRepository implements KnowledgeDistillatio
     );
     return getIndependentEvidenceAuditMemory().getAudit(id);
   }
+  async saveCrossCaseValidationAudit(audit: import("@shared/goodTradingAiCrossCaseValidation").CrossCaseValidationAudit) {
+    const { getCrossCaseValidationAuditMemory } = await import(
+      "../knowledgeDistillation/crossCaseValidation/memoryStore"
+    );
+    getCrossCaseValidationAuditMemory().saveAudit(audit);
+    return audit.id;
+  }
+  async listCrossCaseValidationAudits(sourceRunId?: string) {
+    const { getCrossCaseValidationAuditMemory } = await import(
+      "../knowledgeDistillation/crossCaseValidation/memoryStore"
+    );
+    return getCrossCaseValidationAuditMemory().listAudits(sourceRunId);
+  }
+  async getCrossCaseValidationAudit(id: string) {
+    const { getCrossCaseValidationAuditMemory } = await import(
+      "../knowledgeDistillation/crossCaseValidation/memoryStore"
+    );
+    return getCrossCaseValidationAuditMemory().getAudit(id);
+  }
 }
