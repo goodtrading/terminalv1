@@ -14,6 +14,7 @@ import type {
   CompressedProposal,
   DistillationRunResult,
 } from "@shared/goodTradingAiKnowledgeDistillation";
+import type { IndependentEvidenceAudit } from "@shared/goodTradingAiIndependentEvidence";
 import type { HumanReviewSessionRecord } from "../decision/humanReview/repository";
 import type { HoldoutSnapshot } from "../decision/humanReview/holdout";
 import type {
@@ -64,4 +65,8 @@ export interface KnowledgeDistillationRepository {
   listProposals(): Promise<CompressedProposal[]>;
   listRunIds(): Promise<string[]>;
   getRun(id: string): Promise<DistillationRunResult | null>;
+  /** AI-7.3.12 — append-only audit linked to source run; never overwrites runs. */
+  saveIndependentEvidenceAudit?(audit: IndependentEvidenceAudit): Promise<string>;
+  listIndependentEvidenceAudits?(sourceRunId?: string): Promise<IndependentEvidenceAudit[]>;
+  getIndependentEvidenceAudit?(id: string): Promise<IndependentEvidenceAudit | null>;
 }

@@ -611,7 +611,7 @@ describe("AI-7.3.4 KD source/UI safety matrix", () => {
 
   it("admin page exposes required modes", () => {
     const page = readFileSync(join(process.cwd(), "client/src/pages/admin/KnowledgeDistillationPage.tsx"), "utf8");
-    for (const mode of ["Overview", "Distillation", "Heatmaps", "Gaps", "Adaptive Queue", "Challenge Me", "Compressed Proposals", "Evolution"]) {
+    for (const mode of ["Overview", "Distillation", "Independent Evidence Audit", "Heatmaps", "Gaps", "Adaptive Queue", "Challenge Me", "Compressed Proposals", "Evolution"]) {
       assert.ok(page.includes(mode), `missing mode ${mode}`);
     }
     assert.ok(!/applyToBrain/.test(page));

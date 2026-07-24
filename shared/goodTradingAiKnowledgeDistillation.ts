@@ -8,6 +8,12 @@ import { evidenceLensSchema, ALL_EVIDENCE_LENSES } from "./goodTradingAiCritical
 import { FORBIDDEN_TRADING_OUTCOME_TOKENS } from "./goodTradingAiDecisionGraph";
 
 export const KNOWLEDGE_DISTILLATION_SCHEMA_VERSION = "1.0" as const;
+/** document-v1 = each CC document votes; independent-evidence-v1 = decision units vote. */
+export const DISTILLATION_ANALYSIS_VERSIONS = [
+  "document-v1",
+  "independent-evidence-v1",
+] as const;
+export type DistillationAnalysisVersion = (typeof DISTILLATION_ANALYSIS_VERSIONS)[number];
 export { ALL_EVIDENCE_LENSES };
 
 export const distillationSourceKindSchema = z.enum([
@@ -293,6 +299,20 @@ export const distillationRunResultSchema = z
     brainMutate: z.literal(false),
     autoApply: z.literal(false),
     realMarketData: z.literal(false),
+    /**
+     * Optional for read-compat with AI-7.3.11 document-v1 runs.
+     * New productive runs default to independent-evidence-v1.
+     */
+    analysisVersion: z.enum(DISTILLATION_ANALYSIS_VERSIONS).optional(),
+    documentObservationCount: z.number().int().nonnegative().optional(),
+    decisionUnitCount: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type DistillationRunResult = z.infer<typeof distillationRunResultSchema>;
+
+/** Read helper: missing analysisVersion ⇒ historical document-v1. */
+export function resolveDistillationAnalysisVersion(
+  run: Pick<DistillationRunResult, "analysisVersion"> | null | undefined,
+): DistillationAnalysisVersion {
+  return run?.analysisVersion ?? "document-v1";
+}

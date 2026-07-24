@@ -53,7 +53,8 @@ describe("AI-7.3.6 knowledge provenance routes source", () => {
     assert.ok(router.includes("/admin/knowledge-provenance"));
     assert.ok(router.includes("/admin/knowledge-evolution"));
     assert.ok(router.includes("/admin/knowledge-distillation"));
-    const admin = readFileSync(join(process.cwd(), "client/src/pages/admin/AdminPage.tsx"), "utf8");
-    assert.ok(admin.includes("/admin/knowledge-provenance"));
+    // Admin UX shell: nav links live in adminNav (AdminPage is users workspace).
+    const adminNav = readFileSync(join(process.cwd(), "client/src/components/admin/shell/adminNav.ts"), "utf8");
+    assert.ok(adminNav.includes("/admin/knowledge-provenance"));
   });
 });

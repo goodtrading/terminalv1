@@ -103,6 +103,8 @@ export const strictDistillationRunBodySchema = z
     persist: z.boolean().optional().default(true),
     duplicatePolicy: z.enum(["REJECT", "ALLOW_NEW_RUN"]).optional().default("ALLOW_NEW_RUN"),
     fingerprint: z.string().min(8).max(128).optional(),
+    /** Default independent-evidence-v1 (AI-7.3.12). document-v1 is legacy opt-in. */
+    analysisVersion: z.enum(["document-v1", "independent-evidence-v1"]).optional(),
   })
   .strict();
 

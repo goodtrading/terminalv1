@@ -25,6 +25,7 @@ import type {
   CompressedProposal,
   DistillationRunResult,
 } from "@shared/goodTradingAiKnowledgeDistillation";
+import type { IndependentEvidenceAudit } from "@shared/goodTradingAiIndependentEvidence";
 import type {
   CriticalCalibrationRepository,
   HumanReviewRepository,
@@ -143,5 +144,24 @@ export class FileKnowledgeDistillationRepository implements KnowledgeDistillatio
     } catch {
       return null;
     }
+  }
+  async saveIndependentEvidenceAudit(audit: IndependentEvidenceAudit): Promise<string> {
+    const { getIndependentEvidenceAuditMemory } = await import(
+      "../knowledgeDistillation/independentEvidence/memoryStore"
+    );
+    return getIndependentEvidenceAuditMemory().saveAudit(audit);
+  }
+  async listIndependentEvidenceAudits(sourceRunId?: string): Promise<IndependentEvidenceAudit[]> {
+    const { getIndependentEvidenceAuditMemory } = await import(
+      "../knowledgeDistillation/independentEvidence/memoryStore"
+    );
+    const mem = getIndependentEvidenceAuditMemory();
+    return sourceRunId ? mem.listAuditsForRun(sourceRunId) : mem.listAuditIds().map((id) => mem.getAudit(id)!);
+  }
+  async getIndependentEvidenceAudit(id: string): Promise<IndependentEvidenceAudit | null> {
+    const { getIndependentEvidenceAuditMemory } = await import(
+      "../knowledgeDistillation/independentEvidence/memoryStore"
+    );
+    return getIndependentEvidenceAuditMemory().getAudit(id);
   }
 }

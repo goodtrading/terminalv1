@@ -3,17 +3,19 @@
  * credentials:include. No Brain apply. Challenge never answers.
  */
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "wouter";
+import { AdminShell } from "@/components/admin/shell";
 import {
   fetchAdaptiveQueue,
   fetchChallenges,
   fetchEvolution,
   fetchGaps,
   fetchHeatmaps,
+  fetchIndependentEvidenceAudit,
   fetchKdStatus,
   fetchLatest,
   fetchProposals,
   runDistillation,
+  runIndependentEvidenceAudit,
   runStrictDistillation,
 } from "@/lib/knowledgeDistillation/knowledgeDistillationApi";
 
@@ -25,7 +27,8 @@ type Mode =
   | "adaptive"
   | "challenge"
   | "proposals"
-  | "evolution";
+  | "evolution"
+  | "independentEvidence";
 
 export default function KnowledgeDistillationPage() {
   const [mode, setMode] = useState<Mode>("overview");
@@ -41,6 +44,7 @@ export default function KnowledgeDistillationPage() {
   const [scores, setScores] = useState<unknown[]>([]);
   const [proposals, setProposals] = useState<unknown[]>([]);
   const [evolution, setEvolution] = useState<unknown>(null);
+  const [independentAudit, setIndependentAudit] = useState<unknown>(null);
   const [sessionIdsRaw, setSessionIdsRaw] = useState("");
   const [strictPreview, setStrictPreview] = useState<string | null>(null);
 
@@ -184,9 +188,29 @@ export default function KnowledgeDistillationPage() {
     }
   }, []);
 
+  const onIndependentEvidence = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const existing = await fetchIndependentEvidenceAudit();
+      if (existing.audit) {
+        setIndependentAudit(existing.audit);
+      } else {
+        const created = await runIndependentEvidenceAudit();
+        setIndependentAudit(created.audit);
+      }
+      setMode("independentEvidence");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Independent evidence audit failed");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const tabs: { id: Mode; label: string; action?: () => void }[] = [
     { id: "overview", label: "Overview" },
     { id: "distillation", label: "Distillation", action: () => void onLatest() },
+    { id: "independentEvidence", label: "Independent Evidence Audit", action: () => void onIndependentEvidence() },
     { id: "heatmaps", label: "Heatmaps", action: () => void onHeatmaps() },
     { id: "gaps", label: "Gaps", action: () => void onGaps() },
     { id: "adaptive", label: "Adaptive Queue", action: () => void onQueue() },
@@ -196,16 +220,11 @@ export default function KnowledgeDistillationPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-terminal-bg text-terminal-text px-4 py-6 font-mono text-sm" data-testid="knowledge-distillation-lab">
-      <div className="max-w-5xl mx-auto space-y-4">
-        <div className="flex items-center gap-2 text-xs">
-          <Link href="/admin" className="text-terminal-accent hover:underline">
-            Admin
-          </Link>
-          <span className="text-terminal-muted">/</span>
-          <span>Knowledge Distillation</span>
-        </div>
-
+    <AdminShell
+      title="Knowledge Distillation"
+      description="Deterministic distillation lab. mentorEligible=false · brainMutate=false · autoApply=false. Proposals always PENDING."
+    >
+      <div className="max-w-5xl mx-auto space-y-4 font-mono text-sm" data-testid="knowledge-distillation-lab">
         <div className="border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs space-y-1">
           <div>Flag GOODTRADING_AI_KNOWLEDGE_DISTILLATION_ENABLED (default OFF).</div>
           <div>mentorEligible=false · brainMutate=false · autoApply=false · openAi=false · deterministic only.</div>
@@ -326,7 +345,68 @@ export default function KnowledgeDistillationPage() {
             {evolution ? JSON.stringify(evolution, null, 2) : "Sin evolution report."}
           </pre>
         )}
+
+        {mode === "independentEvidence" && (
+          <section className="space-y-2" data-testid="kd-independent-evidence">
+            <p className="text-[11px] text-amber-200">
+              Independent Evidence Audit — documents ≠ independent humans. Original run immutable. LIMITED_HUMAN_SAMPLE.
+            </p>
+            <pre className="border border-terminal-border p-3 text-[11px] overflow-auto max-h-[560px]">
+              {independentAudit
+                ? JSON.stringify(
+                    (() => {
+                      const a = independentAudit as {
+                        documentObservationCount?: number;
+                        decisionUnitCount?: number;
+                        independentSupportMetrics?: unknown;
+                        conflictAudit?: unknown;
+                        proposalAudit?: unknown;
+                        gapAudit?: unknown;
+                        challengeAudit?: unknown;
+                        utilityReassessment?: unknown;
+                        compressionAudit?: unknown;
+                        confidenceAudit?: { sampleSafety?: string; hasMature?: boolean; avgScore?: number };
+                        warnings?: string[];
+                        sourceRunId?: string;
+                        sourceFingerprint?: string;
+                        brainMutate?: boolean;
+                        autoApply?: boolean;
+                        mentorEligible?: boolean;
+                        containsAnswerText?: boolean;
+                      };
+                      return {
+                        documents: a.documentObservationCount,
+                        humanDecisions: a.decisionUnitCount,
+                        independentSupportMetrics: a.independentSupportMetrics,
+                        conflictAudit: a.conflictAudit,
+                        proposalSupportCorrected: a.proposalAudit,
+                        gaps: a.gapAudit,
+                        challenges: a.challengeAudit,
+                        compression: a.compressionAudit,
+                        confidence: {
+                          sampleSafety: a.confidenceAudit?.sampleSafety,
+                          hasMature: a.confidenceAudit?.hasMature,
+                          avgScore: a.confidenceAudit?.avgScore,
+                        },
+                        utility: a.utilityReassessment,
+                        limitedSampleWarning: a.confidenceAudit?.sampleSafety === "LIMITED_HUMAN_SAMPLE",
+                        sourceRunId: a.sourceRunId,
+                        sourceFingerprint: a.sourceFingerprint,
+                        brainMutate: false,
+                        autoApply: false,
+                        mentorEligible: false,
+                        containsAnswerText: false,
+                        warnings: a.warnings,
+                      };
+                    })(),
+                    null,
+                    2,
+                  )
+                : "Sin audit. Abrí Independent Evidence Audit para generar/cargar."}
+            </pre>
+          </section>
+        )}
       </div>
-    </div>
+    </AdminShell>
   );
 }

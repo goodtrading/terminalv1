@@ -14,6 +14,7 @@ import type {
   CompressedProposal,
   DistillationRunResult,
 } from "@shared/goodTradingAiKnowledgeDistillation";
+import type { IndependentEvidenceAudit } from "@shared/goodTradingAiIndependentEvidence";
 import { canAcceptProposal } from "../criticalCalibration/proposalEngine";
 import type { HumanReviewSessionRecord } from "../decision/humanReview/repository";
 import type { HoldoutSnapshot } from "../decision/humanReview/holdout";
@@ -219,5 +220,24 @@ export class PostgresKnowledgeDistillationRepository implements KnowledgeDistill
   }
   getRun(id: string) {
     return getDoc<DistillationRunResult>(NS_KD, "runs", id);
+  }
+  async saveIndependentEvidenceAudit(audit: IndependentEvidenceAudit) {
+    const existing = await getDoc(NS_KD, "independent_evidence_audits", audit.id);
+    if (existing) throw new Error("AUDIT_APPEND_ONLY_REFUSES_OVERWRITE");
+    await upsertDoc({
+      namespace: NS_KD,
+      collection: "independent_evidence_audits",
+      id: audit.id,
+      payload: audit,
+    });
+    return audit.id;
+  }
+  async listIndependentEvidenceAudits(sourceRunId?: string) {
+    const all = await listDocs<IndependentEvidenceAudit>(NS_KD, "independent_evidence_audits");
+    if (!sourceRunId) return all;
+    return all.filter((a) => a.sourceRunId === sourceRunId);
+  }
+  getIndependentEvidenceAudit(id: string) {
+    return getDoc<IndependentEvidenceAudit>(NS_KD, "independent_evidence_audits", id);
   }
 }

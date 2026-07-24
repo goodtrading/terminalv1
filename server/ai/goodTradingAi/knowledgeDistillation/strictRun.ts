@@ -1,5 +1,7 @@
 /**
  * AI-7.3.9 — Strict distillation by explicit HUMAN completed session IDs.
+ * AI-7.3.12 — New runs use analysisVersion=independent-evidence-v1 (decision units).
+ * Historical document-v1 runs remain readable without rewrite.
  */
 import { createHash } from "node:crypto";
 import {
@@ -15,8 +17,8 @@ import {
 } from "../durableCalibration/health";
 import { getCriticalCalibrationMemory } from "../criticalCalibration/memoryStore";
 import { getSessionProgress } from "../criticalCalibration/sessionService";
-import type { DistillationRunResult } from "@shared/goodTradingAiKnowledgeDistillation";
-import { distillationRunResultSchema } from "@shared/goodTradingAiKnowledgeDistillation";
+import type { DistillationRunResult, DistilledObservation } from "@shared/goodTradingAiKnowledgeDistillation";
+import { distillationRunResultSchema, distilledObservationSchema } from "@shared/goodTradingAiKnowledgeDistillation";
 import { clusterRules } from "./ruleClustering";
 import { compressClusters } from "./compression";
 import { buildConflictHeatmap } from "./conflictHeatmap";
@@ -29,10 +31,42 @@ import { buildChallenges } from "./challengeEngine";
 import { scoreChallenges } from "./challengeScore";
 import { compressProposals } from "./proposalCompression";
 import { buildEvolutionReport } from "./evolutionReport";
-import type { DistilledObservation } from "@shared/goodTradingAiKnowledgeDistillation";
+import {
+  decisionUnitToSyntheticText,
+  resolveAllHumanDecisionUnits,
+} from "./independentEvidence";
 
 function fingerprintSessions(ids: string[]): string {
   return createHash("sha256").update(ids.slice().sort().join("|")).digest("hex").slice(0, 32);
+}
+
+function buildIndependentObservations(sessionIds: string[]): {
+  observations: DistilledObservation[];
+  documentObservationCount: number;
+  decisionUnitCount: number;
+} {
+  const store = getCriticalCalibrationMemory();
+  const raw = sessionIds.flatMap((id) => store.listObservations(id));
+  const { documents, units } = resolveAllHumanDecisionUnits(raw);
+  const observations = units.map((u) =>
+    distilledObservationSchema.parse({
+      id: `ieu_${u.unitId}`.replace(/\|/g, "_").slice(0, 96),
+      sourceKind: "CRITICAL_CALIBRATION",
+      sessionId: u.sessionId,
+      itemId: u.questionId,
+      text: decisionUnitToSyntheticText(u),
+      lenses: u.lenses,
+      signals: ["ANSWER"],
+      confidence: u.confidence,
+      createdAtMs: Date.now(),
+      mentorEligible: false,
+    }),
+  );
+  return {
+    observations,
+    documentObservationCount: documents.length,
+    decisionUnitCount: units.length,
+  };
 }
 
 export async function runStrictKnowledgeDistillation(
@@ -42,7 +76,13 @@ export async function runStrictKnowledgeDistillation(
   dryRun: boolean;
   sourceSessionIds: string[];
   fingerprint: string;
-  preview?: { observationCount: number; humanSessionCount: number };
+  preview?: {
+    observationCount: number;
+    humanSessionCount: number;
+    documentObservationCount?: number;
+    decisionUnitCount?: number;
+    analysisVersion?: string;
+  };
   warning?: string;
   mentorEligible: false;
   brainMutate: false;
@@ -62,7 +102,6 @@ export async function runStrictKnowledgeDistillation(
     if (session.archived) throw new Error(`SESSION_ARCHIVED:${id}`);
     const progress = getSessionProgress(id);
     if (progress.status !== "COMPLETED") throw new Error(`SESSION_NOT_COMPLETED:${id}`);
-    // Holdout exclusion: sessions labeled holdout
     if ((session.label ?? "").toLowerCase().includes("holdout")) {
       throw new Error(`SESSION_HOLDOUT_EXCLUDED:${id}`);
     }
@@ -84,10 +123,20 @@ export async function runStrictKnowledgeDistillation(
     }
   }
 
-  // Filter CC observations to accepted HUMAN sessions only (no TECHNICAL mix).
-  const allCc = analyzeCriticalCalibrationSessions().filter((o) => accepted.includes(o.sessionId));
-  // Do not pull Human Review into CC-session-scoped runs unless session ids match HR (they won't).
-  const observations: DistilledObservation[] = [...allCc];
+  const analysisVersion = parsed.analysisVersion ?? "independent-evidence-v1";
+  let observations: DistilledObservation[];
+  let documentObservationCount: number | undefined;
+  let decisionUnitCount: number | undefined;
+
+  if (analysisVersion === "independent-evidence-v1") {
+    const built = buildIndependentObservations(accepted);
+    observations = built.observations;
+    documentObservationCount = built.documentObservationCount;
+    decisionUnitCount = built.decisionUnitCount;
+  } else {
+    observations = analyzeCriticalCalibrationSessions().filter((o) => accepted.includes(o.sessionId));
+    documentObservationCount = observations.length;
+  }
 
   if (parsed.dryRun) {
     return {
@@ -95,7 +144,13 @@ export async function runStrictKnowledgeDistillation(
       dryRun: true,
       sourceSessionIds: accepted,
       fingerprint: fp,
-      preview: { observationCount: observations.length, humanSessionCount: accepted.length },
+      preview: {
+        observationCount: observations.length,
+        humanSessionCount: accepted.length,
+        documentObservationCount,
+        decisionUnitCount,
+        analysisVersion,
+      },
       mentorEligible: false,
       brainMutate: false,
       autoApply: false,
@@ -146,6 +201,9 @@ export async function runStrictKnowledgeDistillation(
     brainMutate: false,
     autoApply: false,
     realMarketData: false,
+    analysisVersion,
+    documentObservationCount,
+    decisionUnitCount,
   });
 
   if (parsed.persist !== false) {
@@ -180,5 +238,4 @@ export function runLegacyKnowledgeDistillationAllAvailable() {
   };
 }
 
-// silence unused import in typecheck if tree-shaken oddly
 void analyzeHumanReviewSessions;

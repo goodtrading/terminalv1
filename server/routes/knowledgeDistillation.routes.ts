@@ -11,6 +11,13 @@ import {
   runStrictKnowledgeDistillation,
 } from "../ai/goodTradingAi/knowledgeDistillation/strictRun";
 import { assessStorageHealth } from "../ai/goodTradingAi/durableCalibration/health";
+import { getDurableRepos } from "../ai/goodTradingAi/durableCalibration/factory";
+import { getCriticalCalibrationMemory } from "../ai/goodTradingAi/criticalCalibration/memoryStore";
+import {
+  getIndependentEvidenceAuditMemory,
+  runIndependentEvidenceAudit,
+} from "../ai/goodTradingAi/knowledgeDistillation/independentEvidence";
+import type { IndependentEvidenceAudit } from "@shared/goodTradingAiIndependentEvidence";
 
 export function registerKnowledgeDistillationRoutes(app: Express): void {
   const base = "/api/internal/ai/knowledge-distillation";
@@ -131,5 +138,97 @@ export function registerKnowledgeDistillationRoutes(app: Express): void {
       brainMutated: false,
       openAi: false,
     });
+  });
+
+  app.get(`${base}/independent-evidence-audit`, ...guards, async (req: Request, res: Response) => {
+    try {
+      const mem = getIndependentEvidenceAuditMemory();
+      const sourceRunId = typeof req.query.sourceRunId === "string" ? req.query.sourceRunId : undefined;
+      const latest = sourceRunId
+        ? mem.listAuditsForRun(sourceRunId).slice(-1)[0] ?? null
+        : mem.latest();
+      let durableLatest: IndependentEvidenceAudit | null = null;
+      try {
+        const repos = await getDurableRepos();
+        if (repos.knowledgeDistillation.listIndependentEvidenceAudits) {
+          const list = await repos.knowledgeDistillation.listIndependentEvidenceAudits(sourceRunId);
+          durableLatest = list[list.length - 1] ?? null;
+        }
+      } catch {
+        // local memory fallback
+      }
+      const audit = durableLatest ?? latest;
+      res.json({
+        audit,
+        mentorEligible: false,
+        brainMutate: false,
+        autoApply: false,
+        containsAnswerText: false,
+      });
+    } catch (e) {
+      res.status(500).json({
+        code: e instanceof Error ? e.message : "AUDIT_FETCH_FAILED",
+        mentorEligible: false,
+      });
+    }
+  });
+
+  app.post(`${base}/independent-evidence-audit`, ...guards, async (req: Request, res: Response) => {
+    try {
+      const sourceRunId =
+        typeof req.body?.sourceRunId === "string" ? req.body.sourceRunId : undefined;
+      const repos = await getDurableRepos();
+      const runIds = await repos.knowledgeDistillation.listRunIds();
+      const runId = sourceRunId ?? runIds[runIds.length - 1];
+      if (!runId) {
+        res.status(404).json({ code: "NO_SOURCE_RUN", mentorEligible: false });
+        return;
+      }
+      const sourceRun = await repos.knowledgeDistillation.getRun(runId);
+      if (!sourceRun) {
+        res.status(404).json({ code: "SOURCE_RUN_NOT_FOUND", mentorEligible: false });
+        return;
+      }
+      const sourceSessionIds =
+        ((sourceRun as { sourceSessionIds?: string[] }).sourceSessionIds ?? []) as string[];
+      const store = getCriticalCalibrationMemory();
+      const raw =
+        sourceSessionIds.length > 0
+          ? sourceSessionIds.flatMap((id) => store.listObservations(id))
+          : store.listObservations();
+      const audit = runIndependentEvidenceAudit({
+        sourceRunId: runId,
+        sourceFingerprint: (sourceRun as { sourceFingerprint?: string }).sourceFingerprint,
+        rawObservations: raw,
+        sourceRun,
+      });
+      getIndependentEvidenceAuditMemory().saveAudit(audit);
+      let persisted = false;
+      let persistError: string | undefined;
+      try {
+        if (repos.knowledgeDistillation.saveIndependentEvidenceAudit) {
+          await repos.knowledgeDistillation.saveIndependentEvidenceAudit(audit);
+          persisted = true;
+        }
+      } catch (e) {
+        persistError = e instanceof Error ? e.message : "PERSIST_FAILED";
+      }
+      res.json({
+        audit,
+        persisted,
+        persistError,
+        mentorEligible: false,
+        brainMutate: false,
+        autoApply: false,
+        originalRunUnchanged: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "AUDIT_FAILED";
+      res.status(msg === "AUDIT_APPEND_ONLY_REFUSES_OVERWRITE" ? 409 : 400).json({
+        code: msg,
+        mentorEligible: false,
+        brainMutate: false,
+      });
+    }
   });
 }

@@ -97,3 +97,27 @@ export function fetchProposals() {
 export function fetchEvolution() {
   return kdFetch<{ report: unknown; mentorEligible: false; brainMutated: false; openAi: false }>("/evolution");
 }
+
+export function fetchIndependentEvidenceAudit(sourceRunId?: string) {
+  const q = sourceRunId ? `?sourceRunId=${encodeURIComponent(sourceRunId)}` : "";
+  return kdFetch<{
+    audit: unknown;
+    mentorEligible: false;
+    brainMutate: false;
+    containsAnswerText: false;
+  }>(`/independent-evidence-audit${q}`);
+}
+
+export function runIndependentEvidenceAudit(body?: { sourceRunId?: string }) {
+  return kdFetch<{
+    audit: unknown;
+    persisted: boolean;
+    persistError?: string;
+    mentorEligible: false;
+    brainMutate: false;
+    originalRunUnchanged: true;
+  }>("/independent-evidence-audit", {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
