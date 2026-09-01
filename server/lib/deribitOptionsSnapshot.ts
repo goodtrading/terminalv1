@@ -84,6 +84,15 @@ function coerceGammaFlipFromParsed(parsed: Record<string, unknown>): number | nu
   return null;
 }
 
+function normalizeTopMagnets(
+  magnets: Array<{ strike: number; totalGex: number }>,
+): Array<{ strike: number; totalGex: number }> {
+  return [...magnets]
+    .filter((m) => Number.isFinite(m.strike) && Number.isFinite(m.totalGex) && m.totalGex > 0)
+    .sort((a, b) => b.totalGex - a.totalGex || a.strike - b.strike)
+    .slice(0, 3);
+}
+
 export function getDeribitOptionsSnapshot(): DeribitOptionsSnapshot {
   try {
     if (!fs.existsSync(OUTPUT_FILE)) {
@@ -108,44 +117,43 @@ export function getDeribitOptionsSnapshot(): DeribitOptionsSnapshot {
         : "NEUTRAL";
     const gammaFlip = coerceGammaFlipFromParsed(parsed);
     const rawStrikes = Array.isArray(parsed.strikes) ? parsed.strikes : [];
-    const strikes: StrikeRow[] = rawStrikes
-      .map((s: unknown) => {
-        if (!s || typeof s !== "object") return null;
-        const row = s as Record<string, unknown>;
-        const strike = Number(row.strike);
-        if (!Number.isFinite(strike) || strike <= 0) return null;
-        const totalOi = Number(row.totalOiContracts ?? 0);
-        const callOi = Number(row.callOiContracts ?? 0);
-        const putOi = Number(row.putOiContracts ?? 0);
-        const totalOiSafe = Number.isFinite(totalOi) ? totalOi : callOi + putOi;
-        if (totalOiSafe <= 0) return null;
-        const totalGex = Number.isFinite(Number(row.totalGex)) ? Number(row.totalGex) : 0;
-        return {
-          strike,
-          totalGex,
-          callGex: Number.isFinite(Number(row.callGex)) ? Number(row.callGex) : undefined,
-          putGex: Number.isFinite(Number(row.putGex)) ? Number(row.putGex) : undefined,
-          totalOiContracts: totalOiSafe,
-          callOiContracts: Number.isFinite(callOi) ? callOi : 0,
-          putOiContracts: Number.isFinite(putOi) ? putOi : 0,
-        };
-      })
-      .filter((r): r is StrikeRow => r != null);
+    const strikes = rawStrikes.reduce<StrikeRow[]>((acc, s) => {
+      if (!s || typeof s !== "object") return acc;
+      const row = s as Record<string, unknown>;
+      const strike = Number(row.strike);
+      if (!Number.isFinite(strike) || strike <= 0) return acc;
+      const totalOi = Number(row.totalOiContracts ?? 0);
+      const callOi = Number(row.callOiContracts ?? 0);
+      const putOi = Number(row.putOiContracts ?? 0);
+      const totalOiSafe = Number.isFinite(totalOi) ? totalOi : callOi + putOi;
+      if (totalOiSafe <= 0) return acc;
+      const totalGex = Number.isFinite(Number(row.totalGex)) ? Number(row.totalGex) : 0;
+      acc.push({
+        strike,
+        totalGex,
+        callGex: Number.isFinite(Number(row.callGex)) ? Number(row.callGex) : undefined,
+        putGex: Number.isFinite(Number(row.putGex)) ? Number(row.putGex) : undefined,
+        totalOiContracts: totalOiSafe,
+        callOiContracts: Number.isFinite(callOi) ? callOi : 0,
+        putOiContracts: Number.isFinite(putOi) ? putOi : 0,
+      });
+      return acc;
+    }, []);
     const strikeCount = strikes.length;
     console.log("[OptionsSnapshot] parsed.strikes?.length=" + rawStrikes.length + " mapped=" + strikeCount);
     const topMagnetsRaw = Array.isArray(parsed.topMagnets) ? parsed.topMagnets : [];
-    const topMagnets: Array<{ strike: number; totalGex: number }> = topMagnetsRaw
-      .map((m: any) => {
-        const strike =
-          m && typeof m.strike === "number" && Number.isFinite(m.strike) ? m.strike : null;
-        const mgex =
-          m && typeof m.totalGex === "number" && Number.isFinite(m.totalGex)
-            ? m.totalGex
-            : null;
-        if (strike == null || mgex == null) return null;
-        return { strike, totalGex: mgex };
-      })
-      .filter((m: any) => m != null);
+    const topMagnets = normalizeTopMagnets(
+      topMagnetsRaw.reduce<Array<{ strike: number; totalGex: number }>>((acc, m: unknown) => {
+        if (!m || typeof m !== "object") return acc;
+        const row = m as Record<string, unknown>;
+        const strike = typeof row.strike === "number" && Number.isFinite(row.strike) ? row.strike : null;
+        const totalGex =
+          typeof row.totalGex === "number" && Number.isFinite(row.totalGex) ? row.totalGex : null;
+        if (strike == null || totalGex == null) return acc;
+        acc.push({ strike, totalGex });
+        return acc;
+      }, []),
+    );
 
     const snapshot: DeribitOptionsSnapshot = {
       asOf,

@@ -359,10 +359,10 @@ function computeGammaRegime(totalGex) {
   return "NEUTRAL";
 }
 
-function findTopMagnets(strikeRows, count) {
-  const sorted = [...strikeRows].sort(
-    (a, b) => Math.abs(b.totalGex) - Math.abs(a.totalGex)
-  );
+function findTopMagnets(strikeRows, count = 3) {
+  const sorted = [...strikeRows]
+    .filter((row) => Number.isFinite(row?.totalGex) && row.totalGex > 0)
+    .sort((a, b) => b.totalGex - a.totalGex || a.strike - b.strike);
   return sorted.slice(0, count).map((row) => ({
     strike: row.strike,
     totalGex: row.totalGex,
@@ -425,7 +425,7 @@ function main() {
   const totalGex = gexStrikeRows.reduce((sum, r) => sum + (r.totalGex || 0), 0);
   const gammaRegime = computeGammaRegime(totalGex);
   const gammaFlip = gexStrikeRows.length > 0 ? computeGammaFlip(gexStrikeRows) : null;
-  const topMagnets = gexStrikeRows.length > 0 ? findTopMagnets(gexStrikeRows, 5) : [];
+  const topMagnets = gexStrikeRows.length > 0 ? findTopMagnets(gexStrikeRows, 3) : [];
   let spotValue = null;
   for (const row of resultArray) {
     const p = row?.underlying_price ?? row?.underlying_index_price;
@@ -482,5 +482,9 @@ function main() {
   );
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main();
+}
+
+export { findTopMagnets };
 
