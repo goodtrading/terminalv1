@@ -154,6 +154,7 @@ import { DeltaVolumeMatrixPanel } from "./DeltaVolumeMatrixPanel";
 import { formatBtcCompact } from "./bookmapTradeAggregation";
 import {
   RIGHT_SPACE_PCT_OPTIONS,
+  DEFAULT_RIGHT_SPACE_PCT,
   type LocalRangeUsd,
   type RightSpacePct,
 } from "./bookmapViewMode";
@@ -1294,7 +1295,9 @@ export function LiquidityHeatmapPanel({
     return prepareBands(overlayHeatmapState);
   }, [useEngineRenderer, sourceMode, overlayHeatmapState, prepareBands]);
 
-  const effectiveRightSpacePct = visualSettings.layout.rightSpacePct;
+  const effectiveRightSpacePct =
+    RIGHT_SPACE_PCT_OPTIONS.find((option) => option === visualSettings.layout.rightSpacePct) ??
+    DEFAULT_RIGHT_SPACE_PCT;
 
   const timeScale = useBookmapTimeScale({
     dataStartTime: engineRenderBase?.timeMin ?? Date.now() - 900_000,

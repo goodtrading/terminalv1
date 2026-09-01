@@ -76,7 +76,10 @@ export function generateDynamicScenarios(
     type: "VOL",
     probability: 15,
     thesis: "Tail Risk Acceleration / Gamma Squeeze Event",
-    levels: [`${(levels.deepRiskPocketStart / 1000).toFixed(1)}k`, "Extreme OTM levels"],
+    levels:
+      levels.deepRiskPocketStart != null
+        ? [`${(levels.deepRiskPocketStart / 1000).toFixed(1)}k`, "Extreme OTM levels"]
+        : ["Extreme OTM levels"],
     confirmation: ["Massive wall pulling", "DVOL spike > 10%", "Bid/Ask spread expansion"],
     invalidation: "Orderflow stabilization and volatility mean reversion",
     timestamp: new Date()

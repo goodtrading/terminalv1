@@ -159,7 +159,7 @@ function mergeTrades(
 
 export function mergeBookmapVisualSettings(
   base: BookmapVisualSettings = DEFAULT_BOOKMAP_VISUAL_SETTINGS,
-  patch?: Partial<BookmapVisualSettings> | null,
+  patch?: (Partial<BookmapVisualSettings> & { layout?: Partial<BookmapVisualSettings["layout"]> }) | null,
 ): BookmapVisualSettings {
   if (!patch) return structuredClone(base);
 

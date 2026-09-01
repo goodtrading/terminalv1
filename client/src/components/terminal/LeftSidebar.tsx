@@ -331,7 +331,7 @@ export function LeftSidebar() {
               <TerminalValue
                 label="Vanna Exposure"
                 value={fe.display}
-                trend={dealer && dealer.vannaExposure > 0 ? "positive" : "negative"}
+                trend={dealer?.vannaExposure != null ? (dealer.vannaExposure > 0 ? "positive" : dealer.vannaExposure < 0 ? "negative" : "neutral") : "neutral"}
                 tooltip={`Vanna Exposure (raw: ${fe.raw})`}
               />
               <TerminalValue
@@ -350,7 +350,7 @@ export function LeftSidebar() {
               <TerminalValue
                 label="Charm Exposure"
                 value={fe.display}
-                trend={dealer && dealer.charmExposure > 0 ? "positive" : "negative"}
+                trend={dealer?.charmExposure != null ? (dealer.charmExposure > 0 ? "positive" : dealer.charmExposure < 0 ? "negative" : "neutral") : "neutral"}
                 tooltip={`Charm Exposure (raw: ${fe.raw})`}
               />
               <TerminalValue
@@ -413,14 +413,18 @@ export function LeftSidebar() {
           <div className="p-1.5 bg-terminal-negative/10 border border-terminal-negative/20 rounded-sm">
             <div className="text-[8px] uppercase tracking-[0.2em] text-terminal-negative mb-0.5 font-bold">SHORT GAMMA POCKET</div>
             <div className="font-mono text-[10px] text-terminal-negative font-bold">
-              {levels ? `${levels.shortGammaPocketStart.toLocaleString()} – ${levels.shortGammaPocketEnd.toLocaleString()}` : "--"}
+              {levels && levels.shortGammaPocketStart != null && levels.shortGammaPocketEnd != null
+                ? `${levels.shortGammaPocketStart.toLocaleString()} – ${levels.shortGammaPocketEnd.toLocaleString()}`
+                : "--"}
             </div>
           </div>
 
           <div className="p-1.5 terminal-card">
             <div className="terminal-text-label mb-0.5 text-[8px]">DEEP RISK POCKET</div>
             <div className="font-mono text-[10px] terminal-text-secondary font-bold">
-              {levels ? `${levels.deepRiskPocketStart.toLocaleString()} – ${levels.deepRiskPocketEnd.toLocaleString()}` : "--"}
+              {levels && levels.deepRiskPocketStart != null && levels.deepRiskPocketEnd != null
+                ? `${levels.deepRiskPocketStart.toLocaleString()} – ${levels.deepRiskPocketEnd.toLocaleString()}`
+                : "--"}
             </div>
           </div>
         </div>

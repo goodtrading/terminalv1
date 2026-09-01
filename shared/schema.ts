@@ -93,7 +93,7 @@ export const insertOptionsDataSchema = createInsertSchema(optionsData).omit({ id
 export const insertDealerHedgingFlowSchema = createInsertSchema(dealerHedgingFlow).omit({ id: true, timestamp: true });
 
 export type MarketState = typeof marketState.$inferSelect;
-export type DealerExposure = Omit<typeof dealerExposure.$inferSelect, "vannaExposure" | "charmExposure"> & {
+export type DealerExposure = Omit<typeof dealerExposure.$inferSelect, "vannaExposure" | "charmExposure" | "vannaBias" | "charmBias"> & {
   vannaExposure: number | null;
   charmExposure: number | null;
   liveVannaExposure: number | null;

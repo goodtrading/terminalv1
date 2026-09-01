@@ -136,8 +136,8 @@ export async function readLiveMarketFromServer(symbol: string): Promise<LiveMark
     levels: levels
       ? {
           gammaMagnets: Array.isArray(levels.gammaMagnets) ? levels.gammaMagnets.slice(0, 5) : [],
-          shortGammaPocketStart: levels.shortGammaPocketStart,
-          shortGammaPocketEnd: levels.shortGammaPocketEnd,
+          shortGammaPocketStart: levels.shortGammaPocketStart ?? undefined,
+          shortGammaPocketEnd: levels.shortGammaPocketEnd ?? undefined,
           timestampMs: levels.timestamp ? new Date(levels.timestamp).getTime() : undefined,
         }
       : undefined,
