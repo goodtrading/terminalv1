@@ -1,6 +1,9 @@
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
+import { buildDealerHedgeSensitivity } from "./dealer-hedge-sensitivity";
+import { buildDealerHedgeStressScenarios, dealerHedgeStressScenarioSchema } from "./dealer-hedge-stress";
+import { buildDealerHedgeState } from "./dealer-hedge-state";
 import { getDeribitOptionsSnapshot } from "./lib/deribitOptionsSnapshot";
 
 /** Snapshot global flip only if asOf + snapshot spot present, fresh, spot within 3% of live, flip valid. */
@@ -107,6 +110,132 @@ function toFiniteNumberOrNull(...values: unknown[]): number | null {
   return null;
 }
 
+const LEGACY_PINNING_PROXIMITY_USD = 1000;
+const PINNING_REFERENCE_SPOT_USD = 80_000;
+export const PINNING_PROXIMITY_RATIO = LEGACY_PINNING_PROXIMITY_USD / PINNING_REFERENCE_SPOT_USD;
+
+export function relativeDistanceFromSpot(level: number, spot: number): number {
+  if (!Number.isFinite(level) || !Number.isFinite(spot) || spot <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return Math.abs(level - spot) / spot;
+}
+
+function selectLiveImpliedVolatility(
+  markIvRaw: unknown,
+  bidIvRaw: unknown,
+  askIvRaw: unknown,
+): number | null {
+  const parsePercentToDecimal = (raw: unknown): number | null => {
+    if (raw == null || raw === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n / 100 : null;
+  };
+
+  const bidIv = parsePercentToDecimal(bidIvRaw);
+  const askIv = parsePercentToDecimal(askIvRaw);
+  if (bidIv != null && askIv != null) return (bidIv + askIv) / 2;
+
+  const markIv = parsePercentToDecimal(markIvRaw);
+  return markIv != null ? markIv : null;
+}
+
+export type LiveStructuralExposureMetrics = {
+  signedNet: number | null;
+  grossAbs: number | null;
+  directionalRatio: number | null;
+  validRows: number;
+  totalEligibleRows: number;
+  callSignedContribution: number | null;
+  putSignedContribution: number | null;
+};
+
+export function aggregateLiveStructuralExposure<T extends { optionType: "call" | "put" }>(
+  options: Array<T & Partial<Record<"vannaExposure" | "charmExposure", number | null | undefined>>>,
+  field: "vannaExposure" | "charmExposure",
+): LiveStructuralExposureMetrics {
+  let signedNet = 0;
+  let grossAbs = 0;
+  let validRows = 0;
+  let callSignedContribution = 0;
+  let putSignedContribution = 0;
+
+  for (const option of options) {
+    const value = option[field];
+    if (value == null || !Number.isFinite(value)) continue;
+    validRows++;
+    signedNet += value;
+    grossAbs += Math.abs(value);
+    if (option.optionType === "call") callSignedContribution += value;
+    else putSignedContribution += value;
+  }
+
+  if (validRows === 0) {
+    return {
+      signedNet: null,
+      grossAbs: null,
+      directionalRatio: null,
+      validRows: 0,
+      totalEligibleRows: options.length,
+      callSignedContribution: null,
+      putSignedContribution: null,
+    };
+  }
+
+  return {
+    signedNet,
+    grossAbs,
+    directionalRatio: grossAbs > 0 ? signedNet / grossAbs : null,
+    validRows,
+    totalEligibleRows: options.length,
+    callSignedContribution,
+    putSignedContribution,
+  };
+}
+
+export function computeLiveGreekFields(
+  underlyingPrice: number,
+  strike: number,
+  optionType: "call" | "put",
+  openInterest: number,
+  expiry: string,
+  nowMs: number,
+  markIvRaw: unknown,
+  bidIvRaw: unknown,
+  askIvRaw: unknown,
+): { gammaExposure?: number; vannaExposure?: number; charmExposure?: number; sigma?: number | null } {
+  const sigma = selectLiveImpliedVolatility(markIvRaw, bidIvRaw, askIvRaw);
+  if (!(underlyingPrice > 0 && strike > 0 && openInterest > 0) || sigma == null) {
+    return { gammaExposure: undefined, vannaExposure: undefined, charmExposure: undefined, sigma: sigma ?? null };
+  }
+
+  const expiryMs = parseDeribitExpiryDate(expiry)?.getTime() ?? null;
+  if (expiryMs == null || expiryMs <= nowMs) {
+    return { gammaExposure: undefined, vannaExposure: undefined, charmExposure: undefined, sigma };
+  }
+
+  const exactT = (expiryMs - nowMs) / MILLISECONDS_PER_YEAR;
+  const moneyness = Math.log(underlyingPrice / strike);
+  const sqrtExactT = Math.sqrt(exactT);
+
+  const d1 = (moneyness + 0.5 * sigma * sigma * exactT) / (sigma * sqrtExactT);
+  const nd1 = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+
+  const gammaExposure = nd1 / (underlyingPrice * sigma * sqrtExactT);
+
+  const rawVanna = calculateBlackScholesRawVanna(underlyingPrice, strike, sigma, exactT);
+  const rawCharm = calculateBlackScholesRawCharm(underlyingPrice, strike, sigma, exactT);
+  const dealerSign = optionType === "call" ? 1 : -1;
+
+  return {
+    gammaExposure,
+    vannaExposure: dealerSign * rawVanna * openInterest * underlyingPrice * 0.01,
+    charmExposure: dealerSign * rawCharm * openInterest * underlyingPrice / 365,
+    sigma,
+  };
+}
+
 export const normalizedOptionSchema = z.object({
   strike: z.number(),
   expiry: z.string(),
@@ -151,6 +280,52 @@ function parseDeribitExpiryDate(expiry: string): Date | null {
   const year = 2000 + yy;
   const dt = new Date(Date.UTC(year, month, day, 8, 0, 0)); // 08:00 UTC approx Deribit settlement hour
   return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+const MILLISECONDS_PER_YEAR = 365 * 24 * 60 * 60 * 1000;
+const MIN_TIME_TO_EXPIRY_MS = 1;
+const BLACK_SCHOLES_RISK_FREE_RATE = 0.02;
+const BLACK_SCHOLES_DIVIDEND_YIELD = 0;
+
+export function deriveDeribitTimeToExpiryYears(expiry: string, nowMs: number): number | null {
+  if (!Number.isFinite(nowMs)) return null;
+  const expiryMs = parseDeribitExpiryDate(expiry)?.getTime() ?? null;
+  if (expiryMs == null || !Number.isFinite(expiryMs)) return null;
+  return Math.max(expiryMs - nowMs, MIN_TIME_TO_EXPIRY_MS) / MILLISECONDS_PER_YEAR;
+}
+
+export function calculateBlackScholesRawVanna(
+  spot: number,
+  strike: number,
+  sigma: number,
+  timeToExpiryYears: number,
+): number {
+  if (!(spot > 0 && strike > 0 && sigma > 0 && timeToExpiryYears > 0)) return 0;
+  const sqrtT = Math.sqrt(timeToExpiryYears);
+  const d1 =
+    (Math.log(spot / strike) + (BLACK_SCHOLES_RISK_FREE_RATE - BLACK_SCHOLES_DIVIDEND_YIELD + 0.5 * sigma * sigma) * timeToExpiryYears) /
+    (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+  const phiD1 = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+  return -Math.exp(-BLACK_SCHOLES_DIVIDEND_YIELD * timeToExpiryYears) * (phiD1 * d2) / sigma;
+}
+
+export function calculateBlackScholesRawCharm(
+  spot: number,
+  strike: number,
+  sigma: number,
+  timeToExpiryYears: number,
+): number {
+  if (!(spot > 0 && strike > 0 && sigma > 0 && timeToExpiryYears > 0)) return 0;
+  const sqrtT = Math.sqrt(timeToExpiryYears);
+  const d1 =
+    (Math.log(spot / strike) + (BLACK_SCHOLES_RISK_FREE_RATE - BLACK_SCHOLES_DIVIDEND_YIELD + 0.5 * sigma * sigma) * timeToExpiryYears) /
+    (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+  const phiD1 = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
+  const discount = Math.exp(-BLACK_SCHOLES_DIVIDEND_YIELD * timeToExpiryYears);
+  return -discount * phiD1 * (2 * (BLACK_SCHOLES_RISK_FREE_RATE - BLACK_SCHOLES_DIVIDEND_YIELD) * timeToExpiryYears - d2 * sigma * sqrtT) /
+    (2 * timeToExpiryYears * sigma * sqrtT);
 }
 
 function pickOperationalExpiry(options: Array<z.infer<typeof normalizedOptionSchema>>, nowMs: number): string | null {
@@ -511,6 +686,36 @@ export const optionsSummarySchema = z.object({
   shortGammaPockets: z.array(z.object({ start: z.number(), end: z.number() })).nullable(),
   vannaBias: z.enum(["BULLISH", "BEARISH"]).nullable(),
   charmBias: z.enum(["BULLISH", "BEARISH"]).nullable(),
+  liveVannaExposure: z.number().nullable().optional(),
+  liveVannaGrossAbsExposure: z.number().nullable().optional(),
+  liveVannaDirectionalRatio: z.number().nullable().optional(),
+  liveVannaValidRows: z.number().nullable().optional(),
+  liveVannaTotalEligibleRows: z.number().nullable().optional(),
+  liveVannaCallSignedContribution: z.number().nullable().optional(),
+  liveVannaPutSignedContribution: z.number().nullable().optional(),
+  liveCharmExposure: z.number().nullable().optional(),
+  liveCharmGrossAbsExposure: z.number().nullable().optional(),
+  liveCharmDirectionalRatio: z.number().nullable().optional(),
+  liveCharmValidRows: z.number().nullable().optional(),
+  liveCharmTotalEligibleRows: z.number().nullable().optional(),
+  liveCharmCallSignedContribution: z.number().nullable().optional(),
+  liveCharmPutSignedContribution: z.number().nullable().optional(),
+  dealerHedgeSensitivity: z.object({
+    gammaUsdPerDollar: z.number().nullable(),
+    vannaUsdPerVolPoint: z.number().nullable(),
+    vannaGrossAbsUsdPerVolPoint: z.number().nullable(),
+    vannaDirectionalRatio: z.number().nullable(),
+    charmUsdPerDay: z.number().nullable(),
+    charmGrossAbsUsdPerDay: z.number().nullable(),
+    charmDirectionalRatio: z.number().nullable(),
+    vannaValidRows: z.number().nullable(),
+    vannaTotalEligibleRows: z.number().nullable(),
+    charmValidRows: z.number().nullable(),
+    charmTotalEligibleRows: z.number().nullable(),
+    source: z.enum(["LIVE_DERIBIT", "BOOTSTRAP", "NO_DATA"]),
+  }),
+  dealerHedgeState: z.any(),
+  dealerHedgeStressScenarios: z.array(dealerHedgeStressScenarioSchema),
   dealerGammaState: z.enum(["LONG_GAMMA", "SHORT_GAMMA"]).nullable(),
   dealerHedgeDirection: z.string().nullable(),
   volatilityRegime: z.enum(["HIGH_VOL", "LOW_VOL", "TRANSITION"]).nullable(),
@@ -574,7 +779,7 @@ export const optionsSummarySchema = z.object({
     })),
     squeezeProbability: z.number(),
     liquidationSweepRisk: z.enum(["LOW", "MEDIUM", "HIGH"])
-  }).optional(),
+  }).nullable().optional(),
   backtestResults: z.object({
     pinningAccuracy: z.number(),
     expansionAccuracy: z.number(),
@@ -611,7 +816,7 @@ export const optionsSummarySchema = z.object({
     biasDrivers: z.array(z.string()),
     biasInvalidation: z.string(),
     biasHorizon: z.enum(["INTRADAY", "SWING", "EVENT_DRIVEN"])
-  }).optional(),
+  }).nullable().optional(),
   tradeDecisionEngine: z.object({
     tradeState: z.enum(["EXECUTE", "PREPARE", "WAIT", "AVOID"]),
     tradeDirection: z.enum(["LONG", "SHORT", "NEUTRAL"]),
@@ -619,7 +824,7 @@ export const optionsSummarySchema = z.object({
     riskLevel: z.enum(["LOW", "MEDIUM", "HIGH"]),
     positionSizeSuggestion: z.enum(["FULL", "REDUCED", "PROBE_ONLY", "NO_TRADE"]),
     executionReason: z.array(z.string())
-  }).optional(),
+  }).nullable().optional(),
   liquidityCascadeEngine: z.object({
     cascadeRisk: z.enum(["LOW", "MEDIUM", "HIGH", "EXTREME"]),
     cascadeDirection: z.enum(["UP", "DOWN", "TWO_SIDED", "NONE"]),
@@ -631,7 +836,7 @@ export const optionsSummarySchema = z.object({
     cascadeWatchLevel: z.number().optional(),
     cascadeMissingCondition: z.string().optional(),
     cascadeBlockReason: z.string().optional()
-  }).optional(),
+  }).nullable().optional(),
   squeezeProbabilityEngine: z.object({
     squeezeProbability: z.number(),
     squeezeDirection: z.enum(["UP", "DOWN", "NONE"]),
@@ -644,19 +849,19 @@ export const optionsSummarySchema = z.object({
     squeezeWatchLevel: z.number().optional(),
     squeezeMissingCondition: z.string().optional(),
     squeezeBlockReason: z.string().optional()
-  }).optional(),
+  }).nullable().optional(),
   marketModeEngine: z.object({
     marketMode: z.enum(["GAMMA_PIN", "MEAN_REVERSION", "VOL_EXPANSION", "SQUEEZE_RISK", "CASCADE_RISK", "FRAGILE_TRANSITION"]),
     marketModeConfidence: z.number(),
     marketModeReason: z.array(z.string())
-  }).optional(),
+  }).nullable().optional(),
   dealerHedgingFlowMap: z.object({
     hedgingFlowDirection: z.enum(["BUYING", "SELLING", "NEUTRAL"]),
     hedgingFlowStrength: z.enum(["LOW", "MEDIUM", "HIGH", "EXTREME"]),
     hedgingAccelerationRisk: z.enum(["LOW", "MEDIUM", "HIGH"]),
     hedgingTriggerZone: z.string(),
     hedgingFlowSummary: z.array(z.string())
-  }).optional(),
+  }).nullable().optional(),
   liquiditySweepDetector: z.object({
     sweepRisk: z.enum(["LOW", "MEDIUM", "HIGH", "EXTREME"]),
     sweepDirection: z.enum(["UP", "DOWN", "TWO_SIDED", "NONE"]),
@@ -677,7 +882,7 @@ export const optionsSummarySchema = z.object({
     summary: z.array(z.string()).optional()
   }).optional(),
   dominantExpiry: z.string().nullable().optional(),
-  source: z.enum(["LIVE_DERIBIT", "CSV_FALLBACK"]).optional()
+  source: z.enum(["LIVE_DERIBIT", "BOOTSTRAP", "NO_DATA"]).optional()
 });
 
 export type NormalizedOption = z.infer<typeof normalizedOptionSchema>;
@@ -685,7 +890,7 @@ export type OptionsSummary = z.infer<typeof optionsSummarySchema>;
 
 export type IngestionResult = {
   options: NormalizedOption[];
-  source: "LIVE_DERIBIT" | "CSV_FALLBACK";
+  source: "LIVE_DERIBIT" | "BOOTSTRAP";
 };
 
 export class DeribitOptionsGateway {
@@ -868,6 +1073,7 @@ export class DeribitOptionsGateway {
       const options: NormalizedOption[] = [];
       let parsed = 0;
       let skipped = 0;
+      const nowMs = Date.now();
 
       for (const item of json.result) {
         try {
@@ -885,7 +1091,20 @@ export class DeribitOptionsGateway {
           if (openInterest <= 0) { skipped++; continue; }
 
           const underlyingPrice = item.underlying_price || item.mark_price || 0;
-          const markIv = item.mark_iv ? item.mark_iv / 100 : 0.5;
+          const bidIvRaw = item.bid_iv;
+          const askIvRaw = item.ask_iv;
+          const bidIv = bidIvRaw != null
+            ? (() => {
+                const n = parseFloat(String(bidIvRaw));
+                return Number.isFinite(n) && n > 0 ? n / 100 : undefined;
+              })()
+            : undefined;
+          const askIv = askIvRaw != null
+            ? (() => {
+                const n = parseFloat(String(askIvRaw));
+                return Number.isFinite(n) && n > 0 ? n / 100 : undefined;
+              })()
+            : undefined;
           const ivMark =
             item.mark_iv != null
               ? (() => {
@@ -893,52 +1112,25 @@ export class DeribitOptionsGateway {
                   return Number.isFinite(n) && n > 0 ? n / 100 : undefined;
                 })()
               : undefined;
-          const bidIvRaw = item.bid_iv;
-          const askIvRaw = item.ask_iv;
-          const bidIv = bidIvRaw != null
-            ? (() => {
-                const n = parseFloat(String(bidIvRaw));
-                return Number.isFinite(n) ? n / 100 : undefined;
-              })()
-            : undefined;
-          const askIv = askIvRaw != null
-            ? (() => {
-                const n = parseFloat(String(askIvRaw));
-                return Number.isFinite(n) ? n / 100 : undefined;
-              })()
-            : undefined;
           const bestBidPrice = toFiniteNumberOrNull(item.best_bid_price, item.bid_price);
           const bestAskPrice = toFiniteNumberOrNull(item.best_ask_price, item.ask_price);
           const bestBidSize = toFiniteNumberOrNull(item.best_bid_amount, item.bid_amount, item.bid_size);
           const bestAskSize = toFiniteNumberOrNull(item.best_ask_amount, item.ask_amount, item.ask_size);
 
-          let gammaExposure: number | undefined;
-          let vannaExposure: number | undefined;
-          let charmExposure: number | undefined;
-
-          if (underlyingPrice > 0 && strike > 0) {
-            const moneyness = Math.log(underlyingPrice / strike);
-            const dteMatch = expiry.match(/(\d+)/);
-            const roughDte = dteMatch ? Math.max(1, parseInt(dteMatch[0])) : 30;
-            const T = roughDte / 365;
-            const sqrtT = Math.sqrt(T);
-            const sigma = markIv > 0 ? markIv : 0.5;
-
-            const d1 = (moneyness + 0.5 * sigma * sigma * T) / (sigma * sqrtT);
-            const nd1 = Math.exp(-0.5 * d1 * d1) / Math.sqrt(2 * Math.PI);
-
-            const rawGamma = nd1 / (underlyingPrice * sigma * sqrtT);
-            // gammaExposure is used as a raw-gamma hint only.
-            // The real GEX is computed later in getSummary() with the correct formula.
-            gammaExposure = rawGamma;
-
-            const dealerSign = optionType === "call" ? 1 : -1;
-            const dVannaDvol = d1 * nd1 / sigma;
-            vannaExposure = dealerSign * dVannaDvol * openInterest * underlyingPrice * 0.01;
-
-            const charmVal = -nd1 * (2 * 0.02 * T - d1 * sigma * sqrtT) / (2 * T * sigma * sqrtT);
-            charmExposure = dealerSign * charmVal * openInterest * 100;
-          }
+          const liveGreeks = computeLiveGreekFields(
+            underlyingPrice,
+            strike,
+            optionType,
+            openInterest,
+            expiry,
+            nowMs,
+            ivMark,
+            bidIvRaw,
+            askIvRaw,
+          );
+          const gammaExposure = liveGreeks.gammaExposure;
+          const vannaExposure = liveGreeks.vannaExposure;
+          const charmExposure = liveGreeks.charmExposure;
 
           options.push({
             strike,
@@ -984,11 +1176,11 @@ export class DeribitOptionsGateway {
     }
 
     const csvData = await this.ingestLatestCSV();
-    return { options: csvData, source: "CSV_FALLBACK" };
+    return { options: csvData, source: "BOOTSTRAP" };
   }
 
-  static async getSummary(options: NormalizedOption[], spotPrice?: number, source?: "LIVE_DERIBIT" | "CSV_FALLBACK"): Promise<OptionsSummary> {
-    const dataSource = source || "CSV_FALLBACK";
+  static async getSummary(options: NormalizedOption[], spotPrice?: number, source?: "LIVE_DERIBIT" | "BOOTSTRAP"): Promise<OptionsSummary> {
+    const dataSource = source || "BOOTSTRAP";
     try {
       if (options.length === 0) {
         const fallbackPlaybook = {
@@ -1021,6 +1213,34 @@ export class DeribitOptionsGateway {
           shortGammaPockets: null, vannaBias: null, charmBias: null,
           gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
           dealerGammaState: null, dealerHedgeDirection: null, volatilityRegime: null, dealerFlowScore: null,
+          liveVannaExposure: null,
+          liveVannaGrossAbsExposure: null,
+          liveVannaDirectionalRatio: null,
+          liveVannaValidRows: 0,
+          liveVannaTotalEligibleRows: 0,
+          liveVannaCallSignedContribution: null,
+          liveVannaPutSignedContribution: null,
+          liveCharmExposure: null,
+          liveCharmGrossAbsExposure: null,
+          liveCharmDirectionalRatio: null,
+          liveCharmValidRows: 0,
+          liveCharmTotalEligibleRows: 0,
+          liveCharmCallSignedContribution: null,
+          liveCharmPutSignedContribution: null,
+          dealerHedgeSensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+          dealerHedgeStressScenarios: buildDealerHedgeStressScenarios({
+            spotPrice,
+            sensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+          }),
+          dealerHedgeState: buildDealerHedgeState({
+            source: dataSource,
+            sensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+            standardizedStress: buildDealerHedgeStressScenarios({
+              spotPrice,
+              sensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+            }),
+            structuralPressure: null,
+          }),
           tradingPlaybook: fallbackPlaybook,
           gammaCurveEngine: {
             gammaSlope: 0,
@@ -1036,48 +1256,13 @@ export class DeribitOptionsGateway {
             suggestedPlaybook: "RANGE_SCALPING" as const,
             expansionTriggerZone: null
           },
-          institutionalBiasEngine: {
-            institutionalBias: "NEUTRAL_CHOP" as const,
-            biasConfidence: 50,
-            biasDrivers: ["Insufficient data", "Awaiting options ingestion", "No signal alignment"],
-            biasInvalidation: "Bias will update once live options data is available",
-            biasHorizon: "INTRADAY" as const
-          },
-          tradeDecisionEngine: {
-            tradeState: "WAIT" as const,
-            tradeDirection: "NEUTRAL" as const,
-            entryCondition: "Awaiting options data ingestion",
-            riskLevel: "MEDIUM" as const,
-            positionSizeSuggestion: "NO_TRADE" as const,
-            executionReason: ["Insufficient data", "No signal alignment"]
-          },
-          liquidityCascadeEngine: {
-            cascadeRisk: "MEDIUM" as const,
-            cascadeDirection: "DOWN" as const,
-            cascadeTrigger: "71.0k",
-            liquidationPocket: "70.0k - 70.5k",
-            cascadeDrivers: ["Short gamma pressure", "Dealer hedging flow", "Liquidity vacuum forming"]
-          },
-          squeezeProbabilityEngine: {
-            squeezeProbability: 45,
-            squeezeDirection: "UP" as const,
-            squeezeType: "SHORT_SQUEEZE" as const,
-            squeezeTrigger: "Break above 71.2k",
-            squeezeTarget: "71.5k - 72.0k",
-            squeezeDrivers: ["Short gamma regime", "High dealer sensitivity", "Gamma cliff proximity"]
-          },
-          marketModeEngine: {
-            marketMode: "FRAGILE_TRANSITION" as const,
-            marketModeConfidence: 0,
-            marketModeReason: ["Insufficient data", "Awaiting options ingestion"]
-          },
-          dealerHedgingFlowMap: {
-            hedgingFlowDirection: "NEUTRAL" as const,
-            hedgingFlowStrength: "LOW" as const,
-            hedgingAccelerationRisk: "LOW" as const,
-            hedgingTriggerZone: "Awaiting options data ingestion",
-            hedgingFlowSummary: ["Insufficient data", "Awaiting options ingestion"]
-          },
+          institutionalBiasEngine: null,
+          tradeDecisionEngine: null,
+          liquidationConfluence: null,
+          liquidityCascadeEngine: null,
+          squeezeProbabilityEngine: null,
+          marketModeEngine: null,
+          dealerHedgingFlowMap: null,
           dominantExpiry: null,
           source: dataSource
         };
@@ -1086,6 +1271,25 @@ export class DeribitOptionsGateway {
       let totalGex = 0, totalCallGex = 0, totalPutGex = 0;
       let callWall = 0, putWall = 0, maxCallOi = 0, maxPutOi = 0;
       let totalVanna = 0, totalCharm = 0;
+      let bestCallWall: { strike: number; openInterest: number } | null = null;
+      let bestPutWall: { strike: number; openInterest: number } | null = null;
+
+      const isBetterWallCandidate = (
+        candidate: { strike: number; openInterest: number },
+        current: { strike: number; openInterest: number } | null,
+        spot: number | null,
+      ): boolean => {
+        if (!current) return true;
+        if (candidate.openInterest !== current.openInterest) return candidate.openInterest > current.openInterest;
+        if (spot != null && Number.isFinite(spot) && spot > 0) {
+          const candidateDistance = Math.abs(candidate.strike - spot) / spot;
+          const currentDistance = Math.abs(current.strike - spot) / spot;
+          if (candidateDistance !== currentDistance) return candidateDistance < currentDistance;
+        }
+        return candidate.strike < current.strike;
+      };
+      let totalVannaEvidence = 0, totalCharmEvidence = 0;
+
       let gammaFlip: number | null = null;
       let gammaFlipGlobal: number | null = null;
       let gammaFlipGlobalSource: "fresh_snapshot" | "none" | "legacy_structural_live" = "none";
@@ -1099,6 +1303,7 @@ export class DeribitOptionsGateway {
         reason: string;
       } | null = null;
       let gammaFlipOperationalLegacy: number | null = null;
+
       let gammaFlipLocal: number | null = null;
       let gammaRegimeLocal: "LONG GAMMA" | "SHORT GAMMA" | null = null;
       let localTransitionZoneStart: number | null = null;
@@ -1106,7 +1311,7 @@ export class DeribitOptionsGateway {
       let localFlipReason = "SKIP_NO_SPOT_OR_OPTIONS";
       let localBandPctLog = 0;
       let localMaxExpiryDaysLog = 0;
-      /** Legacy net-GEX grid (solo debug, p. ej. legacyAtFileSpotFlip en snapshot debug). */
+
       let legacyFlipGrid: Array<{ spot: number; netGex: number }> | null = null;
       let legacyCrossings: number[] = [];
       let gammaFlipStructuralLive: number | null = null;
@@ -1134,12 +1339,20 @@ export class DeribitOptionsGateway {
 
         if (expiryInRange && strikeInRange) {
           // Walls (OI) should also stay operational: no far structural levels.
-          if (opt.optionType === "call" && opt.openInterest > maxCallOi) {
-            maxCallOi = opt.openInterest;
-            callWall = opt.strike;
-          } else if (opt.optionType === "put" && opt.openInterest > maxPutOi) {
-            maxPutOi = opt.openInterest;
-            putWall = opt.strike;
+          if (opt.optionType === "call") {
+            const candidate = { strike: opt.strike, openInterest: opt.openInterest };
+            if (isBetterWallCandidate(candidate, bestCallWall, spotPrice ?? null)) {
+              bestCallWall = candidate;
+              maxCallOi = candidate.openInterest;
+              callWall = candidate.strike;
+            }
+          } else if (opt.optionType === "put") {
+            const candidate = { strike: opt.strike, openInterest: opt.openInterest };
+            if (isBetterWallCandidate(candidate, bestPutWall, spotPrice ?? null)) {
+              bestPutWall = candidate;
+              maxPutOi = candidate.openInterest;
+              putWall = candidate.strike;
+            }
           }
 
           // Total GEX: signedNetGexForOptionAtSpot at ticker spot (same membership as tactical flip universe).
@@ -1163,9 +1376,23 @@ export class DeribitOptionsGateway {
           }
         }
 
-        if (opt.vannaExposure) totalVanna += opt.vannaExposure;
-        if (opt.charmExposure) totalCharm += opt.charmExposure;
+        if (opt.vannaExposure != null) {
+          totalVanna += opt.vannaExposure;
+          totalVannaEvidence++;
+        }
+        if (opt.charmExposure != null) {
+          totalCharm += opt.charmExposure;
+          totalCharmEvidence++;
+        }
+
       });
+
+      const liveVannaStructural = aggregateLiveStructuralExposure(options, "vannaExposure");
+      const liveCharmStructural = aggregateLiveStructuralExposure(options, "charmExposure");
+      totalVanna = liveVannaStructural.signedNet ?? 0;
+      totalCharm = liveCharmStructural.signedNet ?? 0;
+      totalVannaEvidence = liveVannaStructural.validRows;
+      totalCharmEvidence = liveCharmStructural.validRows;
 
       totalGex = totalCallGex - totalPutGex;
       const strikesUsed = strikeMap.size;
@@ -1176,9 +1403,10 @@ export class DeribitOptionsGateway {
       const now = new Date().toISOString();
       const totalOi = options.reduce((sum, o) => sum + (o.openInterest || 0), 0);
       const avgIv = options.length
-        ? options.reduce((sum, o) => sum + ((o as { markIv?: number }).markIv ?? 0), 0) / options.length
+        ? options.reduce((sum, o) => sum + ((o as { ivMark?: number }).ivMark ?? 0), 0) / options.length
         : 0;
       console.log(
+
         `[DeribitGateway][VannaCharm] ts=${now} spot=${spotPrice ?? 0} strikes=${options.length} totalOI=${totalOi.toFixed(
           0
         )} totalVanna=${totalVanna.toFixed(6)} totalCharm=${totalCharm.toFixed(6)} avgIV=${avgIv.toFixed(4)}`
@@ -1198,12 +1426,20 @@ export class DeribitOptionsGateway {
         const expiryMs = parseDeribitExpiryDate(opt.expiry)?.getTime() ?? null;
         const expiryInRange = expiryMs != null ? (expiryMs - nowMs) > 0 && (expiryMs - nowMs) <= maxExpiryMs : false;
         if (!expiryInRange) return;
-        if (opt.optionType === "call" && opt.strike >= spotPrice && opt.openInterest > maxActiveCallOi) {
-          maxActiveCallOi = opt.openInterest;
-          activeCallWall = opt.strike;
-        } else if (opt.optionType === "put" && opt.strike <= spotPrice && opt.openInterest > maxActivePutOi) {
-          maxActivePutOi = opt.openInterest;
-          activePutWall = opt.strike;
+        if (opt.optionType === "call" && opt.strike >= spotPrice) {
+          const candidate = { strike: opt.strike, openInterest: opt.openInterest };
+          const current = maxActiveCallOi > 0 ? { strike: activeCallWall, openInterest: maxActiveCallOi } : null;
+          if (isBetterWallCandidate(candidate, current, spotPrice)) {
+            maxActiveCallOi = candidate.openInterest;
+            activeCallWall = candidate.strike;
+          }
+        } else if (opt.optionType === "put" && opt.strike <= spotPrice) {
+          const candidate = { strike: opt.strike, openInterest: opt.openInterest };
+          const current = maxActivePutOi > 0 ? { strike: activePutWall, openInterest: maxActivePutOi } : null;
+          if (isBetterWallCandidate(candidate, current, spotPrice)) {
+            maxActivePutOi = candidate.openInterest;
+            activePutWall = candidate.strike;
+          }
         }
       });
 
@@ -1214,6 +1450,8 @@ export class DeribitOptionsGateway {
       const gammaByStrike = Array.from(strikeMap.entries())
         .map(([strike, data]) => ({ strike, gex: data.gex }))
         .sort((a, b) => a.strike - b.strike);
+
+      const grossStrikeGex = gammaByStrike.reduce((sum, s) => sum + Math.abs(s.gex), 0);
 
       const oiByStrike = Array.from(strikeMap.entries())
         .map(([strike, data]) => ({ strike, oi: data.oi }))
@@ -1528,7 +1766,7 @@ export class DeribitOptionsGateway {
       // 3. Gamma Magnets (Top 3 highest positive gamma)
       const gammaMagnets = [...gammaByStrike]
         .filter(s => s.gex > 0)
-        .sort((a, b) => b.gex - a.gex)
+        .sort((a, b) => b.gex - a.gex || a.strike - b.strike)
         .slice(0, 3)
         .map(s => s.strike);
 
@@ -1608,8 +1846,7 @@ export class DeribitOptionsGateway {
         const isWall = curr.strike === callWall || curr.strike === putWall || gammaMagnets.includes(curr.strike);
         if (isWall) {
           const localGex = Math.abs(curr.gex);
-          const totalAbsGex = options.reduce((sum, opt) => sum + Math.abs(opt.gammaExposure || 0), 0);
-          const strengthScore = totalAbsGex > 0 ? localGex / totalAbsGex : 0;
+          const strengthScore = grossStrikeGex > 0 ? localGex / grossStrikeGex : 0;
           gammaWallStrength.push({ strike: curr.strike, strengthScore });
         }
       }
@@ -1677,6 +1914,7 @@ export class DeribitOptionsGateway {
       // --- Advanced Hedging Dynamics ---
       const dealerGammaState = totalGex >= 0 ? "LONG_GAMMA" : "SHORT_GAMMA";
       let dealerHedgeDirection = "NEUTRAL";
+      const liveSensitivityAvailable = dataSource === "LIVE_DERIBIT";
       
       if (spotPrice && gammaFlip) {
         if (dealerGammaState === "SHORT_GAMMA") {
@@ -1691,9 +1929,9 @@ export class DeribitOptionsGateway {
       else if (dealerGammaState === "SHORT_GAMMA") volatilityRegime = "HIGH_VOL";
 
       // Normalized dealer flow score (-1 to +1)
-      const gexScore = Math.tanh(totalGex / 10000000); 
+      const gexScore = Math.tanh(totalGex / 10000000);
       const vannaScore = Math.tanh(totalVanna / 5000000);
-      const charmScore = Math.tanh(totalCharm / 2000000);
+      const charmScore = Math.tanh(totalCharm / 50000000);
       const dealerFlowScore = (gexScore + vannaScore + charmScore) / 3;
 
       // --- Dealer Reaction Map ---
@@ -1748,7 +1986,7 @@ export class DeribitOptionsGateway {
 
           // Tilt based on vanna/charm
           if (totalVanna > 1000000 && tradeBias === "NEUTRAL") tradeBias = "LONG";
-          if (totalCharm < -1000000 && expectedBehavior === "MEAN_REVERSION") expectedBehavior = "VOLATILITY_EXPANSION";
+          if (totalCharm < -25000000 && expectedBehavior === "MEAN_REVERSION") expectedBehavior = "VOLATILITY_EXPANSION";
 
           reactionZones.push({
             startStrike: zoneStart,
@@ -1791,8 +2029,8 @@ export class DeribitOptionsGateway {
         }
 
         // 4. Pinning Strength
-        const nearMagnet = gammaMagnets.some(m => Math.abs(spotPrice - m) <= 1000);
-        const wallStrength = (gammaWallStrength.find(w => Math.abs(w.strike - spotPrice) <= 1000)?.strengthScore || 0);
+        const nearMagnet = gammaMagnets.some(m => relativeDistanceFromSpot(m, spotPrice) <= PINNING_PROXIMITY_RATIO);
+        const wallStrength = (gammaWallStrength.find(w => relativeDistanceFromSpot(w.strike, spotPrice) <= PINNING_PROXIMITY_RATIO)?.strengthScore || 0);
         pinningStrength = Math.min(1, (nearMagnet ? 0.4 : 0) + (wallStrength * 2) + (dealerGammaState === "LONG_GAMMA" ? 0.3 : 0));
         if (inShortZone) pinningStrength *= 0.2;
 
@@ -1807,39 +2045,7 @@ export class DeribitOptionsGateway {
       const backtestResults = DeribitOptionsGateway.getBacktestMetrics();
 
       // --- Liquidation Confluence Engine ---
-      const perpLiquidationClusters = [
-        { price: (spotPrice || 60000) * 1.02, volume: 5000000 },
-        { price: (spotPrice || 60000) * 0.98, volume: 8000000 }
-      ];
-      const fundingRate = 0.0001;
-      const oiChange = 0.05;
-
-      const confluenceZones: any[] = [];
-      if (spotPrice) {
-        gammaMagnets?.forEach(m => {
-          const cluster = perpLiquidationClusters.find(c => Math.abs(c.price - m) < 500);
-          if (cluster) {
-            confluenceZones.push({
-              startPrice: Math.min(m, cluster.price) - 100,
-              endPrice: Math.max(m, cluster.price) + 100,
-              gammaLevel: m,
-              liquidationCluster: cluster.volume,
-              confluenceScore: Math.min(1, (cluster.volume / 10000000) + (Math.abs(oiChange) * 5))
-            });
-          }
-        });
-      }
-
-      const squeezeProbability = Math.min(1, (Math.abs(dealerFlowScore || 0) * 0.5) + (Math.abs(oiChange) * 2) + (fundingRate > 0 ? 0.1 : 0));
-      let liquidationSweepRisk: "LOW" | "MEDIUM" | "HIGH" = "LOW";
-      if (squeezeProbability > 0.7 || cascadeRisk === "HIGH") liquidationSweepRisk = "HIGH";
-      else if (squeezeProbability > 0.4 || cascadeRisk === "MEDIUM") liquidationSweepRisk = "MEDIUM";
-
-      const liquidationConfluence = {
-        zones: confluenceZones,
-        squeezeProbability,
-        liquidationSweepRisk
-      };
+      const liquidationConfluence = null;
 
       // --- Market Regime Engine ---
       let dealerRegime: "LONG_GAMMA" | "SHORT_GAMMA" | "TRANSITION" = "TRANSITION";
@@ -2934,10 +3140,97 @@ export class DeribitOptionsGateway {
         gammaCurve,
         gammaMagnets,
         shortGammaPockets: shortGammaZones.map(z => ({ start: z.startStrike, end: z.endStrike })),
-        vannaBias: totalVanna >= 0 ? "BULLISH" : "BEARISH",
-        charmBias: totalCharm >= 0 ? "BULLISH" : "BEARISH",
-        totalVanna,
-        totalCharm,
+        vannaBias: totalVannaEvidence > 0 ? (totalVanna >= 0 ? "BULLISH" : "BEARISH") : null,
+        charmBias: totalCharmEvidence > 0 ? (totalCharm >= 0 ? "BULLISH" : "BEARISH") : null,
+        totalVanna: totalVannaEvidence > 0 ? totalVanna : null,
+        totalCharm: totalCharmEvidence > 0 ? totalCharm : null,
+        liveVannaExposure: liveSensitivityAvailable && totalVannaEvidence > 0 ? totalVanna : null,
+        liveVannaGrossAbsExposure: liveSensitivityAvailable ? liveVannaStructural.grossAbs : null,
+        liveVannaDirectionalRatio: liveSensitivityAvailable ? liveVannaStructural.directionalRatio : null,
+        liveVannaValidRows: liveSensitivityAvailable ? liveVannaStructural.validRows : null,
+        liveVannaTotalEligibleRows: liveSensitivityAvailable ? liveVannaStructural.totalEligibleRows : null,
+        liveVannaCallSignedContribution: liveSensitivityAvailable ? liveVannaStructural.callSignedContribution : null,
+        liveVannaPutSignedContribution: liveSensitivityAvailable ? liveVannaStructural.putSignedContribution : null,
+        liveCharmExposure: liveSensitivityAvailable && totalCharmEvidence > 0 ? totalCharm : null,
+        liveCharmGrossAbsExposure: liveSensitivityAvailable ? liveCharmStructural.grossAbs : null,
+        liveCharmDirectionalRatio: liveSensitivityAvailable ? liveCharmStructural.directionalRatio : null,
+        liveCharmValidRows: liveSensitivityAvailable ? liveCharmStructural.validRows : null,
+        liveCharmTotalEligibleRows: liveSensitivityAvailable ? liveCharmStructural.totalEligibleRows : null,
+        liveCharmCallSignedContribution: liveSensitivityAvailable ? liveCharmStructural.callSignedContribution : null,
+        liveCharmPutSignedContribution: liveSensitivityAvailable ? liveCharmStructural.putSignedContribution : null,
+        dealerHedgeSensitivity: buildDealerHedgeSensitivity({
+          source: dataSource,
+          totalGex,
+          liveVannaExposure: liveSensitivityAvailable && totalVannaEvidence > 0 ? totalVanna : null,
+          liveVannaGrossAbsExposure: liveSensitivityAvailable ? liveVannaStructural.grossAbs : null,
+          liveVannaDirectionalRatio: liveSensitivityAvailable ? liveVannaStructural.directionalRatio : null,
+          liveVannaValidRows: liveSensitivityAvailable ? liveVannaStructural.validRows : null,
+          liveVannaTotalEligibleRows: liveSensitivityAvailable ? liveVannaStructural.totalEligibleRows : null,
+          liveCharmExposure: liveSensitivityAvailable && totalCharmEvidence > 0 ? totalCharm : null,
+          liveCharmGrossAbsExposure: liveSensitivityAvailable ? liveCharmStructural.grossAbs : null,
+          liveCharmDirectionalRatio: liveSensitivityAvailable ? liveCharmStructural.directionalRatio : null,
+          liveCharmValidRows: liveSensitivityAvailable ? liveCharmStructural.validRows : null,
+          liveCharmTotalEligibleRows: liveSensitivityAvailable ? liveCharmStructural.totalEligibleRows : null,
+        }),
+        dealerHedgeStressScenarios: buildDealerHedgeStressScenarios({
+          spotPrice,
+          sensitivity: buildDealerHedgeSensitivity({
+            source: dataSource,
+            totalGex,
+            liveVannaExposure: liveSensitivityAvailable && totalVannaEvidence > 0 ? totalVanna : null,
+            liveVannaGrossAbsExposure: liveSensitivityAvailable ? liveVannaStructural.grossAbs : null,
+            liveVannaDirectionalRatio: liveSensitivityAvailable ? liveVannaStructural.directionalRatio : null,
+            liveVannaValidRows: liveSensitivityAvailable ? liveVannaStructural.validRows : null,
+            liveVannaTotalEligibleRows: liveSensitivityAvailable ? liveVannaStructural.totalEligibleRows : null,
+            liveCharmExposure: liveSensitivityAvailable && totalCharmEvidence > 0 ? totalCharm : null,
+            liveCharmGrossAbsExposure: liveSensitivityAvailable ? liveCharmStructural.grossAbs : null,
+            liveCharmDirectionalRatio: liveSensitivityAvailable ? liveCharmStructural.directionalRatio : null,
+            liveCharmValidRows: liveSensitivityAvailable ? liveCharmStructural.validRows : null,
+            liveCharmTotalEligibleRows: liveSensitivityAvailable ? liveCharmStructural.totalEligibleRows : null,
+          }),
+        }),
+        dealerHedgeState: buildDealerHedgeState({
+          source: dataSource,
+          sensitivity: buildDealerHedgeSensitivity({
+            source: dataSource,
+            totalGex,
+            liveVannaExposure: liveSensitivityAvailable && totalVannaEvidence > 0 ? totalVanna : null,
+            liveVannaGrossAbsExposure: liveSensitivityAvailable ? liveVannaStructural.grossAbs : null,
+            liveVannaDirectionalRatio: liveSensitivityAvailable ? liveVannaStructural.directionalRatio : null,
+            liveVannaValidRows: liveSensitivityAvailable ? liveVannaStructural.validRows : null,
+            liveVannaTotalEligibleRows: liveSensitivityAvailable ? liveVannaStructural.totalEligibleRows : null,
+            liveCharmExposure: liveSensitivityAvailable && totalCharmEvidence > 0 ? totalCharm : null,
+            liveCharmGrossAbsExposure: liveSensitivityAvailable ? liveCharmStructural.grossAbs : null,
+            liveCharmDirectionalRatio: liveSensitivityAvailable ? liveCharmStructural.directionalRatio : null,
+            liveCharmValidRows: liveSensitivityAvailable ? liveCharmStructural.validRows : null,
+            liveCharmTotalEligibleRows: liveSensitivityAvailable ? liveCharmStructural.totalEligibleRows : null,
+          }),
+          standardizedStress: buildDealerHedgeStressScenarios({
+            spotPrice,
+            sensitivity: buildDealerHedgeSensitivity({
+              source: dataSource,
+              totalGex,
+              liveVannaExposure: liveSensitivityAvailable && totalVannaEvidence > 0 ? totalVanna : null,
+              liveVannaGrossAbsExposure: liveSensitivityAvailable ? liveVannaStructural.grossAbs : null,
+              liveVannaDirectionalRatio: liveSensitivityAvailable ? liveVannaStructural.directionalRatio : null,
+              liveVannaValidRows: liveSensitivityAvailable ? liveVannaStructural.validRows : null,
+              liveVannaTotalEligibleRows: liveSensitivityAvailable ? liveVannaStructural.totalEligibleRows : null,
+              liveCharmExposure: liveSensitivityAvailable && totalCharmEvidence > 0 ? totalCharm : null,
+              liveCharmGrossAbsExposure: liveSensitivityAvailable ? liveCharmStructural.grossAbs : null,
+              liveCharmDirectionalRatio: liveSensitivityAvailable ? liveCharmStructural.directionalRatio : null,
+              liveCharmValidRows: liveSensitivityAvailable ? liveCharmStructural.validRows : null,
+              liveCharmTotalEligibleRows: liveSensitivityAvailable ? liveCharmStructural.totalEligibleRows : null,
+            }),
+          }),
+          structuralPressure: {
+            score: dealerFlowScore,
+            bias: hedgingFlowDirection,
+            intensity: hedgingFlowStrength === "EXTREME" ? "HIGH" : hedgingFlowStrength,
+            accelerationRisk: hedgingAccelerationRisk,
+            triggerZone: hedgingTriggerZone,
+            stressScore: hedgingStressScore,
+          },
+        }),
         dealerGammaState,
         dealerHedgeDirection,
         volatilityRegime,
@@ -2951,7 +3244,7 @@ export class DeribitOptionsGateway {
         cascadeRisk: (cascadeRisk as string),
         pinningStrength,
         dealerFlowUrgency,
-        backtestResults,
+
         liquidationConfluence,
         marketRegime,
         dealerTrapEngine,
@@ -2986,6 +3279,34 @@ export class DeribitOptionsGateway {
         gammaFlipOperationalLegacy: null,
         callWall: 0, putWall: 0, magnets: [],
         shortGammaPockets: [], vannaBias: "NEUTRAL", charmBias: "NEUTRAL",
+        liveVannaExposure: null,
+        liveVannaGrossAbsExposure: null,
+        liveVannaDirectionalRatio: null,
+        liveVannaValidRows: 0,
+        liveVannaTotalEligibleRows: options.length,
+        liveVannaCallSignedContribution: null,
+        liveVannaPutSignedContribution: null,
+        liveCharmExposure: null,
+        liveCharmGrossAbsExposure: null,
+        liveCharmDirectionalRatio: null,
+        liveCharmValidRows: 0,
+        liveCharmTotalEligibleRows: options.length,
+        liveCharmCallSignedContribution: null,
+        liveCharmPutSignedContribution: null,
+        dealerHedgeSensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+        dealerHedgeStressScenarios: buildDealerHedgeStressScenarios({
+          spotPrice,
+          sensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+        }),
+        dealerHedgeState: buildDealerHedgeState({
+          source: "NO_DATA",
+          sensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+          standardizedStress: buildDealerHedgeStressScenarios({
+            spotPrice,
+            sensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+          }),
+          structuralPressure: null,
+        }),
         gammaByStrike: [], oiByStrike: [], gammaCurve: [], gammaMagnets: [], shortGammaZones: [],
         dealerGammaState: "LONG_GAMMA", dealerHedgeDirection: "NEUTRAL", volatilityRegime: "TRANSITION", dealerFlowScore: 0,
         tradingPlaybook: {
@@ -3049,13 +3370,7 @@ export class DeribitOptionsGateway {
           marketModeConfidence: 0,
           marketModeReason: ["Analytics engine error", "Using fallback values"]
         },
-        dealerHedgingFlowMap: {
-          hedgingFlowDirection: "NEUTRAL",
-          hedgingFlowStrength: "LOW",
-          hedgingAccelerationRisk: "LOW",
-          hedgingTriggerZone: "Analytics engine recovery required",
-          hedgingFlowSummary: ["Analytics engine error", "Using fallback values"]
-        },
+        dealerHedgingFlowMap: null,
         dominantExpiry: null,
         source: dataSource
       } as any;

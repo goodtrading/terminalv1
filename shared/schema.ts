@@ -45,10 +45,10 @@ export const optionsPositioning = pgTable("options_positioning", {
 export const keyLevels = pgTable("key_levels", {
   id: serial("id").primaryKey(),
   gammaMagnets: doublePrecision("gamma_magnets").array().notNull(),
-  shortGammaPocketStart: doublePrecision("short_gamma_pocket_start").notNull(),
-  shortGammaPocketEnd: doublePrecision("short_gamma_pocket_end").notNull(),
-  deepRiskPocketStart: doublePrecision("deep_risk_pocket_start").notNull(),
-  deepRiskPocketEnd: doublePrecision("deep_risk_pocket_end").notNull(),
+  shortGammaPocketStart: doublePrecision("short_gamma_pocket_start"),
+  shortGammaPocketEnd: doublePrecision("short_gamma_pocket_end"),
+  deepRiskPocketStart: doublePrecision("deep_risk_pocket_start"),
+  deepRiskPocketEnd: doublePrecision("deep_risk_pocket_end"),
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
@@ -76,11 +76,11 @@ export const optionsData = pgTable("options_data", {
 
 export const dealerHedgingFlow = pgTable("dealer_hedging_flow", {
   id: serial("id").primaryKey(),
-  hedgeFlowBias: text("hedge_flow_bias").notNull(), // "BUYING" | "SELLING" | "NEUTRAL"
-  hedgeFlowIntensity: text("hedge_flow_intensity").notNull(), // "LOW" | "MEDIUM" | "HIGH"
-  accelerationRisk: text("acceleration_risk").notNull(), // "LOW" | "HIGH"
-  flowTriggerUp: doublePrecision("flow_trigger_up").notNull(),
-  flowTriggerDown: doublePrecision("flow_trigger_down").notNull(),
+  hedgeFlowBias: text("hedge_flow_bias"), // "BUYING" | "SELLING" | "NEUTRAL"
+  hedgeFlowIntensity: text("hedge_flow_intensity"), // "LOW" | "MEDIUM" | "HIGH"
+  accelerationRisk: text("acceleration_risk"), // "LOW" | "HIGH"
+  flowTriggerUp: doublePrecision("flow_trigger_up"),
+  flowTriggerDown: doublePrecision("flow_trigger_down"),
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
@@ -93,9 +93,130 @@ export const insertOptionsDataSchema = createInsertSchema(optionsData).omit({ id
 export const insertDealerHedgingFlowSchema = createInsertSchema(dealerHedgingFlow).omit({ id: true, timestamp: true });
 
 export type MarketState = typeof marketState.$inferSelect;
-export type DealerExposure = typeof dealerExposure.$inferSelect;
+export type DealerExposure = Omit<typeof dealerExposure.$inferSelect, "vannaExposure" | "charmExposure"> & {
+  vannaExposure: number | null;
+  charmExposure: number | null;
+  liveVannaExposure: number | null;
+  liveVannaGrossAbsExposure: number | null;
+  liveVannaDirectionalRatio: number | null;
+  liveVannaValidRows: number | null;
+  liveVannaTotalEligibleRows: number | null;
+  liveVannaCallSignedContribution: number | null;
+  liveVannaPutSignedContribution: number | null;
+  liveCharmExposure: number | null;
+  liveCharmGrossAbsExposure: number | null;
+  liveCharmDirectionalRatio: number | null;
+  liveCharmValidRows: number | null;
+  liveCharmTotalEligibleRows: number | null;
+  liveCharmCallSignedContribution: number | null;
+  liveCharmPutSignedContribution: number | null;
+  heuristicVannaScore: number | null;
+  heuristicCharmScore: number | null;
+  vannaBias: "BULLISH" | "BEARISH" | "NEUTRAL" | null;
+  charmBias: "BULLISH" | "BEARISH" | "NEUTRAL" | null;
+};
+
+export type DealerHedgeSensitivity = {
+  gammaUsdPerDollar: number | null;
+  vannaUsdPerVolPoint: number | null;
+  vannaGrossAbsUsdPerVolPoint: number | null;
+  vannaDirectionalRatio: number | null;
+  charmUsdPerDay: number | null;
+  charmGrossAbsUsdPerDay: number | null;
+  charmDirectionalRatio: number | null;
+  vannaValidRows: number | null;
+  vannaTotalEligibleRows: number | null;
+  charmValidRows: number | null;
+  charmTotalEligibleRows: number | null;
+  source: "LIVE_DERIBIT" | "BOOTSTRAP" | "NO_DATA";
+};
+
+export type DealerHedgeStressScenarioType =
+  | "SPOT_UP_1PCT"
+  | "SPOT_DOWN_1PCT"
+  | "VOL_UP_1PT"
+  | "TIME_DECAY_1D";
+
+export type DealerHedgeStressScenario = {
+  scenarioType: DealerHedgeStressScenarioType;
+  deltaSpotUsd: number | null;
+  deltaIvVolPoints: number;
+  deltaDays: number;
+  gammaOptionDeltaChangeUsd: number | null;
+  vannaOptionDeltaChangeUsd: number | null;
+  charmOptionDeltaChangeUsd: number | null;
+  optionDeltaChangeUsd: number | null;
+  requiredHedgeTradeUsd: number | null;
+  hedgeAction: "BUY" | "SELL" | "NEUTRAL" | null;
+  source: "LIVE_DERIBIT" | "BOOTSTRAP" | "NO_DATA";
+  vannaCoverage: number | null;
+  charmCoverage: number | null;
+};
+
+export type DealerHedgeStructuralPressure = {
+  score: number | null;
+  bias: "BUYING" | "SELLING" | "NEUTRAL" | null;
+  intensity: "LOW" | "MEDIUM" | "HIGH" | null;
+  accelerationRisk: "LOW" | "MEDIUM" | "HIGH" | null;
+  triggerZone: string | null;
+  stressScore: number | null;
+};
+
+export type DealerHedgeState = {
+  source: DealerHedgeSensitivity["source"];
+  sensitivity: DealerHedgeSensitivity;
+  standardizedStress: DealerHedgeStressScenario[];
+  structuralPressure: DealerHedgeStructuralPressure | null;
+  metadata: {
+    structuralPositioningProxy: true;
+    observedDealerFlow: false;
+    expectedFlowForecast: false;
+  };
+};
+
+export type GravityMapType = "MAGNET" | "TRANSITION" | "REPULSION" | "ACCELERATION" | "NEUTRAL";
+export type GravityMapStrength = "WEAK" | "MODERATE" | "HIGH" | "EXTREME";
+
+export type GravityMapLevel = {
+  price: number;
+  zoneLow: number;
+  zoneHigh: number;
+  gravityScore: number; // Relative structural composite score, not a probability.
+  type: GravityMapType; // Local structural context only.
+  strength: GravityMapStrength; // Score-band classification only.
+  directionBias: "UP" | "DOWN" | "NEUTRAL";
+  oiUsd: number;
+  gammaConfluence: number;
+  liquidityConfluence: number;
+  distanceScore: number;
+  pressureAlignmentScore: number;
+  shortGammaBoost: number;
+  summary: string;
+  reasons: string[];
+};
+
+export type GravityMapState = {
+  semanticType: "RELATIVE_STRUCTURAL_SCORE";
+  status: "INACTIVE" | "ACTIVE";
+  primaryGravityLevel: GravityMapLevel | null;
+  secondaryGravityLevel: GravityMapLevel | null;
+  primaryMagnet: GravityMapLevel | null; // Legacy alias.
+  secondaryMagnet: GravityMapLevel | null; // Legacy alias.
+  repulsionZones: GravityMapLevel[];
+  accelerationZones: GravityMapLevel[];
+  bias: "UPWARD_PULL" | "DOWNWARD_PULL" | "BALANCED" | "NEUTRAL";
+  summary: string;
+  metadata: {
+    calibratedProbability: false;
+    predictionHorizon: null;
+    historicallyCalibrated: false;
+  };
+  debug?: Record<string, unknown>;
+};
+
 export type OptionsPositioning = typeof optionsPositioning.$inferSelect;
 export type KeyLevels = typeof keyLevels.$inferSelect;
+
 export type TradingScenario = typeof tradingScenarios.$inferSelect;
 export type OptionData = typeof optionsData.$inferSelect;
 export type DealerHedgingFlow = typeof dealerHedgingFlow.$inferSelect;
@@ -163,6 +284,7 @@ export type Payment = typeof payments.$inferSelect;
 
 /** Optional Deribit summary fields surfaced on `GET /api/terminal/state` → `options`. */
 export type TerminalStateOptionsGammaExtras = {
+  dealerHedgeState?: DealerHedgeState;
   gammaFlipGlobal?: number | null;
   gammaFlipGlobalSource?: "fresh_snapshot" | "none" | "legacy_structural_live";
   gammaFlipGlobalDebug?: {

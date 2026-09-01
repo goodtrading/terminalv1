@@ -34,6 +34,12 @@ export const terminalStateSchema = z.object({
 
   exposure: z.any(),
 
+  dealerHedgeSensitivity: z.any().optional(),
+
+  dealerHedgeStressScenarios: z.array(z.any()).optional(),
+
+  dealerHedgeState: z.any().optional(),
+
   positioning: z.any(),
 
   levels: z.any(),
@@ -160,11 +166,17 @@ export async function getTerminalState(): Promise<TerminalState> {
 
     // Aggregated quantitative state from DB (fast read)
 
-    const [market, exposure, positioning, levels, scenarios] = await Promise.all([
+    const [market, exposure, dealerHedgeSensitivity, dealerHedgeStressScenarios, dealerHedgeState, positioning, levels, scenarios] = await Promise.all([
 
       storage.getMarketState(),
 
       storage.getDealerExposure(),
+
+      storage.getDealerHedgeSensitivity(),
+
+      storage.getDealerHedgeStressScenarios(),
+
+      storage.getDealerHedgeState(),
 
       storage.getOptionsPositioning(),
 
@@ -714,7 +726,13 @@ export async function getTerminalState(): Promise<TerminalState> {
 
       gravityMap = {
 
+        semanticType: "RELATIVE_STRUCTURAL_SCORE",
+
         status: "INACTIVE",
+
+        primaryGravityLevel: null,
+
+        secondaryGravityLevel: null,
 
         primaryMagnet: null,
 
@@ -727,6 +745,16 @@ export async function getTerminalState(): Promise<TerminalState> {
         bias: "NEUTRAL",
 
         summary: reason,
+
+        metadata: {
+
+          calibratedProbability: false,
+
+          predictionHorizon: null,
+
+          historicallyCalibrated: false,
+
+        },
 
       };
 
@@ -742,7 +770,13 @@ export async function getTerminalState(): Promise<TerminalState> {
 
     gravityMap = {
 
+      semanticType: "RELATIVE_STRUCTURAL_SCORE",
+
       status: "INACTIVE",
+
+      primaryGravityLevel: null,
+
+      secondaryGravityLevel: null,
 
       primaryMagnet: null,
 
@@ -755,6 +789,16 @@ export async function getTerminalState(): Promise<TerminalState> {
       bias: "NEUTRAL",
 
       summary: "Gravity map engine error",
+
+      metadata: {
+
+        calibratedProbability: false,
+
+        predictionHorizon: null,
+
+        historicallyCalibrated: false,
+
+      },
 
     };
 
@@ -958,6 +1002,8 @@ export async function getTerminalState(): Promise<TerminalState> {
 
     shortGammaPockets,
 
+    dealerHedgeState,
+
   };
 
   console.log(`[TerminalState][FinalOptions] totalGex=${finalOptions.totalGex} marketForClient.totalGex=${marketForClient?.totalGex} enrichedOptionsSnapshot.totalGex=${enrichedOptionsSnapshot?.totalGex}`);
@@ -1023,6 +1069,12 @@ export async function getTerminalState(): Promise<TerminalState> {
       market: marketForClient,
 
       exposure,
+
+      dealerHedgeSensitivity,
+
+      dealerHedgeStressScenarios,
+
+      dealerHedgeState,
 
       positioning: enrichedPositioning,
 

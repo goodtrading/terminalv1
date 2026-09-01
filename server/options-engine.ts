@@ -62,6 +62,7 @@ export async function refreshOptionsEngine(): Promise<void> {
 
     storage.updateFromDeribitSummary(
       {
+        source,
         totalGex,
         gammaFlip,
         callWall,

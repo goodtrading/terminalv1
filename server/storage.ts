@@ -1,12 +1,13 @@
-import { 
+import {
   marketState, dealerExposure, optionsPositioning, keyLevels, tradingScenarios, optionsData, dealerHedgingFlow,
-  type MarketState, type DealerExposure, type OptionsPositioning, type KeyLevels, type TradingScenario, type OptionData, type DealerHedgingFlow
+  type MarketState, type DealerExposure, type DealerHedgeSensitivity, type DealerHedgeState, type DealerHedgeStressScenario, type OptionsPositioning, type KeyLevels, type TradingScenario, type OptionData, type DealerHedgingFlow
 } from "@shared/schema";
 import {
   parseOptionsCSV,
   calculateGEX,
   findGammaFlip,
   calculateVanna,
+  calculateVannaWithCoverage,
   calculateCharm,
   detectWalls,
   calculateKeyLevels,
@@ -14,6 +15,9 @@ import {
   type OptionsEntry,
 } from "./analytics";
 import { GAMMA_OPERATIONAL_CONFIG } from "./deribit-gateway";
+import { buildDealerHedgeSensitivity } from "./dealer-hedge-sensitivity";
+import { buildDealerHedgeState } from "./dealer-hedge-state";
+import { buildDealerHedgeStressScenarios } from "./dealer-hedge-stress";
 import { generateDynamicScenarios } from "./scenarios";
 import { MarketDataGateway } from "./market-gateway";
 import path from "path";
@@ -37,8 +41,24 @@ function inferSpotFromOptionsData(data: OptionsEntry[]): number | null {
   return strikes[Math.floor(strikes.length / 2)]!;
 }
 
+function biasFromLiveOrHeuristic(liveValue: number | null | undefined, heuristicScore: number | null | undefined): "BULLISH" | "BEARISH" | "NEUTRAL" | null {
+  if (liveValue == null && heuristicScore == null) return null;
+  if (liveValue != null) return liveValue > 0 ? "BULLISH" : liveValue < 0 ? "BEARISH" : "NEUTRAL";
+  if (heuristicScore != null) return heuristicScore > 0.05 ? "BULLISH" : heuristicScore < -0.05 ? "BEARISH" : "NEUTRAL";
+  return null;
+}
+
+function compatibilityExposure(liveValue: number | null | undefined, heuristicScore: number | null | undefined): number | null {
+  return liveValue ?? heuristicScore ?? null;
+}
+
+function decisionMagnitude(heuristicScore: number | null | undefined): number | null {
+  return heuristicScore == null ? null : Math.abs(heuristicScore);
+}
+
 export interface OptionsSummaryUpdate {
   totalGex?: number | null;
+  source?: "LIVE_DERIBIT" | "BOOTSTRAP" | "NO_DATA";
   gammaFlip?: number | null;
   callWall?: number | null;
   putWall?: number | null;
@@ -50,14 +70,43 @@ export interface OptionsSummaryUpdate {
   shortGammaZones?: Array<{ startStrike: number; endStrike: number }>;
   totalVanna?: number | null;
   totalCharm?: number | null;
+  liveVannaExposure?: number | null;
+  liveVannaGrossAbsExposure?: number | null;
+  liveVannaDirectionalRatio?: number | null;
+  liveVannaValidRows?: number | null;
+  liveVannaTotalEligibleRows?: number | null;
+  liveVannaCallSignedContribution?: number | null;
+  liveVannaPutSignedContribution?: number | null;
+  liveCharmExposure?: number | null;
+  liveCharmGrossAbsExposure?: number | null;
+  liveCharmDirectionalRatio?: number | null;
+  liveCharmValidRows?: number | null;
+  liveCharmTotalEligibleRows?: number | null;
+  liveCharmCallSignedContribution?: number | null;
+  liveCharmPutSignedContribution?: number | null;
+  dealerHedgeSensitivity?: DealerHedgeSensitivity | null;
+  dealerHedgeStressScenarios?: DealerHedgeStressScenario[];
+  dealerHedgeState?: DealerHedgeState | null;
+  dealerFlowScore?: number | null;
+  hedgingStressScore?: number | null;
+  dealerHedgingFlowMap?: {
+    hedgingFlowDirection: "BUYING" | "SELLING" | "NEUTRAL";
+    hedgingFlowStrength: "LOW" | "MEDIUM" | "HIGH" | "EXTREME";
+    hedgingAccelerationRisk: "LOW" | "MEDIUM" | "HIGH";
+    hedgingTriggerZone: string;
+    hedgingFlowSummary: string[];
+  } | null;
 }
 
 export interface IStorage {
   getMarketState(): Promise<MarketState | undefined>;
   getDealerExposure(): Promise<DealerExposure | undefined>;
+  getDealerHedgeSensitivity(): Promise<DealerHedgeSensitivity | undefined>;
+  getDealerHedgeState(): Promise<DealerHedgeState | undefined>;
   getOptionsPositioning(): Promise<OptionsPositioning | undefined>;
   getKeyLevels(): Promise<KeyLevels | undefined>;
   getTradingScenarios(): Promise<TradingScenario[]>;
+  getDealerHedgeStressScenarios(): Promise<DealerHedgeStressScenario[]>;
   getOptionsData(): Promise<OptionData[]>;
   getDealerHedgingFlow(): Promise<DealerHedgingFlow | undefined>;
   recomputeAll(csvPath: string): Promise<void>;
@@ -68,6 +117,19 @@ export interface IStorage {
 export class MemStorage implements IStorage {
   private marketState: MarketState | undefined;
   private dealerExposure: DealerExposure | undefined;
+  private dealerHedgeSensitivity: DealerHedgeSensitivity = buildDealerHedgeSensitivity({ totalGex: null });
+  private dealerHedgeState: DealerHedgeState = buildDealerHedgeState({
+    sensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+    standardizedStress: buildDealerHedgeStressScenarios({
+      spotPrice: null,
+      sensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+    }),
+    structuralPressure: null,
+  });
+  private dealerHedgeStressScenarios: DealerHedgeStressScenario[] = buildDealerHedgeStressScenarios({
+    spotPrice: null,
+    sensitivity: buildDealerHedgeSensitivity({ totalGex: null }),
+  });
   private optionsPositioning: OptionsPositioning | undefined;
   private keyLevels: KeyLevels | undefined;
   private tradingScenarios: TradingScenario[] = [];
@@ -122,9 +184,23 @@ export class MemStorage implements IStorage {
     const transitionPct = GAMMA_OPERATIONAL_CONFIG.transitionWidthBps / 10000;
     const callWall = summary.callWall ?? 0;
     const putWall = summary.putWall ?? 0;
-    const vanna = summary.totalVanna ?? 0;
-    const charm = summary.totalCharm ?? 0;
-    const biasThreshold = 0.05;
+    const isLiveSummary = summary.source === "LIVE_DERIBIT";
+    const liveVannaExposure = isLiveSummary ? summary.liveVannaExposure ?? summary.totalVanna ?? null : null;
+    const liveVannaGrossAbsExposure = isLiveSummary ? summary.liveVannaGrossAbsExposure ?? null : null;
+    const liveVannaDirectionalRatio = isLiveSummary ? summary.liveVannaDirectionalRatio ?? null : null;
+    const liveVannaValidRows = isLiveSummary ? summary.liveVannaValidRows ?? null : null;
+    const liveVannaTotalEligibleRows = isLiveSummary ? summary.liveVannaTotalEligibleRows ?? null : null;
+    const liveVannaCallSignedContribution = isLiveSummary ? summary.liveVannaCallSignedContribution ?? null : null;
+    const liveVannaPutSignedContribution = isLiveSummary ? summary.liveVannaPutSignedContribution ?? null : null;
+    const liveCharmExposure = isLiveSummary ? summary.liveCharmExposure ?? summary.totalCharm ?? null : null;
+    const liveCharmGrossAbsExposure = isLiveSummary ? summary.liveCharmGrossAbsExposure ?? null : null;
+    const liveCharmDirectionalRatio = isLiveSummary ? summary.liveCharmDirectionalRatio ?? null : null;
+    const liveCharmValidRows = isLiveSummary ? summary.liveCharmValidRows ?? null : null;
+    const liveCharmTotalEligibleRows = isLiveSummary ? summary.liveCharmTotalEligibleRows ?? null : null;
+    const liveCharmCallSignedContribution = isLiveSummary ? summary.liveCharmCallSignedContribution ?? null : null;
+    const liveCharmPutSignedContribution = isLiveSummary ? summary.liveCharmPutSignedContribution ?? null : null;
+    const heuristicVannaScore = null;
+    const heuristicCharmScore = null;
 
     this.marketState = {
       id: 1,
@@ -154,31 +230,84 @@ export class MemStorage implements IStorage {
     this.keyLevels = {
       id: 1,
       gammaMagnets: magnets,
-      shortGammaPocketStart: firstZone?.startStrike ?? spotPrice * 0.98,
-      shortGammaPocketEnd: firstZone?.endStrike ?? spotPrice * 1.02,
-      deepRiskPocketStart: spotPrice * 0.9,
-      deepRiskPocketEnd: spotPrice * 0.95,
+      shortGammaPocketStart: firstZone?.startStrike ?? null,
+      shortGammaPocketEnd: firstZone?.endStrike ?? null,
+      deepRiskPocketStart: null,
+      deepRiskPocketEnd: null,
       timestamp: new Date(),
     };
 
     this.dealerExposure = {
       id: 1,
-      vannaExposure: vanna,
-      vannaBias: vanna > biasThreshold ? "BULLISH" : vanna < -biasThreshold ? "BEARISH" : "NEUTRAL",
-      charmExposure: charm,
-      charmBias: charm > biasThreshold ? "BULLISH" : charm < -biasThreshold ? "BEARISH" : "NEUTRAL",
+      liveVannaExposure,
+      liveVannaGrossAbsExposure,
+      liveVannaDirectionalRatio,
+      liveVannaValidRows,
+      liveVannaTotalEligibleRows,
+      liveVannaCallSignedContribution,
+      liveVannaPutSignedContribution,
+      liveCharmExposure,
+      liveCharmGrossAbsExposure,
+      liveCharmDirectionalRatio,
+      liveCharmValidRows,
+      liveCharmTotalEligibleRows,
+      liveCharmCallSignedContribution,
+      liveCharmPutSignedContribution,
+      heuristicVannaScore,
+      heuristicCharmScore,
+      vannaExposure: compatibilityExposure(liveVannaExposure, heuristicVannaScore),
+      vannaBias: biasFromLiveOrHeuristic(liveVannaExposure, heuristicVannaScore),
+      charmExposure: compatibilityExposure(liveCharmExposure, heuristicCharmScore),
+      charmBias: biasFromLiveOrHeuristic(liveCharmExposure, heuristicCharmScore),
       gammaPressure: "+0.00",
       gammaConcentration: 0,
       timestamp: new Date(),
     };
 
+    this.dealerHedgeSensitivity = summary.dealerHedgeSensitivity ?? buildDealerHedgeSensitivity({
+      source: summary.source === "LIVE_DERIBIT" || summary.source === "BOOTSTRAP" ? summary.source : undefined,
+      totalGex: gex,
+      liveVannaExposure,
+      liveVannaGrossAbsExposure,
+      liveVannaDirectionalRatio,
+      liveVannaValidRows,
+      liveVannaTotalEligibleRows,
+      liveCharmExposure,
+      liveCharmGrossAbsExposure,
+      liveCharmDirectionalRatio,
+      liveCharmValidRows,
+      liveCharmTotalEligibleRows,
+    });
+    this.dealerHedgeStressScenarios = summary.dealerHedgeStressScenarios ?? buildDealerHedgeStressScenarios({
+      spotPrice,
+      sensitivity: this.dealerHedgeSensitivity,
+    });
+    this.dealerHedgeState = summary.dealerHedgeState ?? buildDealerHedgeState({
+      source: this.dealerHedgeSensitivity.source,
+      sensitivity: this.dealerHedgeSensitivity,
+      standardizedStress: this.dealerHedgeStressScenarios,
+      structuralPressure: summary.dealerHedgingFlowMap
+        ? {
+            score: summary.dealerFlowScore ?? null,
+            bias: summary.dealerHedgingFlowMap.hedgingFlowDirection,
+            intensity:
+              summary.dealerHedgingFlowMap.hedgingFlowStrength === "EXTREME"
+                ? "HIGH"
+                : summary.dealerHedgingFlowMap.hedgingFlowStrength,
+            accelerationRisk: summary.dealerHedgingFlowMap.hedgingAccelerationRisk,
+            triggerZone: summary.dealerHedgingFlowMap.hedgingTriggerZone,
+            stressScore: summary.hedgingStressScore ?? null,
+          }
+        : null,
+    });
+
     this.dealerHedgingFlow = {
       id: 1,
-      hedgeFlowBias: "NEUTRAL",
-      hedgeFlowIntensity: "LOW",
-      accelerationRisk: "LOW",
-      flowTriggerUp: spotPrice * 1.01,
-      flowTriggerDown: spotPrice * 0.99,
+      hedgeFlowBias: null,
+      hedgeFlowIntensity: null,
+      accelerationRisk: null,
+      flowTriggerUp: null,
+      flowTriggerDown: null,
       timestamp: new Date(),
     };
 
@@ -206,7 +335,7 @@ export class MemStorage implements IStorage {
     const totalGex = calculateGEX(data, spotPrice);
     const rawFlip = findGammaFlip(data);
     const flip = Number.isFinite(rawFlip) && rawFlip > 0 ? rawFlip : null;
-    const walls = detectWalls(data);
+    const walls = detectWalls(data, spotPrice);
     const levels = calculateKeyLevels(data, spotPrice);
     const accel = calculateAcceleration(data, spotPrice);
 
@@ -245,27 +374,23 @@ export class MemStorage implements IStorage {
     this.keyLevels = kl;
 
     // Dealer Flow Recalibration
-    const vanna = calculateVanna(data, spotPrice);
-    const charm = calculateCharm(data, spotPrice);
-    
-    let rawGammaPressure = 0;
-    let totalSpotWeight = 0;
-    let contributingStrikes = 0;
+    const bootstrapVanna = calculateVannaWithCoverage(data, spotPrice);
+    const heuristicVannaScore = bootstrapVanna.validRows > 0 ? bootstrapVanna.value : null;
+    const heuristicCharmScore = calculateCharm(data, spotPrice);
+    const liveVannaExposure = null;
+    const liveCharmExposure = null;
 
+    let rawGammaPressure = 0;
     data.forEach(d => {
       const distancePct = Math.abs(d.strike - spotPrice) / spotPrice;
       const spotWeight = Math.max(0.15, 1 - distancePct * 10);
       rawGammaPressure += d.gamma * d.open_interest * spotWeight;
-      totalSpotWeight += spotWeight;
-      contributingStrikes++;
     });
 
     const totalAbsGamma = data.reduce((acc, d) => acc + Math.abs(d.gamma * d.open_interest), 0);
     const gammaPressureValue = totalAbsGamma > 0 ? (rawGammaPressure / totalAbsGamma) : 0;
-    const normalizedPressure = Math.tanh(gammaPressureValue * 1.5); // Adjusted multiplier for better sensitivity without saturation
-    
-    // Removed temporary debug logging
-    // Gamma Concentration (Proximity-Weighted)
+    const normalizedPressure = Math.tanh(gammaPressureValue * 1.5);
+
     let localGamma = 0;
     let totalGammaAbs = 0;
     data.forEach(d => {
@@ -279,33 +404,70 @@ export class MemStorage implements IStorage {
 
     const de: DealerExposure = {
       id: 1,
-      vannaExposure: vanna,
-      vannaBias: vanna > 0.05 ? "BULLISH" : vanna < -0.05 ? "BEARISH" : "NEUTRAL",
-      charmExposure: charm,
-      charmBias: charm > 0.05 ? "BULLISH" : charm < -0.05 ? "BEARISH" : "NEUTRAL",
+      liveVannaExposure,
+      liveVannaGrossAbsExposure: null,
+      liveVannaDirectionalRatio: null,
+      liveVannaValidRows: null,
+      liveVannaTotalEligibleRows: null,
+      liveVannaCallSignedContribution: null,
+      liveVannaPutSignedContribution: null,
+      liveCharmExposure,
+      liveCharmGrossAbsExposure: null,
+      liveCharmDirectionalRatio: null,
+      liveCharmValidRows: null,
+      liveCharmTotalEligibleRows: null,
+      liveCharmCallSignedContribution: null,
+      liveCharmPutSignedContribution: null,
+      heuristicVannaScore,
+      heuristicCharmScore,
+      vannaExposure: compatibilityExposure(liveVannaExposure, heuristicVannaScore),
+      vannaBias: biasFromLiveOrHeuristic(liveVannaExposure, heuristicVannaScore),
+      charmExposure: compatibilityExposure(liveCharmExposure, heuristicCharmScore),
+      charmBias: biasFromLiveOrHeuristic(liveCharmExposure, heuristicCharmScore),
       gammaPressure: (normalizedPressure >= 0 ? "+" : "") + normalizedPressure.toFixed(2),
       gammaConcentration: concentration,
       timestamp: new Date()
     };
     this.dealerExposure = de;
 
+    this.dealerHedgeSensitivity = buildDealerHedgeSensitivity({
+      source: totalGex != null ? "BOOTSTRAP" : undefined,
+      totalGex,
+      liveVannaExposure: null,
+      liveVannaGrossAbsExposure: null,
+      liveVannaDirectionalRatio: null,
+      liveVannaValidRows: null,
+      liveVannaTotalEligibleRows: null,
+      liveCharmExposure: null,
+      liveCharmGrossAbsExposure: null,
+      liveCharmDirectionalRatio: null,
+      liveCharmValidRows: null,
+      liveCharmTotalEligibleRows: null,
+    });
+    this.dealerHedgeStressScenarios = buildDealerHedgeStressScenarios({
+      spotPrice,
+      sensitivity: this.dealerHedgeSensitivity,
+    });
+
     // DEALER HEDGING FLOW V2 (Institutional Model)
     let flowScore = 0;
-    
+
     // 1. Gamma Regime Base
     const isLongGamma = ms.gammaRegime === "LONG GAMMA";
     flowScore += isLongGamma ? 1 : -1;
 
     // 2. Vanna/Charm Interaction (Scoring)
-    // Thresholds: Strong > 0.5, Mild > 0.1
-    const vannaAbs = Math.abs(de.vannaExposure);
-    const charmAbs = Math.abs(de.charmExposure);
-    
-    if (de.vannaBias === "BULLISH") flowScore += vannaAbs > 0.5 ? 2 : 1;
-    if (de.vannaBias === "BEARISH") flowScore -= vannaAbs > 0.5 ? 2 : 1;
-    
-    if (de.charmBias === "BULLISH") flowScore += charmAbs > 0.5 ? 2 : 1;
-    if (de.charmBias === "BEARISH") flowScore -= charmAbs > 0.5 ? 2 : 1;
+    // Heuristic scores alone drive normalized thresholds; live exposures only contribute directional sign.
+    const vannaDecisionScore = de.heuristicVannaScore;
+    const charmDecisionScore = de.heuristicCharmScore;
+    const vannaAbs = decisionMagnitude(vannaDecisionScore);
+    const charmAbs = decisionMagnitude(charmDecisionScore);
+
+    if (de.vannaBias === "BULLISH") flowScore += vannaAbs != null ? (vannaAbs > 0.5 ? 2 : 1) : 1;
+    if (de.vannaBias === "BEARISH") flowScore -= vannaAbs != null ? (vannaAbs > 0.5 ? 2 : 1) : 1;
+
+    if (de.charmBias === "BULLISH") flowScore += charmAbs != null ? (charmAbs > 0.5 ? 2 : 1) : 1;
+    if (de.charmBias === "BEARISH") flowScore -= charmAbs != null ? (charmAbs > 0.5 ? 2 : 1) : 1;
 
     // 3. Dealer Pivot Logic
     const isAbovePivot = spotPrice > op.dealerPivot;
@@ -324,21 +486,21 @@ export class MemStorage implements IStorage {
     const hedgeFlowBias = flowScore >= 2 ? "BUYING" : flowScore <= -2 ? "SELLING" : "NEUTRAL";
 
     // 5. Intensity Logic
-    const totalExposure = vannaAbs + charmAbs;
+    const totalExposure = (vannaAbs ?? 0) + (charmAbs ?? 0);
     const distToFlip = ms.gammaFlip != null ? Math.abs(spotPrice - ms.gammaFlip) / spotPrice : Infinity;
     const distToPivot = Math.abs(spotPrice - op.dealerPivot) / spotPrice;
-    
+
     let intensityScore = 0;
     if (totalExposure > 1.0) intensityScore += 2;
     else if (totalExposure > 0.4) intensityScore += 1;
-    
-    if (distToFlip < 0.01) intensityScore += 1; // Near flip
-    if (distToPivot < 0.005) intensityScore += 1; // Near pivot
-    
+
+    if (distToFlip < 0.01) intensityScore += 1;
+    if (distToPivot < 0.005) intensityScore += 1;
+
     const hedgeFlowIntensity = intensityScore >= 3 ? "HIGH" : intensityScore >= 1 ? "MEDIUM" : "LOW";
 
     // 6. Acceleration Risk Refinement
-    const strongAlignment = (de.vannaBias === de.charmBias) && (vannaAbs + charmAbs > 0.8);
+    const strongAlignment = vannaDecisionScore != null && charmDecisionScore != null && de.vannaBias === de.charmBias && totalExposure > 0.8;
     const nearFlipInShortGamma =
       !isLongGamma &&
       ms.gammaFlip != null &&
@@ -348,12 +510,12 @@ export class MemStorage implements IStorage {
     // 7. Trigger Selection Refinement
     const flowTriggerUp = [op.dealerPivot, ms.gammaFlip, ms.transitionZoneEnd, op.callWall]
       .filter((l): l is number => l != null && Number.isFinite(l))
-      .filter(l => l > spotPrice + 10) // Small buffer
+      .filter(l => l > spotPrice + 10)
       .sort((a, b) => a - b)[0] || op.callWall;
 
     const flowTriggerDown = [op.dealerPivot, ms.gammaFlip, ms.transitionZoneStart, op.putWall]
       .filter((l): l is number => l != null && Number.isFinite(l))
-      .filter(l => l < spotPrice - 10) // Small buffer
+      .filter(l => l < spotPrice - 10)
       .sort((a, b) => b - a)[0] || op.putWall;
 
     this.dealerHedgingFlow = {
@@ -365,16 +527,29 @@ export class MemStorage implements IStorage {
       flowTriggerDown,
       timestamp: new Date()
     };
+    this.dealerHedgeState = buildDealerHedgeState({
+      source: this.dealerHedgeSensitivity.source,
+      sensitivity: this.dealerHedgeSensitivity,
+      standardizedStress: this.dealerHedgeStressScenarios,
+      structuralPressure: {
+        score: flowScore,
+        bias: hedgeFlowBias,
+        intensity: hedgeFlowIntensity,
+        accelerationRisk,
+        triggerZone: null,
+        stressScore: null,
+      },
+    });
 
     this.tradingScenarios = generateDynamicScenarios(ms, op, kl, de);
     this.optionsLastUpdated = Date.now();
 
-    const formatVal = (v: number) => (v >= 0 ? "+" : "") + v.toFixed(2);
+    const formatVal = (v: number | null) => v == null ? "n/a" : (v >= 0 ? "+" : "") + v.toFixed(2);
 
     console.log("=== DEALER FLOW AUDIT ===");
-    console.log(`Vanna Exposure: ${formatVal(vanna)}`);
+    console.log(`Vanna Exposure: ${formatVal(heuristicVannaScore)}`);
     console.log(`Vanna Bias: ${de.vannaBias}`);
-    console.log(`Charm Exposure: ${formatVal(charm)}`);
+    console.log(`Charm Exposure: ${formatVal(heuristicCharmScore)}`);
     console.log(`Charm Bias: ${de.charmBias}`);
     console.log(`Gamma Pressure: ${de.gammaPressure}`);
     console.log(`Gamma Concentration: ${concentration > 0.6 ? "HIGH" : concentration > 0.3 ? "MEDIUM" : "LOW"} (${concentration.toFixed(2)})`);
@@ -383,12 +558,16 @@ export class MemStorage implements IStorage {
   }
 
   async getMarketState() {
+
     return this.marketState;
   }
   async getDealerExposure() { return this.dealerExposure; }
+  async getDealerHedgeSensitivity() { return this.dealerHedgeSensitivity; }
+  async getDealerHedgeState() { return this.dealerHedgeState; }
   async getOptionsPositioning() { return this.optionsPositioning; }
   async getKeyLevels() { return this.keyLevels; }
   async getTradingScenarios() { return this.tradingScenarios; }
+  async getDealerHedgeStressScenarios() { return this.dealerHedgeStressScenarios; }
   async getOptionsData() { return this.optionsData; }
   async getDealerHedgingFlow() { return this.dealerHedgingFlow; }
   getOptionsLastUpdated() { return this.optionsLastUpdated; }
@@ -404,6 +583,43 @@ export class MemStorage implements IStorage {
       this.bootstrapShellFromDeribitSummary(summary, spotPrice);
       if (!this.isAnalyticsReady()) return;
     }
+    const liveSensitivitySource = summary.source === "LIVE_DERIBIT" ? "LIVE_DERIBIT" : undefined;
+    this.dealerHedgeSensitivity = summary.dealerHedgeSensitivity ?? buildDealerHedgeSensitivity({
+      source: liveSensitivitySource,
+      totalGex: summary.totalGex,
+      liveVannaExposure: liveSensitivitySource === "LIVE_DERIBIT" ? summary.liveVannaExposure : null,
+      liveVannaGrossAbsExposure: liveSensitivitySource === "LIVE_DERIBIT" ? summary.liveVannaGrossAbsExposure : null,
+      liveVannaDirectionalRatio: liveSensitivitySource === "LIVE_DERIBIT" ? summary.liveVannaDirectionalRatio : null,
+      liveVannaValidRows: liveSensitivitySource === "LIVE_DERIBIT" ? summary.liveVannaValidRows : null,
+      liveVannaTotalEligibleRows: liveSensitivitySource === "LIVE_DERIBIT" ? summary.liveVannaTotalEligibleRows : null,
+      liveCharmExposure: liveSensitivitySource === "LIVE_DERIBIT" ? summary.liveCharmExposure : null,
+      liveCharmGrossAbsExposure: liveSensitivitySource === "LIVE_DERIBIT" ? summary.liveCharmGrossAbsExposure : null,
+      liveCharmDirectionalRatio: liveSensitivitySource === "LIVE_DERIBIT" ? summary.liveCharmDirectionalRatio : null,
+      liveCharmValidRows: liveSensitivitySource === "LIVE_DERIBIT" ? summary.liveCharmValidRows : null,
+      liveCharmTotalEligibleRows: liveSensitivitySource === "LIVE_DERIBIT" ? summary.liveCharmTotalEligibleRows : null,
+    });
+    this.dealerHedgeStressScenarios = summary.dealerHedgeStressScenarios ?? buildDealerHedgeStressScenarios({
+      spotPrice,
+      sensitivity: this.dealerHedgeSensitivity,
+    });
+    this.dealerHedgeState = summary.dealerHedgeState ?? buildDealerHedgeState({
+      source: this.dealerHedgeSensitivity.source,
+      sensitivity: this.dealerHedgeSensitivity,
+      standardizedStress: this.dealerHedgeStressScenarios,
+      structuralPressure: summary.dealerHedgingFlowMap
+        ? {
+            score: summary.dealerFlowScore ?? null,
+            bias: summary.dealerHedgingFlowMap.hedgingFlowDirection,
+            intensity:
+              summary.dealerHedgingFlowMap.hedgingFlowStrength === "EXTREME"
+                ? "HIGH"
+                : summary.dealerHedgingFlowMap.hedgingFlowStrength,
+            accelerationRisk: summary.dealerHedgingFlowMap.hedgingAccelerationRisk,
+            triggerZone: summary.dealerHedgingFlowMap.hedgingTriggerZone,
+            stressScore: summary.hedgingStressScore ?? null,
+          }
+        : null,
+    });
     let updated = false;
     const ms = this.marketState;
     const op = this.optionsPositioning;
@@ -493,24 +709,49 @@ export class MemStorage implements IStorage {
       updated = true;
     }
 
-    if (summary.totalVanna != null || summary.totalCharm != null) {
+    if (summary.totalVanna != null || summary.totalCharm != null || summary.liveVannaExposure != null || summary.liveCharmExposure != null) {
       const prev = this.dealerExposure;
-      const vanna = summary.totalVanna ?? prev?.vannaExposure ?? 0;
-      const charm = summary.totalCharm ?? prev?.charmExposure ?? 0;
-
-      const biasThreshold = 0.05;
-      const vannaBias = vanna > biasThreshold ? "BULLISH" : vanna < -biasThreshold ? "BEARISH" : "NEUTRAL";
-      const charmBias = charm > biasThreshold ? "BULLISH" : charm < -biasThreshold ? "BEARISH" : "NEUTRAL";
-
+      const liveVannaExposure = summary.liveVannaExposure ?? summary.totalVanna ?? null;
+      const liveVannaGrossAbsExposure = summary.liveVannaGrossAbsExposure ?? null;
+      const liveVannaDirectionalRatio = summary.liveVannaDirectionalRatio ?? null;
+      const liveVannaValidRows = summary.liveVannaValidRows ?? null;
+      const liveVannaTotalEligibleRows = summary.liveVannaTotalEligibleRows ?? null;
+      const liveVannaCallSignedContribution = summary.liveVannaCallSignedContribution ?? null;
+      const liveVannaPutSignedContribution = summary.liveVannaPutSignedContribution ?? null;
+      const liveCharmExposure = summary.liveCharmExposure ?? summary.totalCharm ?? null;
+      const liveCharmGrossAbsExposure = summary.liveCharmGrossAbsExposure ?? null;
+      const liveCharmDirectionalRatio = summary.liveCharmDirectionalRatio ?? null;
+      const liveCharmValidRows = summary.liveCharmValidRows ?? null;
+      const liveCharmTotalEligibleRows = summary.liveCharmTotalEligibleRows ?? null;
+      const liveCharmCallSignedContribution = summary.liveCharmCallSignedContribution ?? null;
+      const liveCharmPutSignedContribution = summary.liveCharmPutSignedContribution ?? null;
+      const heuristicVannaScore = null;
+      const heuristicCharmScore = null;
       const gammaPressure = prev?.gammaPressure ?? "+0.00";
       const gammaConcentration = prev?.gammaConcentration ?? 0;
 
       this.dealerExposure = {
         id: prev?.id ?? 1,
-        vannaExposure: vanna,
-        vannaBias,
-        charmExposure: charm,
-        charmBias,
+        liveVannaExposure,
+        liveVannaGrossAbsExposure,
+        liveVannaDirectionalRatio,
+        liveVannaValidRows,
+        liveVannaTotalEligibleRows,
+        liveVannaCallSignedContribution,
+        liveVannaPutSignedContribution,
+        liveCharmExposure,
+        liveCharmGrossAbsExposure,
+        liveCharmDirectionalRatio,
+        liveCharmValidRows,
+        liveCharmTotalEligibleRows,
+        liveCharmCallSignedContribution,
+        liveCharmPutSignedContribution,
+        heuristicVannaScore,
+        heuristicCharmScore,
+        vannaExposure: compatibilityExposure(liveVannaExposure, heuristicVannaScore),
+        vannaBias: biasFromLiveOrHeuristic(liveVannaExposure, heuristicVannaScore),
+        charmExposure: compatibilityExposure(liveCharmExposure, heuristicCharmScore),
+        charmBias: biasFromLiveOrHeuristic(liveCharmExposure, heuristicCharmScore),
         gammaPressure,
         gammaConcentration,
         timestamp: new Date()
@@ -518,9 +759,57 @@ export class MemStorage implements IStorage {
 
       const now = new Date().toISOString();
       console.log(
-        `[DealerExposure][Update] ts=${now} totalVanna=${vanna.toFixed(6)} totalCharm=${charm.toFixed(6)}`
+        `[DealerExposure][Update] ts=${now} liveVanna=${String(liveVannaExposure)} liveCharm=${String(liveCharmExposure)}`
       );
+      this.dealerHedgingFlow = {
+        id: prev?.id ?? 1,
+        hedgeFlowBias: null,
+        hedgeFlowIntensity: null,
+        accelerationRisk: null,
+        flowTriggerUp: null,
+        flowTriggerDown: null,
+        timestamp: new Date(),
+      };
       updated = true;
+    } else if (this.dealerExposure) {
+      const prev = this.dealerExposure;
+      const hasExplicitLiveExposure = prev.liveVannaExposure != null || prev.liveCharmExposure != null;
+      if (hasExplicitLiveExposure) {
+        this.dealerExposure = {
+          ...prev,
+          liveVannaExposure: null,
+          liveVannaGrossAbsExposure: null,
+          liveVannaDirectionalRatio: null,
+          liveVannaValidRows: null,
+          liveVannaTotalEligibleRows: null,
+          liveVannaCallSignedContribution: null,
+          liveVannaPutSignedContribution: null,
+          liveCharmExposure: null,
+          liveCharmGrossAbsExposure: null,
+          liveCharmDirectionalRatio: null,
+          liveCharmValidRows: null,
+          liveCharmTotalEligibleRows: null,
+          liveCharmCallSignedContribution: null,
+          liveCharmPutSignedContribution: null,
+          heuristicVannaScore: null,
+          heuristicCharmScore: null,
+          vannaExposure: null,
+          charmExposure: null,
+          vannaBias: null,
+          charmBias: "NEUTRAL",
+          timestamp: new Date(),
+        };
+        this.dealerHedgingFlow = {
+          id: prev?.id ?? 1,
+          hedgeFlowBias: null,
+          hedgeFlowIntensity: null,
+          accelerationRisk: null,
+          flowTriggerUp: null,
+          flowTriggerDown: null,
+          timestamp: new Date(),
+        };
+        updated = true;
+      }
     }
 
     if (updated) {

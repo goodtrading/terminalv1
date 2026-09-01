@@ -1,7 +1,7 @@
 /**
  * Gravity Map Engine
- * Ranks price zones by attraction/repulsion strength using OI + gamma + liquidity confluence.
- * Outputs primary/secondary magnets, repulsion zones, acceleration zones.
+ * Ranks price zones by a relative structural composite score using normalized OI + gamma + liquidity features.
+ * Outputs ranking levels plus repulsion/acceleration metadata; this is not a probability model.
  */
 
 export interface GravityZone {
@@ -23,13 +23,21 @@ export interface GravityZone {
 }
 
 export interface GravityMapSignal {
+  semanticType: "RELATIVE_STRUCTURAL_SCORE";
   status: "INACTIVE" | "ACTIVE";
-  primaryMagnet: GravityZone | null;
-  secondaryMagnet: GravityZone | null;
+  primaryGravityLevel: GravityZone | null;
+  secondaryGravityLevel: GravityZone | null;
+  primaryMagnet: GravityZone | null; // Legacy alias.
+  secondaryMagnet: GravityZone | null; // Legacy alias.
   repulsionZones: GravityZone[];
   accelerationZones: GravityZone[];
   bias: "UPWARD_PULL" | "DOWNWARD_PULL" | "BALANCED" | "NEUTRAL";
   summary: string;
+  metadata: {
+    calibratedProbability: false;
+    predictionHorizon: null;
+    historicallyCalibrated: false;
+  };
   debug?: Record<string, unknown>;
 }
 
@@ -93,13 +101,21 @@ export interface GravityMapInput {
 /** Build INACTIVE fallback when input is insufficient. */
 function buildInactiveSignal(reason: string): GravityMapSignal {
   return {
+    semanticType: "RELATIVE_STRUCTURAL_SCORE",
     status: "INACTIVE",
+    primaryGravityLevel: null,
+    secondaryGravityLevel: null,
     primaryMagnet: null,
     secondaryMagnet: null,
     repulsionZones: [],
     accelerationZones: [],
     bias: "NEUTRAL",
     summary: reason,
+    metadata: {
+      calibratedProbability: false,
+      predictionHorizon: null,
+      historicallyCalibrated: false,
+    },
   };
 }
 
@@ -134,8 +150,25 @@ export function computeGravityMap(input: GravityMapInput): GravityMapSignal {
   if (!hasGammaFlip && !hasMagnets && !hasLiquidity) return buildInactiveSignal("Need gamma flip, magnets, or heatmap");
 
   const threshold = spotPrice * 0.12;
+  // Deterministic, economically local selection: relative distance first, then strike.
   const candidateStrikes = strikes
     .filter((s) => Math.abs(s.strike - spotPrice) <= threshold * 2)
+    .map((s) => ({
+      strike: s.strike,
+      totalGex: s.totalGex,
+      callGex: s.callGex,
+      putGex: s.putGex,
+      totalOiContracts: s.totalOiContracts,
+      callOiContracts: s.callOiContracts,
+      putOiContracts: s.putOiContracts,
+      oiUsd: s.oiUsd,
+    }))
+    .sort((a, b) => {
+      const distanceA = Math.abs(a.strike - spotPrice) / spotPrice;
+      const distanceB = Math.abs(b.strike - spotPrice) / spotPrice;
+      if (distanceA !== distanceB) return distanceA - distanceB;
+      return a.strike - b.strike;
+    })
     .slice(0, 50);
 
   if (candidateStrikes.length === 0) return buildInactiveSignal("No strikes in range");
@@ -301,13 +334,21 @@ export function computeGravityMap(input: GravityMapInput): GravityMapSignal {
       : `${primaryMagnet ? `Primary magnet ${primaryMagnet.price.toLocaleString()}` : ""}${primaryMagnet && secondaryMagnet ? ", " : ""}${secondaryMagnet ? `secondary ${secondaryMagnet.price.toLocaleString()}` : ""}. ${repulsions.length} repulsion, ${accelerations.length} acceleration zones.`.trim() || "Gravity zones computed.";
 
   return {
+    semanticType: "RELATIVE_STRUCTURAL_SCORE",
     status: hasAnyZone ? "ACTIVE" : "INACTIVE",
+    primaryGravityLevel: primaryMagnet,
+    secondaryGravityLevel: secondaryMagnet,
     primaryMagnet,
     secondaryMagnet,
     repulsionZones: repulsions.slice(0, 5),
     accelerationZones: accelerations.slice(0, 5),
     bias,
     summary: summary.trim() || "No significant gravity zones.",
+    metadata: {
+      calibratedProbability: false,
+      predictionHorizon: null,
+      historicallyCalibrated: false,
+    },
     debug: {
       zonesCount: zones.length,
       topScores: sorted.slice(0, 5).map((z) => ({ price: z.price, score: z.gravityScore, type: z.type })),
