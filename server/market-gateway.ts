@@ -4,7 +4,8 @@ import { aggregateOhlcvCandles } from "./lib/candleAggregation";
 import { clampCandleLimit, getCandleLimitForTimeframe } from "@shared/candleLimits";
 import { parseBookmapMarket, type BookmapMarketSource } from "@shared/bookmapMarket";
 import { buildMarketDataTruth, deriveMarketDataQuality, type MarketDataMarketType, type MarketDataTruth } from "@shared/marketDataTruth";
-import { getOrderBookForMarket } from "./services/orderbookMarketRegistry";
+import { getOrderBookForMarket, getCanonicalL2BookForMarket } from "./services/orderbookMarketRegistry";
+import type { CanonicalL2Book } from "@shared/canonicalL2Book";
 import { getSpotOrderBookHealth } from "./services/orderbookService";
 import { getPerpOrderBookHealth } from "./services/orderbookServicePerp";
 import {
@@ -358,6 +359,16 @@ export class MarketDataGateway {
       }
     }
     throw new Error("Ticker unavailable from all providers");
+  }
+
+  static getCanonicalL2Book(input: {
+    instrument: string;
+    venue: "Binance";
+    marketType: MarketDataMarketType;
+  }): CanonicalL2Book {
+    if (input.venue !== "Binance") throw new Error("Unsupported canonical L2 venue");
+    if (input.instrument.trim().toUpperCase() !== "BTCUSDT") throw new Error("Unsupported canonical L2 instrument");
+    return getCanonicalL2BookForMarket(input.marketType === "Perpetual" ? "perp" : "spot");
   }
 
   static getMarketTruth(input: {

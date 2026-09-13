@@ -21,6 +21,7 @@ import {
 import { isHeatmapEnabled } from "../lib/runtimeEnv";
 import type { MarketDataQuality, MarketDataSource } from "@shared/marketDataTruth";
 import { shouldAcceptMarketDataUpdate } from "@shared/marketDataTruth";
+import { CanonicalL2BookOwner, type CanonicalL2Book } from "@shared/canonicalL2Book";
 
 export interface OrderBookLevel {
   price: number;
@@ -55,6 +56,12 @@ if (HEATMAP_ENABLED && (DEBUG_ENABLED || process.env.NODE_ENV === "production"))
     restPrimary: REST_DEPTH_URL,
   });
 }
+
+const canonicalOwner = new CanonicalL2BookOwner({
+  instrument: "BTCUSDT",
+  venue: "Binance",
+  marketType: "Spot",
+});
 
 let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
 let ws: WebSocket | null = null;
@@ -410,6 +417,7 @@ function connect(): void {
 
   ws.on("close", () => {
     health.connected = false;
+    snapshot.quality = "DISCONNECTED";
     ws = null;
     scheduleReconnect();
   });
@@ -452,6 +460,20 @@ if (HEATMAP_ENABLED) {
  * Returns the current order book snapshot from Binance depth WebSocket.
  * Large liquidity = higher size values.
  */
+export function getCanonicalL2Book(): CanonicalL2Book {
+  const book = canonicalOwner.applySnapshot({
+    bids: snapshot.bids.map(({ price, size }) => ({ price, quantity: size })),
+    asks: snapshot.asks.map(({ price, size }) => ({ price, quantity: size })),
+    sequence: snapshot.sequence ?? health.latestUpdateId ?? null,
+    snapshotId: snapshot.sequence ?? health.latestUpdateId ?? null,
+    eventTime: snapshot.eventTime ?? null,
+    receiveTime: snapshot.receiveTime ?? snapshot.timestamp ?? Date.now(),
+    source: snapshot.source ?? "rest",
+    quality: health.connected ? snapshot.quality ?? "PARTIAL" : "DISCONNECTED",
+  });
+  return health.connected ? book : canonicalOwner.markDisconnected();
+}
+
 export function getOrderBook(): OrderBookSnapshot {
   const ts =
     health.lastMessageTs > 0

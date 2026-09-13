@@ -16,6 +16,7 @@ import { recordBboFromOrderBook } from "./bboHistoryRegistry";
 import { publishPerpBbo, publishPerpQuoteUnavailable } from "./nautilusQuoteStream";
 import type { OrderBookLevel, OrderBookSnapshot } from "./orderbookService";
 import { shouldAcceptMarketDataUpdate } from "@shared/marketDataTruth";
+import { CanonicalL2BookOwner, type CanonicalL2Book } from "@shared/canonicalL2Book";
 
 
 const WS_URL = "wss://fstream.binance.com/ws/btcusdt@depth";
@@ -28,6 +29,12 @@ const RECONNECT_MS = 5_000;
 if (DEBUG_ENABLED) {
   console.debug("[OrderBookServicePerp] Using WebSocket URL:", WS_URL, "depth:", DEPTH_LEVELS);
 }
+
+const canonicalOwner = new CanonicalL2BookOwner({
+  instrument: "BTCUSDT",
+  venue: "Binance",
+  marketType: "Perpetual",
+});
 
 let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
 let ws: WebSocket | null = null;
@@ -60,7 +67,7 @@ export function classifyPerpDepthUpdate(
     !Number.isFinite(lastUpdateId) ||
     !Number.isFinite(firstUpdateId) ||
     !Number.isFinite(finalUpdateId)
-  ) return "APPLY";
+  ) return "GAP";
   if (previousFinalUpdateId != null) {
     if (finalUpdateId <= previousFinalUpdateId) return "STALE";
     if (previousUpdateId == null || previousUpdateId !== previousFinalUpdateId) return "GAP";
@@ -492,6 +499,22 @@ function runPerpLimitHistorySample(): void {
     asks: snapshot.asks,
     timestamp: snapshot.timestamp ?? Date.now(),
   });
+}
+
+export function getCanonicalL2Book(): CanonicalL2Book {
+  const book = canonicalOwner.applySnapshot({
+    bids: snapshot.bids.map(({ price, size }) => ({ price, quantity: size })),
+    asks: snapshot.asks.map(({ price, size }) => ({ price, quantity: size })),
+    sequence: snapshot.sequence ?? health.latestUpdateId ?? null,
+    snapshotId: snapshot.sequence ?? health.latestUpdateId ?? null,
+    eventTime: snapshot.eventTime ?? null,
+    receiveTime: snapshot.receiveTime ?? snapshot.timestamp ?? Date.now(),
+    source: snapshot.source ?? "rest",
+    quality: syncState === "SYNCHRONIZED" && health.connected ? snapshot.quality ?? "VALID" : syncState === "DESYNCHRONIZED" ? "RESYNCING" : "PARTIAL",
+  });
+  if (!health.connected) return canonicalOwner.markDisconnected();
+  if (syncState === "DESYNCHRONIZED") return canonicalOwner.markResyncing();
+  return book;
 }
 
 export function getPerpOrderBook(): OrderBookSnapshot {
