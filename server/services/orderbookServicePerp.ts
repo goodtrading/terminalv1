@@ -17,6 +17,7 @@ import { publishPerpBbo, publishPerpQuoteUnavailable } from "./nautilusQuoteStre
 import type { OrderBookLevel, OrderBookSnapshot } from "./orderbookService";
 import { shouldAcceptMarketDataUpdate } from "@shared/marketDataTruth";
 import { CanonicalL2BookOwner, type CanonicalL2Book } from "@shared/canonicalL2Book";
+import { LiquidityLifecycleProjector, type LiquidityLifecycleEvent } from "@shared/liquidityLifecycle";
 
 
 const WS_URL = "wss://fstream.binance.com/ws/btcusdt@depth";
@@ -35,6 +36,9 @@ const canonicalOwner = new CanonicalL2BookOwner({
   venue: "Binance",
   marketType: "Perpetual",
 });
+const lifecycleProjector = new LiquidityLifecycleProjector();
+let previousCanonicalBook: CanonicalL2Book | null = null;
+const recentLifecycleEvents: LiquidityLifecycleEvent[] = [];
 
 let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
 let ws: WebSocket | null = null;
@@ -501,6 +505,12 @@ function runPerpLimitHistorySample(): void {
   });
 }
 
+function recordLifecycle(book: CanonicalL2Book): void {
+  if (previousCanonicalBook) recentLifecycleEvents.push(...lifecycleProjector.project(previousCanonicalBook, book));
+  previousCanonicalBook = book;
+  if (recentLifecycleEvents.length > 500) recentLifecycleEvents.splice(0, recentLifecycleEvents.length - 500);
+}
+
 export function getCanonicalL2Book(): CanonicalL2Book {
   const book = canonicalOwner.applySnapshot({
     bids: snapshot.bids.map(({ price, size }) => ({ price, quantity: size })),
@@ -514,7 +524,12 @@ export function getCanonicalL2Book(): CanonicalL2Book {
   });
   if (!health.connected) return canonicalOwner.markDisconnected();
   if (syncState === "DESYNCHRONIZED") return canonicalOwner.markResyncing();
+  recordLifecycle(book);
   return book;
+}
+
+export function getLiquidityLifecycle(): LiquidityLifecycleEvent[] {
+  return recentLifecycleEvents.map((event) => ({ ...event, provenance: { ...event.provenance } }));
 }
 
 export function getPerpOrderBook(): OrderBookSnapshot {

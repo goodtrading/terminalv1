@@ -22,6 +22,7 @@ import { isHeatmapEnabled } from "../lib/runtimeEnv";
 import type { MarketDataQuality, MarketDataSource } from "@shared/marketDataTruth";
 import { shouldAcceptMarketDataUpdate } from "@shared/marketDataTruth";
 import { CanonicalL2BookOwner, type CanonicalL2Book } from "@shared/canonicalL2Book";
+import { LiquidityLifecycleProjector, type LiquidityLifecycleEvent } from "@shared/liquidityLifecycle";
 
 export interface OrderBookLevel {
   price: number;
@@ -62,6 +63,9 @@ const canonicalOwner = new CanonicalL2BookOwner({
   venue: "Binance",
   marketType: "Spot",
 });
+const lifecycleProjector = new LiquidityLifecycleProjector();
+let previousCanonicalBook: CanonicalL2Book | null = null;
+const recentLifecycleEvents: LiquidityLifecycleEvent[] = [];
 
 let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
 let ws: WebSocket | null = null;
@@ -460,6 +464,12 @@ if (HEATMAP_ENABLED) {
  * Returns the current order book snapshot from Binance depth WebSocket.
  * Large liquidity = higher size values.
  */
+function recordLifecycle(book: CanonicalL2Book): void {
+  if (previousCanonicalBook) recentLifecycleEvents.push(...lifecycleProjector.project(previousCanonicalBook, book));
+  previousCanonicalBook = book;
+  if (recentLifecycleEvents.length > 500) recentLifecycleEvents.splice(0, recentLifecycleEvents.length - 500);
+}
+
 export function getCanonicalL2Book(): CanonicalL2Book {
   const book = canonicalOwner.applySnapshot({
     bids: snapshot.bids.map(({ price, size }) => ({ price, quantity: size })),
@@ -471,7 +481,13 @@ export function getCanonicalL2Book(): CanonicalL2Book {
     source: snapshot.source ?? "rest",
     quality: health.connected ? snapshot.quality ?? "PARTIAL" : "DISCONNECTED",
   });
-  return health.connected ? book : canonicalOwner.markDisconnected();
+  const result = health.connected ? book : canonicalOwner.markDisconnected();
+  recordLifecycle(result);
+  return result;
+}
+
+export function getLiquidityLifecycle(): LiquidityLifecycleEvent[] {
+  return recentLifecycleEvents.map((event) => ({ ...event, provenance: { ...event.provenance } }));
 }
 
 export function getOrderBook(): OrderBookSnapshot {
