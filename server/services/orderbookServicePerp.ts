@@ -15,6 +15,7 @@ import {
 import { recordBboFromOrderBook } from "./bboHistoryRegistry";
 import { publishPerpBbo, publishPerpQuoteUnavailable } from "./nautilusQuoteStream";
 import type { OrderBookLevel, OrderBookSnapshot } from "./orderbookService";
+import { shouldAcceptMarketDataUpdate } from "@shared/marketDataTruth";
 
 
 const WS_URL = "wss://fstream.binance.com/ws/btcusdt@depth";
@@ -239,6 +240,21 @@ export async function initializePerpFullDepth(): Promise<void> {
   const bids = parseLevels(data.bids);
   const asks = parseLevels(data.asks);
   const ts = Date.now();
+  const sequence = data.lastUpdateId != null && Number.isFinite(Number(data.lastUpdateId)) ? Number(data.lastUpdateId) : null;
+  const current = snapshot.source
+    ? {
+        source: snapshot.source,
+        eventTime: snapshot.eventTime ?? null,
+        receiveTime: snapshot.receiveTime ?? 0,
+        sequence: snapshot.sequence ?? null,
+      }
+    : null;
+  if (snapshot.bids.length > 0 && snapshot.asks.length > 0 && !shouldAcceptMarketDataUpdate(current, {
+    source: "rest",
+    eventTime: null,
+    receiveTime: ts,
+    sequence,
+  })) return;
   syncState = "BOOTSTRAPPING";
   snapshot = {
     bids: bids.sort((a, b) => b.price - a.price),
@@ -247,7 +263,7 @@ export async function initializePerpFullDepth(): Promise<void> {
     eventTime: null,
     receiveTime: ts,
     source: "rest",
-    sequence: data.lastUpdateId != null && Number.isFinite(Number(data.lastUpdateId)) ? Number(data.lastUpdateId) : null,
+    sequence,
     quality: "PARTIAL",
   };
   health.lastMessageTs = ts;
@@ -261,7 +277,7 @@ export async function initializePerpFullDepth(): Promise<void> {
     invalidatePerpSnapshot();
     throw new Error("Perp REST depth returned an invalid BBO");
   }
-  syncState = "SYNCHRONIZED";
+  syncState = "BOOTSTRAPPING";
 
   feedBinanceOrderBook(
     { bids: snapshot.bids, asks: snapshot.asks, timestamp: ts },
@@ -366,9 +382,25 @@ function connect(): void {
       const eventTimeCandidate = Number(inner.E) || Number(inner.T);
       const eventTime = Number.isFinite(eventTimeCandidate) && eventTimeCandidate > 0 ? eventTimeCandidate : null;
       const ts = eventTime ?? Date.now();
+      const receiveTime = Date.now();
       const firstUpdateId = inner.U != null ? Number(inner.U) : null;
       const finalUpdateId = inner.u != null ? Number(inner.u) : null;
       const previousUpdateId = inner.pu != null ? Number(inner.pu) : null;
+      const incomingSequence = finalUpdateId;
+      const current = snapshot.source
+        ? {
+            source: snapshot.source,
+            eventTime: snapshot.eventTime ?? null,
+            receiveTime: snapshot.receiveTime ?? 0,
+            sequence: snapshot.sequence ?? null,
+          }
+        : null;
+      if (!shouldAcceptMarketDataUpdate(current, {
+        source: "websocket",
+        eventTime,
+        receiveTime,
+        sequence: incomingSequence,
+      })) return;
       const decision = classifyPerpDepthUpdate(
         lastAppliedUpdateId,
         firstUpdateId,
@@ -397,7 +429,7 @@ function connect(): void {
         return;
       }
 
-      health.lastMessageTs = Date.now();
+      health.lastMessageTs = receiveTime;
       syncState = "SYNCHRONIZED";
       if (finalUpdateId != null && Number.isFinite(finalUpdateId)) {
         lastAppliedUpdateId = finalUpdateId;

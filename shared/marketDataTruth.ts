@@ -30,6 +30,31 @@ export type MarketDataTruthInput = Omit<MarketDataTruth, "mid"> & {
   mid?: number | null;
 };
 
+export type MarketDataUpdateMetadata = {
+  source: MarketDataSource;
+  eventTime: number | null;
+  receiveTime: number;
+  sequence: number | null;
+};
+
+export function shouldAcceptMarketDataUpdate(
+  current: MarketDataUpdateMetadata | null,
+  incoming: MarketDataUpdateMetadata,
+): boolean {
+  if (!current) return true;
+  if (incoming.source === "rest" && current.source === "websocket") {
+    if (current.sequence == null || incoming.sequence == null) return false;
+    return incoming.sequence > current.sequence;
+  }
+  if (current.sequence != null && incoming.sequence != null && incoming.sequence < current.sequence) {
+    return false;
+  }
+  if (current.eventTime != null && incoming.eventTime != null && incoming.eventTime < current.eventTime) {
+    return false;
+  }
+  return incoming.receiveTime >= current.receiveTime;
+}
+
 export function deriveMarketDataQuality(input: {
   connected: boolean;
   hasBbo: boolean;
@@ -37,8 +62,8 @@ export function deriveMarketDataQuality(input: {
   marketType: MarketDataMarketType;
   syncState?: "BOOTSTRAPPING" | "SYNCHRONIZED" | "DESYNCHRONIZED";
 }): MarketDataQuality {
-  if (input.marketType === "Perpetual" && input.syncState === "DESYNCHRONIZED") return "RESYNCING";
   if (!input.connected) return "DISCONNECTED";
+  if (input.marketType === "Perpetual" && input.syncState !== "SYNCHRONIZED") return "RESYNCING";
   if (!input.hasBbo) return "PARTIAL";
   if (input.ageMs != null && input.ageMs > (input.marketType === "Perpetual" ? 3_000 : 10_000)) return "STALE";
   return "VALID";

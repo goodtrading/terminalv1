@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildMarketDataTruth,
   deriveMarketDataQuality,
+  shouldAcceptMarketDataUpdate,
   type MarketDataTruth,
 } from "./marketDataTruth.ts";
 
@@ -73,6 +74,45 @@ for (const quality of ["DISCONNECTED", "GAP", "RESYNCING"] as const) {
   });
 }
 
+test("REST cannot overwrite a newer live WebSocket update", () => {
+  assert.equal(
+    shouldAcceptMarketDataUpdate(
+      { source: "websocket", eventTime: 2_000, receiveTime: 2_010, sequence: 20 },
+      { source: "rest", eventTime: null, receiveTime: 2_020, sequence: 19 },
+    ),
+    false,
+  );
+});
+
+test("out-of-order producer events are rejected", () => {
+  assert.equal(
+    shouldAcceptMarketDataUpdate(
+      { source: "websocket", eventTime: 2_000, receiveTime: 2_010, sequence: 20 },
+      { source: "websocket", eventTime: 1_999, receiveTime: 2_020, sequence: 19 },
+    ),
+    false,
+  );
+});
+
+test("Perpetual bootstrap cannot be VALID before synchronized WebSocket data", () => {
+  assert.equal(
+    deriveMarketDataQuality({
+      connected: true,
+      hasBbo: true,
+      ageMs: 1,
+      marketType: "Perpetual",
+      syncState: "BOOTSTRAPPING",
+    }),
+    "RESYNCING",
+  );
+});
+
+test("disconnected remains disconnected even with a cached BBO", () => {
+  assert.equal(
+    deriveMarketDataQuality({ connected: false, hasBbo: true, ageMs: 1, marketType: "Perpetual" }),
+    "DISCONNECTED",
+  );
+});
 test("requires explicit market identity and does not provide Spot/Perp fallback", () => {
   assert.throws(() => buildMarketDataTruth({ ...base, marketType: undefined as never }));
 });

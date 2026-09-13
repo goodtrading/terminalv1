@@ -20,6 +20,7 @@ import {
 } from "./binanceSpotMarketData";
 import { isHeatmapEnabled } from "../lib/runtimeEnv";
 import type { MarketDataQuality, MarketDataSource } from "@shared/marketDataTruth";
+import { shouldAcceptMarketDataUpdate } from "@shared/marketDataTruth";
 
 export interface OrderBookLevel {
   price: number;
@@ -166,6 +167,23 @@ export async function initializeFullDepth(): Promise<void> {
   try {
     const depth = await fetchSpotDepthFromRest();
     const ts = Date.now();
+    const incoming = {
+      source: "rest" as const,
+      eventTime: null,
+      receiveTime: ts,
+      sequence: depth.latestUpdateId,
+    };
+    const current = snapshot.source
+      ? {
+          source: snapshot.source,
+          eventTime: snapshot.eventTime ?? null,
+          receiveTime: snapshot.receiveTime ?? 0,
+          sequence: snapshot.sequence ?? null,
+        }
+      : null;
+    if (snapshot.bids.length > 0 && snapshot.asks.length > 0 && !shouldAcceptMarketDataUpdate(current, incoming)) {
+      return;
+    }
 
     snapshot = {
       bids: depth.bids.sort((a, b) => b.price - a.price),
@@ -318,12 +336,33 @@ function connect(): void {
         root.data && typeof root.data === "object" ? (root.data as Record<string, unknown>) : root;
       const eventTime = Number(inner.E);
       const ts = Date.now();
+      const sourceEventTime = Number.isFinite(eventTime) && eventTime > 0 ? eventTime : null;
+      const incomingSequence = inner.u != null && Number.isFinite(Number(inner.u))
+        ? Number(inner.u)
+        : inner.lastUpdateId != null && Number.isFinite(Number(inner.lastUpdateId))
+          ? Number(inner.lastUpdateId)
+          : null;
+      const receiveTime = Date.now();
+      const current = snapshot.source
+        ? {
+            source: snapshot.source,
+            eventTime: snapshot.eventTime ?? null,
+            receiveTime: snapshot.receiveTime ?? 0,
+            sequence: snapshot.sequence ?? null,
+          }
+        : null;
+      if (!shouldAcceptMarketDataUpdate(current, {
+        source: "websocket",
+        eventTime: sourceEventTime,
+        receiveTime,
+        sequence: incomingSequence,
+      })) return;
       if (inner.u != null && Number.isFinite(Number(inner.u))) {
         health.latestUpdateId = Number(inner.u);
       } else if (inner.lastUpdateId != null && Number.isFinite(Number(inner.lastUpdateId))) {
         health.latestUpdateId = Number(inner.lastUpdateId);
       }
-      health.lastMessageTs = Date.now();
+      health.lastMessageTs = receiveTime;
       health.lastError = null;
       const hasFullSnapshot = snapshot.bids.length >= 50 || snapshot.asks.length >= 50;
       
