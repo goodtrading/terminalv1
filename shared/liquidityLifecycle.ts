@@ -33,7 +33,7 @@ export function projectLiquidityLifecycle(
   if (previous.instrument !== current.instrument || previous.venue !== current.venue || previous.marketType !== current.marketType) {
     throw new Error("Lifecycle projection requires matching market identity");
   }
-  if (unusable.has(current.quality)) return [];
+  if (unusable.has(current.quality) || current.provenance.source === "rest") return [];
 
   const events: LiquidityLifecycleEvent[] = [];
   const sides: Array<[LiquidityLifecycleSide, CanonicalL2Level[], CanonicalL2Level[]]> = [
@@ -71,6 +71,16 @@ export function projectLiquidityLifecycle(
     }
   }
   return events;
+}
+
+export function appendLiquidityLifecycleEvents(
+  buffer: LiquidityLifecycleEvent[],
+  events: LiquidityLifecycleEvent[],
+  maxEvents = 500,
+): void {
+  if (!Number.isInteger(maxEvents) || maxEvents <= 0) throw new Error("Invalid lifecycle buffer size");
+  buffer.push(...events);
+  if (buffer.length > maxEvents) buffer.splice(0, buffer.length - maxEvents);
 }
 
 export class LiquidityLifecycleProjector {

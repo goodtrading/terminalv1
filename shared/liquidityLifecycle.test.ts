@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CanonicalL2BookOwner } from "./canonicalL2Book";
-import { LiquidityLifecycleProjector, projectLiquidityLifecycle } from "./liquidityLifecycle";
+import { LiquidityLifecycleProjector, appendLiquidityLifecycleEvents, projectLiquidityLifecycle } from "./liquidityLifecycle";
 
 const base = { instrument: "BTCUSDT", venue: "Binance" as const, marketType: "Spot" as const };
 const meta = { sequence: 1, snapshotId: 1, eventTime: 100, receiveTime: 110, source: "websocket" as const, quality: "VALID" as const };
@@ -53,8 +53,44 @@ test("projector deduplicates and does not mutate books", () => {
   assert.deepEqual(previous, before);
 });
 
-test("Spot and Perpetual lifecycle streams are isolated", () => {
-  const previous = book([{ price: 100, quantity: 2 }]);
-  const perp = book([{ price: 100, quantity: 2 }], [], { marketType: "Perpetual" });
-  assert.throws(() => projectLiquidityLifecycle(previous, perp));
+
+
+test("accepted owner delta projects once and preserves legacy parity", () => {
+  const owner = new CanonicalL2BookOwner(base);
+  const initial = owner.applySnapshot({ ...meta, source: "rest", bids: [{ price: 100, quantity: 10 }], asks: [{ price: 101, quantity: 12 }] });
+  const before = owner.getBook();
+  const applied = owner.applyDelta({ ...meta, sequence: 2, bids: [{ price: 100, quantity: 15 }], asks: [] });
+  assert.equal(applied.accepted, true);
+  const events = projectLiquidityLifecycle(before, applied.book);
+  assert.equal(events.length, 1);
+  assert.deepEqual(applied.book.bids, [{ price: 100, quantity: 15 }]);
+  assert.equal(events[0]?.newQuantity, applied.book.bids[0]?.quantity);
+  assert.deepEqual(initial.asks, [{ price: 101, quantity: 12 }]);
+});
+
+test("rejected, degraded and resnapshot transitions emit no usable lifecycle", () => {
+  const owner = new CanonicalL2BookOwner({ ...base, marketType: "Perpetual" });
+  const initial = owner.applySnapshot({ ...meta, source: "rest", bids: [{ price: 100, quantity: 10 }], asks: [{ price: 101, quantity: 12 }] });
+  const projector = new LiquidityLifecycleProjector();
+  const rejected = owner.applyDelta({ ...meta, sequence: 10, firstUpdateId: 10, previousUpdateId: 9, bids: [{ price: 100, quantity: 15 }], asks: [] });
+  assert.equal(rejected.accepted, false);
+  assert.equal(projector.project(initial, rejected.book).length, 0);
+  const disconnected = owner.markDisconnected();
+  assert.equal(projector.project(initial, disconnected).length, 0);
+  const resnapshot = owner.applySnapshot({ ...meta, source: "rest", snapshotId: 20, sequence: 20, bids: [{ price: 99, quantity: 3 }], asks: [{ price: 102, quantity: 4 }] });
+  assert.equal(projector.project(disconnected, resnapshot).length, 0);
+});
+
+test("buffer is ordered, capped at 500, and independent from the books", () => {
+  const buffer: ReturnType<typeof projectLiquidityLifecycle> = [];
+  const owner = new CanonicalL2BookOwner(base);
+  let previous = owner.applySnapshot({ ...meta, source: "rest", bids: [{ price: 100, quantity: 1 }], asks: [{ price: 101, quantity: 2 }] });
+  for (let i = 0; i < 501; i += 1) {
+    const current = owner.applySnapshot({ ...meta, source: "websocket", sequence: i + 2, bids: [{ price: 100 + i + 1, quantity: 1 }], asks: [{ price: 101, quantity: 2 }] });
+    appendLiquidityLifecycleEvents(buffer, projectLiquidityLifecycle(previous, current));
+    previous = current;
+  }
+  assert.equal(buffer.length, 500);
+  assert.ok(buffer.every((event, index) => index === 0 || event.sequence! >= buffer[index - 1]!.sequence!));
+  assert.equal(owner.getBook().bids.length, 1);
 });

@@ -22,7 +22,7 @@ import { isHeatmapEnabled } from "../lib/runtimeEnv";
 import type { MarketDataQuality, MarketDataSource } from "@shared/marketDataTruth";
 import { shouldAcceptMarketDataUpdate } from "@shared/marketDataTruth";
 import { CanonicalL2BookOwner, type CanonicalL2Book } from "@shared/canonicalL2Book";
-import { LiquidityLifecycleProjector, type LiquidityLifecycleEvent } from "@shared/liquidityLifecycle";
+import { LiquidityLifecycleProjector, appendLiquidityLifecycleEvents, type LiquidityLifecycleEvent } from "@shared/liquidityLifecycle";
 
 export interface OrderBookLevel {
   price: number;
@@ -64,10 +64,22 @@ const canonicalOwner = new CanonicalL2BookOwner({
   marketType: "Spot",
 });
 const lifecycleProjector = new LiquidityLifecycleProjector();
-let previousCanonicalBook: CanonicalL2Book | null = null;
 const recentLifecycleEvents: LiquidityLifecycleEvent[] = [];
 
-let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
+function toLegacySnapshot(book: CanonicalL2Book): OrderBookSnapshot {
+  return {
+    bids: book.bids.map(({ price, quantity }) => ({ price, size: quantity })),
+    asks: book.asks.map(({ price, quantity }) => ({ price, size: quantity })),
+    timestamp: book.receiveTime,
+    eventTime: book.eventTime,
+    receiveTime: book.receiveTime,
+    source: book.provenance.source,
+    sequence: book.sequence,
+    quality: book.quality,
+  };
+}
+
+let snapshot: OrderBookSnapshot = toLegacySnapshot(canonicalOwner.getBook());
 let ws: WebSocket | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let healthInterval: ReturnType<typeof setInterval> | null = null;
@@ -196,16 +208,18 @@ export async function initializeFullDepth(): Promise<void> {
       return;
     }
 
-    snapshot = {
-      bids: depth.bids.sort((a, b) => b.price - a.price),
-      asks: depth.asks.sort((a, b) => a.price - b.price),
-      timestamp: ts,
+    const canonical = canonicalOwner.applySnapshot({
+      bids: depth.bids.map(({ price, size }) => ({ price, quantity: size })),
+      asks: depth.asks.map(({ price, size }) => ({ price, quantity: size })),
+      sequence: depth.latestUpdateId,
+      snapshotId: depth.latestUpdateId,
       eventTime: null,
       receiveTime: ts,
       source: "rest",
-      sequence: depth.latestUpdateId,
       quality: "PARTIAL",
-    };
+    });
+    snapshot = toLegacySnapshot(canonical);
+    recentLifecycleEvents.length = 0;
     health.lastMessageTs = ts;
     health.latestUpdateId = depth.latestUpdateId;
     health.lastError = null;
@@ -340,13 +354,9 @@ function connect(): void {
         return;
       }
 
-      // Binance @depth sends PARTIAL updates (5–20 levels). Merge into snapshot instead of replacing
-      // so we preserve full depth from initializeFullDepth.
       const root = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-      const inner =
-        root.data && typeof root.data === "object" ? (root.data as Record<string, unknown>) : root;
+      const inner = root.data && typeof root.data === "object" ? (root.data as Record<string, unknown>) : root;
       const eventTime = Number(inner.E);
-      const ts = Date.now();
       const sourceEventTime = Number.isFinite(eventTime) && eventTime > 0 ? eventTime : null;
       const incomingSequence = inner.u != null && Number.isFinite(Number(inner.u))
         ? Number(inner.u)
@@ -354,56 +364,23 @@ function connect(): void {
           ? Number(inner.lastUpdateId)
           : null;
       const receiveTime = Date.now();
-      const current = snapshot.source
-        ? {
-            source: snapshot.source,
-            eventTime: snapshot.eventTime ?? null,
-            receiveTime: snapshot.receiveTime ?? 0,
-            sequence: snapshot.sequence ?? null,
-          }
-        : null;
-      if (!shouldAcceptMarketDataUpdate(current, {
-        source: "websocket",
+      const ts = receiveTime;
+      const previous = canonicalOwner.getBook();
+      const result = canonicalOwner.applyDelta({
+        bids: normalized.bids.map(([price, quantity]) => ({ price: Number(price), quantity: Number(quantity) })),
+        asks: normalized.asks.map(([price, quantity]) => ({ price: Number(price), quantity: Number(quantity) })),
+        sequence: incomingSequence,
         eventTime: sourceEventTime,
         receiveTime,
-        sequence: incomingSequence,
-      })) return;
-      if (inner.u != null && Number.isFinite(Number(inner.u))) {
-        health.latestUpdateId = Number(inner.u);
-      } else if (inner.lastUpdateId != null && Number.isFinite(Number(inner.lastUpdateId))) {
-        health.latestUpdateId = Number(inner.lastUpdateId);
-      }
+        source: "websocket",
+        quality: "VALID",
+      });
+      if (!result.accepted) return;
+      health.latestUpdateId = incomingSequence;
       health.lastMessageTs = receiveTime;
       health.lastError = null;
-      const hasFullSnapshot = snapshot.bids.length >= 50 || snapshot.asks.length >= 50;
-      
-      if (hasFullSnapshot && (deltaBids.length < 50 || deltaAsks.length < 50)) {
-        const bidMap = new Map(snapshot.bids.map((b) => [b.price, b]));
-        const askMap = new Map(snapshot.asks.map((a) => [a.price, a]));
-        deltaBids.forEach((b) => bidMap.set(b.price, b));
-        deltaAsks.forEach((a) => askMap.set(a.price, a));
-        snapshot = {
-          bids: Array.from(bidMap.values()).sort((a, b) => b.price - a.price),
-          asks: Array.from(askMap.values()).sort((a, b) => a.price - b.price),
-          timestamp: ts,
-          eventTime: Number.isFinite(eventTime) && eventTime > 0 ? eventTime : null,
-          receiveTime: health.lastMessageTs,
-          source: "websocket",
-          sequence: health.latestUpdateId,
-          quality: "VALID",
-        };
-      } else {
-        snapshot = {
-          bids: deltaBids.sort((a, b) => b.price - a.price),
-          asks: deltaAsks.sort((a, b) => a.price - b.price),
-          timestamp: ts,
-          eventTime: Number.isFinite(eventTime) && eventTime > 0 ? eventTime : null,
-          receiveTime: health.lastMessageTs,
-          source: "websocket",
-          sequence: health.latestUpdateId,
-          quality: "VALID",
-        };
-      }
+      snapshot = toLegacySnapshot(result.book);
+      appendLiquidityLifecycleEvents(recentLifecycleEvents, lifecycleProjector.project(previous, result.book));
 
       if (bookmapBids.length > 0 || bookmapAsks.length > 0) {
         feedBinanceOrderBook(
@@ -421,7 +398,7 @@ function connect(): void {
 
   ws.on("close", () => {
     health.connected = false;
-    snapshot.quality = "DISCONNECTED";
+    snapshot = toLegacySnapshot(canonicalOwner.markDisconnected());
     ws = null;
     scheduleReconnect();
   });
@@ -464,26 +441,10 @@ if (HEATMAP_ENABLED) {
  * Returns the current order book snapshot from Binance depth WebSocket.
  * Large liquidity = higher size values.
  */
-function recordLifecycle(book: CanonicalL2Book): void {
-  if (previousCanonicalBook) recentLifecycleEvents.push(...lifecycleProjector.project(previousCanonicalBook, book));
-  previousCanonicalBook = book;
-  if (recentLifecycleEvents.length > 500) recentLifecycleEvents.splice(0, recentLifecycleEvents.length - 500);
-}
-
 export function getCanonicalL2Book(): CanonicalL2Book {
-  const book = canonicalOwner.applySnapshot({
-    bids: snapshot.bids.map(({ price, size }) => ({ price, quantity: size })),
-    asks: snapshot.asks.map(({ price, size }) => ({ price, quantity: size })),
-    sequence: snapshot.sequence ?? health.latestUpdateId ?? null,
-    snapshotId: snapshot.sequence ?? health.latestUpdateId ?? null,
-    eventTime: snapshot.eventTime ?? null,
-    receiveTime: snapshot.receiveTime ?? snapshot.timestamp ?? Date.now(),
-    source: snapshot.source ?? "rest",
-    quality: health.connected ? snapshot.quality ?? "PARTIAL" : "DISCONNECTED",
-  });
-  const result = health.connected ? book : canonicalOwner.markDisconnected();
-  recordLifecycle(result);
-  return result;
+  const book = canonicalOwner.getBook();
+  snapshot = toLegacySnapshot(book);
+  return book;
 }
 
 export function getLiquidityLifecycle(): LiquidityLifecycleEvent[] {

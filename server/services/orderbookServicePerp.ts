@@ -17,7 +17,7 @@ import { publishPerpBbo, publishPerpQuoteUnavailable } from "./nautilusQuoteStre
 import type { OrderBookLevel, OrderBookSnapshot } from "./orderbookService";
 import { shouldAcceptMarketDataUpdate } from "@shared/marketDataTruth";
 import { CanonicalL2BookOwner, type CanonicalL2Book } from "@shared/canonicalL2Book";
-import { LiquidityLifecycleProjector, type LiquidityLifecycleEvent } from "@shared/liquidityLifecycle";
+import { LiquidityLifecycleProjector, appendLiquidityLifecycleEvents, type LiquidityLifecycleEvent } from "@shared/liquidityLifecycle";
 
 
 const WS_URL = "wss://fstream.binance.com/ws/btcusdt@depth";
@@ -37,10 +37,22 @@ const canonicalOwner = new CanonicalL2BookOwner({
   marketType: "Perpetual",
 });
 const lifecycleProjector = new LiquidityLifecycleProjector();
-let previousCanonicalBook: CanonicalL2Book | null = null;
 const recentLifecycleEvents: LiquidityLifecycleEvent[] = [];
 
-let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
+function toLegacySnapshot(book: CanonicalL2Book): OrderBookSnapshot {
+  return {
+    bids: book.bids.map(({ price, quantity }) => ({ price, size: quantity })),
+    asks: book.asks.map(({ price, quantity }) => ({ price, size: quantity })),
+    timestamp: book.receiveTime,
+    eventTime: book.eventTime,
+    receiveTime: book.receiveTime,
+    source: book.provenance.source,
+    sequence: book.sequence,
+    quality: book.quality,
+  };
+}
+
+let snapshot: OrderBookSnapshot = toLegacySnapshot(canonicalOwner.getBook());
 let ws: WebSocket | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let healthInterval: ReturnType<typeof setInterval> | null = null;
@@ -147,55 +159,8 @@ export function isPerpBboValid(ob: OrderBookSnapshot = snapshot): boolean {
   return bestBid < bestAsk;
 }
 
-function applyDeltaToSnapshot(
-  deltaBids: OrderBookLevel[],
-  deltaAsks: OrderBookLevel[],
-  removalBids: OrderBookLevel[],
-  removalAsks: OrderBookLevel[],
-  ts: number,
-): void {
-  const appliedAt = Date.now();
-  const hasFullSnapshot = snapshot.bids.length >= 50 || snapshot.asks.length >= 50;
-
-  if (hasFullSnapshot) {
-    const bidMap = new Map(snapshot.bids.map((b) => [b.price, b]));
-    const askMap = new Map(snapshot.asks.map((a) => [a.price, a]));
-
-    for (const b of removalBids) {
-      if (b.size <= 0) bidMap.delete(b.price);
-      else bidMap.set(b.price, b);
-    }
-    for (const a of removalAsks) {
-      if (a.size <= 0) askMap.delete(a.price);
-      else askMap.set(a.price, a);
-    }
-    for (const b of deltaBids) bidMap.set(b.price, b);
-    for (const a of deltaAsks) askMap.set(a.price, a);
-
-    snapshot = {
-      bids: Array.from(bidMap.values()).sort((a, b) => b.price - a.price),
-      asks: Array.from(askMap.values()).sort((a, b) => a.price - b.price),
-      timestamp: appliedAt,
-    };
-  } else {
-    snapshot = {
-      bids: deltaBids.sort((a, b) => b.price - a.price),
-      asks: deltaAsks.sort((a, b) => a.price - b.price),
-      timestamp: appliedAt,
-    };
-  }
-}
-
 function invalidatePerpSnapshot(): void {
-  snapshot = {
-    bids: [],
-    asks: [],
-    eventTime: null,
-    receiveTime: Date.now(),
-    source: "websocket",
-    sequence: null,
-    quality: "RESYNCING",
-  };
+  snapshot = toLegacySnapshot(canonicalOwner.markResyncing());
   syncState = "DESYNCHRONIZED";
   health.lastMessageTs = 0;
   health.latestUpdateId = null;
@@ -267,16 +232,18 @@ export async function initializePerpFullDepth(): Promise<void> {
     sequence,
   })) return;
   syncState = "BOOTSTRAPPING";
-  snapshot = {
-    bids: bids.sort((a, b) => b.price - a.price),
-    asks: asks.sort((a, b) => a.price - b.price),
-    timestamp: ts,
+  const canonical = canonicalOwner.applySnapshot({
+    bids: bids.map(({ price, size }) => ({ price, quantity: size })),
+    asks: asks.map(({ price, size }) => ({ price, quantity: size })),
+    sequence,
+    snapshotId: sequence,
     eventTime: null,
     receiveTime: ts,
     source: "rest",
-    sequence,
     quality: "PARTIAL",
-  };
+  });
+  snapshot = toLegacySnapshot(canonical);
+  recentLifecycleEvents.length = 0;
   health.lastMessageTs = ts;
   health.latestUpdateId =
     data.lastUpdateId != null && Number.isFinite(Number(data.lastUpdateId))
@@ -427,12 +394,21 @@ function connect(): void {
         void resyncPerpOrderBook("sequence-gap");
         return;
       }
-      applyDeltaToSnapshot(deltaBids, deltaAsks, removalBids, removalAsks, ts);
-      snapshot.eventTime = eventTime;
-      snapshot.receiveTime = Date.now();
-      snapshot.source = "websocket";
-      snapshot.sequence = finalUpdateId;
-      snapshot.quality = "VALID";
+      const previous = canonicalOwner.getBook();
+      const result = canonicalOwner.applyDelta({
+        bids: removalBids.map(({ price, size }) => ({ price, quantity: size })),
+        asks: removalAsks.map(({ price, size }) => ({ price, quantity: size })),
+        sequence: finalUpdateId,
+        firstUpdateId,
+        previousUpdateId,
+        eventTime,
+        receiveTime,
+        source: "websocket",
+        quality: "VALID",
+      });
+      if (!result.accepted) return;
+      snapshot = toLegacySnapshot(result.book);
+      appendLiquidityLifecycleEvents(recentLifecycleEvents, lifecycleProjector.project(previous, result.book));
 
       if (!isPerpBboValid()) {
         invalidatePerpSnapshot();
@@ -505,26 +481,9 @@ function runPerpLimitHistorySample(): void {
   });
 }
 
-function recordLifecycle(book: CanonicalL2Book): void {
-  if (previousCanonicalBook) recentLifecycleEvents.push(...lifecycleProjector.project(previousCanonicalBook, book));
-  previousCanonicalBook = book;
-  if (recentLifecycleEvents.length > 500) recentLifecycleEvents.splice(0, recentLifecycleEvents.length - 500);
-}
-
 export function getCanonicalL2Book(): CanonicalL2Book {
-  const book = canonicalOwner.applySnapshot({
-    bids: snapshot.bids.map(({ price, size }) => ({ price, quantity: size })),
-    asks: snapshot.asks.map(({ price, size }) => ({ price, quantity: size })),
-    sequence: snapshot.sequence ?? health.latestUpdateId ?? null,
-    snapshotId: snapshot.sequence ?? health.latestUpdateId ?? null,
-    eventTime: snapshot.eventTime ?? null,
-    receiveTime: snapshot.receiveTime ?? snapshot.timestamp ?? Date.now(),
-    source: snapshot.source ?? "rest",
-    quality: syncState === "SYNCHRONIZED" && health.connected ? snapshot.quality ?? "VALID" : syncState === "DESYNCHRONIZED" ? "RESYNCING" : "PARTIAL",
-  });
-  if (!health.connected) return canonicalOwner.markDisconnected();
-  if (syncState === "DESYNCHRONIZED") return canonicalOwner.markResyncing();
-  recordLifecycle(book);
+  const book = canonicalOwner.getBook();
+  snapshot = toLegacySnapshot(book);
   return book;
 }
 
