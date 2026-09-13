@@ -121,6 +121,39 @@ test("Spot liquidity price cannot come from Perpetual truth", () => {
   assert.equal(usableMarketDataPrice(perp), 200);
   assert.notEqual(usableMarketDataPrice(spot), usableMarketDataPrice(perp));
 });
+test("REST never overwrites fresh WebSocket even with a higher sequence", () => {
+  assert.equal(
+    shouldAcceptMarketDataUpdate(
+      { source: "websocket", eventTime: 2_000, receiveTime: 2_010, sequence: 20 },
+      { source: "rest", eventTime: null, receiveTime: 2_020, sequence: 21 },
+    ),
+    false,
+  );
+});
+
+test("crossed or incomplete BBO cannot remain VALID", () => {
+  const crossed = buildMarketDataTruth({ ...base, marketType: "Spot", bid: 102, ask: 102 });
+  const incomplete = buildMarketDataTruth({ ...base, marketType: "Spot", ask: null });
+  assert.equal(crossed.mid, null);
+  assert.equal(crossed.quality, "PARTIAL");
+  assert.equal(incomplete.mid, null);
+  assert.equal(incomplete.quality, "PARTIAL");
+});
+
+test("sequence ordering takes precedence over receive time", () => {
+  assert.equal(
+    shouldAcceptMarketDataUpdate(
+      { source: "websocket", eventTime: 2_000, receiveTime: 2_100, sequence: 20 },
+      { source: "websocket", eventTime: 1_000, receiveTime: 2_200, sequence: 19 },
+    ),
+    false,
+  );
+});
+
+test("stale truth is not usable as a fresh consumer price", () => {
+  const stale = buildMarketDataTruth({ ...base, marketType: "Spot", quality: "STALE" });
+  assert.equal(usableMarketDataPrice(stale), null);
+});
 test("requires explicit market identity and does not provide Spot/Perp fallback", () => {
   assert.throws(() => buildMarketDataTruth({ ...base, marketType: undefined as never }));
 });

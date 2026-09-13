@@ -43,14 +43,13 @@ export function shouldAcceptMarketDataUpdate(
 ): boolean {
   if (!current) return true;
   if (incoming.source === "rest" && current.source === "websocket") {
-    if (current.sequence == null || incoming.sequence == null) return false;
+    return false;
+  }
+  if (current.sequence != null && incoming.sequence != null) {
     return incoming.sequence > current.sequence;
   }
-  if (current.sequence != null && incoming.sequence != null && incoming.sequence < current.sequence) {
-    return false;
-  }
-  if (current.eventTime != null && incoming.eventTime != null && incoming.eventTime < current.eventTime) {
-    return false;
+  if (current.eventTime != null && incoming.eventTime != null) {
+    return incoming.eventTime >= current.eventTime;
   }
   return incoming.receiveTime >= current.receiveTime;
 }
@@ -119,6 +118,6 @@ export function buildMarketDataTruth(input: MarketDataTruthInput): MarketDataTru
     receiveTime: input.receiveTime,
     source: input.source,
     sequence,
-    quality: input.quality,
+    quality: input.quality === "VALID" && !validBbo(bid, ask) ? "PARTIAL" : input.quality,
   };
 }
