@@ -518,11 +518,17 @@ export function getCanonicalL2Book(): CanonicalL2Book {
 }
 
 export function getPerpOrderBook(): OrderBookSnapshot {
-  const ts =
-    health.lastMessageTs > 0
-      ? health.lastMessageTs
-      : snapshot.timestamp ?? Date.now();
-  return { ...snapshot, timestamp: ts };
+  const book = getCanonicalL2Book();
+  return {
+    bids: book.bids.map(({ price, quantity }) => ({ price, size: quantity })),
+    asks: book.asks.map(({ price, quantity }) => ({ price, size: quantity })),
+    timestamp: book.receiveTime,
+    eventTime: book.eventTime,
+    receiveTime: book.receiveTime,
+    source: book.provenance.source,
+    sequence: book.sequence,
+    quality: book.quality,
+  };
 }
 
 export function getPerpOrderBookHealth() {
