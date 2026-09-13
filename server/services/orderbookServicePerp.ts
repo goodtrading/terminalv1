@@ -175,7 +175,15 @@ function applyDeltaToSnapshot(
 }
 
 function invalidatePerpSnapshot(): void {
-  snapshot = { bids: [], asks: [] };
+  snapshot = {
+    bids: [],
+    asks: [],
+    eventTime: null,
+    receiveTime: Date.now(),
+    source: "websocket",
+    sequence: null,
+    quality: "RESYNCING",
+  };
   syncState = "DESYNCHRONIZED";
   health.lastMessageTs = 0;
   health.latestUpdateId = null;
@@ -236,6 +244,11 @@ export async function initializePerpFullDepth(): Promise<void> {
     bids: bids.sort((a, b) => b.price - a.price),
     asks: asks.sort((a, b) => a.price - b.price),
     timestamp: ts,
+    eventTime: null,
+    receiveTime: ts,
+    source: "rest",
+    sequence: data.lastUpdateId != null && Number.isFinite(Number(data.lastUpdateId)) ? Number(data.lastUpdateId) : null,
+    quality: "PARTIAL",
   };
   health.lastMessageTs = ts;
   health.latestUpdateId =
@@ -350,10 +363,9 @@ function connect(): void {
       const root = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
       const inner =
         root.data && typeof root.data === "object" ? (root.data as Record<string, unknown>) : root;
-      const ts =
-        Number(inner.E) ||
-        Number(inner.T) ||
-        Date.now();
+      const eventTimeCandidate = Number(inner.E) || Number(inner.T);
+      const eventTime = Number.isFinite(eventTimeCandidate) && eventTimeCandidate > 0 ? eventTimeCandidate : null;
+      const ts = eventTime ?? Date.now();
       const firstUpdateId = inner.U != null ? Number(inner.U) : null;
       const finalUpdateId = inner.u != null ? Number(inner.u) : null;
       const previousUpdateId = inner.pu != null ? Number(inner.pu) : null;
@@ -373,6 +385,11 @@ function connect(): void {
         return;
       }
       applyDeltaToSnapshot(deltaBids, deltaAsks, removalBids, removalAsks, ts);
+      snapshot.eventTime = eventTime;
+      snapshot.receiveTime = Date.now();
+      snapshot.source = "websocket";
+      snapshot.sequence = finalUpdateId;
+      snapshot.quality = "VALID";
 
       if (!isPerpBboValid()) {
         invalidatePerpSnapshot();

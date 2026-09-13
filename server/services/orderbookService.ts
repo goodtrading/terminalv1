@@ -19,6 +19,7 @@ import {
   shouldUseBinanceSpotVision,
 } from "./binanceSpotMarketData";
 import { isHeatmapEnabled } from "../lib/runtimeEnv";
+import type { MarketDataQuality, MarketDataSource } from "@shared/marketDataTruth";
 
 export interface OrderBookLevel {
   price: number;
@@ -29,6 +30,11 @@ export interface OrderBookSnapshot {
   bids: OrderBookLevel[];
   asks: OrderBookLevel[];
   timestamp?: number;
+  eventTime?: number | null;
+  receiveTime?: number;
+  source?: MarketDataSource;
+  sequence?: number | null;
+  quality?: MarketDataQuality;
 }
 
 // Enhanced configuration for Bookmap-style tracking
@@ -165,6 +171,11 @@ export async function initializeFullDepth(): Promise<void> {
       bids: depth.bids.sort((a, b) => b.price - a.price),
       asks: depth.asks.sort((a, b) => a.price - b.price),
       timestamp: ts,
+      eventTime: null,
+      receiveTime: ts,
+      source: "rest",
+      sequence: depth.latestUpdateId,
+      quality: "PARTIAL",
     };
     health.lastMessageTs = ts;
     health.latestUpdateId = depth.latestUpdateId;
@@ -305,7 +316,8 @@ function connect(): void {
       const root = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
       const inner =
         root.data && typeof root.data === "object" ? (root.data as Record<string, unknown>) : root;
-      const ts = Number(inner.E) || Date.now();
+      const eventTime = Number(inner.E);
+      const ts = Date.now();
       if (inner.u != null && Number.isFinite(Number(inner.u))) {
         health.latestUpdateId = Number(inner.u);
       } else if (inner.lastUpdateId != null && Number.isFinite(Number(inner.lastUpdateId))) {
@@ -324,12 +336,22 @@ function connect(): void {
           bids: Array.from(bidMap.values()).sort((a, b) => b.price - a.price),
           asks: Array.from(askMap.values()).sort((a, b) => a.price - b.price),
           timestamp: ts,
+          eventTime: Number.isFinite(eventTime) && eventTime > 0 ? eventTime : null,
+          receiveTime: health.lastMessageTs,
+          source: "websocket",
+          sequence: health.latestUpdateId,
+          quality: "VALID",
         };
       } else {
         snapshot = {
           bids: deltaBids.sort((a, b) => b.price - a.price),
           asks: deltaAsks.sort((a, b) => a.price - b.price),
           timestamp: ts,
+          eventTime: Number.isFinite(eventTime) && eventTime > 0 ? eventTime : null,
+          receiveTime: health.lastMessageTs,
+          source: "websocket",
+          sequence: health.latestUpdateId,
+          quality: "VALID",
         };
       }
 

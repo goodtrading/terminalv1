@@ -1,5 +1,25 @@
 /** Bookmap composite Phase 1 — separate spot vs perpetual depth/trade sources. */
 export type BookmapMarketSource = "spot" | "perp";
+export type CanonicalMarketType = "Spot" | "Perpetual";
+
+export type CanonicalMarketIdentity = {
+  instrument: string;
+  venue: "Binance";
+  marketType: CanonicalMarketType;
+};
+
+export function canonicalMarketIdentity(
+  instrument: string,
+  market: BookmapMarketSource,
+): CanonicalMarketIdentity {
+  const normalized = instrument.trim().toUpperCase();
+  if (!normalized) throw new Error("Market instrument is required");
+  return {
+    instrument: normalized,
+    venue: "Binance",
+    marketType: market === "perp" ? "Perpetual" : "Spot",
+  };
+}
 
 /**
  * Default matches the legacy Binance feed (spot depth + spot aggTrades).

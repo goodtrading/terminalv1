@@ -3,8 +3,13 @@ import { getKrakenTicker, getKrakenCandles } from "./kraken-gateway";
 import { aggregateOhlcvCandles } from "./lib/candleAggregation";
 import { clampCandleLimit, getCandleLimitForTimeframe } from "@shared/candleLimits";
 import { parseBookmapMarket, type BookmapMarketSource } from "@shared/bookmapMarket";
+import { buildMarketDataTruth, deriveMarketDataQuality, type MarketDataMarketType, type MarketDataTruth } from "@shared/marketDataTruth";
+import { getOrderBookForMarket } from "./services/orderbookMarketRegistry";
+import { getSpotOrderBookHealth } from "./services/orderbookService";
+import { getPerpOrderBookHealth } from "./services/orderbookServicePerp";
 import {
   getBufferCoverage,
+  getTradesBufferHealth,
   queryBufferedAggTrades,
   type BufferedAggTrade,
 } from "./services/aggTradeBufferRegistry";
@@ -353,6 +358,40 @@ export class MarketDataGateway {
       }
     }
     throw new Error("Ticker unavailable from all providers");
+  }
+
+  static getMarketTruth(input: {
+    instrument: string;
+    venue: "Binance";
+    marketType: MarketDataMarketType;
+  }): MarketDataTruth {
+    if (input.venue !== "Binance") throw new Error("Unsupported market truth venue");
+    const market: BookmapMarketSource = input.marketType === "Perpetual" ? "perp" : "spot";
+    const orderbook = getOrderBookForMarket(market);
+    const bookHealth = market === "perp" ? getPerpOrderBookHealth() : getSpotOrderBookHealth();
+    const tradeHealth = getTradesBufferHealth(input.instrument, market);
+    const hasBbo = orderbook.bids.length > 0 && orderbook.asks.length > 0;
+    const quality = deriveMarketDataQuality({
+      connected: bookHealth.connected,
+      hasBbo,
+      ageMs: bookHealth.ageMs,
+      marketType: input.marketType,
+      syncState: (bookHealth as { syncState?: "BOOTSTRAPPING" | "SYNCHRONIZED" | "DESYNCHRONIZED" }).syncState,
+    });
+
+    return buildMarketDataTruth({
+      instrument: input.instrument.trim().toUpperCase(),
+      venue: "Binance",
+      marketType: input.marketType,
+      bid: orderbook.bids[0]?.price ?? null,
+      ask: orderbook.asks[0]?.price ?? null,
+      last: tradeHealth.lastTradePrice,
+      eventTime: orderbook.eventTime ?? null,
+      receiveTime: orderbook.receiveTime ?? bookHealth.lastMessageTs ?? Date.now(),
+      source: orderbook.source ?? "rest",
+      sequence: orderbook.sequence ?? bookHealth.latestUpdateId ?? null,
+      quality,
+    });
   }
 
   // Pure read-only access to cached ticker
