@@ -4,7 +4,8 @@ import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
 import cors from "cors";
-import { getAllowedCorsOrigins, logAllowedCorsOrigins } from "./lib/runtimeEnv";
+import { logAllowedCorsOrigins } from "./lib/runtimeEnv";
+import { createCorsOptions, createBrowserWriteOriginGuard } from "./lib/corsContract";
 import { recordEndpointTiming } from "./lib/performanceMonitor";
 import { logEmailConfigStatus, verifyEmailTransport } from "./services/emailService";
 
@@ -94,38 +95,10 @@ const httpServer = createServer(app);
 console.log("[BOOT] Express app and HTTP server created");
 
 // CORS configuration - must be before routes (applies to all /api/* including mobile)
-const allowedOrigins = getAllowedCorsOrigins();
 logAllowedCorsOrigins();
 
-const corsOptions: cors.CorsOptions = {
-  origin(origin, callback) {
-    // Permitir requests sin Origin: mobile native, curl, server-to-server, healthchecks
-    if (!origin) return callback(null, true);
-
-    const normalized = origin.replace(/\/+$/, "");
-    if (allowedOrigins.includes(normalized) || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.warn("[cors] blocked origin:", origin, {
-      hint: "Add to CORS_ALLOWED_ORIGINS in Railway (comma-separated https origins)",
-    });
-    return callback(null, false);
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "X-Requested-With",
-    "Accept",
-    "Origin",
-  ],
-  optionsSuccessStatus: 204,
-  maxAge: 86_400,
-};
-
-app.use(cors(corsOptions));
+app.use(cors(createCorsOptions()));
+app.use(createBrowserWriteOriginGuard());
 
 console.log("[BOOT] CORS middleware configured");
 

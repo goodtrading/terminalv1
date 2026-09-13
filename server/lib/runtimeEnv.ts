@@ -126,7 +126,18 @@ export function getInternalApiBaseUrl(): string {
   return `http://127.0.0.1:${port}`;
 }
 
-/** Known production frontends — merged with CORS_ALLOWED_ORIGINS and RAILWAY_PUBLIC_DOMAIN. */
+/** Official Tauri v2 WebView origin used by packaged Desktop builds. */
+export const PRODUCTION_DESKTOP_CORS_ORIGINS = ["http://tauri.localhost"] as const;
+
+/** Development origins used by Tauri dev and explicitly supported local web clients. */
+export const DEVELOPMENT_DESKTOP_CORS_ORIGINS = [
+  "http://localhost:5000",
+  "http://localhost:5100",
+  "http://127.0.0.1:5000",
+  "http://127.0.0.1:5100",
+] as const;
+
+/** Known production web frontends — merged with configured origins and Railway domain. */
 const PRODUCTION_CORS_DEFAULTS = [
   "https://terminalv1-production.up.railway.app",
   "https://app-movil-production-5e55.up.railway.app",
@@ -167,6 +178,7 @@ export function getAllowedCorsOrigins(): string[] {
   if (useProductionDefaults) {
     const origins = new Set<string>([
       ...PRODUCTION_CORS_DEFAULTS.map(normalizeCorsOrigin),
+      ...PRODUCTION_DESKTOP_CORS_ORIGINS.map(normalizeCorsOrigin),
       ...fromEnv,
     ]);
     const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
@@ -177,14 +189,14 @@ export function getAllowedCorsOrigins(): string[] {
   }
 
   const devDefaults = [
-    "http://localhost:5000",
+    ...DEVELOPMENT_DESKTOP_CORS_ORIGINS,
     "http://localhost:8081",
     "http://localhost:8082",
     "http://localhost:8083",
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:19006",
-    "http://127.0.0.1:5000",
+
     "http://127.0.0.1:8081",
     "http://127.0.0.1:8082",
     "http://127.0.0.1:8083",
