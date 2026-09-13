@@ -3,6 +3,7 @@ import { z } from "zod";
 import { storage } from "./storage";
 
 import { MarketDataGateway, tickerSchema } from "./market-gateway";
+import { getGammaSpotReference } from "./gammaMarketReference";
 
 import { DeribitOptionsGateway } from "./deribit-gateway";
 
@@ -348,9 +349,9 @@ export async function getTerminalState(): Promise<TerminalState> {
 
     const { options: rawOptions, source } = await DeribitOptionsGateway.ingestOptions();
 
-    const cachedTicker = MarketDataGateway.getCachedTicker();
+    const gammaSpotPrice = getGammaSpotReference();
 
-    const summary = await DeribitOptionsGateway.getSummary(rawOptions, cachedTicker?.price, source);
+    const summary = await DeribitOptionsGateway.getSummary(rawOptions, gammaSpotPrice, source);
 
     deribitSummaryExtras = {
 

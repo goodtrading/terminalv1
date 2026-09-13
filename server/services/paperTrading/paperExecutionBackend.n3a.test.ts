@@ -11,13 +11,31 @@ const USER_ID = 42;
 const MARKET_PRICE = 100;
 
 function withPinnedMarket<T>(fn: () => Promise<T> | T): Promise<T> {
+  const originalTruth = MarketDataGateway.getMarketTruth;
   const originalCached = MarketDataGateway.getCachedTicker;
   const originalTicker = MarketDataGateway.getTicker;
-  (MarketDataGateway as any).getCachedTicker = () => ({ price: MARKET_PRICE });
+  (MarketDataGateway as any).getMarketTruth = () => ({
+    instrument: "BTCUSDT",
+    venue: "Binance",
+    marketType: "Perpetual",
+    bid: MARKET_PRICE - 1,
+    ask: MARKET_PRICE + 1,
+    mid: MARKET_PRICE,
+    last: MARKET_PRICE,
+    eventTime: 1_000,
+    receiveTime: 1_001,
+    source: "websocket",
+    sequence: 1,
+    quality: "VALID",
+  });
+  (MarketDataGateway as any).getCachedTicker = () => {
+    throw new Error("legacy cached ticker must not be called");
+  };
   (MarketDataGateway as any).getTicker = async () => {
-    throw new Error("network access is not allowed in N3A tests");
+    throw new Error("legacy ticker must not be called");
   };
   return Promise.resolve(fn()).finally(() => {
+    (MarketDataGateway as any).getMarketTruth = originalTruth;
     (MarketDataGateway as any).getCachedTicker = originalCached;
     (MarketDataGateway as any).getTicker = originalTicker;
   });

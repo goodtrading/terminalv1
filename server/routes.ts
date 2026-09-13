@@ -45,6 +45,7 @@ import { VacuumValidationTests } from "./lib/vacuumValidationTests";
 import { scenarioEngine, TerminalSignals } from "./lib/scenarioEngine";
 import { testScenarioEngine } from "./lib/scenarioEngineTest";
 import { resolveCandleLimit } from "@shared/candleLimits";
+import { usableMarketDataPrice } from "@shared/marketDataTruth";
 import { cachedFetch, getCacheSnapshots } from "./lib/ttlCache";
 import { startBookmapRailwayDataDiag } from "./services/bookmapRailwayDataDiag";
 import { getRecentSlowEndpoints } from "./lib/performanceMonitor";
@@ -1137,9 +1138,13 @@ export async function registerRoutes(
           invalidMessage: "Invalid empty liquidity heatmap snapshot",
         },
         async () => {
-          const ticker = MarketDataGateway.getCachedTicker();
-          const spotPrice = ticker?.price;
-          if (!spotPrice) {
+          const truth = MarketDataGateway.getMarketTruth({
+            instrument: "BTCUSDT",
+            venue: "Binance",
+            marketType: "Spot",
+          });
+          const spotPrice = usableMarketDataPrice(truth);
+          if (spotPrice == null || !Number.isFinite(spotPrice) || spotPrice <= 0) {
             throw new Error("SPOT_PRICE_UNAVAILABLE");
           }
           return OrderBookGateway.getLiquidityHeatmap(spotPrice);

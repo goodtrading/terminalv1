@@ -4,6 +4,7 @@ import {
   buildMarketDataTruth,
   deriveMarketDataQuality,
   shouldAcceptMarketDataUpdate,
+  usableMarketDataPrice,
   type MarketDataTruth,
 } from "./marketDataTruth.ts";
 
@@ -112,6 +113,13 @@ test("disconnected remains disconnected even with a cached BBO", () => {
     deriveMarketDataQuality({ connected: false, hasBbo: true, ageMs: 1, marketType: "Perpetual" }),
     "DISCONNECTED",
   );
+});
+test("Spot liquidity price cannot come from Perpetual truth", () => {
+  const spot = buildMarketDataTruth({ ...base, marketType: "Spot", last: 100 });
+  const perp = buildMarketDataTruth({ ...base, marketType: "Perpetual", last: 200 });
+  assert.equal(usableMarketDataPrice(spot), 100);
+  assert.equal(usableMarketDataPrice(perp), 200);
+  assert.notEqual(usableMarketDataPrice(spot), usableMarketDataPrice(perp));
 });
 test("requires explicit market identity and does not provide Spot/Perp fallback", () => {
   assert.throws(() => buildMarketDataTruth({ ...base, marketType: undefined as never }));

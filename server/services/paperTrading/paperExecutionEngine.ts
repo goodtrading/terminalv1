@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { MarketDataGateway } from "../../market-gateway";
+import { usableMarketDataPrice, type MarketDataTruth } from "@shared/marketDataTruth";
 import {
   appendPaperFill,
   calculateRMultiple,
@@ -47,30 +48,38 @@ import type {
 const DEFAULT_SYMBOL = "BTC-USDT";
 const POSITION_DUST = 1e-10;
 
+function getPerpMarketTruth(): MarketDataTruth {
+  return MarketDataGateway.getMarketTruth({
+    instrument: "BTCUSDT",
+    venue: "Binance",
+    marketType: "Perpetual",
+  });
+}
+
+function priceFromPerpTruth(truth: MarketDataTruth): number | null {
+  return usableMarketDataPrice(truth);
+}
+
 function getMarkPriceSync(): number | null {
-  const ticker = MarketDataGateway.getCachedTicker();
-  if (ticker?.price && Number.isFinite(ticker.price) && ticker.price > 0) {
-    return ticker.price;
+  try {
+    return priceFromPerpTruth(getPerpMarketTruth());
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export async function resolveMarkPrice(): Promise<number | { error: string; code: string }> {
-  const cached = getMarkPriceSync();
-  if (cached != null) return cached;
   try {
-    const ticker = await MarketDataGateway.getTicker("BTCUSDT");
-    if (ticker?.price && Number.isFinite(ticker.price) && ticker.price > 0) {
-      return ticker.price;
-    }
+    const price = priceFromPerpTruth(getPerpMarketTruth());
+    if (price != null) return price;
   } catch (err) {
     console.error(
-      "[paper-execution] mark price fetch failed",
+      "[paper-execution] perp market truth failed",
       err instanceof Error ? err.message : err,
     );
   }
   return {
-    error: "Unable to resolve mark price for paper execution.",
+    error: "Unable to resolve Perpetual market truth for paper execution.",
     code: "PAPER_MARK_PRICE_UNAVAILABLE",
   };
 }

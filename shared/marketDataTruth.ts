@@ -69,10 +69,14 @@ export function deriveMarketDataQuality(input: {
   return "VALID";
 }
 
+export function usableMarketDataPrice(truth: MarketDataTruth): number | null {
+  if (truth.quality !== "VALID") return null;
+  const price = truth.last ?? truth.mid;
+  return price != null && Number.isFinite(price) && price > 0 ? price : null;
+}
 function validPrice(value: number | null): value is number {
   return value != null && Number.isFinite(value) && value > 0;
 }
-
 function validBbo(bid: number | null, ask: number | null): boolean {
   return validPrice(bid) && validPrice(ask) && bid < ask;
 }
