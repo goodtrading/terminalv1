@@ -1,6 +1,7 @@
 [package]
 name = "app"
-version = "0.1.10"
+default-run = "app"
+version = "0.1.12"
 description = "GoodTrading Terminal desktop application"
 authors = ["GoodTrading"]
 license = ""
@@ -25,3 +26,4 @@ tauri = { version = "2.11.2", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-shell = "2.3.5"
+rusqlite = { version = "0.32", features = ["bundled"] }

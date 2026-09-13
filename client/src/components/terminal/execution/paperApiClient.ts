@@ -1,12 +1,28 @@
 import { getAuthToken } from "@/lib/authToken";
+import { getPaperExecutionBackend } from "@/lib/paperExecutionBackendState";
 import { apiRequest } from "@/lib/queryClient";
+
+/** Safety guard: legacy Paper commands are forbidden in Nautilus mode. */
+function nautilusPaperWriteGuard(
+  path: string,
+  init: RequestInit,
+): void {
+  if (getPaperExecutionBackend() !== "nautilus" || !path.startsWith("/api/paper/")) return;
+
+  const method = (init.method ?? "GET").toUpperCase();
+  if (method === "GET") return;
+
+  throw new Error(
+    `LEGACY_PAPER_REQUEST_FORBIDDEN_IN_NAUTILUS ${method} ${path}`,
+  );
+}
 
 /** Authenticated paper API — same transport as BingX (cookie + Bearer). */
 export async function paperApiFetch(
   path: string,
   init: RequestInit & { assertOk?: boolean } = {},
 ): Promise<Response> {
-  if (import.meta.env.DEV) {
+  if (import.meta.env?.DEV) {
     console.debug("[Paper Auth Client]", {
       path,
       hasToken: Boolean(getAuthToken()),
@@ -14,6 +30,7 @@ export async function paperApiFetch(
     });
   }
   const { assertOk = true, headers: initHeaders, ...rest } = init;
+  nautilusPaperWriteGuard(path, rest);
   return apiRequest(path, {
     credentials: "include",
     assertOk,

@@ -17,6 +17,7 @@ import {
   sortAndDedupeCandlesByTime,
 } from "@/lib/candleAggregationClient";
 import { updateLiveCandle } from "@/lib/liveCandleUpdate";
+import { mergeHistoricalCandles } from "@/lib/chartHistoryMerge";
 import type { MarketCandle } from "@/lib/marketCandleTypes";
 import {
   DEFAULT_CHART_TIMEFRAME,
@@ -28,6 +29,7 @@ import {
 
 const STORAGE_KEY = "goodtrading:chartTimeframe";
 const MAX_BASE_CANDLES = 1200;
+const MAX_RENDER_CANDLES = 1500;
 
 const TF_ORDER: ChartTimeframeId[] = CHART_TIMEFRAMES.map((t) => t.id);
 
@@ -132,25 +134,32 @@ function rebuildAllDerived(): void {
 
 function applySeed15s(seed: MarketCandle[] | undefined): void {
   if (seed?.length) {
-    candlesByTimeframe["15s"] = sortAndDedupeCandlesByTime(seed);
+    const current = candlesByTimeframe["15s"] ?? [];
+    candlesByTimeframe["15s"] = mergeHistoricalCandles(current, seed);
   }
 }
 
 function applyNative15m(seed: MarketCandle[] | undefined): void {
   if (seed?.length) {
-    candlesByTimeframe["15m"] = sortAndDedupeCandlesByTime(seed);
+    const current = candlesByTimeframe["15m"] ?? [];
+    candlesByTimeframe["15m"] = mergeHistoricalCandles(current, seed);
   }
 }
 
-/**
- * Replace engine state from REST pack (called after successful React Query fetch).
- */
+/** Apply historical series for any chart-supported timeframe. */
+export function setHistoricalChartCandles(tf: ChartTimeframeId, candles: MarketCandle[]): void {
+  if (!candles.length) return;
+  const current = candlesByTimeframe[tf] ?? [];
+  candlesByTimeframe[tf] = mergeHistoricalCandles(current, candles);
+  const merged = candlesByTimeframe[tf];
+  lastUpdateTs = Date.now();
+  emitData();
+}
+
 /** Apply native GET /api/market/candles series for 1m / 5m / 15m (chart history). */
 export function applyNativeChartCandles(tf: ChartTimeframeId, candles: MarketCandle[]): void {
   if (!NATIVE_REST_SERIES.includes(tf) || !candles.length) return;
-  candlesByTimeframe[tf] = sortAndDedupeCandlesByTime(candles);
-  lastUpdateTs = Date.now();
-  emitData();
+  setHistoricalChartCandles(tf, candles);
 }
 
 export function hydrateMarketEngine(pack: BtcMarketBasePack): void {
@@ -258,7 +267,8 @@ export function applyMarketTicker(price: number, timestampMs: number): void {
 
 /** Immutable copy for chart / UI */
 export function getCandlesSliceForTimeframe(tf: ChartTimeframeId): MarketCandle[] {
-  return (candlesByTimeframe[tf] ?? []).map((c) => ({ ...c }));
+  const slice = (candlesByTimeframe[tf] ?? []).map((c) => ({ ...c }));
+  return slice;
 }
 
 export function getActiveCandlesSlice(): MarketCandle[] {

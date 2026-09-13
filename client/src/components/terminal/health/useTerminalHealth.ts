@@ -7,12 +7,9 @@ import type {
   BingXReadOnlyHealthResponse,
   BingXReadOnlySnapshot,
   ExecutionRiskGuardState,
-  PaperAccountSnapshot,
-  PaperOrderSnapshot,
-  PaperPositionSnapshot,
 } from "../execution/executionTypes";
 import { bingxApiFetch } from "../execution/bingxApiClient";
-import { paperApiFetch } from "../execution/paperApiClient";
+
 import { formatLastSyncAgo } from "../execution/bingxReadOnlyMessages";
 import {
   loadBrokerSession,
@@ -41,6 +38,7 @@ import {
 } from "./healthMappers";
 import { useSystemHealth } from "./useSystemHealth";
 import { useLiveTradingReadiness } from "./useLiveTradingReadiness";
+import { usePaperState } from "@/lib/paperState";
 
 function agoFromTs(ts?: number): string {
   if (!ts || !Number.isFinite(ts)) return "—";
@@ -59,6 +57,7 @@ function feedTone(ageSec: number | null, staleSec: number): HealthTone {
 
 export function useTerminalHealth() {
   const [brokerSession, setBrokerSession] = useState(loadBrokerSession);
+
   const [auditTick, setAuditTick] = useState(0);
   const [marketTick, setMarketTick] = useState(0);
 
@@ -79,6 +78,7 @@ export function useTerminalHealth() {
     return subscribeTerminalAudit(() => setAuditTick((n) => n + 1));
   }, []);
 
+
   useEffect(() => {
     const id = window.setInterval(() => setMarketTick((n) => n + 1), 2000);
     return () => clearInterval(id);
@@ -90,10 +90,17 @@ export function useTerminalHealth() {
     brokerSession.connected &&
     Boolean(brokerSession.connectionId);
 
-  const paperActive =
-    brokerSession.exchange === "paper" &&
-    brokerSession.connectionMode === "paper" &&
-    brokerSession.connected;
+  const paperState = usePaperState();
+  const {
+    active: paperActive,
+    availability: paperAvailability,
+    account: paperAccount,
+    position: paperPosition,
+    orders: paperOrders,
+    resources: paperResources,
+  } = paperState;
+  const paperNotWired = paperActive && paperAvailability === "NOT_WIRED";
+  const paperPartial = paperActive && paperAvailability === "PARTIAL";
 
   const executionSymbol =
     DEFAULT_TERMINAL_EXECUTION_CONTEXT.executionSymbol ?? "BTC-USDT";
@@ -140,35 +147,6 @@ export function useTerminalHealth() {
     retry: 1,
   });
 
-  const { data: paperAccount } = useQuery<PaperAccountSnapshot>({
-    queryKey: ["/api/paper/account"],
-    queryFn: async () => {
-      const res = await paperApiFetch("/api/paper/account");
-      return res.json() as Promise<PaperAccountSnapshot>;
-    },
-    enabled: paperActive,
-    refetchInterval: paperActive ? 6_000 : false,
-  });
-
-  const { data: paperPositionData } = useQuery<{ position: PaperPositionSnapshot | null }>({
-    queryKey: ["/api/paper/position"],
-    queryFn: async () => {
-      const res = await paperApiFetch("/api/paper/position");
-      return res.json() as Promise<{ position: PaperPositionSnapshot | null }>;
-    },
-    enabled: paperActive,
-    refetchInterval: paperActive ? 6_000 : false,
-  });
-
-  const { data: paperOrdersData } = useQuery<{ orders: PaperOrderSnapshot[] }>({
-    queryKey: ["/api/paper/orders"],
-    queryFn: async () => {
-      const res = await paperApiFetch("/api/paper/orders");
-      return res.json() as Promise<{ orders: PaperOrderSnapshot[] }>;
-    },
-    enabled: paperActive,
-    refetchInterval: paperActive ? 6_000 : false,
-  });
 
   const { data: executionStatus } = useQuery<ExecutionRiskGuardState & {
     liveTradingEnabled: boolean;
@@ -240,13 +218,13 @@ export function useTerminalHealth() {
 
   const pendingPaper = useMemo(
     () =>
-      (paperOrdersData?.orders ?? []).filter(
+      paperOrders.filter(
         (o) => o.status === "open" || o.status === "pending" || o.status === "partial",
       ),
-    [paperOrdersData?.orders],
+    [paperOrders],
   );
 
-  const paperPosition = paperPositionData?.position ?? null;
+
   const hasPaperPosition =
     paperPosition != null &&
     paperPosition.side !== "flat" &&
@@ -363,14 +341,18 @@ export function useTerminalHealth() {
     },
     paper: {
       active: paperActive,
-      activeTone: (paperActive ? "ok" : "off") as HealthTone,
+      activeTone: (paperNotWired || paperPartial ? "warn" : paperActive ? "ok" : "off") as HealthTone,
       accountLabel: !paperActive
         ? "inactive"
+        : paperNotWired || paperResources.account !== "AVAILABLE"
+          ? "NOT_WIRED"
         : paperAccount
           ? `${(paperAccount.equityUsdt ?? 0).toFixed(2)} USDT equity`
           : "loading",
-      pendingCount: pendingPaper.length,
-      openPosition: hasPaperPosition
+      pendingCount: paperNotWired || paperResources.orders !== "AVAILABLE" ? 0 : pendingPaper.length,
+      openPosition: paperNotWired || paperResources.position !== "AVAILABLE"
+        ? "NOT_WIRED"
+        : hasPaperPosition
         ? `${paperPosition!.side.toUpperCase()} · ${paperPosition!.quantity} BTC`
         : "none",
     },

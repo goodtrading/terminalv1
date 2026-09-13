@@ -146,7 +146,7 @@ function normalizeLedgerEntry(raw: unknown): PaperTradeLedgerEntry | null {
   return {
     id: t.id,
     symbol: t.symbol,
-    venue: t.venue === "bingx" ? "bingx" : "bingx",
+    venue: t.venue === "bingx" || t.venue === "paper" ? t.venue : "paper",
     marketType: t.marketType ?? "perpetual",
     chartSymbol: typeof t.chartSymbol === "string" ? t.chartSymbol : undefined,
     side,

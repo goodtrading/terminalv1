@@ -44,11 +44,8 @@ export function getPaperSubmitState(
   if (!executionSymbol) {
     return { enabled: false, reason: EXECUTION_MAPPING_MISSING_MESSAGE };
   }
-  if (ctx.executionExchange !== "bingx") {
-    return { enabled: false, reason: "Execution exchange must be bingx" };
-  }
   if (ctx.executionMarketType !== "perpetual") {
-    return { enabled: false, reason: "Execution market type must be perpetual" };
+    return { enabled: false, reason: "Paper execution market type must be perpetual" };
   }
 
   if (!finitePositive(input.notionalUsdt)) {

@@ -18,8 +18,9 @@ export type ChartFeeSettings = {
 
 export function resolveChartFeeBps(
   settings?: Partial<ChartFeeSettings> | null,
+  defaults: ChartFeeSettings = DEFAULT_CHART_FEE_DEFAULTS,
 ): ChartFeeSettings {
-  const d = DEFAULT_CHART_FEE_DEFAULTS;
+  const d = defaults;
   const maker = Number(settings?.makerFeeBps);
   const taker = Number(settings?.takerFeeBps);
   const slip = Number(settings?.slippageBps);

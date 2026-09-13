@@ -8,7 +8,9 @@ export interface PaperChartTradeOverlay {
   stopLoss: number | null;
   takeProfit: number | null;
   markPrice: number | null;
-  unrealizedPnlUsdt: number;
+  unrealizedPnlUsdt?: number;
+  netPnlUsdt?: number | null;
+  netPositionPct?: number | null;
   status: "open" | "flat";
   tradeId: string | null;
 }

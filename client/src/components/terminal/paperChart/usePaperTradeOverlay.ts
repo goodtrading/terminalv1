@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type {
   PaperAccountSnapshot,
   PaperOrderSnapshot,
@@ -7,98 +7,48 @@ import type {
   PaperTradingSettings,
 } from "../execution/executionTypes";
 import { invalidatePaperQueries } from "../execution/paperQueryKeys";
-import { paperApiFetch } from "../execution/paperApiClient";
-import {
-  BROKER_SESSION_STORAGE_KEY,
-  loadBrokerSession,
-} from "../execution/brokerSessionState";
+import { paperExecutionPort } from "@/lib/paperExecutionPort";
+import { isPaperExecutionCoreReady, usePaperState } from "@/lib/paperState";
 import {
   mapApiPaperPosition,
   mapPaperChartOverlay,
   resolvePaperAccountBaseUsdt,
   resolvePaperChartFeeBps,
+  getCanonicalProtectiveOrders,
+  isWorkingPaperLimitOrder,
   type PaperChartFeeSettings,
 } from "./paperTradeOverlayHelpers";
 import type { PaperChartTradeOverlay } from "./paperTradeOverlayTypes";
-
-function isPaperSessionActive(): boolean {
-  const s = loadBrokerSession();
-  return s.connectionMode === "paper" && s.connected && s.exchange === "paper";
-}
+import { calculateNetPositionPct, canonicalNetPnl, canonicalNetAtPrice } from "../execution/canonicalNetPnl";
 
 export function usePaperTradeOverlay() {
   const queryClient = useQueryClient();
-  const [paperActive, setPaperActive] = useState(isPaperSessionActive);
+  const paperState = usePaperState();
+  const { account: accountData, position, settings: paperSettings, orders, resources } = paperState;
+  const paperActive = isPaperExecutionCoreReady(paperState);
+  const paperOrdersActive = paperState.active
+    && resources.account === "AVAILABLE"
+    && resources.orders === "AVAILABLE";
+  const readOnly = false;
 
-  useEffect(() => {
-    const sync = () => setPaperActive(isPaperSessionActive());
-    sync();
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === BROKER_SESSION_STORAGE_KEY) sync();
-    };
-    const onCustom = () => sync();
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("goodtrading-broker-session-changed", onCustom);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("goodtrading-broker-session-changed", onCustom);
-    };
-  }, []);
-
-  const { data: positionData } = useQuery<{ position: PaperPositionSnapshot | null }>({
-    queryKey: ["/api/paper/position"],
-    queryFn: async () => {
-      const res = await paperApiFetch("/api/paper/position");
-      if (!res.ok) throw new Error("Paper position sync failed");
-      return res.json() as Promise<{ position: PaperPositionSnapshot | null }>;
-    },
-    enabled: paperActive,
-    refetchInterval: paperActive ? 2500 : false,
-    staleTime: 500,
-  });
-
-  const { data: accountData } = useQuery<PaperAccountSnapshot>({
-    queryKey: ["/api/paper/account"],
-    queryFn: async () => {
-      const accRes = await paperApiFetch("/api/paper/account");
-      if (!accRes.ok) throw new Error("Paper account sync failed");
-      return accRes.json() as Promise<PaperAccountSnapshot>;
-    },
-    enabled: paperActive,
-    refetchInterval: paperActive ? 2500 : false,
-    staleTime: 500,
-  });
-
-  const { data: paperSettings } = useQuery<PaperTradingSettings>({
-    queryKey: ["/api/paper/settings"],
-    queryFn: async () => {
-      const res = await paperApiFetch("/api/paper/settings");
-      if (!res.ok) throw new Error("Paper settings failed");
-      return res.json() as Promise<PaperTradingSettings>;
-    },
-    enabled: paperActive,
-    staleTime: 60_000,
-    retry: 1,
-  });
-
-  const { data: ordersData } = useQuery<{ orders: PaperOrderSnapshot[] }>({
-    queryKey: ["/api/paper/orders"],
-    queryFn: async () => {
-      const res = await paperApiFetch("/api/paper/orders");
-      if (!res.ok) throw new Error("Paper orders sync failed");
-      return res.json() as Promise<{ orders: PaperOrderSnapshot[] }>;
-    },
-    enabled: paperActive,
-    refetchInterval: paperActive ? 2500 : false,
-    staleTime: 500,
-  });
-
-  const position = useMemo(
-    () => mapApiPaperPosition(positionData?.position ?? null),
-    [positionData?.position],
+  const mappedPosition = useMemo(
+    () => (resources.position === "AVAILABLE" ? mapApiPaperPosition(position) : null),
+    [position, resources.position],
   );
 
-  const overlay = mapPaperChartOverlay(position, accountData?.unrealizedPnlUsdt);
+  const overlay = mapPaperChartOverlay(mappedPosition, accountData?.unrealizedPnlUsdt);
+  const netPnl = canonicalNetPnl(paperState).net;
+  const netPositionPct = calculateNetPositionPct(
+    netPnl,
+    mappedPosition?.quantity,
+    mappedPosition?.entryPrice,
+  );
+  const overlayWithNetPositionPct = overlay
+    ? { ...overlay, netPnlUsdt: netPnl, netPositionPct }
+    : null;
+  const protectiveOrders = useMemo(() => getCanonicalProtectiveOrders(orders), [orders]);
+  const stopLossOrder = protectiveOrders.STOP_LOSS[0];
+  const takeProfitOrder = protectiveOrders.TAKE_PROFIT[0];
 
   const accountEquityUsdt = useMemo(
     () => resolvePaperAccountBaseUsdt(accountData),
@@ -111,50 +61,65 @@ export function usePaperTradeOverlay() {
   );
 
   const openLimitOrders = useMemo(
-    () =>
-      (ordersData?.orders ?? []).filter(
-        (o) =>
-          o.status === "open" &&
-          o.type === "limit" &&
-          o.price != null &&
-          Number.isFinite(o.price) &&
-          o.price > 0,
-      ),
-    [ordersData?.orders],
+    () => orders.filter((o) => isWorkingPaperLimitOrder(o)),
+    [orders],
   );
 
   const invalidatePaper = useCallback(async () => {
+    await paperState.refresh();
     await invalidatePaperQueries(queryClient);
-  }, [queryClient]);
+  }, [paperState.refresh, queryClient]);
 
-  const patchRisk = useCallback(
-    async (patch: { stopLoss?: number | null; takeProfit?: number | null }) => {
-      const res = await paperApiFetch("/api/paper/position/risk", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      const data = (await res.json()) as {
-        success?: boolean;
-        message?: string;
-        code?: string;
-      };
-      if (!res.ok || !data.success) {
-        throw new Error(data.message ?? "Unable to update paper risk");
-      }
-      return data;
+  const cancelOrder = useCallback(
+    async (clientOrderId: string) => {
+      await paperExecutionPort.cancelOrder(clientOrderId);
+      await invalidatePaper();
     },
-    [],
+    [invalidatePaper],
   );
+
+  const patchRisk = useCallback(async (patch: { stopLoss?: number | null; takeProfit?: number | null }) => {
+    if (!mappedPosition || mappedPosition.quantity <= 0) throw new Error("Position unavailable");
+    const isStop = patch.stopLoss != null;
+    const price = (isStop ? patch.stopLoss : patch.takeProfit)!;
+    const existing = isStop ? stopLossOrder : takeProfitOrder;
+    if (existing) {
+      await paperExecutionPort.amendOrder({
+        clientOrderId: existing.id,
+        ...(isStop ? { triggerPrice: price } : { limitPrice: price }),
+      });
+      return;
+    }
+    await paperExecutionPort.submitProtectiveOrder({
+      clientOrderId: `paper-${isStop ? "sl" : "tp"}-${Date.now()}`,
+      protectionType: isStop ? "STOP_LOSS" : "TAKE_PROFIT",
+      price,
+      quantity: String(mappedPosition.quantity),
+    });
+  }, [mappedPosition, stopLossOrder, takeProfitOrder]);
+
+  const amendProtectiveOrder = useCallback(async (order: PaperOrderSnapshot, price: number) => {
+    await paperExecutionPort.amendOrder({
+      clientOrderId: order.id,
+      ...(order.protectionType === "STOP_LOSS" ? { triggerPrice: price } : { limitPrice: price }),
+    });
+    await invalidatePaper();
+  }, [invalidatePaper]);
 
   return {
     paperActive,
-    overlay,
-    position,
+    paperOrdersActive,
+    netAtPrice: (price: number) => canonicalNetAtPrice(paperState, price),
+    readOnly,
+    overlay: overlayWithNetPositionPct,
+    position: mappedPosition,
     accountEquityUsdt,
     feeSettings,
     openLimitOrders,
+    protectiveOrders,
+    cancelOrder,
     patchRisk,
+    amendProtectiveOrder,
     invalidatePaper,
   };
 }

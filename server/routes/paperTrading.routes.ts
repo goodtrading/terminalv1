@@ -3,8 +3,8 @@ import { requirePaperUserId } from "../middleware/paperAuth";
 import { requireSaasAuth } from "../middleware/saasAuth";
 import {
   normalizePaperOrderBody,
-  paperExecutionAdapter,
-} from "../services/paperExecutionAdapter";
+  paperExecutionBackend as paperExecutionAdapter,
+} from "../services/paperTrading/paperExecutionBackend";
 import { getPaperTerminalExecutionContext } from "@shared/execution/paperExecutionContext";
 import {
   getPaperFills,

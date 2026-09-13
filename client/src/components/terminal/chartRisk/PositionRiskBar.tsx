@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import {
   formatBingxBarStatusLabel,
@@ -20,6 +20,13 @@ import {
   BINGX_BAR_RIGHT_OFFSET,
   PRICE_SCALE_INSET,
 } from "./positionRiskOverlayStyles";
+import {
+  DEFAULT_POSITION_PNL_DISPLAY,
+  formatCanonicalNetPnlUsdt,
+  formatNetPositionPct,
+  togglePositionPnlDisplay,
+  type PositionPnlDisplayMode,
+} from "./positionPnlDisplay";
 
 type PositionRiskBarProps = {
   mode: PositionRiskOverlayMode;
@@ -53,7 +60,9 @@ export function PositionRiskBar({
 }: PositionRiskBarProps) {
   const sideLabel = position.side.toUpperCase();
   const qtyLabel = `${formatOverlayQty(position.quantity)} BTC`;
-  const pnl = position.unrealizedPnlUsdt ?? 0;
+  const netPositionPct = position.netPositionPct;
+  const netPnlUsdt = position.netPnlUsdt;
+  const [pnlDisplay, setPnlDisplay] = useState<PositionPnlDisplayMode>(DEFAULT_POSITION_PNL_DISPLAY);
   const entryStr = formatEntryPrice(position.entryPrice);
   const lev =
     position.leverage != null && position.leverage > 0
@@ -118,11 +127,7 @@ export function PositionRiskBar({
       }}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div className="flex items-center gap-0 rounded-l border border-r-0 border-cyan-500/40 bg-[#0a0a0a]/95 px-1.5 shrink-0">
-        <span className="text-[9px] font-bold uppercase tracking-wider text-cyan-400">
-          Paper
-        </span>
-      </div>
+
 
       <div
         className={cn(
@@ -136,17 +141,22 @@ export function PositionRiskBar({
 
       {paperControls}
 
-      <div
+      <button
+        type="button"
         className={cn(
-          "flex items-center px-2 border-y border-l-0 border-slate-600 bg-[#0a0a0a]/95 tabular-nums shrink-0",
+          "flex items-center px-2 border-y border-l-0 border-slate-600 bg-[#0a0a0a]/95 tabular-nums shrink-0 cursor-pointer",
           !paperTrailing && "rounded-r",
-          pnl > 0 && "text-emerald-400",
-          pnl < 0 && "text-red-400",
-          pnl === 0 && "text-slate-400",
+          netPositionPct != null && netPositionPct > 0 && "text-emerald-400",
+          netPositionPct != null && netPositionPct < 0 && "text-red-400",
+          netPositionPct == null && "text-slate-400",
         )}
+        onClick={() => setPnlDisplay(togglePositionPnlDisplay)}
+        title={pnlDisplay === "percent" ? "Click to show NET PnL in $" : "Click to show NET PnL in %"}
       >
-        {formatOverlayPnlUsdt(position.unrealizedPnlUsdt)}
-      </div>
+        {pnlDisplay === "percent"
+          ? formatNetPositionPct(netPositionPct)
+          : formatCanonicalNetPnlUsdt(netPnlUsdt)}
+      </button>
 
       {paperTrailing}
     </div>

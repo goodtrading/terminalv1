@@ -254,17 +254,25 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-    },
-    () => {
-      console.log(`[startup] listening on port ${port}`);
-      console.log(`[BOOT] Server listening on port ${port}`);
-      log(`serving on port ${port}`);
-    },
-  );
+  const startHttpServer = () => {
+    httpServer.listen(
+      {
+        port,
+        host: "0.0.0.0",
+      },
+      () => {
+        console.log(`[startup] listening on port ${port}`);
+        console.log(`[BOOT] Server listening on port ${port}`);
+        log(`serving on port ${port}`);
+      },
+    );
+  };
+
+  // In development, wait until Vite middleware is installed before exposing
+  // the port so Tauri cannot load the SPA as an Express "Cannot GET /" page.
+  if (process.env.NODE_ENV === "production") {
+    startHttpServer();
+  }
 
   // Continue with async initialization AFTER server is listening
   console.log("[BOOT] Registering API routes...");
@@ -326,6 +334,10 @@ app.use((req, res, next) => {
     console.log("[BOOT] Vite setup complete");
   }
   console.log("[BOOT] Middleware setup complete");
+
+  if (process.env.NODE_ENV !== "production") {
+    startHttpServer();
+  }
 
   // Background services (start after server is listening)
   void (async () => {

@@ -4,7 +4,8 @@ import type {
   PaperTradeLedgerSnapshot,
 } from "./executionTypes";
 import { formatPrice, formatUSDT } from "./paperFormatHelpers";
-import { paperApiFetch } from "./paperApiClient";
+import { paperExecutionPort, getPaperExecutionBackend } from "@/lib/paperExecutionPort";
+import { nautilusSimulation } from "@/lib/nautilusSimulationBridge";
 
 type Props = {
   /** Still passed for parent refresh wiring; position UI lives on chart overlay. */
@@ -15,6 +16,7 @@ type Props = {
   onMessage: (msg: string) => void;
   onRefresh: () => void | Promise<void>;
   busy?: boolean;
+  backend?: "legacy" | "nautilus";
 };
 
 export function PaperPositionsOrdersSection({
@@ -23,6 +25,7 @@ export function PaperPositionsOrdersSection({
   onMessage,
   onRefresh,
   busy = false,
+  backend = "legacy",
 }: Props) {
   const hasPending = pendingOrders.length > 0;
   const recentClosed = closedTrades.slice(0, 3);
@@ -34,16 +37,12 @@ export function PaperPositionsOrdersSection({
 
   const cancelOne = async (orderId: string) => {
     try {
-      const res = await paperApiFetch(
-        `/api/paper/orders/${encodeURIComponent(orderId)}/cancel`,
-        { method: "POST", assertOk: false },
-      );
-      const json = (await res.json()) as { success?: boolean; message?: string };
-      if (!res.ok || !json.success) {
-        onMessage(json.message ?? "Cancel failed");
-        return;
+      if (getPaperExecutionBackend() === "nautilus") {
+        await nautilusSimulation.cancelOrder(orderId);
+      } else {
+        await paperExecutionPort.cancelOrder(orderId);
       }
-      onMessage(json.message ?? "Order cancelled");
+      onMessage("Order cancellation requested");
       await onRefresh();
     } catch (err) {
       onMessage(err instanceof Error ? err.message : "Cancel failed");
@@ -55,7 +54,7 @@ export function PaperPositionsOrdersSection({
       {hasPending ? (
         <div className="rounded border border-terminal-border/80 bg-black/30 px-2 py-1 space-y-0.5">
           <div className="text-[7px] font-bold uppercase tracking-widest text-slate-500">
-            Pending orders
+            Orders
           </div>
           <ul className="space-y-0.5">
             {pendingOrders.map((o) => (
@@ -64,18 +63,17 @@ export function PaperPositionsOrdersSection({
                 className="flex items-center justify-between gap-1 text-[8px] font-mono"
               >
                 <span className="text-slate-400 truncate">
-                  {o.side.toUpperCase()} {o.type}{" "}
-                  {o.size != null ? String(o.size) : "—"} @{" "}
-                  {o.price != null ? formatPrice(o.price) : "MKT"}
+                  {o.instrument ?? o.symbol} · {o.side === "long" ? "BUY" : "SELL"} {o.orderType ?? o.type.toUpperCase()}{" "}
+                  {o.quantity ?? String(o.size)} · {o.limitPrice != null ? `@ ${formatPrice(o.limitPrice)}` : "MKT"} · {o.filledQuantity ?? "—"}/{o.remainingQuantity ?? "—"} · {o.status}
                 </span>
-                <button
+                {o.status === "ACCEPTED" || o.status === "PARTIALLY_FILLED" ? <button
                   type="button"
                   disabled={busy}
                   onClick={() => void cancelOne(o.id)}
                   className="shrink-0 text-[7px] uppercase text-amber-300/90 hover:text-amber-200 disabled:opacity-50"
                 >
                   Cancel
-                </button>
+                </button> : null}
               </li>
             ))}
           </ul>

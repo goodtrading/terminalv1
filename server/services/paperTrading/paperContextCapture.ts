@@ -72,7 +72,7 @@ function intentFromLedgerTrade(trade: PaperTradeLedgerEntry): PaperOrderIntent {
   return {
     symbol: trade.symbol,
     chartSymbol: trade.chartSymbol,
-    venue: trade.venue ?? "bingx",
+    venue: trade.venue ?? "paper",
     marketType: trade.marketType ?? "perpetual",
     side: trade.side,
     type: "market",

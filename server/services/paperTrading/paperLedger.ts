@@ -104,7 +104,7 @@ export function recordFillAndLedger(params: {
     tradeId,
     orderId,
     symbol: intent.symbol,
-    venue: intent.venue ?? "bingx",
+    venue: "paper",
     marketType: intent.marketType ?? "perpetual",
     chartSymbol: intent.chartSymbol,
     side: intent.side,
@@ -122,7 +122,7 @@ export function recordFillAndLedger(params: {
     const entry: PaperTradeLedgerEntry = {
       id: tradeId,
       symbol: intent.symbol,
-      venue: intent.venue ?? "bingx",
+      venue: "paper",
       marketType: intent.marketType ?? "perpetual",
       chartSymbol: intent.chartSymbol,
       side: intent.side,

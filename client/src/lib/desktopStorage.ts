@@ -1,4 +1,5 @@
 import { appVersion } from "@/lib/appVersion";
+import { isDesktopApp } from "@/lib/desktopRuntime";
 
 export const isDesktopBuild = import.meta.env.VITE_PLATFORM === "desktop";
 
@@ -141,7 +142,7 @@ export function getCachedDesktopStoragePaths(): DesktopStoragePaths | null {
 
 export async function getDesktopStoragePaths(): Promise<DesktopStoragePaths> {
   if (cachedPaths) return cachedPaths;
-  if (!isDesktopBuild) {
+  if (!isDesktopBuild && !isDesktopApp()) {
     cachedPaths = fallbackPaths();
     return cachedPaths;
   }
@@ -161,7 +162,7 @@ export async function initDesktopStorage(): Promise<DesktopStoragePaths> {
     const existing = await readDesktopConfig();
     const settings = defaultSettings(existing as Partial<DesktopSettings>);
 
-    if (!isDesktopBuild) {
+    if (!isDesktopBuild && !isDesktopApp()) {
       cachedPaths = fallbackPaths();
       writeFallbackJson("config:settings", settings);
       appendFallbackLog("app_start", { mode: cachedPaths.mode });
@@ -197,7 +198,7 @@ export async function writeDesktopLog(
   event: DesktopLogEventName,
   payload: Record<string, unknown> = {},
 ): Promise<void> {
-  if (!isDesktopBuild) {
+  if (!isDesktopBuild && !isDesktopApp()) {
     appendFallbackLog(event, payload);
     return;
   }
@@ -211,7 +212,7 @@ export async function writeDesktopLog(
 }
 
 export async function readDesktopLogTail(lines = 300): Promise<string> {
-  if (!isDesktopBuild) {
+  if (!isDesktopBuild && !isDesktopApp()) {
     const entries = readFallbackJson<unknown[]>("logs:desktop", []);
     return entries.slice(-lines).map((entry) => JSON.stringify(entry)).join("\n");
   }
@@ -226,12 +227,12 @@ export async function readDesktopLogTail(lines = 300): Promise<string> {
 export async function openDesktopStoragePath(
   target: DesktopStorageOpenTarget,
 ): Promise<void> {
-  if (!isDesktopBuild) return;
+  if (!isDesktopBuild && !isDesktopApp()) return;
   await invokeDesktop<void>("open_desktop_storage_path", { input: { target } });
 }
 
 export async function readDesktopConfig(): Promise<Partial<DesktopSettings>> {
-  if (!isDesktopBuild) {
+  if (!isDesktopBuild && !isDesktopApp()) {
     return readFallbackJson<Partial<DesktopSettings>>("config:settings", {});
   }
   try {
@@ -244,7 +245,7 @@ export async function readDesktopConfig(): Promise<Partial<DesktopSettings>> {
 export async function writeDesktopConfig(
   configPatch: Partial<DesktopSettings>,
 ): Promise<Partial<DesktopSettings>> {
-  if (!isDesktopBuild) {
+  if (!isDesktopBuild && !isDesktopApp()) {
     const current = readFallbackJson<Partial<DesktopSettings>>("config:settings", {});
     const next = { ...current, ...configPatch };
     writeFallbackJson("config:settings", next);
@@ -264,7 +265,7 @@ export async function writeMarketDataCache(
   key: string,
   payload: Record<string, unknown>,
 ): Promise<string | null> {
-  if (!isDesktopBuild) {
+  if (!isDesktopBuild && !isDesktopApp()) {
     writeFallbackJson(`market-data:${key}`, payload);
     return null;
   }
@@ -281,7 +282,7 @@ export async function writeHeatmapCache(
   day: string,
   payload: Record<string, unknown>,
 ): Promise<string | null> {
-  if (!isDesktopBuild) {
+  if (!isDesktopBuild && !isDesktopApp()) {
     writeFallbackJson(`heatmap:${day}:${key}`, payload);
     return null;
   }
@@ -294,7 +295,7 @@ export async function writeHeatmapCache(
 }
 
 export async function clearTempCache(): Promise<void> {
-  if (!isDesktopBuild) {
+  if (!isDesktopBuild && !isDesktopApp()) {
     writeFallbackJson("temp", {});
     return;
   }
@@ -308,7 +309,7 @@ export async function clearTempCache(): Promise<void> {
 export async function writeHeatmapSessionMetadata(
   metadata: HeatmapSessionMetadata,
 ): Promise<string | null> {
-  if (!isDesktopBuild) {
+  if (!isDesktopBuild && !isDesktopApp()) {
     writeFallbackJson(`sessions:${metadata.startedAt}`, metadata);
     return null;
   }

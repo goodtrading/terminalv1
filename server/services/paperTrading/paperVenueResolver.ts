@@ -1,13 +1,14 @@
 import { DEFAULT_TERMINAL_EXECUTION_CONTEXT } from "@shared/execution/defaultExecutionContext";
-import type { ExecutionVenueFields } from "@shared/execution/executionContextTypes";
 import {
-  assertExecutionVenueAllowed,
   assertNotChartVenue,
   resolveExecutionSymbolFromChart,
 } from "@shared/execution/executionGuards";
 
-export type ResolvedPaperVenue = ExecutionVenueFields & {
-  executionExchange: "bingx";
+export type ResolvedPaperVenue = {
+  venue: "paper";
+  marketType: "perpetual";
+  symbol: string;
+  chartSymbol?: string;
 };
 
 export type PaperVenueResolveResult =
@@ -34,13 +35,6 @@ export function resolvePaperExecutionVenue(body: {
     return { ok: false, code: chartGuard.code, message: chartGuard.message };
   }
 
-  const venueGuard = assertExecutionVenueAllowed(
-    ctx.executionExchange,
-    ctx.executionMarketType,
-  );
-  if (!venueGuard.ok) {
-    return { ok: false, code: venueGuard.code, message: venueGuard.message };
-  }
 
   const rawChart =
     typeof body.chartSymbol === "string" && body.chartSymbol.trim()
@@ -57,9 +51,8 @@ export function resolvePaperExecutionVenue(body: {
   return {
     ok: true,
     venue: {
-      venue: "bingx",
+      venue: "paper",
       marketType: "perpetual",
-      executionExchange: "bingx",
       symbol: mapped.symbol,
       chartSymbol: rawChart.toUpperCase().replace(/-/g, ""),
     },

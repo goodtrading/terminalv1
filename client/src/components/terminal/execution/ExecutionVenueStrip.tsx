@@ -20,7 +20,9 @@ export function ExecutionVenueStrip({
 }: ExecutionVenueStripProps) {
   const ctx = DEFAULT_TERMINAL_EXECUTION_CONTEXT;
   const chartLabel = `${ctx.chartExchange.charAt(0).toUpperCase()}${ctx.chartExchange.slice(1)} ${ctx.chartMarketType === "spot" ? "Spot" : ctx.chartMarketType} ${formatChartSymbolDisplay(chartSymbol)}`;
-  const execLabel = `BingX Perpetual ${formatExecutionSymbolDisplay(ctx.executionSymbol)}`;
+  const execLabel = mode === "paper"
+    ? "Paper Perpetual"
+    : `BingX Perpetual ${formatExecutionSymbolDisplay(ctx.executionSymbol)}`;
 
   return (
     <div
@@ -48,12 +50,12 @@ export function ExecutionVenueStrip({
           </span>
         </div>
       ) : null}
-      <div className="flex justify-between gap-2">
+      {mode !== "paper" ? <div className="flex justify-between gap-2">
         <span className="text-slate-600">Live</span>
         <span className={liveTradingEnabled ? "text-amber-300" : "text-red-300/90"}>
           {liveTradingEnabled ? "Enabled" : "Locked"}
         </span>
-      </div>
+      </div> : null}
     </div>
   );
 }

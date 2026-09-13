@@ -1,6 +1,21 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { getAuthToken, clearAuthStorage } from "./authToken";
 import { apiUrl } from "./apiBase";
+import { getPaperExecutionBackendState } from "./paperExecutionBackendState";
+
+/** Safety guard: legacy Paper commands are forbidden in Nautilus mode. */
+function nautilusPaperWriteGuard(url: string, method: string): void {
+  if (getPaperExecutionBackendState() !== "nautilus") return;
+
+  const pathname = new URL(url, "http://localhost").pathname;
+  if (!pathname.startsWith("/api/paper/")) return;
+
+  if (method === "GET") return;
+
+  throw new Error(
+    `LEGACY_PAPER_REQUEST_FORBIDDEN_IN_NAUTILUS ${method} ${pathname}`,
+  );
+}
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
@@ -20,6 +35,10 @@ export async function apiRequest(
   options: RequestInit & { skipAuth?: boolean; assertOk?: boolean } = {},
 ): Promise<Response> {
   const { skipAuth = false, assertOk = true, headers: initHeaders, ...fetchInit } = options;
+  nautilusPaperWriteGuard(
+    url,
+    (fetchInit.method ?? "GET").toUpperCase(),
+  );
   const headers = new Headers(initHeaders as HeadersInit | undefined);
   if (!skipAuth) {
     for (const [k, v] of Object.entries(authHeaders())) {

@@ -1,3 +1,4 @@
+import { traceChartApi, tracePaperChart, usePaperChartLifetime, chartObjectId } from "./paperChart/paperChartLifecycleTrace";
 import { apiUrl } from "../../lib/apiBase";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartContextMenu, type ChartContextMenuAction } from "./chart/ChartContextMenu";
@@ -11,6 +12,9 @@ import type { ChartTimeframeId } from "@/lib/chartTimeframes";
 import { getChartTimeframeMeta } from "@/lib/chartTimeframes";
 import { getCandleLimitForTimeframe } from "@shared/candleLimits";
 import { fetchMarketCandles } from "@/lib/btcMarketBaseFetch";
+import { createCandleHistoryManager, type CandleHistoryKey } from "@/lib/candleHistoryManager";
+import { fetchCachedCandleHistoryPage } from "@/lib/candleHistoryCache";
+import { getContiguousSuffix } from "@/lib/candleContinuity";
 import {
   applyMarketTicker,
   applyNativeChartCandles,
@@ -19,6 +23,7 @@ import {
   getChartTimeframe,
   getLastCandleForTimeframe,
   hydrateMarketEngine,
+  setHistoricalChartCandles,
   subscribeMarketData,
   useChartTimeframe,
 } from "@/stores/marketEngineStore";
@@ -26,6 +31,7 @@ import { getChartSettings, setChartSettings, useChartSettings } from "./chart/ch
 import type { ChartMenuContext, ChartMenuOverlayKind } from "./chart/chartContextTypes";
 import type { DrawingsLayerHandle } from "./drawings/DrawingsLayer";
 import { useQuery } from "@tanstack/react-query";
+import { useBookmapMarketTradeSummary } from "@/hooks/useBookmapMarketTradeSummary";
 import { createChart, ColorType, LineStyle, CandlestickSeries, HistogramSeries, LineSeries, IChartApi, ISeriesApi } from "lightweight-charts";
 import { TerminalPanel } from "./TerminalPanel";
 import { OptionsPositioning, MarketState, KeyLevels, DealerExposure, TradingScenario } from "@shared/schema";
@@ -65,12 +71,14 @@ import { useChartMeasurement } from "./measurement/useChartMeasurement";
 import { BingXReadOnlyChartOverlay } from "./bingxChart/BingXReadOnlyChartOverlay";
 import { PaperChartLimitOrders } from "./paperChart/PaperChartLimitOrders";
 import { PaperTradeOverlay } from "./paperChart/PaperTradeOverlay";
+import { PaperFillPriceMarkers } from "./paperChart/PaperFillPriceMarkers";
 import { TerminalErrorBoundary } from "./TerminalErrorBoundary";
 import {
   BROKER_SESSION_STORAGE_KEY,
   loadBrokerSession,
 } from "./execution/brokerSessionState";
 import { isBingXVisualSession } from "./execution/bingxSession";
+import { isPaperExecutionCoreReady, paperStateController, usePaperState } from "@/lib/paperState";
 import {
   readTerminalActivePanels,
   writeTerminalActivePanels,
@@ -112,6 +120,7 @@ export function MainChart({
   /** SIMPLE: menos cromo tÃ©cnico en el lienzo; PRO: comportamiento actual. */
   viewMode?: "SIMPLE" | "PRO";
 }) {
+  usePaperChartLifetime("MainChart");
   const isSimpleView = viewMode === "SIMPLE";
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const drawingsLayerRef = useRef<DrawingsLayerHandle | null>(null);
@@ -128,6 +137,9 @@ export function MainChart({
   const lastChartPushRef = useRef<{ tf: ChartTimeframeId; len: number; lastTime: number } | null>(null);
   const [chartReady, setChartReady] = useState(false);
   const [brokerSession, setBrokerSession] = useState(loadBrokerSession);
+  const paperState = usePaperState();
+  const paperStateDebug = import.meta.env?.DEV ? paperStateController.getDebugSnapshot() : null;
+  const paperStateDebugFill = paperStateDebug?.fillsCount === 1 ? paperState.fills[0] : undefined;
   const [chartSize, setChartSize] = useState<{ w: number; h: number } | null>(null);
   const [plotAreaWidth, setPlotAreaWidth] = useState<number | null>(null);
   const [priceAxisWidth, setPriceAxisWidth] = useState(RIGHT_PRICE_SCALE_MIN_WIDTH);
@@ -137,6 +149,14 @@ export function MainChart({
   const drawingsInteractionRafRef = useRef<number | null>(null);
   const drawingsWheelStopTimeoutRef = useRef<number | null>(null);
   const chartTimeframe = useChartTimeframe();
+  const candleHistoryManagerRef = useRef(
+    createCandleHistoryManager(
+      async ({ key, before, limit }) => fetchCachedCandleHistoryPage({ key, before, limit }).then((page) => page.candles),
+      { renderCap: 1500 },
+    ),
+  );
+  const candleHistoryRunRef = useRef(0);
+  const lazyBackfillInFlightRef = useRef(false);
 
   const drawingsTimeProjectionRef = useRef<{
     lastTimeSec: number | null;
@@ -179,10 +199,11 @@ export function MainChart({
     };
   }, []);
 
-  const showPaperChartOverlay =
-    brokerSession.exchange === "paper" &&
-    brokerSession.connectionMode === "paper" &&
-    brokerSession.connected;
+  useEffect(() => { tracePaperChart("PAPER_STATE", { active: paperState.active, loading: paperState.loading, account: paperState.resources.account, position: paperState.resources.position, paperActive: isPaperExecutionCoreReady(paperState), hasPosition: !!paperState.position, chart: chartObjectId(chartRef.current), series: chartObjectId(candleSeriesRef.current) }); }, [paperState.active, paperState.loading, paperState.resources.account, paperState.resources.position, paperState.position]);
+  const showPaperChartOverlay = isPaperExecutionCoreReady(paperState);
+  const showPaperLimitOrders = paperState.active
+    && paperState.resources.account === "AVAILABLE"
+    && paperState.resources.orders === "AVAILABLE";
 
   const showBingXReadOnlyChartOverlay = isBingXVisualSession(brokerSession);
 
@@ -236,7 +257,7 @@ export function MainChart({
   const sessionLiquidityLinesRef = useRef<any[]>([]);
   const boundaryBadgesRef = useRef<HTMLDivElement[]>([]);
   const lastGammaOverlayLogKeyRef = useRef("");
-  
+
   // Bookmap-style order book tracker for faithful order book visualization
   const bookmapTrackerRef = useRef<BookmapOrderBookTracker>(
     new BookmapOrderBookTracker({
@@ -298,6 +319,26 @@ export function MainChart({
   const usesNativeChartHistory =
     chartTimeframe === "1m" || chartTimeframe === "5m";
 
+  const buildHistoryKey = useCallback(
+    (tf: ChartTimeframeId): CandleHistoryKey => ({
+      exchange: "binance",
+      market: "spot",
+      symbol: "BTCUSDT",
+      timeframe: tf,
+    }),
+    [],
+  );
+
+  const getX5TargetForTimeframe = useCallback((tf: ChartTimeframeId): number => {
+    const meta = getChartTimeframeMeta(tf);
+    return getCandleLimitForTimeframe(meta.apiInterval) * 5;
+  }, []);
+
+  const getPageSizeForTimeframe = useCallback((tf: ChartTimeframeId): number => {
+    const meta = getChartTimeframeMeta(tf);
+    return getCandleLimitForTimeframe(meta.apiInterval);
+  }, []);
+
   const {
     data: basePack,
     error: baseError,
@@ -324,10 +365,75 @@ export function MainChart({
   }, [basePack]);
 
   useEffect(() => {
+    if (!basePack?.base?.length) return;
+    let cancelled = false;
+    const runToken = ++candleHistoryRunRef.current;
+    const manager = candleHistoryManagerRef.current;
+    const supportedOrder: ChartTimeframeId[] = [chartTimeframe, "15s", "1m", "5m", "15m"].filter(
+      (tf, index, self): tf is ChartTimeframeId => self.indexOf(tf) === index,
+    );
+
+    const run = async () => {
+          for (const tf of supportedOrder) {
+            if (cancelled || runToken !== candleHistoryRunRef.current) return;
+            const key = buildHistoryKey(tf);
+            const target = getX5TargetForTimeframe(tf);
+            const pageSize = getPageSizeForTimeframe(tf);
+            let state = manager.getState(key);
+            setHistoricalChartCandles(tf, state.rendered);
+            if (state.loaded.length === 0) {
+              state = await manager.requestOlder(key, { limit: pageSize });
+              if (cancelled || runToken !== candleHistoryRunRef.current) return;
+              setHistoricalChartCandles(tf, state.rendered);
+            }
+
+            // Repair against the same recent series displayed by the store. Native
+            // REST may arrive after the cached prefix; both source refreshes rerun us.
+            let repair = { repaired: false, pagesFetched: 0, candlesAdded: 0 };
+            for (let repairPass = 0; repairPass < 5; repairPass++) {
+              const recentCandles = getCandlesSliceForTimeframe(tf);
+              if (tf === chartTimeframe && usesNativeChartHistory && nativeChartCandles?.length) {
+                recentCandles.push(...nativeChartCandles);
+              }
+              repair = await manager.requestInternalGapRepair(key, { pageSize, recentCandles });
+              if (cancelled || runToken !== candleHistoryRunRef.current) return;
+              state = manager.getState(key);
+              chartFullResyncRef.current = true;
+              // Publish every repaired row: merging only the render window would
+              // leave the store's preserved prefix separated from the recent tail.
+              setHistoricalChartCandles(tf, state.loaded);
+              // Keep each pass bounded. Resume the remaining internal gap in the
+              // same effect while there is real forward progress.
+              if (repair.repaired || repair.pagesFetched === 0 || repair.candlesAdded === 0) {
+                break;
+              }
+            }
+            if (!repair.repaired) continue;
+
+            // X5 readiness: contiguous suffix reaching newest boundary
+            while (!cancelled && getContiguousSuffix(state.loaded, tf).count < target) {
+              const previousOldest = state.oldestLoadedTime;
+              const before = previousOldest != null ? previousOldest * 1000 - 1 : undefined;
+              state = await manager.requestOlder(key, { before, limit: pageSize });
+              if (cancelled || runToken !== candleHistoryRunRef.current) return;
+              setHistoricalChartCandles(tf, state.rendered);
+              if (state.loaded.length === 0 || state.status === "X5_FAILED" || state.oldestLoadedTime === previousOldest) break;
+            }
+          }
+        };
+
+    void run();
+    return () => {
+      cancelled = true;
+      candleHistoryRunRef.current += 1;
+    };
+  }, [basePack, nativeChartCandles, buildHistoryKey, chartTimeframe, usesNativeChartHistory, getPageSizeForTimeframe, getX5TargetForTimeframe]);
+
+  useEffect(() => {
     if (!usesNativeChartHistory || !nativeChartCandles?.length) return;
     chartFullResyncRef.current = true;
     applyNativeChartCandles(chartTimeframe, nativeChartCandles);
-  }, [nativeChartCandles, chartTimeframe, usesNativeChartHistory]);
+  }, [buildHistoryKey, chartTimeframe, nativeChartCandles, usesNativeChartHistory]);
 
   const { data: ticker, error: tickerError } = useQuery({
     queryKey: ["btc-ticker"],
@@ -366,6 +472,7 @@ export function MainChart({
   }, [chartTimeframe]);
 
   const prevTimeframeRef = useRef(chartTimeframe);
+  const squeezeMicroStateMemoryRef = useRef<Map<string, unknown>>(new Map());
   useEffect(() => {
     if (prevTimeframeRef.current !== chartTimeframe) {
       prevTimeframeRef.current = chartTimeframe;
@@ -399,8 +506,14 @@ export function MainChart({
     },
     refetchInterval: 1_500,
     staleTime: 750,
-    enabled: activePanels.has("HEATMAP") // Only fetch when heatmap is active
+    enabled: activePanels.has("HEATMAP") || activePanels.has("SQUEEZE"), // Heatmap or Squeeze need live order book
   });
+
+  const { summary: squeezeTradeAggression } = useBookmapMarketTradeSummary(
+    "BTCUSDT",
+    "spot",
+    activePanels.has("SQUEEZE"),
+  );
 
   // Live price marker component for safe mode
   const LivePriceMarker = () => {
@@ -455,7 +568,7 @@ export function MainChart({
       heatmap.liquidityHeatZones.forEach((zone: any) => {
         const midPrice = (zone.priceStart + zone.priceEnd) / 2;
         const size = zone.totalSize || zone.intensity * 10; // Temporary conversion
-        
+
         if (zone.side === 'BID') {
           rawBids.push([midPrice.toString(), size.toString()]);
         } else if (zone.side === 'ASK') {
@@ -570,7 +683,11 @@ export function MainChart({
       priceLineVisible: false,
     });
     volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.88, bottom: 0 } });
-    
+
+    traceChartApi(chart, "MainChart.chart");
+    traceChartApi(candleSeries, "MainChart.candlestick");
+    traceChartApi(volumeSeries, "MainChart.volume");
+    traceChartApi(ghostSeries, "MainChart.ghost");
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
@@ -625,6 +742,26 @@ export function MainChart({
       if (visible.to >= ghostHorizonLogical - FUTURE_GHOST_EXTEND_BUFFER) {
         rebuildGhostBars((ghostBarsCountRef.current || FUTURE_GHOST_BASE) + FUTURE_GHOST_EXTEND_STEP);
       }
+
+      if (visible.from > 24 || lazyBackfillInFlightRef.current) return;
+            const historyKey = buildHistoryKey(chartTimeframe);
+            const historyState = candleHistoryManagerRef.current.getState(historyKey);
+            // Use contiguous suffix (reaching newest) for X5 readiness, not total count
+            const suffix = getContiguousSuffix(historyState.loaded, chartTimeframe);
+            if (suffix.count < getX5TargetForTimeframe(chartTimeframe) || historyState.oldestLoadedTime == null) return;
+
+      lazyBackfillInFlightRef.current = true;
+      void (async () => {
+        try {
+          const next = await candleHistoryManagerRef.current.requestOlder(historyKey, {
+            before: historyState.oldestLoadedTime != null ? historyState.oldestLoadedTime * 1000 - 1 : undefined,
+            limit: getPageSizeForTimeframe(chartTimeframe),
+          });
+          setHistoricalChartCandles(chartTimeframe, next.rendered);
+        } finally {
+          lazyBackfillInFlightRef.current = false;
+        }
+      })();
     };
     const ts = chart.timeScale();
     const ensureFutureSpace = () => {
@@ -774,55 +911,55 @@ export function MainChart({
       setChartCandleTimes(candlesForChart.map((c) => ({ time: Number(c.time) })));
 
       if (LIVE_CANDLE_CHART_DISABLED) {
-        if (chartFullResyncRef.current) {
-          series.setData(candlesForChart);
-          if (ghostSeries) rebuildGhostBars(FUTURE_GHOST_BASE);
-          chartFullResyncRef.current = false;
-          lastChartPushRef.current = {
-            tf,
-            len: candlesForChart.length,
-            lastTime: Number(lastBar.time),
-          };
-          if (shouldFitContentRef.current && chartRef.current) {
-            chartRef.current.timeScale().fitContent();
-            chartRef.current.timeScale().applyOptions({ rightOffset: 36, rightBarStaysOnScroll: true });
-            shouldFitContentRef.current = false;
-          }
-        }
-        return;
-      }
+                    if (chartFullResyncRef.current) {
+                      series.setData(candlesForChart);
+                      if (ghostSeries) rebuildGhostBars(FUTURE_GHOST_BASE);
+                      chartFullResyncRef.current = false;
+                      lastChartPushRef.current = {
+                        tf,
+                        len: candlesForChart.length,
+                        lastTime: Number(lastBar.time),
+                      };
+                      if (shouldFitContentRef.current && chartRef.current) {
+                        chartRef.current.timeScale().fitContent();
+                        chartRef.current.timeScale().applyOptions({ rightOffset: 36, rightBarStaysOnScroll: true });
+                        shouldFitContentRef.current = false;
+                      }
+                    }
+                    return;
+                  }
 
-      const p = lastChartPushRef.current;
-      if (!p || p.tf !== tf) {
-        series.setData(candlesForChart);
-        lastChartPushRef.current = {
-          tf,
-          len: candlesForChart.length,
-          lastTime: Number(lastBar.time),
-        };
-      } else if (
-        candlesForChart.length === p.len &&
-        Number(lastBar.time) === p.lastTime
-      ) {
-        series.update(lastBar);
-      } else if (
-        candlesForChart.length === p.len + 1 &&
-        Number(lastBar.time) > p.lastTime
-      ) {
-        series.update(lastBar);
-        lastChartPushRef.current = {
-          tf,
-          len: candlesForChart.length,
-          lastTime: Number(lastBar.time),
-        };
-      } else {
-        series.setData(candlesForChart);
-        lastChartPushRef.current = {
-          tf,
-          len: candlesForChart.length,
-          lastTime: Number(lastBar.time),
-        };
-      }
+                  const p = lastChartPushRef.current;
+                  if (!p || p.tf !== tf) {
+                    series.setData(candlesForChart);
+                    lastChartPushRef.current = {
+                      tf,
+                      len: candlesForChart.length,
+                      lastTime: Number(lastBar.time),
+                    };
+                  } else if (
+                    candlesForChart.length === p.len &&
+                    Number(lastBar.time) === p.lastTime
+                  ) {
+                    series.update(lastBar);
+                  } else if (
+                    candlesForChart.length === p.len + 1 &&
+                    Number(lastBar.time) > p.lastTime
+                  ) {
+                    series.update(lastBar);
+                    lastChartPushRef.current = {
+                      tf,
+                      len: candlesForChart.length,
+                      lastTime: Number(lastBar.time),
+                    };
+                  } else {
+                    series.setData(candlesForChart);
+                    lastChartPushRef.current = {
+                      tf,
+                      len: candlesForChart.length,
+                      lastTime: Number(lastBar.time),
+                    };
+                  }
 
       if (ghostSeries) rebuildGhostBars(FUTURE_GHOST_BASE);
       if (shouldFitContentRef.current && chartRef.current) {
@@ -971,12 +1108,12 @@ export function MainChart({
     ) => {
       const distanceFromPrice = Math.abs(p - price);
       const isWithinThreshold = allowOutsideThreshold || distanceFromPrice <= threshold;
-      
+
       if (!isWithinThreshold) {
         console.log(`[DEBUG PUSH] DESCARTADO "${label}" @ $${p}: distance=${distanceFromPrice.toFixed(2)} > threshold=${threshold.toFixed(2)}`);
         return;
       }
-      
+
       const timing = isBandFill
         ? undefined
         : computeLevelTiming(
@@ -1022,14 +1159,14 @@ export function MainChart({
         strength,
         structural,
       };
-      
+
       console.log(`[DEBUG PUSH] AGREGANDO "${label}" @ $${p}: color=${color}, width=${lineWidthScaled}, style=${style}`);
       entries.push(finalEntry);
     };
 
     // LOG FINAL TOTALS Y DETECCIÃ“N DE COLISIONES
     console.log(`[DEBUG FINAL] TOTAL entries procesadas: ${entries.length}`);
-    
+
     // Detectar colisiones por precio exacto
     const priceGroups = new Map<number, any[]>();
     entries.forEach(entry => {
@@ -1038,14 +1175,14 @@ export function MainChart({
       }
       priceGroups.get(entry.price)!.push(entry);
     });
-    
+
     // Loguear colisiones detectadas
     priceGroups.forEach((entriesAtPrice, price) => {
       if (entriesAtPrice.length > 1) {
         console.log(`[DEBUG COLLISION] DETECTADA en precio $${price}:`, entriesAtPrice.map(e => `${e.label}(${e.priority})`));
       }
     });
-    
+
     console.log(`[DEBUG FINAL] Entries por tipo:`, {
       CASCADE: entries.filter(e => e.label.includes('CASCADE') || e.label.includes('LIQ')).length,
       SQUEEZE: entries.filter(e => e.label.includes('SQ') || e.label.includes('SQUEEZE')).length,
@@ -1053,14 +1190,14 @@ export function MainChart({
       GAMMA: entries.filter(e => e.label.includes('GAMMA') || e.label.includes('FLIP')).length,
       HEATMAP: entries.filter(e => e.label.includes('THIN') || e.label.includes('VACUUM')).length
     });
-    
+
     // Loguear entradas por prioridad para ver si hay pisadas
     const priorityGroups = entries.reduce((acc, entry) => {
       if (!acc[entry.priority]) acc[entry.priority] = [];
       acc[entry.priority].push(entry);
       return acc;
     }, {} as Record<number, any[]>);
-    
+
     console.log(`[DEBUG PRIORITY] Entries por prioridad:`, Object.keys(priorityGroups).map(p => `Priority ${p}: ${priorityGroups[p].length} entries`));
 
     if (activePanels.has("LEVELS")) {
@@ -1224,7 +1361,7 @@ export function MainChart({
         };
         const strongStatuses = new Set(["ACTIVE", "NEAR", "TRIGGERED", "WARNING", "HIGH_RISK", "EXPANDING"]);
         const softStatuses = new Set(["WATCH", "IDLE", "NONE"]);
-        
+
         // Deduplicate pockets: if overlap >60% or centers <300 USD apart, keep higher priority
         const statusPriority: Record<string, number> = {
           TRIGGERED: 7,
@@ -1253,7 +1390,7 @@ export function MainChart({
           const bCenter = bRange ? (bRange.rangeLow + bRange.rangeHigh) / 2 : Number.POSITIVE_INFINITY;
           return Math.abs(aCenter - price) - Math.abs(bCenter - price);
         });
-        
+
         for (const pocket of sortedByPriority) {
           if (pocket.status === "FAILED") continue;
           const range = resolvePocketRange(pocket);
@@ -1274,11 +1411,11 @@ export function MainChart({
             deduplicatedPockets.push(pocket);
           }
         }
-        
+
         // Show max 2 pockets: nearest upper + nearest lower
         const pocketsToRender: any[] = [];
         const spot = price;
-        
+
         // Separate pockets by direction relative to spot
         const upperPockets = deduplicatedPockets.filter((p: any) => {
           const range = resolvePocketRange(p);
@@ -1292,7 +1429,7 @@ export function MainChart({
           const centerB = (rangeB.rangeLow + rangeB.rangeHigh) / 2;
           return (centerA - spot) - (centerB - spot); // Sort by distance to spot (ascending)
         });
-        
+
         const lowerPockets = deduplicatedPockets.filter((p: any) => {
           const range = resolvePocketRange(p);
           if (!range) return false;
@@ -1305,24 +1442,24 @@ export function MainChart({
           const centerB = (rangeB.rangeLow + rangeB.rangeHigh) / 2;
           return (spot - centerA) - (spot - centerB); // Sort by distance to spot (ascending)
         });
-        
+
         // Add nearest upper pocket if exists
         if (upperPockets.length > 0) {
           pocketsToRender.push(upperPockets[0]);
         }
-        
+
         // Add nearest lower pocket if exists
         if (lowerPockets.length > 0) {
           pocketsToRender.push(lowerPockets[0]);
         }
-        
+
         // If we have less than 2 pockets, add nearest as fallback
         if (pocketsToRender.length === 0 && nearest) {
           pocketsToRender.push(nearest);
         } else if (pocketsToRender.length === 1 && nearest && !pocketsToRender.includes(nearest)) {
           pocketsToRender.push(nearest);
         }
-        
+
         let renderedPocketCount = 0;
         pocketsToRender.slice(0, 4).forEach((pocket: any, index: number) => {
           const range = resolvePocketRange(pocket);
@@ -1332,15 +1469,15 @@ export function MainChart({
           const status = String(pocket?.status ?? signalStatus ?? "NONE").toUpperCase();
           if (rangeLow && rangeHigh && Math.abs(rangeHigh - rangeLow) > 0) {
             const center = (rangeLow + rangeHigh) / 2;
-            
+
             const isStrong = strongStatuses.has(status) || risk === "HIGH";
             const isSoft = softStatuses.has(status) || !isStrong;
             const displayStatus = isStrong ? status : "WATCH";
-            
+
             const label = isStrong
               ? `SHORT GAMMA POCKET · ${displayStatus} · ${fmtK(rangeLow)}-${fmtK(rangeHigh)}`
               : `SGP WATCH · ${fmtK(rangeLow)}-${fmtK(rangeHigh)}`;
-            
+
             // Visual hierarchy: nearest pocket more visible
             const isNearest = index === 0;
             const opacity = isStrong
@@ -1355,7 +1492,7 @@ export function MainChart({
                   : `rgba(255, 255, 255, ${opacity})`;
             const lineWidth = isStrong && isNearest ? 2 : 1;
             const labelPriority = isStrong ? 3 : 4;
-            
+
             pushEntry(center, labelPriority, label, "SGP", color, LineStyle.Solid, lineWidth, false, false, "short_gamma_pocket" as any, "gamma", opacity, true);
             pushEntry(rangeLow, 4, "", "", color, LineStyle.Dashed, 1, false, true, "short_gamma_pocket_band" as any, "gamma", opacity * 0.55, false);
             pushEntry(rangeHigh, 4, "", "", color, LineStyle.Dashed, 1, false, true, "short_gamma_pocket_band" as any, "gamma", opacity * 0.55, false);
@@ -1376,7 +1513,7 @@ export function MainChart({
       console.log('[DEBUG CASCADE] Tab activo, procesando...');
       console.log('[DEBUG CASCADE] positioning_engines:', positioning_engines);
       console.log('[DEBUG CASCADE] liquidityCascadeEngine:', positioning_engines?.liquidityCascadeEngine);
-      
+
       const cascadeEntries = renderCascadeLevels({
         price,
         threshold,
@@ -1387,7 +1524,7 @@ export function MainChart({
         sweepDetector,
         vacuumState: undefined
       });
-      
+
       console.log('[DEBUG CASCADE] Entries devueltas:', cascadeEntries.length);
       cascadeEntries.forEach((entry, i) => {
         console.log(`[DEBUG CASCADE] Entry ${i}:`, {
@@ -1400,17 +1537,17 @@ export function MainChart({
           isBandFill: entry.isBandFill
         });
       });
-      
+
       cascadeEntries.forEach(entry => {
         const distanceFromPrice = Math.abs(entry.price - price);
         const isWithinThreshold = distanceFromPrice <= threshold;
         console.log(`[DEBUG CASCADE] Entry "${entry.label}" @ $${entry.price}: distance=${distanceFromPrice.toFixed(2)}, threshold=${threshold.toFixed(2)}, within=${isWithinThreshold}`);
-        
+
         if (!isWithinThreshold) {
           console.log(`[DEBUG CASCADE] DESCARTADO: "${entry.label}" fuera de threshold (${distanceFromPrice.toFixed(2)} > ${threshold.toFixed(2)})`);
           return;
         }
-        
+
         // FORZAR VISIBILIDAD MÃXIMA PARA DEBUG
         pushEntry(
           entry.price,
@@ -1434,7 +1571,7 @@ export function MainChart({
       console.log('[DEBUG SQUEEZE] Tab activo, procesando...');
       console.log('[DEBUG SQUEEZE] positioning_engines:', positioning_engines);
       console.log('[DEBUG SQUEEZE] squeezeProbabilityEngine:', positioning_engines?.squeezeProbabilityEngine);
-      
+
       const squeezeEntries = renderSqueezeLevels({
         price,
         threshold,
@@ -1443,9 +1580,13 @@ export function MainChart({
         levels,
         positioning_engines,
         sweepDetector,
+        rawOrderBook,
+        tradeAggression: squeezeTradeAggression,
+        lastCandle,
+        microStateMemory: squeezeMicroStateMemoryRef.current,
         vacuumState: undefined
       });
-      
+
       console.log('[DEBUG SQUEEZE] Entries devueltas:', squeezeEntries.length);
       squeezeEntries.forEach((entry, i) => {
         console.log(`[DEBUG SQUEEZE] Entry ${i}:`, {
@@ -1458,17 +1599,17 @@ export function MainChart({
           isBandFill: entry.isBandFill
         });
       });
-      
+
       squeezeEntries.forEach(entry => {
         const distanceFromPrice = Math.abs(entry.price - price);
         const isWithinThreshold = distanceFromPrice <= threshold;
         console.log(`[DEBUG SQUEEZE] Entry "${entry.label}" @ $${entry.price}: distance=${distanceFromPrice.toFixed(2)}, threshold=${threshold.toFixed(2)}, within=${isWithinThreshold}`);
-        
+
         if (!isWithinThreshold) {
           console.log(`[DEBUG SQUEEZE] DESCARTADO: "${entry.label}" fuera de threshold (${distanceFromPrice.toFixed(2)} > ${threshold.toFixed(2)})`);
           return;
         }
-        
+
         // FORZAR VISIBILIDAD MÃXIMA PARA DEBUG
         pushEntry(
           entry.price,
@@ -1801,7 +1942,7 @@ export function MainChart({
       });
       if (line) priceLinesRef.current.push(line);
     }
-  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines, rawOrderBook, showAccelZones, showAbsorbZones, showGravityZones, terminalState?.gravityMap, terminalState?.options, chartTimeframe, gammaOverlaySel]);
+  }, [market, positioning, levels, lastCandle, activePanels, positioning_engines, rawOrderBook, squeezeTradeAggression, showAccelZones, showAbsorbZones, showGravityZones, terminalState?.gravityMap, terminalState?.options, chartTimeframe, gammaOverlaySel]);
 
   const probeInstitutionalOverlay = useCallback(
     (ctx: ChartMenuContext): ChartMenuContext => {
@@ -2319,6 +2460,31 @@ export function MainChart({
             PRICE_LABEL_DEBUG && "outline outline-2 outline-blue-500",
           )}
         >
+        {paperStateDebug ? (
+          <div
+            aria-label="PaperState development probe"
+            className="pointer-events-none absolute left-2 top-14 z-50 max-w-[330px] border border-cyan-900/80 bg-black/85 px-2 py-1 font-mono text-[10px] leading-4 text-cyan-200"
+          >
+            <div className="font-semibold text-cyan-100">PAPERSTATE DEV</div>
+            <div>backend: {paperStateDebug.backend} · workspace: {paperStateDebug.workspace} · port: {paperStateDebug.portAvailability}</div>
+            <div>timer: {paperStateDebug.timerExists ? "YES" : "NO"} · ticks: {paperStateDebug.tickCount} · refresh: {paperStateDebug.refreshStartCount}/{paperStateDebug.refreshEndCount}</div>
+            <div>account: {paperStateDebug.resources.account} · position: {paperStateDebug.resources.position}</div>
+            <div>orders: {paperStateDebug.resources.orders} · fills: {paperStateDebug.resources.fills} · count: {paperStateDebug.fillsCount}</div>
+            <div>feesTotal: {paperStateDebug.feesTotal ?? "NOT_EXPOSED"} · error: {paperStateDebug.lastRefreshError ?? "none"}</div>
+
+
+            {paperStateDebugFill ? (
+              <div className="mt-1 border-t border-cyan-900/80 pt-1 text-cyan-100">
+                <div>fillId: {paperStateDebugFill.fillId}</div>
+                <div>clientOrderId: {paperStateDebugFill.clientOrderId}</div>
+                <div>venueOrderId: {paperStateDebugFill.venueOrderId}</div>
+                <div>timestamp: {paperStateDebugFill.timestamp}</div>
+                <div>price: {paperStateDebugFill.price} · quantity: {paperStateDebugFill.quantity}</div>
+                <div>fee: {paperStateDebugFill.fee ?? "none"} {paperStateDebugFill.feeAsset ?? ""} · {paperStateDebugFill.liquidity ?? "unknown"}</div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div
           ref={chartContainerRef}
           data-chart-container
@@ -2359,15 +2525,17 @@ export function MainChart({
               />
               {candleSeriesRef.current ? (
                 <>
+                  {showPaperLimitOrders ? (
+                    <PaperChartLimitOrders
+                      chartWidth={timeScaleWidth}
+                      chartHeight={chartSize.h}
+                      viewportVersion={drawingsViewportVersion}
+                      coordinates={chartCoordinates}
+                      candleSeries={candleSeriesRef.current}
+                    />
+                  ) : null}
                   {showPaperChartOverlay ? (
                     <>
-                      <PaperChartLimitOrders
-                        chartWidth={timeScaleWidth}
-                        chartHeight={chartSize.h}
-                        viewportVersion={drawingsViewportVersion}
-                        coordinates={chartCoordinates}
-                        candleSeries={candleSeriesRef.current}
-                      />
                       <TerminalErrorBoundary
                         name="paper-chart-overlay"
                         fallbackMessage="Paper module crashed. Reload or switch broker."
@@ -2380,6 +2548,14 @@ export function MainChart({
                           candleSeries={candleSeriesRef.current}
                         />
                       </TerminalErrorBoundary>
+                      {chartReady && chartSize ? (
+                        <PaperFillPriceMarkers
+                          fills={paperState.fills}
+                          coordinates={chartCoordinates}
+                          chartWidth={timeScaleWidth}
+                          chartHeight={chartSize.h}
+                        />
+                      ) : null}
                     </>
                   ) : null}
                   {showBingXReadOnlyChartOverlay ? (

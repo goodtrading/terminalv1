@@ -58,8 +58,6 @@ export function PaperRiskGuardLine({
           <span className="text-slate-600">
             {" "}
             · Max lev {maxLev}x · Max risk {PAPER_RISK_GUARD_POLICY.maxRiskPerTradePct}%
-            {" "}
-            · Live locked
           </span>
         </>
       ) : (

@@ -60,7 +60,7 @@ export function parseIntent(
       chartSymbol: venue.chartSymbol,
       venue: venue.venue,
       marketType: venue.marketType,
-      executionExchange: venue.executionExchange,
+
       side: body.side,
       type: body.type,
       price: body.type === "limit" ? readOrderPrice(body.price) : undefined,
@@ -224,7 +224,7 @@ export function validatePaperOrder(
 
   warnings.push("Paper trading only — no real funds at risk.");
   warnings.push(
-    `Simulated BingX perpetual (${intent.symbol}) — chart is Binance Spot for display only.`,
+    `Paper perpetual (${intent.symbol}) — chart is Binance Spot for display only.`,
   );
 
   return { valid: errors.length === 0, errors, warnings };

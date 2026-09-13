@@ -3,8 +3,7 @@ import { DesktopFeedStatusBanner } from "@/components/desktop/DesktopFeedStatusB
 import { LeftSidebar } from "@/components/terminal/LeftSidebar";
 import RightSidebar from "@/components/terminal/RightSidebar";
 import { MainChart } from "@/components/terminal/MainChart";
-import { ExchangeConnectionPanel } from "@/components/terminal/execution/ExchangeConnectionPanel";
-import { TradingExecutionPanel } from "@/components/terminal/execution/TradingExecutionPanel";
+import { ExecutionDock } from "@/components/terminal/execution/ExecutionDock";
 import { BrokerSessionProvider } from "@/components/terminal/execution/useBrokerSession";
 import { MarketStructureBar } from "@/components/terminal/MarketStructureBar";
 import { BottomPanel } from "@/components/terminal/BottomPanel";
@@ -15,19 +14,22 @@ import { FlowsPanel } from "@/components/flows/FlowsPanel";
 import { VolatilityEnginePanel } from "@/components/terminal/VolatilityEnginePanel";
 import { ReportsPanel } from "@/components/reports/ReportsPanel";
 import { TerminalErrorBoundary } from "@/components/common/TerminalErrorBoundary";
-import { useDesktopPanelsVisible } from "@/hooks/useDesktopPanelsVisible";
+import { useDesktopPanelsVisible, type TerminalViewMode } from "@/hooks/useDesktopPanelsVisible";
 import { cn } from "@/lib/utils";
 import { prefetchOptionsBook } from "@/lib/optionsBookClient";
 import { AlertCenter } from "@/components/alerts/AlertCenter";
 import { AlertRuntime } from "@/components/alerts/AlertRuntime";
 import type { AlertEvent } from "@shared/alerts";
 
+
 export default function TerminalLayout() {
   const [activeScenario, setActiveScenario] = useState<"BASE" | "ALT" | "VOL">("BASE");
   const [bottomPanelsMinimized, setBottomPanelsMinimized] = useState(false);
-  const { panelsVisible, togglePanels } = useDesktopPanelsVisible();
+  const { viewMode, setViewMode } = useDesktopPanelsVisible();
+  const sidePanelsVisible = viewMode === "trading" || viewMode === "analysis";
+  const executionVisible = viewMode === "trading" || viewMode === "execution";
   // Fixed to PRO mode - view toggle removed
-const viewMode: "PRO" = "PRO";
+  const chartViewMode: "PRO" = "PRO";
   const [activeTab, setActiveTab] = useState("TERMINAL");
 
   useEffect(() => {
@@ -86,20 +88,22 @@ const viewMode: "PRO" = "PRO";
   };
 
   return (
-    <div className="h-screen w-full flex flex-col bg-terminal-bg text-terminal-text overflow-hidden font-sans">
+    <div className="terminal-shell h-screen w-full flex flex-col bg-terminal-bg text-terminal-text overflow-hidden">
       <TopNav
         activeTab={activeTab}
         onTabChange={setActiveTab}
-        panelsVisible={panelsVisible}
-        onTogglePanels={togglePanels}
+        viewMode={viewMode}
+        onViewModeChange={(mode: TerminalViewMode) => setViewMode(mode)}
       />
       <AlertRuntime />
       <DesktopFeedStatusBanner />
-      
+
       <div className="flex-1 flex overflow-hidden min-h-0">
         {activeTab === "TERMINAL" && (
           <BrokerSessionProvider>
-            {panelsVisible ? <LeftSidebar /> : null}
+            <div className={sidePanelsVisible ? "contents" : "hidden"}>
+              <LeftSidebar />
+            </div>
 
             <div
               className={cn(
@@ -117,19 +121,20 @@ const viewMode: "PRO" = "PRO";
                   <MainChart
                     activeScenario={activeScenario}
                     onActiveScenarioChange={setActiveScenario}
-                    viewMode={viewMode}
+                    viewMode={chartViewMode}
                   />
                 </TerminalErrorBoundary>
               </div>
 
-              {panelsVisible ? (
-                <div
-                  className={`relative flex gap-1 min-h-0 transition-all duration-200 max-[1000px]:flex-col ${
-                    bottomPanelsMinimized
-                      ? "h-[38px] max-[1000px]:h-[76px]"
-                      : "h-[clamp(200px,30vh,288px)] max-[1200px]:h-[clamp(220px,34vh,340px)] max-[1000px]:h-[clamp(280px,44vh,460px)]"
-                  }`}
-                >
+              <div
+                className={cn(
+                  "relative flex gap-1 min-h-0 transition-all duration-200 max-[1000px]:flex-col",
+                  executionVisible ? "" : "hidden",
+                  bottomPanelsMinimized
+                    ? "h-[38px] max-[1000px]:h-[76px]"
+                    : "h-[clamp(200px,30vh,288px)] max-[1200px]:h-[clamp(220px,34vh,340px)] max-[1000px]:h-[clamp(280px,44vh,460px)]",
+                )}
+              >
                   <button
                     type="button"
                     onClick={toggleBottomPanels}
@@ -138,30 +143,18 @@ const viewMode: "PRO" = "PRO";
                   >
                     {bottomPanelsMinimized ? "EXPAND" : "MINIMIZE"}
                   </button>
-                  <TerminalErrorBoundary
-                    name="exchange-connection"
-                    fallbackMessage="Connection panel crashed. Reload terminal."
-                  >
-                    <ExchangeConnectionPanel collapsed={bottomPanelsMinimized} />
-                  </TerminalErrorBoundary>
-                  <TerminalErrorBoundary
-                    name="paper-execution"
-                    fallbackMessage="Paper module crashed. Reload or switch broker."
-                  >
-                    <TradingExecutionPanel collapsed={bottomPanelsMinimized} />
-                  </TerminalErrorBoundary>
-                </div>
-              ) : null}
+                  <ExecutionDock collapsed={bottomPanelsMinimized} />
+              </div>
             </div>
 
-            {panelsVisible ? (
+            <div className={sidePanelsVisible ? "contents" : "hidden"}>
               <RightSidebar
                 onScenarioSelect={(s) => {
                   window.dispatchEvent(new CustomEvent("scenario-select", { detail: s }));
                 }}
                 onActiveScenarioChange={setActiveScenario}
               />
-            ) : null}
+            </div>
           </BrokerSessionProvider>
         )}
 
@@ -201,7 +194,9 @@ const viewMode: "PRO" = "PRO";
         )}
       </div>
 
-      {panelsVisible ? <BottomPanel /> : null}
+      <div className={executionVisible ? "" : "hidden"}>
+        <BottomPanel />
+      </div>
     </div>
   );
 }

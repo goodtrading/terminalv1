@@ -1,3 +1,4 @@
+import { usePaperChartLifetime } from "./paperChartLifecycleTrace";
 import {
   useCallback,
   useEffect,
@@ -5,16 +6,13 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+
 import { LineStyle, type IPriceLine } from "lightweight-charts";
 import { cn } from "@/lib/utils";
 import type { DrawingsCoordinateHelpers } from "../drawings/DrawingsLayer";
 import type { PaperOrderSnapshot } from "../execution/executionTypes";
-import {
-  patchPaperOrderPrice,
-  postPaperCancelOrder,
-} from "../execution/paperChartActions";
-import { invalidatePaperQueries } from "../execution/paperQueryKeys";
+import { patchPaperOrderPrice } from "../execution/paperChartActions";
+import { paperExecutionPort } from "@/lib/paperExecutionPort";
 import { formatOverlayPrice, snapOverlayPrice } from "./paperTradeOverlayHelpers";
 import { usePaperTradeOverlay } from "./usePaperTradeOverlay";
 
@@ -57,6 +55,7 @@ function LimitOrderBar({
   dragging,
   draftPrice,
   busy,
+  readOnly,
   onPointerDownLine,
   onCancel,
 }: {
@@ -67,10 +66,12 @@ function LimitOrderBar({
   dragging: boolean;
   draftPrice: number | null;
   busy: boolean;
+  readOnly: boolean;
   onPointerDownLine: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onCancel: () => void;
 }) {
-  const price = draftPrice ?? order.price ?? 0;
+  usePaperChartLifetime("LimitOrderBar:" + order.id);
+  const price = draftPrice ?? order.limitPrice ?? order.price ?? 0;
   const barTop = Math.min(
     Math.max(y - ORDER_BAR_HEIGHT / 2, 4),
     chartHeight - ORDER_BAR_HEIGHT - 4,
@@ -92,13 +93,19 @@ function LimitOrderBar({
           }}
         />
         <div
-          role="slider"
+          role={readOnly ? undefined : "slider"}
           aria-label="Drag to move limit order price"
           className={cn(
-            "absolute left-0 right-0 h-4 -translate-y-1/2 cursor-ns-resize pointer-events-auto",
+            "absolute left-0 right-0 h-4 -translate-y-1/2 pointer-events-auto",
+            !readOnly && "cursor-ns-resize",
             dragging && "bg-white/[0.03]",
           )}
           onPointerDown={onPointerDownLine}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!readOnly && !busy) onCancel();
+          }}
         />
       </div>
 
@@ -111,6 +118,11 @@ function LimitOrderBar({
           maxWidth: chartWidth - PRICE_SCALE_INSET - 8,
         }}
         onPointerDown={(e) => e.stopPropagation()}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!readOnly && !busy) onCancel();
+        }}
       >
         <div
           className="flex items-center gap-1 rounded-l border border-r-0 px-1.5 shrink-0"
@@ -120,7 +132,7 @@ function LimitOrderBar({
             color: accent,
           }}
         >
-          <span className="font-bold uppercase tracking-wider opacity-90">Paper Limit</span>
+          <span className="font-bold uppercase tracking-wider opacity-90">LIMIT</span>
         </div>
         <div
           className={cn(
@@ -166,10 +178,10 @@ export function PaperChartLimitOrders({
   coordinates,
   candleSeries,
 }: PaperChartLimitOrdersProps) {
-  const queryClient = useQueryClient();
+  usePaperChartLifetime("PaperChartLimitOrders", candleSeries);
   const rootRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<Map<string, IPriceLine>>(new Map());
-  const { paperActive, openLimitOrders } = usePaperTradeOverlay();
+  const { paperOrdersActive, readOnly, openLimitOrders, cancelOrder, invalidatePaper } = usePaperTradeOverlay();
 
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -182,7 +194,7 @@ export function PaperChartLimitOrders({
 
   const syncLines = useCallback(() => {
     const series = candleSeries;
-    if (!series || !paperActive) {
+    if (!series || !paperOrdersActive) {
       for (const line of lineRefs.current.values()) {
         series?.removePriceLine(line);
       }
@@ -199,7 +211,8 @@ export function PaperChartLimitOrders({
     }
 
     for (const order of openLimitOrders) {
-      const px = draft?.orderId === order.id ? draft.price : order.price;
+      const committedPrice = order.limitPrice ?? order.price;
+      const px = draft?.orderId === order.id ? draft.price : committedPrice;
       if (px == null || !Number.isFinite(px)) continue;
       const color = order.side === "long" ? LIMIT_LONG : LIMIT_SHORT;
       const existing = lineRefs.current.get(order.id);
@@ -216,7 +229,7 @@ export function PaperChartLimitOrders({
         }),
       );
     }
-  }, [candleSeries, paperActive, openLimitOrders, draft]);
+  }, [candleSeries, paperOrdersActive, openLimitOrders, draft]);
 
   useEffect(() => {
     syncLines();
@@ -246,8 +259,7 @@ export function PaperChartLimitOrders({
     async (orderId: string) => {
       setBusyId(orderId);
       try {
-        await postPaperCancelOrder(orderId);
-        await invalidatePaperQueries(queryClient);
+        await cancelOrder(orderId);
         showStatus("Paper order cancelled");
       } catch (err) {
         showStatus(err instanceof Error ? err.message : "Cancel failed", 2800);
@@ -255,7 +267,7 @@ export function PaperChartLimitOrders({
         setBusyId(null);
       }
     },
-    [queryClient, showStatus],
+    [cancelOrder, showStatus],
   );
 
   const handleLinePointerDown = (
@@ -265,6 +277,7 @@ export function PaperChartLimitOrders({
   ) => {
     e.preventDefault();
     e.stopPropagation();
+    if (readOnly) return;
     const rect = rootRef.current?.getBoundingClientRect();
     if (!rect) return;
 
@@ -285,8 +298,15 @@ export function PaperChartLimitOrders({
 
       setBusyId(order.id);
       try {
-        await patchPaperOrderPrice(order.id, final);
-        await invalidatePaperQueries(queryClient);
+        if (paperExecutionPort.getBackend() === "nautilus") {
+          await paperExecutionPort.amendOrder({
+            clientOrderId: order.id,
+            limitPrice: final,
+          });
+        } else {
+          await patchPaperOrderPrice(order.id, final);
+        }
+        await invalidatePaper();
         showStatus("Limit order moved");
       } catch (err) {
         setDraft({ orderId: order.id, price: committed });
@@ -300,7 +320,7 @@ export function PaperChartLimitOrders({
     window.addEventListener("pointerup", onUp);
   };
 
-  if (!paperActive || openLimitOrders.length === 0) {
+  if (!paperOrdersActive || openLimitOrders.length === 0) {
     return null;
   }
 
@@ -317,7 +337,9 @@ export function PaperChartLimitOrders({
       ) : null}
 
       {openLimitOrders.map((order) => {
-        const px = draft?.orderId === order.id ? draft.price : order.price!;
+        const committedPrice = order.limitPrice ?? order.price;
+        const px = draft?.orderId === order.id ? draft.price : committedPrice;
+        if (px == null || !Number.isFinite(px)) return null;
         const y = coordinates.priceToCoordinate(px);
         if (y == null || !Number.isFinite(y)) return null;
 
@@ -331,6 +353,7 @@ export function PaperChartLimitOrders({
             dragging={draft?.orderId === order.id}
             draftPrice={draft?.orderId === order.id ? draft.price : null}
             busy={busyId === order.id}
+            readOnly={readOnly}
             onPointerDownLine={(e) => handleLinePointerDown(order, px, e)}
             onCancel={() => void handleCancel(order.id)}
           />

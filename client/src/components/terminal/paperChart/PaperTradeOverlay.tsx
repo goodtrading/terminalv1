@@ -1,3 +1,5 @@
+import { tracePaperChart, usePaperChartLifetime } from "./paperChartLifecycleTrace";
+import { reconcileProtectivePriceLines } from "./protectivePriceLines";
 import {
   useCallback,
   useEffect,
@@ -8,9 +10,10 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import type { DrawingsCoordinateHelpers } from "../drawings/DrawingsLayer";
+import type { PaperOrderSnapshot } from "../execution/executionTypes";
 import { PositionRiskOverlay } from "../chartRisk/PositionRiskOverlay";
 import { PlacementPreviewLine } from "../chartRisk/positionRiskOverlayShared";
-import type { IPriceLine } from "lightweight-charts";
+import { LineStyle, type IPriceLine } from "lightweight-charts";
 import {
   buildRiskLevelNetMetrics,
   createEmptyRiskLevelMetrics,
@@ -20,12 +23,16 @@ import {
   initialPlacementPreviewPrice,
   snapOverlayPrice,
   validateChartPlacement,
+  validateProtectiveDrag,
   type RiskPlacementTarget,
 } from "./paperTradeOverlayHelpers";
 import { PaperClosePositionModal } from "../execution/PaperClosePositionModal";
-import { postPaperClosePartial } from "../execution/paperChartActions";
+import { postPaperClosePartial, closeQuantityText } from "../execution/paperChartActions";
 import type { PaperChartTradeOverlay, PaperRiskDragTarget } from "./paperTradeOverlayTypes";
 import { usePaperTradeOverlay } from "./usePaperTradeOverlay";
+import { PaperChartOrderBar } from "./PaperChartOrderBar";
+import { createProtectiveDragState } from "./protectiveDragState";
+import { calculateNetPositionPct } from "../execution/canonicalNetPnl";
 
 const PLACEMENT_DRAG_THRESHOLD_PX = 5;
 
@@ -56,15 +63,22 @@ export function PaperTradeOverlay({
   coordinates,
   candleSeries,
 }: PaperTradeOverlayProps) {
+  usePaperChartLifetime("PaperTradeOverlay", candleSeries);
   const rootRef = useRef<HTMLDivElement>(null);
+  const placementCancelRef = useRef<(() => void) | null>(null);
   const {
     paperActive,
+    readOnly,
     overlay,
     position,
     accountEquityUsdt,
     feeSettings,
     patchRisk,
     invalidatePaper,
+    protectiveOrders,
+    cancelOrder,
+    amendProtectiveOrder,
+    netAtPrice,
   } = usePaperTradeOverlay();
 
   const [draftRisk, setDraftRisk] = useState<{
@@ -113,7 +127,10 @@ export function PaperTradeOverlay({
   useEffect(() => {
     if (!placementMode) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") clearPlacement("Placement cancelled");
+      if (e.key === "Escape") {
+        placementCancelRef.current?.();
+        clearPlacement("Placement cancelled");
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -138,7 +155,9 @@ export function PaperTradeOverlay({
       try {
         const patch =
           mode === "stopLoss" ? { stopLoss: price } : { takeProfit: price };
+        tracePaperChart("PROTECTION_SUBMIT", { mode, price, paperActive });
         await patchRisk(patch);
+        tracePaperChart("PROTECTION_RETURN", { mode });
         await invalidatePaper();
         clearPlacement();
         showStatus(mode === "stopLoss" ? "SL placed" : "TP placed");
@@ -160,15 +179,17 @@ export function PaperTradeOverlay({
     (mode: RiskPlacementTarget) => {
       if (!displayOverlay?.entryPrice) return;
       const existing =
-        mode === "stopLoss" ? displayOverlay.stopLoss : displayOverlay.takeProfit;
-      if (existing != null && Number.isFinite(existing)) return;
-
+        mode === "stopLoss"
+          ? protectiveOrders.STOP_LOSS[0]?.triggerPrice
+          : protectiveOrders.TAKE_PROFIT[0]?.price ?? protectiveOrders.TAKE_PROFIT[0]?.limitPrice;
       setPlacementMode(mode);
       setPreviewRiskPrice(
-        initialPlacementPreviewPrice(displayOverlay.side, displayOverlay.entryPrice, mode),
+        existing != null && Number.isFinite(existing)
+          ? existing
+          : initialPlacementPreviewPrice(displayOverlay.side, displayOverlay.entryPrice, mode),
       );
     },
-    [displayOverlay],
+    [displayOverlay, protectiveOrders],
   );
 
   const finishDrag = useCallback(
@@ -177,7 +198,9 @@ export function PaperTradeOverlay({
       try {
         const patch =
           target === "stopLoss" ? { stopLoss: price } : { takeProfit: price };
+        tracePaperChart("PROTECTION_SUBMIT", { mode, price, paperActive });
         await patchRisk(patch);
+        tracePaperChart("PROTECTION_RETURN", { mode });
         await invalidatePaper();
         showStatus(target === "stopLoss" ? "SL updated" : "TP updated", 1800);
       } catch (err) {
@@ -243,39 +266,93 @@ export function PaperTradeOverlay({
 
     e.preventDefault();
     e.stopPropagation();
+    placementCancelRef.current?.();
     beginPlacement(mode);
 
-    const startY = e.clientY;
-    let dragged = false;
-
-    const onMove = (ev: PointerEvent) => {
-      if (Math.abs(ev.clientY - startY) > PLACEMENT_DRAG_THRESHOLD_PX) {
-        dragged = true;
+    const pointerId = e.pointerId;
+    const target = e.currentTarget;
+    target.setPointerCapture?.(pointerId);
+    let finished = false;
+    let suppressingContextMenu = false;
+    let suppressTimer: number | null = null;
+    const removeContextSuppressor = () => {
+      suppressingContextMenu = false;
+      window.removeEventListener("contextmenu", onContextMenu, true);
+      if (suppressTimer != null) {
+        window.clearTimeout(suppressTimer);
+        suppressTimer = null;
       }
-      const p = priceFromClientY(ev.clientY);
-      if (p != null) setPreviewRiskPrice(p);
     };
-
-    const onUp = async (ev: PointerEvent) => {
+    const removeActiveListeners = () => {
+      if (finished) return;
+      finished = true;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
-
-      const final = priceFromClientY(ev.clientY) ?? previewRiskPrice;
-      if (dragged && final != null) {
-        const ok = await commitPlacement(final, mode);
-        if (!ok) {
-          setPlacementMode(mode);
-          setPreviewRiskPrice(final);
-        }
-        return;
-      }
-      // Tap: stay in placement mode — chart click confirms
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      target.removeEventListener("lostpointercapture", onLostCapture);
+      if (target.hasPointerCapture?.(pointerId)) target.releasePointerCapture?.(pointerId);
+      placementCancelRef.current = null;
+    };
+    const armContextSuppressor = () => {
+      suppressingContextMenu = true;
+      if (suppressTimer != null) window.clearTimeout(suppressTimer);
+      suppressTimer = window.setTimeout(removeContextSuppressor, 1200);
+    };
+    const cleanup = () => {
+      removeActiveListeners();
+      removeContextSuppressor();
+    };
+    const cancel = () => {
+      cleanup();
+      clearPlacement();
+    };
+    const abortPlacement = () => {
+      if (finished) return;
+      armContextSuppressor();
+      removeActiveListeners();
+      clearPlacement();
+    };
+    const onCancel = () => cancel();
+    const onLostCapture = () => cancel();
+    const onPointerDown = (ev: PointerEvent) => {
+      if (ev.button !== 2 || finished) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      ev.stopImmediatePropagation();
+      abortPlacement();
+    };
+    const onContextMenu = (ev: MouseEvent) => {
+      if (!suppressingContextMenu && finished) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      ev.stopImmediatePropagation();
+      if (finished) removeContextSuppressor();
+      else abortPlacement();
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
       const p = priceFromClientY(ev.clientY);
       if (p != null) setPreviewRiskPrice(p);
     };
-
+    const onUp = async (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      cleanup();
+      const final = priceFromClientY(ev.clientY) ?? previewRiskPrice;
+      if (final == null) return;
+      const ok = await commitPlacement(final, mode);
+      if (!ok) {
+        setPlacementMode(mode);
+        setPreviewRiskPrice(final);
+      }
+    };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("contextmenu", onContextMenu, true);
+    target.addEventListener("lostpointercapture", onLostCapture);
+    placementCancelRef.current = cancel;
   };
 
   const handlePlacementLayerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -297,8 +374,12 @@ export function PaperTradeOverlay({
   }
 
   const pnl = displayOverlay.unrealizedPnlUsdt;
-  const slPrice = displayOverlay.stopLoss ?? null;
-  const tpPrice = displayOverlay.takeProfit ?? null;
+  const canonicalSl = protectiveOrders.STOP_LOSS;
+  const canonicalTp = protectiveOrders.TAKE_PROFIT;
+  const stopLossOrder = canonicalSl[0];
+  const takeProfitOrder = canonicalTp[0];
+  const slPrice = canonicalSl[0]?.triggerPrice ?? null;
+  const tpPrice = canonicalTp[0]?.price ?? canonicalTp[0]?.limitPrice ?? null;
   const hasSl = slPrice != null && Number.isFinite(slPrice);
   const hasTp = tpPrice != null && Number.isFinite(tpPrice);
 
@@ -351,6 +432,8 @@ export function PaperTradeOverlay({
     entryPrice: entry,
     markPrice: displayOverlay.markPrice ?? undefined,
     unrealizedPnlUsdt: pnl,
+    netPnlUsdt: displayOverlay.netPnlUsdt,
+    netPositionPct: displayOverlay.netPositionPct,
   };
 
   return (
@@ -366,21 +449,30 @@ export function PaperTradeOverlay({
         </div>
       ) : null}
 
+
+      <CanonicalProtectionLines
+        candleSeries={candleSeries}
+        netAtPrice={netAtPrice}
+        positionQuantity={qtyForMetrics}
+        positionEntryPrice={entry}
+        stopLoss={canonicalSl}
+        takeProfit={canonicalTp}
+        coordinates={coordinates}
+        chartWidth={chartWidth}
+        chartHeight={chartHeight}
+        side={side}
+        referencePrice={displayOverlay.markPrice ?? entry}
+        onAmend={amendProtectiveOrder}
+        onCancel={cancelOrder}
+        onError={(message) => showStatus(message, 3200)}
+      />
       <PositionRiskOverlay
         mode="paper"
-        readonly={false}
+        readonly={readOnly}
         position={overlayPosition}
         account={{ equityUsdt: accountEquityUsdt }}
-        stopLoss={
-          displayOverlay.stopLoss != null
-            ? { price: displayOverlay.stopLoss, source: "paper" }
-            : null
-        }
-        takeProfit={
-          displayOverlay.takeProfit != null
-            ? { price: displayOverlay.takeProfit, source: "paper" }
-            : null
-        }
+        stopLoss={null}
+        takeProfit={null}
         feeSettings={feeSettings}
         chartWidth={chartWidth}
         chartHeight={chartHeight}
@@ -395,18 +487,12 @@ export function PaperTradeOverlay({
         draggingStopLoss={draftRisk?.target === "stopLoss"}
         draggingTakeProfit={draftRisk?.target === "takeProfit"}
         onStopLossPointerDown={
-          hasSl
-            ? (e) =>
-                handleExistingLinePointerDown("stopLoss", displayOverlay.stopLoss!, e)
-            : undefined
+          undefined
         }
         onTakeProfitPointerDown={
-          hasTp
-            ? (e) =>
-                handleExistingLinePointerDown("takeProfit", displayOverlay.takeProfit!, e)
-            : undefined
+          undefined
         }
-        paperControls={
+        paperControls={!readOnly ? (
           <>
             <button
               type="button"
@@ -451,8 +537,8 @@ export function PaperTradeOverlay({
               SL
             </button>
           </>
-        }
-        paperTrailing={
+        ) : undefined}
+        paperTrailing={!readOnly ? (
           <button
             type="button"
             disabled={riskBusy != null}
@@ -469,7 +555,7 @@ export function PaperTradeOverlay({
           >
             ×
           </button>
-        }
+        ) : undefined}
       >
         {placementMode && placementHint ? (
           <div className="absolute top-7 left-1/2 -translate-x-1/2 z-[20] flex items-center gap-2 rounded border border-cyan-500/35 bg-black/92 px-2 py-1 text-[9px] font-mono text-slate-200 pointer-events-auto shadow-md">
@@ -520,7 +606,7 @@ export function PaperTradeOverlay({
         ) : null}
       </PositionRiskOverlay>
 
-      {position && position.side !== "flat" ? (
+      {!readOnly && position && position.side !== "flat" ? (
         <PaperClosePositionModal
           open={closeModalOpen}
           onClose={() => setCloseModalOpen(false)}
@@ -529,7 +615,10 @@ export function PaperTradeOverlay({
           onConfirm={async (percent) => {
             setCloseLoading(true);
             try {
-              await postPaperClosePartial(percent);
+              await postPaperClosePartial(
+                percent,
+                percent >= 100 ? undefined : closeQuantityText(position.quantity, percent),
+              );
               setCloseModalOpen(false);
               clearPlacement();
               await invalidatePaper();
@@ -548,4 +637,133 @@ export function PaperTradeOverlay({
       ) : null}
     </div>
   );
+}
+
+function CanonicalProtectionLines({
+  candleSeries, stopLoss, takeProfit, coordinates, chartWidth, chartHeight, side, referencePrice, positionQuantity, positionEntryPrice, netAtPrice, onAmend, onCancel, onError,
+}: {
+  candleSeries: PaperTradeOverlayProps["candleSeries"];
+  stopLoss: PaperOrderSnapshot[];
+  takeProfit: PaperOrderSnapshot[];
+  coordinates: DrawingsCoordinateHelpers;
+  chartWidth: number;
+  chartHeight: number;
+  side: "long" | "short";
+  referencePrice: number;
+  positionEntryPrice: number;
+  positionQuantity: number;
+  netAtPrice: (price: number) => number | null;
+  onAmend: (order: PaperOrderSnapshot, price: number) => Promise<void>;
+  onCancel: (clientOrderId: string) => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  usePaperChartLifetime("CanonicalProtectionLines", candleSeries);
+  const refs = useRef(new Map<string, IPriceLine>());
+  const protectionRoot = useRef<HTMLDivElement>(null);
+  const dragCleanup = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragCleanup.current?.(), []);
+  const [preview, setPreview] = useState<Record<string, number>>({});
+  const beginDrag = useCallback((order: PaperOrderSnapshot, key: string, event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    dragCleanup.current?.();
+    const root = protectionRoot.current;
+    const toPrice = (clientY: number) => {
+      const rect = root?.getBoundingClientRect();
+      const value = rect ? coordinates.coordinateToPrice(clientY - rect.top) : null;
+      return value != null && Number.isFinite(value) ? snapOverlayPrice(value) : null;
+    };
+    const originalPrice = order.protectionType === "STOP_LOSS" ? order.triggerPrice : order.price ?? order.limitPrice;
+    if (originalPrice == null || !Number.isFinite(originalPrice)) return;
+    const dragState = createProtectiveDragState();
+    if (!dragState.start(originalPrice)) return;
+    let cleaned = false;
+    let suppressingContextMenu = false;
+    let suppressTimer: number | null = null;
+    const removeContextSuppressor = () => {
+      suppressingContextMenu = false;
+      window.removeEventListener("contextmenu", onContextMenu, true);
+      if (suppressTimer != null) {
+        window.clearTimeout(suppressTimer);
+        suppressTimer = null;
+      }
+    };
+    const removeActiveListeners = () => {
+      if (cleaned) return;
+      cleaned = true;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+    const removeListeners = () => {
+      removeActiveListeners();
+      removeContextSuppressor();
+    };
+    dragCleanup.current = () => {
+      dragState.abort();
+      removeListeners();
+      setPreview({});
+    };
+    const armContextSuppressor = () => {
+      suppressingContextMenu = true;
+      if (suppressTimer != null) window.clearTimeout(suppressTimer);
+      suppressTimer = window.setTimeout(removeContextSuppressor, 1200);
+    };
+    const abortDrag = () => {
+      if (!dragState.abort()) return;
+      armContextSuppressor();
+      removeActiveListeners();
+      setPreview((current) => { const next = { ...current }; delete next[key]; return next; });
+    };
+    const onMove = (move: PointerEvent) => {
+      const price = toPrice(move.clientY);
+      if (price != null && dragState.preview(price)) setPreview((current) => ({ ...current, [key]: price }));
+    };
+    const onContextMenu = (context: MouseEvent) => {
+      if (!suppressingContextMenu && dragState.getState() !== "DRAGGING") return;
+      context.preventDefault();
+      context.stopImmediatePropagation();
+      if (dragState.getState() === "DRAGGING") abortDrag();
+      else removeContextSuppressor();
+    };
+    const onPointerDown = (down: PointerEvent) => {
+      if (down.button !== 2 || dragState.getState() !== "DRAGGING") return;
+      down.preventDefault();
+      down.stopPropagation();
+      down.stopImmediatePropagation();
+      abortDrag();
+    };
+    const onKeyDown = (keyboard: KeyboardEvent) => {
+      if (keyboard.key !== "Escape") return;
+      keyboard.preventDefault();
+      keyboard.stopPropagation();
+      abortDrag();
+    };
+    const onUp = async (up: PointerEvent) => {
+      if (dragState.getState() !== "DRAGGING") return;
+      removeListeners();
+      const price = toPrice(up.clientY);
+      if (price == null || !order.protectionType) { setPreview((current) => { const next = { ...current }; delete next[key]; return next; }); return; }
+      const validation = validateProtectiveDrag(side, order.protectionType, price, referencePrice);
+      if (validation) { setPreview((current) => { const next = { ...current }; delete next[key]; return next; }); onError(validation); return; }
+      dragState.commit(price);
+      try { await onAmend(order, price); } catch (error) { onError(error instanceof Error ? error.message : "Protective order amend failed"); }
+      setPreview((current) => { const next = { ...current }; delete next[key]; return next; });
+    };
+    window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("contextmenu", onContextMenu, true);
+    window.addEventListener("keydown", onKeyDown);
+  }, [coordinates, onAmend, onError, referencePrice, side]);
+  useEffect(() => {
+    if (!candleSeries) return;
+    const prices = new Map<string, { price: number; title: string; color: string }>();
+    for (const order of stopLoss) if (order.triggerPrice != null && Number.isFinite(order.triggerPrice)) prices.set(`SL:${order.id}`, { price: preview[`SL:${order.id}`] ?? order.triggerPrice, title: "SL", color: "#f59e0b" });
+    for (const order of takeProfit) { const price = order.price ?? order.limitPrice; if (price != null && Number.isFinite(price)) prices.set(`TP:${order.id}`, { price: preview[`TP:${order.id}`] ?? price, title: "TP", color: "#34d399" }); }
+    reconcileProtectivePriceLines(candleSeries, refs.current, prices, LineStyle.Dashed);
+  }, [candleSeries, stopLoss, takeProfit, preview]);
+  useEffect(() => () => { if (candleSeries) for (const line of Array.from(refs.current.values())) candleSeries.removePriceLine(line); refs.current.clear(); }, [candleSeries]);
+  const handles = [...stopLoss.map((order) => ({ order, key: `SL:${order.id}`, price: order.triggerPrice, label: "SL" })), ...takeProfit.map((order) => ({ order, key: `TP:${order.id}`, price: order.price ?? order.limitPrice, label: "TP" }))];
+  return <div ref={protectionRoot} className="absolute inset-0 pointer-events-none" style={{ width: chartWidth, height: chartHeight }}>{handles.map(({ order, key, price, label }) => { const shown = preview[key] ?? price; const y = shown != null ? coordinates.priceToCoordinate(shown) : null; if (y == null || !Number.isFinite(y) || price == null) return null; const model = { id: order.id, clientOrderId: order.id, kind: label === "SL" ? "STOP_LOSS" as const : "TAKE_PROFIT" as const, price: shown, side, quantity: order.size, draggable: true, cancelable: true, source: order }; return <PaperChartOrderBar key={key} model={model} projectedNet={shown != null ? netAtPrice(shown) : null} projectedNetPct={shown != null ? calculateNetPositionPct(netAtPrice(shown), positionQuantity, positionEntryPrice) : null} dragging={preview[key] != null} y={y} chartWidth={chartWidth} chartHeight={chartHeight} onPointerDown={(event) => beginDrag(order, key, event)} onCancel={(id) => void onCancel(id)} />; })}</div>;
 }

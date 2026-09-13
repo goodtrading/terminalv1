@@ -50,19 +50,32 @@ export async function fetchMarketCandles(
   symbol: string,
   interval: string,
   limit?: number,
+  before?: number | null,
 ): Promise<MarketCandle[]> {
-  return fetchNormalized(buildMarketCandlesUrl(symbol, interval, limit));
+  return fetchNormalized(buildMarketCandlesUrl(symbol, interval, limit, before));
 }
 
 async function fetchNormalized(url: string): Promise<MarketCandle[]> {
-  const res = await fetch(apiUrl(url));
-  if (!res.ok) throw new Error(`Candles fetch failed: ${res.status}`);
-  const raw = await res.json();
-  if (!Array.isArray(raw)) return [];
-  return raw.map(normalizeCandle).filter((c): c is MarketCandle => c !== null);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), CANDLE_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(apiUrl(url), { signal: controller.signal });
+    if (!res.ok) throw new Error(`Candles fetch failed: ${res.status}`);
+    const raw = await res.json();
+    if (!Array.isArray(raw)) return [];
+    return raw.map(normalizeCandle).filter((c): c is MarketCandle => c !== null);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return [];
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 const MIN_BASE_BARS = 8;
+const CANDLE_FETCH_TIMEOUT_MS = 15_000;
 
 /**
  * Prefer 1s as base (client derives 1m / 5m).
@@ -71,7 +84,7 @@ const MIN_BASE_BARS = 8;
  */
 export async function fetchBtcMarketBasePack(): Promise<BtcMarketBasePack> {
   const [oneS, native15mRaw, seed15sRaw] = await Promise.all([
-    fetchNormalized(buildMarketCandlesUrl("BTCUSDT", "1s")),
+    fetchNormalized(buildMarketCandlesUrl("BTCUSDT", "1s")).catch(() => [] as MarketCandle[]),
     fetchNormalized(buildMarketCandlesUrl("BTCUSDT", "15m")).catch(() => [] as MarketCandle[]),
     fetchNormalized(buildMarketCandlesUrl("BTCUSDT", "15s")).catch(() => [] as MarketCandle[]),
   ]);

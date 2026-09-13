@@ -13,6 +13,8 @@ export interface PositionRiskOverlayPosition {
   leverage?: number;
   marginMode?: string;
   unrealizedPnlUsdt?: number;
+  netPnlUsdt?: number | null;
+  netPositionPct?: number | null;
   /** BingX: ROE / account % when provided by snapshot. */
   unrealizedPnlAccountPct?: number;
 }

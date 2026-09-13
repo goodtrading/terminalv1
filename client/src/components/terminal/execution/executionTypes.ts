@@ -313,7 +313,7 @@ export interface ExchangeConnectionState {
 }
 
 export type OrderSide = "long" | "short";
-export type OrderType = "market" | "limit";
+export type OrderType = "market" | "limit" | "stop_market";
 export type MarginMode = "isolated" | "cross";
 export type SizeUnit = "USDT" | "BTC" | "%";
 
@@ -402,6 +402,22 @@ export interface PaperTradeLedgerSnapshot {
   exitTime?: string;
 }
 
+export interface PaperFillSnapshot {
+  fillId: string;
+  clientOrderId: string;
+  venueOrderId?: string;
+  instrument: string;
+  venue: string;
+  marketType: string;
+  side: "buy" | "sell";
+  price: number;
+  quantity: number;
+  timestamp: string;
+  fee: number | null;
+  feeAsset: string | null;
+  liquidity: "MAKER" | "TAKER" | null;
+}
+
 export interface PaperTradingSettings {
   initialBalanceUsdt: number;
   makerFeeBps: number;
@@ -422,6 +438,8 @@ export interface PaperAccountSnapshot {
   unrealizedPnlUsdt: number;
   realizedPnlUsdt: number;
   equityUsdt: number;
+  /** Canonical simulation aggregate; preserved as a decimal string. */
+  feesTotal?: string;
   updatedAt: string;
 }
 
@@ -439,8 +457,8 @@ export interface PaperPositionSnapshot {
   unrealizedPnL?: number;
   realizedPnl?: number;
   realizedPnL?: number;
-  leverage: number;
-  marginMode: "isolated" | "cross";
+  leverage: number | null;
+  marginMode: "isolated" | "cross" | "unknown";
   stopLoss?: number | null;
   takeProfit?: number | null;
 }
@@ -450,11 +468,22 @@ export interface PaperOrderSnapshot {
   symbol: string;
   side: OrderSide;
   type: OrderType;
-  price?: number;
+  price: number | null;
   size: number;
   sizeUnit: SizeUnit;
   leverage: number;
   marginMode: MarginMode;
   status: string;
   createdAt: string;
+  venueOrderId?: string;
+  instrument?: string;
+  orderType?: "MARKET" | "LIMIT" | "STOP_MARKET";
+  quantity?: string;
+  filledQuantity?: string;
+  remainingQuantity?: string;
+  limitPrice?: number;
+  triggerPrice?: number;
+  protectionType?: "STOP_LOSS" | "TAKE_PROFIT";
+  averageFillPrice?: number;
+  reason?: string;
 }

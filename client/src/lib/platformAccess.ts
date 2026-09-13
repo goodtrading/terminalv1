@@ -51,6 +51,14 @@ export function getTerminalRedirect(user: PlatformUser | null | undefined): stri
   return "/terminal";
 }
 
+/** Dev-only escape hatch for the SaaS-disabled gate. Never true in production. */
+export function shouldBypassSaasDisabledGate(
+  mockAccessMode: MockAccessMode,
+  isDevelopment: boolean,
+): boolean {
+  return isDevelopment && mockAccessMode === "active";
+}
+
 export type MarketingCtaAction = "navigate" | "download";
 
 export type MarketingCtaPair = {

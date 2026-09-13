@@ -5,20 +5,29 @@ import {
   writeDesktopPanelsVisible,
 } from "@/lib/desktopLayoutPrefs";
 
-export function useDesktopPanelsVisible() {
-  const [panelsVisible, setPanelsVisible] = useState(() => readDesktopPanelsVisible());
+export type TerminalViewMode = "trading" | "analysis" | "execution" | "focus";
 
-  const togglePanels = useCallback(() => {
-    setPanelsVisible((prev) => {
-      const next = !prev;
-      writeDesktopPanelsVisible(next);
-      void writeDesktopLog(
-        next ? "desktop_layout_panels_shown" : "desktop_layout_panels_hidden",
-      );
-      window.dispatchEvent(new Event("resize"));
-      return next;
-    });
+export function useDesktopPanelsVisible() {
+  const [viewMode, setViewModeState] = useState<TerminalViewMode>(() =>
+    readDesktopPanelsVisible() ? "trading" : "focus",
+  );
+
+  const setViewMode = useCallback((mode: TerminalViewMode) => {
+    setViewModeState(mode);
+    writeDesktopPanelsVisible(mode !== "focus");
+    void writeDesktopLog("desktop_layout_view_mode_changed", { mode });
+    window.dispatchEvent(new Event("resize"));
   }, []);
 
-  return { panelsVisible, togglePanels, setPanelsVisible };
+  const togglePanels = useCallback(() => {
+    setViewMode(viewMode === "focus" ? "trading" : "focus");
+  }, [setViewMode, viewMode]);
+
+  return {
+    viewMode,
+    setViewMode,
+    panelsVisible: viewMode !== "focus",
+    togglePanels,
+    setPanelsVisible: (visible: boolean) => setViewMode(visible ? "trading" : "focus"),
+  };
 }

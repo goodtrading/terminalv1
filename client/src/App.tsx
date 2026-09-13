@@ -6,6 +6,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { LearnModeProvider } from "@/hooks/useLearnMode";
 import { TerminalAuthProvider } from "@/contexts/TerminalAuthContext";
 import { initDesktopStorage, isDesktopBuild, writeDesktopLog } from "@/lib/desktopStorage";
+import { initCandleHistoryStore } from "@/lib/candleHistoryCache";
+import { isDesktopApp } from "@/lib/desktopRuntime";
 import { DesktopUpdateModal } from "@/components/desktop/DesktopUpdateModal";
 import { DesktopUpdateStartup } from "@/components/desktop/DesktopUpdateStartup";
 import { DesktopAppErrorBoundary } from "@/components/desktop/DesktopAppErrorBoundary";
@@ -15,8 +17,9 @@ import { AppRouter } from "@/AppRouter";
 function App() {
   useEffect(() => {
     document.title = "Terminal de Order Flow y Gamma para Bitcoin | GoodTrading";
-    if (!isDesktopBuild) return;
+    if (!isDesktopBuild && !isDesktopApp()) return;
     void initDesktopStorage();
+    void initCandleHistoryStore();
     const handleShutdown = () => {
       void writeDesktopLog("app_shutdown", { reason: "window_unload" });
     };
@@ -26,7 +29,7 @@ function App() {
       void writeDesktopLog("app_shutdown", { reason: "react_unmount" });
     };
   }, []);
-  
+
   return (
     <QueryClientProvider client={queryClient}>
       <DesktopUpdateProvider>

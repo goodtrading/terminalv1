@@ -1,4 +1,4 @@
-const rawApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() ?? "";
+const rawApiBaseUrl = import.meta.env?.VITE_API_BASE_URL?.trim() ?? "";
 
 export function apiBaseUrl(): string {
   return rawApiBaseUrl || window.location.origin;

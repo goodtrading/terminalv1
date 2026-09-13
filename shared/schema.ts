@@ -103,6 +103,8 @@ export type DealerExposure = Omit<typeof dealerExposure.$inferSelect, "vannaExpo
   liveVannaTotalEligibleRows: number | null;
   liveVannaCallSignedContribution: number | null;
   liveVannaPutSignedContribution: number | null;
+  liveVannaPositiveContribution: number | null;
+  liveVannaNegativeContribution: number | null;
   liveCharmExposure: number | null;
   liveCharmGrossAbsExposure: number | null;
   liveCharmDirectionalRatio: number | null;
@@ -110,10 +112,65 @@ export type DealerExposure = Omit<typeof dealerExposure.$inferSelect, "vannaExpo
   liveCharmTotalEligibleRows: number | null;
   liveCharmCallSignedContribution: number | null;
   liveCharmPutSignedContribution: number | null;
+  liveCharmPositiveContribution: number | null;
+  liveCharmNegativeContribution: number | null;
   heuristicVannaScore: number | null;
   heuristicCharmScore: number | null;
   vannaBias: "BULLISH" | "BEARISH" | "NEUTRAL" | null;
   charmBias: "BULLISH" | "BEARISH" | "NEUTRAL" | null;
+  vannaDynamics?: TemporalExposureDynamics | null;
+  charmDynamics?: TemporalExposureDynamics | null;
+};
+
+export type TemporalExposureSign = "NO_DATA" | "NEGATIVE" | "NEUTRAL" | "POSITIVE";
+export type TemporalExposureBalanceState = "NO_DATA" | "BALANCED" | "MIXED" | "DIRECTIONAL";
+export type TemporalExposureFragility = "NO_DATA" | "FRAGILE" | "MIXED" | "ROBUST";
+export type TemporalExposureDynamicState = "NO_DATA" | "INTENSIFYING" | "NEUTRALIZING" | "STABLE" | "CROSSING";
+export type TemporalExposureSpeed = "SLOW" | "MODERATE" | "FAST";
+export type TemporalExposureSignTransition =
+  | "NONE"
+  | "NEGATIVE_TO_POSITIVE"
+  | "POSITIVE_TO_NEGATIVE"
+  | "NEGATIVE_TO_NEUTRAL"
+  | "POSITIVE_TO_NEUTRAL"
+  | "NEUTRAL_TO_POSITIVE"
+  | "NEUTRAL_TO_NEGATIVE";
+
+export type ExposureMetricSnapshot = {
+  net: number | null;
+  gross: number | null;
+  positiveContribution: number | null;
+  negativeContribution: number | null;
+  directionalRatio: number | null;
+};
+
+export type TemporalExposureHorizonAnalysis = {
+  available: boolean;
+  lookbackTargetTimestamp: number;
+  previousTimestamp: number | null;
+  previousNet: number | null;
+  deltaAbsolute: number | null;
+  normalizedChange: number | null;
+  dynamicState: TemporalExposureDynamicState;
+  speed: TemporalExposureSpeed | null;
+  signTransition: TemporalExposureSignTransition;
+};
+
+export type TemporalExposureDynamics = {
+  snapshotTimestamp: number;
+  historyLength: number;
+  historyWarmup: boolean;
+  current: {
+    net: number | null;
+    gross: number | null;
+    sign: TemporalExposureSign;
+    directionalRatio: number | null;
+    balanceState: TemporalExposureBalanceState;
+    fragility: TemporalExposureFragility;
+    positiveContribution: number | null;
+    negativeContribution: number | null;
+  };
+  horizons: Record<"1m" | "5m" | "15m", TemporalExposureHorizonAnalysis>;
 };
 
 export type DealerHedgeSensitivity = {

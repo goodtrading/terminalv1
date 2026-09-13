@@ -146,9 +146,9 @@ function toPaperIntent(order: PaperNormalizedOrder): PaperOrderIntent {
   return {
     symbol,
     chartSymbol: chartSymbol.toUpperCase().replace(/-/g, ""),
-    venue: "bingx",
+    venue: "paper",
     marketType: "perpetual",
-    executionExchange: "bingx",
+
     side: mapSide(order.side),
     type: order.orderType,
     price: order.orderType === "limit" && order.price != null ? String(order.price) : undefined,

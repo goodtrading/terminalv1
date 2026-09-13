@@ -6,6 +6,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { getPaperExecutionBackend } from "@/lib/paperExecutionPort";
+import {
+  closeQuantityText,
+  isExecutableNautilusCloseQuantity,
+} from "./paperChartActions";
+
 import type { PaperPositionSnapshot } from "./executionTypes";
 import {
   formatPrice,
@@ -48,6 +54,20 @@ export function PaperClosePositionModal({
     return (qtyBTC * percent) / 100;
   }, [qtyBTC, percent]);
 
+  const closeQtyTextValue = useMemo(() => {
+    if (qtyBTC == null || qtyBTC <= 0) return null;
+    return closeQuantityText(qtyBTC, percent);
+  }, [qtyBTC, percent]);
+
+  const closeQtyExecutable =
+    closeQtyTextValue != null &&
+    (getPaperExecutionBackend() !== "nautilus" ||
+      isExecutableNautilusCloseQuantity(closeQtyTextValue));
+  const closeQtyError =
+    getPaperExecutionBackend() === "nautilus" && closeQtyTextValue != null && !closeQtyExecutable
+      ? "INVALID_QUANTITY_INCREMENT: active Paper instrument step is 0.001 BTC"
+      : null;
+
   const estRealized = useMemo(() => {
     if (entry == null || entry <= 0 || mark == null || closeQty == null) {
       return null;
@@ -56,6 +76,12 @@ export function PaperClosePositionModal({
       display?.side === "long" ? mark - entry : entry - mark;
     return pnlPerUnit * closeQty;
   }, [closeQty, entry, mark, display?.side]);
+
+  const isPercentExecutable = (candidate: number) => {
+    if (qtyBTC == null || qtyBTC <= 0) return false;
+    if (getPaperExecutionBackend() !== "nautilus") return true;
+    return isExecutableNautilusCloseQuantity(closeQuantityText(qtyBTC, candidate));
+  };
 
   const confirmLabel =
     percent >= 100 ? "Close full position" : "Close partial position";
@@ -106,7 +132,7 @@ export function PaperClosePositionModal({
               <button
                 key={p}
                 type="button"
-                disabled={loading || qtyBTC == null}
+                disabled={loading || qtyBTC == null || !isPercentExecutable(p)}
                 onClick={() => setPercent(p)}
                 className={cn(
                   "py-1 text-[8px] font-bold uppercase border rounded",
@@ -146,6 +172,9 @@ export function PaperClosePositionModal({
         </div>
 
         <div className="text-[9px] text-slate-500 space-y-0.5 border-t border-terminal-border/60 pt-2">
+        {closeQtyError ? (
+          <div className="text-red-300">{closeQtyError}</div>
+        ) : null}
           <div>Est. close qty: {formatQtyBtc(closeQty)} BTC</div>
           {estRealized != null ? (
             <div>
@@ -173,7 +202,7 @@ export function PaperClosePositionModal({
           </button>
           <button
             type="button"
-            disabled={loading || qtyBTC == null || closeQty == null}
+            disabled={loading || qtyBTC == null || closeQty == null || !closeQtyExecutable}
             onClick={() => void onConfirm(percent)}
             className="py-1.5 text-[9px] font-bold uppercase border border-red-900/50 rounded text-red-300 bg-red-950/25 hover:bg-red-950/40 disabled:opacity-50"
           >

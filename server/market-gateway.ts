@@ -27,7 +27,6 @@ function bybitIntervalFromApi(iv: string): string {
   return m[iv] ?? iv;
 }
 
-/** Coinbase candles granularity in seconds. */
 function coinbaseGranularitySeconds(iv: string): number {
   const m: Record<string, number> = {
     "1m": 60,
@@ -38,6 +37,55 @@ function coinbaseGranularitySeconds(iv: string): number {
     "1d": 86400,
   };
   return m[iv] ?? 900;
+}
+
+function apiIntervalSeconds(iv: string): number {
+  const m: Record<string, number> = {
+    "1s": 1,
+    "15s": 15,
+    "1m": 60,
+    "3m": 180,
+    "5m": 300,
+    "15m": 900,
+    "30m": 1800,
+    "1h": 3600,
+    "2h": 7200,
+    "4h": 14_400,
+    "6h": 21_600,
+    "12h": 43_200,
+    "1d": 86_400,
+  };
+  return m[iv] ?? 900;
+}
+
+function sortAndDedupeCandles(candles: Candle[]): Candle[] {
+  const byTime = new Map<number, Candle>();
+  for (const candle of candles) {
+    if (!candle || !Number.isFinite(candle.time)) continue;
+    byTime.set(candle.time, candle);
+  }
+  return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+}
+
+async function collectCandlesBackward(
+  targetLimit: number,
+  pageSize: number,
+  initialBeforeMs: number | null | undefined,
+  fetchPage: (beforeMs: number | undefined, pageSize: number) => Promise<Candle[]>,
+): Promise<Candle[]> {
+  const limit = Math.max(1, targetLimit);
+  const safePageSize = Math.max(1, pageSize);
+  const maxPages = Math.max(2, Math.ceil(limit / safePageSize) + 4);
+  let beforeMs = initialBeforeMs == null || !Number.isFinite(initialBeforeMs) ? undefined : Math.floor(initialBeforeMs) - 1;
+  let collected: Candle[] = [];
+  for (let page = 0; page < maxPages && collected.length < limit; page += 1) {
+    const batch = sortAndDedupeCandles(await fetchPage(beforeMs, safePageSize));
+    if (!batch.length) break;
+    collected = sortAndDedupeCandles([...batch, ...collected]);
+    if (batch.length < safePageSize) break;
+    beforeMs = batch[0]!.time * 1000 - 1;
+  }
+  return collected.slice(-limit);
 }
 
 // --- Internal Market Data Schemas ---
@@ -137,14 +185,14 @@ export class MarketDataGateway {
    * 15s bars from Binance 1s klines. Paginates 1s REST (1000 cap/request) so limits up to 500
    * fifteen-second bars are feasible (~limit×15 one-second samples).
    */
-  private static async getCandles15sFrom1s(symbol: string, limit: number): Promise<Candle[]> {
+  private static async getCandles15sFrom1s(symbol: string, limit: number, beforeMs?: number): Promise<Candle[]> {
     const BINANCE_1S_MAX = 1000;
     const target15s = clampCandleLimit(limit, getCandleLimitForTimeframe("15s"));
     const oneSecNeeded = target15s * 15;
     const maxPages = 6;
 
     let allOneSec: Candle[] = [];
-    let endTimeMs: number | undefined;
+    let endTimeMs: number | undefined = beforeMs != null && Number.isFinite(beforeMs) ? Math.floor(beforeMs) - 1 : undefined;
 
     for (let page = 0; page < maxPages && allOneSec.length < oneSecNeeded; page++) {
       let path = `/api/v3/klines?symbol=${symbol}&interval=1s&limit=${BINANCE_1S_MAX}`;
@@ -155,12 +203,11 @@ export class MarketDataGateway {
       const batch = this.validateAndSort(this.normalizeBinance(out.data));
       if (!batch.length) break;
 
-      const oldestSec = batch[0]!.time;
       const merged = page === 0 ? batch : [...batch, ...allOneSec];
       allOneSec = this.validateAndSort(merged);
 
       if (batch.length < BINANCE_1S_MAX) break;
-      endTimeMs = oldestSec * 1000 - 1;
+      endTimeMs = batch[0]!.time * 1000 - 1;
     }
 
     if (allOneSec.length === 0) return [];
@@ -173,67 +220,106 @@ export class MarketDataGateway {
       volume: c.volume,
     }));
     const fifteen = aggregateOhlcvCandles(asAgg, 15);
-    return fifteen.slice(-target15s);
+    const filtered = beforeMs != null && Number.isFinite(beforeMs)
+      ? fifteen.filter((c) => c.time * 1000 < Math.floor(beforeMs))
+      : fifteen;
+    return filtered.slice(-target15s);
   }
 
-  static async getCandles(symbol: string, interval: string = "15m", limit: number = 500, preferredSource?: string): Promise<Candle[]> {
+  static async getCandles(symbol: string, interval: string = "15m", limit: number = 500, preferredSource?: string, beforeMs?: number): Promise<Candle[]> {
     const iv = interval.trim().toLowerCase();
     const safeLimit = clampCandleLimit(limit, getCandleLimitForTimeframe(iv));
+    const safeBeforeMs = beforeMs != null && Number.isFinite(beforeMs) ? Math.floor(beforeMs) : undefined;
     if (iv === "15s") {
       try {
-        return await this.getCandles15sFrom1s(symbol, safeLimit);
+        return await this.getCandles15sFrom1s(symbol, safeLimit, safeBeforeMs);
       } catch (e: any) {
         console.warn("[Gateway] 15s via 1s failed:", e?.message ?? e);
         throw e;
       }
     }
 
-    const krakenProvider = {
-      name: 'Kraken',
-      fetch: async (): Promise<{ data: Candle[]; provider: string; latency: number }> => {
-        const candles = await getKrakenCandles(symbol, iv, safeLimit);
-        return { data: candles, provider: 'Kraken', latency: 0 };
+    const providerAttempts: Array<{
+      name: string;
+      fetch: () => Promise<{ data: Candle[]; provider: string; latency: number }>;
+      normalize: (d: any) => Candle[];
+    }> = [
+      {
+        name: 'Binance',
+        fetch: async () => {
+          const candles = await collectCandlesBackward(safeLimit, 500, safeBeforeMs, async (before, pageLimit) => {
+            let path = `/api/v3/klines?symbol=${symbol}&interval=${iv}&limit=${pageLimit}`;
+            if (before != null) path += `&endTime=${before}`;
+            const out = await this.fetchBinance(path);
+            return this.normalizeBinance(out.data);
+          });
+          return { data: candles, provider: 'Binance', latency: 0 };
+        },
+        normalize: (d: any) => this.validateAndSort(d),
       },
-      normalize: (d: Candle[]) => d
-    };
-    const baseProviders = [
-      { name: 'Binance', fetch: () => this.fetchBinance(`/api/v3/klines?symbol=${symbol}&interval=${iv}&limit=${safeLimit}`), normalize: (d: any) => this.normalizeBinance(d) },
       {
         name: 'Bybit',
-        fetch: () =>
-          this.fetchBybit(
-            `/v5/market/kline?category=spot&symbol=${symbol}&interval=${bybitIntervalFromApi(iv)}&limit=${safeLimit}`,
-          ),
-        normalize: (d: any) => this.normalizeBybit(d),
+        fetch: async () => {
+          const candles = await collectCandlesBackward(safeLimit, 500, safeBeforeMs, async (before, pageLimit) => {
+            let path = `/v5/market/kline?category=spot&symbol=${symbol}&interval=${bybitIntervalFromApi(iv)}&limit=${pageLimit}`;
+            if (before != null) path += `&end=${before}`;
+            const out = await this.fetchBybit(path);
+            return this.normalizeBybit(out.data);
+          });
+          return { data: candles, provider: 'Bybit', latency: 0 };
+        },
+        normalize: (d: any) => this.validateAndSort(d),
       },
       {
         name: 'Coinbase',
-        fetch: () =>
-          this.fetchCoinbase(
-            `/products/${symbol.replace('USDT', '-USDT')}/candles?granularity=${coinbaseGranularitySeconds(iv)}`,
-          ),
-        normalize: (d: any) => this.normalizeCoinbase(d),
+        fetch: async () => {
+          const candles = await collectCandlesBackward(safeLimit, 300, safeBeforeMs, async (before, pageLimit) => {
+            const granularity = coinbaseGranularitySeconds(iv);
+            const endSec = before != null ? Math.floor(before / 1000) : Math.floor(Date.now() / 1000);
+            const windowStart = Math.max(0, endSec - granularity * pageLimit * 2);
+            const out = await this.fetchCoinbase(
+              `/products/${symbol.replace('USDT', '-USDT')}/candles?granularity=${granularity}&start=${windowStart}&end=${endSec}`,
+            );
+            return this.normalizeCoinbase(out.data);
+          });
+          return { data: candles, provider: 'Coinbase', latency: 0 };
+        },
+        normalize: (d: any) => this.validateAndSort(d),
+      },
+      {
+        name: 'Kraken',
+        fetch: async () => {
+          const candles = await collectCandlesBackward(safeLimit, 720, safeBeforeMs, async (before, pageLimit) => {
+            const intervalCode = iv;
+            const lookbackMs = apiIntervalSeconds(intervalCode) * pageLimit * 2 * 1000;
+            void lookbackMs;
+            return getKrakenCandles(symbol, intervalCode, pageLimit);
+          });
+          return { data: candles, provider: 'Kraken', latency: 0 };
+        },
+        normalize: (d: any) => this.validateAndSort(d),
       },
     ];
-    const providers = preferredSource === 'kraken'
-      ? [krakenProvider, ...baseProviders]
-      : [...baseProviders, krakenProvider];
 
-    let lastError = null;
-    for (const provider of providers) {
+    const orderedAttempts = preferredSource === 'kraken'
+      ? [providerAttempts[3], ...providerAttempts.slice(0, 3)]
+      : providerAttempts;
+
+    let lastError: unknown = null;
+    for (const provider of orderedAttempts) {
       try {
+        if (!provider) continue;
         const out = await provider.fetch();
-        const candles = provider.normalize(out.data).slice(0, safeLimit);
-        const validated = this.validateAndSort(candles);
+        const validated = provider.normalize(out.data).slice(-safeLimit);
         if (MarketDataGateway.DEBUG_GATEWAY) {
           console.log(`[Gateway] Provider: ${out.provider} | Latency: ${out.latency}ms | Count: ${validated.length}`);
         }
         return validated;
       } catch (e: any) {
-        lastError = e.message;
+        lastError = e?.message ?? e;
       }
     }
-    throw new Error(lastError || "All providers failed");
+    throw new Error(typeof lastError === 'string' ? lastError : 'All providers failed');
   }
 
   static async getTicker(symbol: string, preferredSource?: string): Promise<Ticker> {
@@ -569,11 +655,11 @@ export class MarketDataGateway {
   }
 
   private static validateAndSort(candles: Candle[]): Candle[] {
-    const valid = candles.filter(c => 
-      Number.isFinite(c.time) && 
-      Number.isFinite(c.open) && 
-      Number.isFinite(c.high) && 
-      Number.isFinite(c.low) && 
+    const valid = candles.filter(c =>
+      Number.isFinite(c.time) &&
+      Number.isFinite(c.open) &&
+      Number.isFinite(c.high) &&
+      Number.isFinite(c.low) &&
       Number.isFinite(c.close) &&
       Number.isFinite(c.volume)
     ).sort((a, b) => a.time - b.time);

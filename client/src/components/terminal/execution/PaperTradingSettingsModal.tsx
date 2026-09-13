@@ -1,5 +1,6 @@
+import { PAPER_COST_POLICY } from "@shared/trading/paperCostPolicy";
 import { useCallback, useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
@@ -8,8 +9,9 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
-import type { PaperAccountSnapshot, PaperTradingSettings } from "./executionTypes";
+import type { PaperTradingSettings } from "./executionTypes";
 import { paperApiFetch } from "./paperApiClient";
+import { usePaperState } from "@/lib/paperState";
 
 const inputClass =
   "w-full rounded border border-terminal-border bg-terminal-bg px-2 py-1.5 text-[11px] font-mono text-white focus:border-cyan-500/40 focus:outline-none";
@@ -23,9 +25,9 @@ type Draft = Omit<PaperTradingSettings, "updatedAt">;
 
 const DEFAULT_DRAFT: Draft = {
   initialBalanceUsdt: 10000,
-  makerFeeBps: 2,
-  takerFeeBps: 5,
-  slippageBps: 1,
+  makerFeeBps: PAPER_COST_POLICY.makerFeeBps,
+  takerFeeBps: PAPER_COST_POLICY.takerFeeBps,
+  slippageBps: PAPER_COST_POLICY.slippageBps,
   maxLeverage: 20,
   defaultLeverage: 5,
   defaultMarginMode: "isolated",
@@ -35,36 +37,21 @@ const DEFAULT_DRAFT: Draft = {
 
 export function PaperTradingSettingsModal({ open, onClose }: Props) {
   const queryClient = useQueryClient();
+  const paperState = usePaperState();
+  const isNautilus = paperState.backend === "nautilus";
   const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState<string | null>(null);
 
-  const settingsQuery = useQuery<PaperTradingSettings>({
-    queryKey: ["/api/paper/settings"],
-    queryFn: async () => {
-      const res = await paperApiFetch("/api/paper/settings");
-      if (!res.ok) throw new Error("Failed to load settings");
-      return res.json() as Promise<PaperTradingSettings>;
-    },
-    enabled: open,
-  });
-
-  const accountQuery = useQuery<PaperAccountSnapshot>({
-    queryKey: ["/api/paper/account"],
-    queryFn: async () => {
-      const res = await paperApiFetch("/api/paper/account");
-      if (!res.ok) throw new Error("Failed to load account");
-      return res.json() as Promise<PaperAccountSnapshot>;
-    },
-    enabled: open,
-    refetchInterval: open ? 5000 : false,
-  });
+  const settings = paperState.settings;
+  const account = paperState.account;
+  const notWired = paperState.resources.settings !== "AVAILABLE";
 
   useEffect(() => {
-    if (settingsQuery.data) {
-      const s = settingsQuery.data;
+    if (settings) {
+      const s = settings;
       setDraft({
         initialBalanceUsdt: s.initialBalanceUsdt,
         makerFeeBps: s.makerFeeBps,
@@ -77,9 +64,10 @@ export function PaperTradingSettingsModal({ open, onClose }: Props) {
         allowLimitOrders: s.allowLimitOrders,
       });
     }
-  }, [settingsQuery.data]);
+  }, [settings]);
 
   const invalidatePaper = useCallback(async () => {
+    await paperState.refresh();
     const keys = [
       "/api/paper/account",
       "/api/paper/settings",
@@ -93,7 +81,7 @@ export function PaperTradingSettingsModal({ open, onClose }: Props) {
     await Promise.all(
       keys.map((key) => queryClient.invalidateQueries({ queryKey: [key] })),
     );
-  }, [queryClient]);
+  }, [paperState.refresh, queryClient]);
 
   const buildSettingsPayload = () => ({
     initialBalanceUsdt: Number(draft.initialBalanceUsdt),
@@ -174,8 +162,7 @@ export function PaperTradingSettingsModal({ open, onClose }: Props) {
       setMessage("Paper state reset.");
       setConfirmReset(null);
       await invalidatePaper();
-      await settingsQuery.refetch();
-      await accountQuery.refetch();
+
     } catch {
       setMessage("Reset failed");
     } finally {
@@ -183,8 +170,7 @@ export function PaperTradingSettingsModal({ open, onClose }: Props) {
     }
   };
 
-  const account = accountQuery.data;
-  const loading = settingsQuery.isLoading;
+  const loading = paperState.loading && !settings;
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -199,7 +185,11 @@ export function PaperTradingSettingsModal({ open, onClose }: Props) {
         </DialogHeader>
 
         <div className="px-4 py-3 max-h-[70vh] overflow-y-auto space-y-4 text-[10px] font-mono">
-          {loading ? (
+          {notWired ? (
+            <p className="border border-amber-500/30 rounded px-3 py-3 text-amber-300/90">
+              Nautilus Paper state is not wired yet. Account and settings are unavailable.
+            </p>
+          ) : loading ? (
             <div className="flex items-center justify-center gap-2 py-8 text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin" />
               Loading…
@@ -443,7 +433,7 @@ export function PaperTradingSettingsModal({ open, onClose }: Props) {
         <div className="flex gap-2 px-4 py-3 border-t border-terminal-border">
           <button
             type="button"
-            disabled={saving || loading}
+            disabled={saving || loading || notWired}
             onClick={() => void saveSettings()}
             className="flex-1 rounded border border-cyan-500/45 bg-cyan-600/15 py-2 text-[10px] font-bold uppercase tracking-wider text-cyan-100 hover:bg-cyan-600/25 disabled:opacity-50"
           >

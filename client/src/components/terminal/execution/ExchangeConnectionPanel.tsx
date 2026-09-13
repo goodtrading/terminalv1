@@ -1,5 +1,5 @@
 import { apiUrl } from "../../../lib/apiBase";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { TerminalPanel } from "../TerminalPanel";
 import { cn } from "@/lib/utils";
 import { Star, ExternalLink, Settings } from "lucide-react";
@@ -20,6 +20,11 @@ import { useBrokerSession } from "./useBrokerSession";
 import { EXCHANGE_PANEL_SLOT_ORDER } from "./exchangeVisualOrder";
 import { openExternalUrl } from "@/lib/openExternalUrl";
 import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
+import {
+  getExecutionWorkspace,
+  setExecutionWorkspace,
+  subscribeExecutionWorkspace,
+} from "@/lib/executionWorkspace";
 
 function openReferral(url: string) {
   void openExternalUrl(url, { source: "bingx_register" }).catch((error) => {
@@ -101,13 +106,13 @@ function ExchangeCard({
   const isPaper = exchange.id === "paper";
   const phase = isBingx ? (bingxPhase ?? "not_connected") : null;
   const statusText = (() => {
-    if (isPaper && paperConnected) return "Connected";
+    if (isPaper && paperConnected) return "Selected";
     if (isBingx && phase) return bingxStatusLabel(phase, bingxSecureApi);
     if (exchange.status === "coming_soon") return "Coming soon";
     return "Ready";
   })();
   const healthText = (() => {
-    if (isPaper && paperConnected) return "Active";
+    if (isPaper && paperConnected) return "Available";
     if (isBingx && phase) return bingxHealthLabel(phase);
     if (exchange.status === "coming_soon") return "Coming soon";
     return "Ready";
@@ -116,10 +121,10 @@ function ExchangeCard({
     !brokerBackgroundBusy &&
     (phase === "connecting" || phase === "checking");
   const showDisconnect =
-    (isBingx && bingxConnected && onDisconnect) || (isPaper && paperConnected && onDisconnect);
+    isBingx && bingxConnected && onDisconnect;
 
   const connectLabel = (() => {
-    if (isPaper) return paperConnected ? "Disconnect" : "Connect";
+    if (isPaper) return paperConnected ? "Selected" : "Open Paper";
     if (!isBingx) return "Connect";
     if (connecting) return "Connecting";
     if (bingxConnected) return "Manage";
@@ -218,7 +223,7 @@ function ExchangeCard({
           {isPaper && paperConnected ? (
             <>
               <span>·</span>
-              <span className="text-cyan-400/80">Internal simulated broker connected</span>
+              <span className="text-cyan-400/80">Paper workspace selected</span>
             </>
           ) : null}
           {isBingx && apiKeyMasked ? (
@@ -247,10 +252,7 @@ function ExchangeCard({
             disabled={disabled || (isBingx && connecting)}
             onClick={() => {
               if (disabled) return;
-              if (isPaper && paperConnected && onDisconnect) {
-                onDisconnect();
-                return;
-              }
+              if (isPaper && paperConnected) return;
               if (isBingx && bingxConnected && onManage) {
                 onManage();
                 return;
@@ -323,8 +325,7 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
     disconnectBroker,
     deleteSavedBingXConnection,
     activateSavedBingXConnection,
-    connectPaperTrading,
-    disconnectPaperTrading,
+
     restoreLoading,
     loginStatusLoading,
   } = useBrokerSession();
@@ -386,8 +387,12 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
     session.exchange === "bingx" &&
     session.connected &&
     (bingxReadOnly || bingxSecureApi);
-  const paperActive =
-    session.exchange === "paper" && session.connected && session.connectionMode === "paper";
+  const executionWorkspace = useSyncExternalStore(
+    subscribeExecutionWorkspace,
+    getExecutionWorkspace,
+    getExecutionWorkspace,
+  );
+  const paperActive = executionWorkspace === "paper";
   const showSavedBingxInactive =
     Boolean(primarySavedBingX) && !bingxApiConnected;
   const brokerBackgroundBusy = restoreLoading || loginStatusLoading;
@@ -450,9 +455,7 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
                 bingxConnected={ex.id === "bingx" ? session.connected : false}
                 bingxDemo={ex.id === "bingx" ? session.demo : false}
                 paperConnected={
-                  ex.id === "paper" &&
-                  session.exchange === "paper" &&
-                  session.connected
+                  ex.id === "paper" && executionWorkspace === "paper"
                 }
                 onConnect={() => {
                   if (ex.id === "bingx") {
@@ -462,7 +465,7 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
                       setBingxModalOpen(true);
                     }
                   }
-                  if (ex.id === "paper") connectPaperTrading();
+                  if (ex.id === "paper") setExecutionWorkspace("paper");
                 }}
                 onManage={() => {
                   if (ex.id === "bingx") setBingxModalOpen(true);
@@ -476,9 +479,7 @@ export function ExchangeConnectionPanel({ collapsed = false }: { collapsed?: boo
                 onDisconnect={
                   ex.id === "bingx"
                     ? () => void disconnectBroker()
-                    : ex.id === "paper"
-                      ? () => disconnectPaperTrading()
-                      : undefined
+                    : undefined
                 }
                 onOpenPaperSettings={
                   ex.id === "paper" ? () => setPaperSettingsOpen(true) : undefined

@@ -47,10 +47,7 @@ export function validatePaperTicketOrder(
     return EXECUTION_MAPPING_MISSING_MESSAGE;
   }
   if (ctx.executionMarketType !== "perpetual") {
-    return "Only BingX perpetual execution is supported.";
-  }
-  if (ctx.executionExchange !== "bingx") {
-    return "Only BingX is configured as the execution venue.";
+    return "Paper execution supports perpetual simulation only.";
   }
 
   if (!Number.isFinite(input.notionalUsdt) || input.notionalUsdt <= 0) {

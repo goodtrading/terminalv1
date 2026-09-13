@@ -13,8 +13,9 @@ import {
   runBookmapLimitHistorySnapshotSample,
 } from "./bookmapEngine";
 import { recordBboFromOrderBook } from "./bboHistoryRegistry";
+import { publishPerpBbo, publishPerpQuoteUnavailable } from "./nautilusQuoteStream";
 import type { OrderBookLevel, OrderBookSnapshot } from "./orderbookService";
-import { isHeatmapEnabled } from "../lib/runtimeEnv";
+
 
 const WS_URL = "wss://fstream.binance.com/ws/btcusdt@depth";
 const REST_DEPTH_URL = "https://fapi.binance.com/fapi/v1/depth";
@@ -23,9 +24,7 @@ const DEBUG_ENABLED = process.env.NODE_ENV === "development";
 const STALE_MS = 3_000;
 const HEALTH_INTERVAL_MS = 1_500;
 const RECONNECT_MS = 5_000;
-const HEATMAP_ENABLED = isHeatmapEnabled();
-
-if (HEATMAP_ENABLED && DEBUG_ENABLED) {
+if (DEBUG_ENABLED) {
   console.debug("[OrderBookServicePerp] Using WebSocket URL:", WS_URL, "depth:", DEPTH_LEVELS);
 }
 
@@ -33,9 +32,43 @@ let snapshot: OrderBookSnapshot = { bids: [], asks: [] };
 let ws: WebSocket | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let healthInterval: ReturnType<typeof setInterval> | null = null;
+
 let resyncInFlight = false;
 let lastResyncAttemptMs = 0;
+let sourceStarted = false;
 const RESYNC_COOLDOWN_MS = 4_000;
+
+export type PerpOrderBookSyncState = "BOOTSTRAPPING" | "SYNCHRONIZED" | "DESYNCHRONIZED";
+export type PerpDepthUpdateDecision = "APPLY" | "STALE" | "GAP";
+
+export function shouldAcquirePerpMarketData(_heatmapEnabled: boolean, sourceStarted = false): boolean {
+  return !sourceStarted;
+}
+
+export function classifyPerpDepthUpdate(
+  lastUpdateId: number | null,
+  firstUpdateId: number | null,
+  finalUpdateId: number | null,
+  previousFinalUpdateId: number | null = null,
+  previousUpdateId: number | null = null,
+): PerpDepthUpdateDecision {
+  if (
+    lastUpdateId == null ||
+    firstUpdateId == null ||
+    finalUpdateId == null ||
+    !Number.isFinite(lastUpdateId) ||
+    !Number.isFinite(firstUpdateId) ||
+    !Number.isFinite(finalUpdateId)
+  ) return "APPLY";
+  if (previousFinalUpdateId != null) {
+    if (finalUpdateId <= previousFinalUpdateId) return "STALE";
+    if (previousUpdateId == null || previousUpdateId !== previousFinalUpdateId) return "GAP";
+  } else {
+    if (finalUpdateId < lastUpdateId) return "STALE";
+    if (!(firstUpdateId <= lastUpdateId && lastUpdateId <= finalUpdateId)) return "GAP";
+  }
+  return "APPLY";
+}
 
 const health = {
   connected: false,
@@ -43,6 +76,9 @@ const health = {
   latestUpdateId: null as number | null,
   reconnectCount: 0,
 };
+let lastAppliedUpdateId: number | null = null;
+let previousFinalUpdateId: number | null = null;
+let syncState: PerpOrderBookSyncState = "BOOTSTRAPPING";
 
 function parseLevels(arr: [string, string][]): OrderBookLevel[] {
   if (!Array.isArray(arr)) return [];
@@ -106,6 +142,7 @@ function applyDeltaToSnapshot(
   removalAsks: OrderBookLevel[],
   ts: number,
 ): void {
+  const appliedAt = Date.now();
   const hasFullSnapshot = snapshot.bids.length >= 50 || snapshot.asks.length >= 50;
 
   if (hasFullSnapshot) {
@@ -126,15 +163,43 @@ function applyDeltaToSnapshot(
     snapshot = {
       bids: Array.from(bidMap.values()).sort((a, b) => b.price - a.price),
       asks: Array.from(askMap.values()).sort((a, b) => a.price - b.price),
-      timestamp: ts,
+      timestamp: appliedAt,
     };
   } else {
     snapshot = {
       bids: deltaBids.sort((a, b) => b.price - a.price),
       asks: deltaAsks.sort((a, b) => a.price - b.price),
-      timestamp: ts,
+      timestamp: appliedAt,
     };
   }
+}
+
+function invalidatePerpSnapshot(): void {
+  snapshot = { bids: [], asks: [] };
+  syncState = "DESYNCHRONIZED";
+  health.lastMessageTs = 0;
+  health.latestUpdateId = null;
+  lastAppliedUpdateId = null;
+  previousFinalUpdateId = null;
+  publishPerpQuoteUnavailable();
+}
+
+function publishCurrentPerpBbo(sourceTimestampMs: number): void {
+  if (syncState !== "SYNCHRONIZED" || !isPerpBboValid()) return;
+  const bid = snapshot.bids[0];
+  const ask = snapshot.asks[0];
+  if (!bid || !ask || !snapshot.timestamp) return;
+  publishPerpBbo({
+    bestBidPrice: bid.price.toString(),
+    bestBidSize: bid.size.toString(),
+    bestAskPrice: ask.price.toString(),
+    bestAskSize: ask.size.toString(),
+    sourceTimestampMs,
+    localAppliedTimestampMs: snapshot.timestamp,
+    source: "binance",
+    market: "perpetual",
+    symbol: "BTCUSDT",
+  });
 }
 
 function logPerpHealth(reason?: string): void {
@@ -158,7 +223,6 @@ function logPerpHealth(reason?: string): void {
 }
 
 export async function initializePerpFullDepth(): Promise<void> {
-  if (!HEATMAP_ENABLED) return;
   const response = await fetch(`${REST_DEPTH_URL}?symbol=BTCUSDT&limit=${DEPTH_LEVELS}`);
   if (!response.ok) {
     throw new Error(`Perp REST depth failed: ${response.status}`);
@@ -167,6 +231,7 @@ export async function initializePerpFullDepth(): Promise<void> {
   const bids = parseLevels(data.bids);
   const asks = parseLevels(data.asks);
   const ts = Date.now();
+  syncState = "BOOTSTRAPPING";
   snapshot = {
     bids: bids.sort((a, b) => b.price - a.price),
     asks: asks.sort((a, b) => a.price - b.price),
@@ -177,6 +242,13 @@ export async function initializePerpFullDepth(): Promise<void> {
     data.lastUpdateId != null && Number.isFinite(Number(data.lastUpdateId))
       ? Number(data.lastUpdateId)
       : null;
+  lastAppliedUpdateId = health.latestUpdateId;
+  previousFinalUpdateId = null;
+  if (!isPerpBboValid()) {
+    invalidatePerpSnapshot();
+    throw new Error("Perp REST depth returned an invalid BBO");
+  }
+  syncState = "SYNCHRONIZED";
 
   feedBinanceOrderBook(
     { bids: snapshot.bids, asks: snapshot.asks, timestamp: ts },
@@ -184,6 +256,7 @@ export async function initializePerpFullDepth(): Promise<void> {
     "perp",
   );
   recordBboFromOrderBook("perp", "BTCUSDT", snapshot.bids, snapshot.asks, ts);
+  publishCurrentPerpBbo(ts);
 
   if (DEBUG_ENABLED) {
     console.debug("[OrderBookServicePerp] Full depth initialized:", {
@@ -195,7 +268,6 @@ export async function initializePerpFullDepth(): Promise<void> {
 }
 
 export async function resyncPerpOrderBook(reason: string): Promise<void> {
-  if (!HEATMAP_ENABLED) return;
   if (resyncInFlight) return;
   const now = Date.now();
   if (now - lastResyncAttemptMs < RESYNC_COOLDOWN_MS) return;
@@ -204,6 +276,13 @@ export async function resyncPerpOrderBook(reason: string): Promise<void> {
   try {
     if (DEBUG_ENABLED) {
       console.warn("[OrderBookServicePerp] Resyncing from REST:", reason);
+    }
+    const shouldResubscribe =
+      reason === "stale-age" || reason === "sequence-gap" || reason === "crossed-bbo-live";
+    if (shouldResubscribe && ws?.readyState === WebSocket.OPEN) {
+      ws.close();
+      ws = null;
+      health.connected = false;
     }
     await initializePerpFullDepth();
     if (ws?.readyState !== WebSocket.OPEN) {
@@ -275,15 +354,39 @@ function connect(): void {
         Number(inner.E) ||
         Number(inner.T) ||
         Date.now();
-      if (inner.u != null && Number.isFinite(Number(inner.u))) {
-        health.latestUpdateId = Number(inner.u);
-      } else if (inner.lastUpdateId != null) {
-        health.latestUpdateId = Number(inner.lastUpdateId);
+      const firstUpdateId = inner.U != null ? Number(inner.U) : null;
+      const finalUpdateId = inner.u != null ? Number(inner.u) : null;
+      const previousUpdateId = inner.pu != null ? Number(inner.pu) : null;
+      const decision = classifyPerpDepthUpdate(
+        lastAppliedUpdateId,
+        firstUpdateId,
+        finalUpdateId,
+        previousFinalUpdateId,
+        previousUpdateId,
+      );
+      if (decision === "STALE") {
+        return;
+      }
+      if (decision === "GAP") {
+        invalidatePerpSnapshot();
+        void resyncPerpOrderBook("sequence-gap");
+        return;
+      }
+      applyDeltaToSnapshot(deltaBids, deltaAsks, removalBids, removalAsks, ts);
+
+      if (!isPerpBboValid()) {
+        invalidatePerpSnapshot();
+        void resyncPerpOrderBook("crossed-bbo-live");
+        return;
       }
 
       health.lastMessageTs = Date.now();
-
-      applyDeltaToSnapshot(deltaBids, deltaAsks, removalBids, removalAsks, ts);
+      syncState = "SYNCHRONIZED";
+      if (finalUpdateId != null && Number.isFinite(finalUpdateId)) {
+        lastAppliedUpdateId = finalUpdateId;
+        previousFinalUpdateId = finalUpdateId;
+        health.latestUpdateId = finalUpdateId;
+      }
 
       if (removalBids.length > 0 || removalAsks.length > 0) {
         feedBinanceOrderBook(
@@ -293,11 +396,8 @@ function connect(): void {
         );
       }
       recordBboFromOrderBook("perp", "BTCUSDT", snapshot.bids, snapshot.asks, ts);
+      publishCurrentPerpBbo(ts);
 
-      if (!isPerpBboValid()) {
-        void resyncPerpOrderBook("crossed-bbo-live");
-        return;
-      }
     } catch (e) {
       console.warn("[OrderBookServicePerp] Parse error:", e);
     }
@@ -305,6 +405,7 @@ function connect(): void {
 
   ws.on("close", () => {
     health.connected = false;
+    invalidatePerpSnapshot();
     ws = null;
     scheduleReconnect();
   });
@@ -324,6 +425,16 @@ function scheduleReconnect(): void {
   }, RECONNECT_MS);
 }
 
+export function ensurePerpMarketDataAvailable(): void {
+  if (!shouldAcquirePerpMarketData(true, sourceStarted)) return;
+  sourceStarted = true;
+  connect();
+  healthInterval = setInterval(runHealthCheck, HEALTH_INTERVAL_MS);
+  if (BOOKMAP_HISTORY_SAMPLER_ENABLED) {
+    setInterval(runPerpLimitHistorySample, BOOKMAP_SNAPSHOT_SAMPLE_MS);
+  }
+}
+
 function runPerpLimitHistorySample(): void {
   if (!BOOKMAP_HISTORY_SAMPLER_ENABLED) return;
   if (snapshot.bids.length === 0 && snapshot.asks.length === 0) return;
@@ -332,14 +443,6 @@ function runPerpLimitHistorySample(): void {
     asks: snapshot.asks,
     timestamp: snapshot.timestamp ?? Date.now(),
   });
-}
-
-if (HEATMAP_ENABLED) {
-  connect();
-  healthInterval = setInterval(runHealthCheck, HEALTH_INTERVAL_MS);
-  if (BOOKMAP_HISTORY_SAMPLER_ENABLED) {
-    setInterval(runPerpLimitHistorySample, BOOKMAP_SNAPSHOT_SAMPLE_MS);
-  }
 }
 
 export function getPerpOrderBook(): OrderBookSnapshot {
@@ -357,6 +460,7 @@ export function getPerpOrderBookHealth() {
     connected: health.connected,
     lastMessageTs: health.lastMessageTs || null,
     latestUpdateId: health.latestUpdateId,
+    syncState,
     bidsCount: snapshot.bids.length,
     asksCount: snapshot.asks.length,
     bestBid,

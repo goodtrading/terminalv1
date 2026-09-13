@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import {
+  paperExecutionPort,
+  PaperExecutionPortError,
+} from "@/lib/paperExecutionPort";
+import { NAUTILUS_PAPER_SIMULATION_CONTEXT } from "@/lib/nautilusPaperMarketAdapter";
 import type {
   OrderPreviewSummary,
   PaperAccountSnapshot,
@@ -18,7 +23,7 @@ import {
   resolvePaperEntryPrice,
 } from "./paperEntryPrice";
 import { computePaperTicketMetrics } from "./paperOrderTicketCalc";
-import { paperApiJson } from "./paperApiClient";
+
 import { paperMaxLeverage } from "./paperRiskGuardConfig";
 import {
   buildPaperSubmitRiskPayload,
@@ -33,7 +38,7 @@ import {
 } from "./paperTicketSubmitState";
 
 const inputClass =
-  "w-full rounded border border-terminal-border bg-terminal-bg px-2 py-1 text-[10px] font-mono text-white focus:border-cyan-500/40 focus:outline-none disabled:opacity-50";
+  "w-full rounded border border-terminal-border bg-terminal-bg px-2 py-1 text-[12px] font-mono text-white focus:border-cyan-500/40 focus:outline-none disabled:opacity-50";
 
 const qtyReadonlyClass =
   "w-full rounded border border-terminal-border/60 bg-black/40 px-2 py-1 text-[10px] font-mono text-slate-400";
@@ -52,6 +57,20 @@ export type PaperOrderFeedback = {
   detail?: string;
 };
 
+export function resolveNautilusPaperTicketQuantityText(
+  source: "usdt" | "btc",
+  rawQuantityText: string,
+): string {
+  if (source !== "btc") {
+    throw new Error("NAUTILUS_EXACT_BASE_QUANTITY_REQUIRED");
+  }
+  const quantityText = rawQuantityText.trim();
+  if (!quantityText) {
+    throw new Error("NAUTILUS_DECIMAL_QUANTITY_REQUIRED");
+  }
+  return quantityText;
+}
+
 type Props = {
   markPrice: number | null;
   tickerPrice?: number | null;
@@ -60,6 +79,7 @@ type Props = {
   settings?: PaperTradingSettings | null;
   position?: PaperPositionSnapshot | null;
   busy?: boolean;
+  executionUnavailable?: boolean;
   tradingBlocked?: boolean;
   blockReason?: string | null;
   ticketLeverage?: number | null;
@@ -81,6 +101,7 @@ export function PaperOrderTicket({
   settings,
   position,
   busy = false,
+  executionUnavailable = false,
   tradingBlocked = false,
   blockReason,
   ticketLeverage: ticketLeverageProp,
@@ -111,6 +132,8 @@ export function PaperOrderTicket({
     null,
   );
   const [priceHint, setPriceHint] = useState<string | null>(null);
+  const [quantitySource, setQuantitySource] = useState<"usdt" | "btc">("usdt");
+  const submitInFlight = useRef(false);
 
   const chartSymbol =
     DEFAULT_TERMINAL_EXECUTION_CONTEXT.chartSymbol ?? "BTCUSDT";
@@ -221,6 +244,8 @@ export function PaperOrderTicket({
 
   const dailyLossBlock =
     tradingBlocked && blockReason ? blockReason : null;
+  const selectedBackend = paperExecutionPort.getBackend();
+  useEffect(() => { setServerPreview(null); }, [selectedBackend]);
 
   const marketSubmit = useMemo(
     () =>
@@ -336,6 +361,11 @@ export function PaperOrderTicket({
   );
 
   const fetchPreview = useCallback(async () => {
+    const previewBackend = paperExecutionPort.getBackend();
+    if (previewBackend === "nautilus") {
+      setServerPreview(null);
+      return;
+    }
     if (
       !marketSubmit.enabled ||
       marketEntryResolved.price == null ||
@@ -346,15 +376,13 @@ export function PaperOrderTicket({
       return;
     }
     try {
-      const { data: json } = await paperApiJson<{
+      const json = await paperExecutionPort.previewOrder({
+        ...buildOrderPayload(side === "long" ? "buy" : "sell", orderType),
+      }) as {
         success?: boolean;
         preview?: OrderPreviewSummary;
-      }>("/api/paper/preview", {
-        method: "POST",
-        body: JSON.stringify(
-          buildOrderPayload(side === "long" ? "buy" : "sell", orderType),
-        ),
-      });
+      };
+      if (paperExecutionPort.getBackend() !== previewBackend) return;
       if (json.success && json.preview) {
         setServerPreview(json.preview);
       } else {
@@ -364,6 +392,7 @@ export function PaperOrderTicket({
       setServerPreview(null);
     }
   }, [
+    selectedBackend,
     marketSubmit.enabled,
     marketEntryResolved.price,
     notionalNum,
@@ -416,7 +445,7 @@ export function PaperOrderTicket({
       entryPriceForSizing,
       hasValidEntryPrice:
         marketEntryResolved.price != null && marketEntryResolved.price > 0,
-      executionExchange: DEFAULT_TERMINAL_EXECUTION_CONTEXT.executionExchange,
+      executionDomain: "paper" as const,
       executionMarketType: DEFAULT_TERMINAL_EXECUTION_CONTEXT.executionMarketType,
       executionSymbol,
       liveTradingLocked: true,
@@ -450,6 +479,10 @@ export function PaperOrderTicket({
   );
 
   const submit = async (apiSide: "buy" | "sell", type: "market" | "limit") => {
+    if (submitInFlight.current || busy || executionUnavailable || tradingBlocked) return;
+    submitInFlight.current = true;
+    const backend = paperExecutionPort.getBackend();
+    const isNautilus = backend === "nautilus";
     const hardErr = validatePaperTicketOrder({
       side: apiSide === "buy" ? "long" : "short",
       orderType: type,
@@ -475,37 +508,70 @@ export function PaperOrderTicket({
       stopLossRaw: stopLoss,
       takeProfitRaw: takeProfit,
     });
-    const err = dailyLossBlock ?? hardErr ?? riskErr;
+    const lifecycleState = isNautilus ? paperExecutionPort.getState() : null;
+    const quantityErr = isNautilus
+      ? quantitySource !== "btc"
+        ? "NAUTILUS_EXACT_BASE_QUANTITY_REQUIRED"
+        : !qtyBtc.trim()
+          ? "NAUTILUS_DECIMAL_QUANTITY_REQUIRED"
+          : null
+      : null;
+    const orderTypeErr = null;
+    const readinessErr =
+      isNautilus &&
+      (lifecycleState?.availability !== "AVAILABLE" ||
+        lifecycleState.engine !== "RUNNING" ||
+        lifecycleState.simulation !== "RUNNING")
+        ? "NAUTILUS_BACKEND_NOT_READY"
+        : null;
+    const err = dailyLossBlock ?? orderTypeErr ?? readinessErr ?? quantityErr ?? hardErr ?? riskErr;
 
     if (err) {
       onMessage(err);
+      submitInFlight.current = false;
       return;
     }
     onMessage(priceHint ?? "");
     try {
-      const { res, data: json } = await paperApiJson<{
+      const result = isNautilus
+        ? {
+            res: { ok: true, status: 200 },
+            data: await paperExecutionPort.submitOrder({
+              ...buildOrderPayload(apiSide, type),
+              quantityText: resolveNautilusPaperTicketQuantityText(
+                quantitySource,
+                qtyBtc,
+              ),
+              executionContext: NAUTILUS_PAPER_SIMULATION_CONTEXT,
+            }),
+          }
+        : await paperExecutionPort.paperApiJson("/api/paper/order", {
+            method: "POST",
+            body: JSON.stringify(buildOrderPayload(apiSide, type)),
+          });
+      if (paperExecutionPort.getBackend() !== backend) return;
+      const response = result.data as {
         success?: boolean;
         message?: string;
+        code?: string;
+        order?: { status?: string; averageFillPrice?: string; clientOrderId?: string };
         position?: {
           entryPrice?: number;
           quantity?: number;
           stopLoss?: number | null;
           takeProfit?: number | null;
+          side?: string;
         };
-      }>("/api/paper/order", {
-        method: "POST",
-        body: JSON.stringify(buildOrderPayload(apiSide, type)),
-      });
-      if (!res.ok || !json.success) {
-        const errBody = json as { code?: string; message?: string };
-        if (res.status === 401) {
-          onMessage(
-            errBody.message ??
-              "Paper trading requires login (cookie or Bearer token).",
-          );
-        } else {
-          onMessage(errBody.message ?? "Paper order rejected");
-        }
+        account?: unknown;
+      };
+      const legacyJson = response;
+      if (!result.res.ok || (!isNautilus && !legacyJson.success)) {
+        const errBody = legacyJson;
+        onMessage(
+          result.res.status === 401
+            ? errBody.message ?? "Paper trading requires login (cookie or Bearer token)."
+            : errBody.message ?? "Paper order rejected",
+        );
         return;
       }
 
@@ -515,15 +581,19 @@ export function PaperOrderTicket({
         side: ticketSide,
         orderType: type,
         notionalUsdt: notionalNum,
-        entry: json.position?.entryPrice ?? display.entry ?? undefined,
-        size: json.position?.quantity ?? effectiveQtyBtc,
-        stopLoss: json.position?.stopLoss ?? riskPayload.stopLoss,
-        takeProfit: json.position?.takeProfit ?? riskPayload.takeProfit,
+        entry: isNautilus
+          ? display.entry ?? undefined
+          : legacyJson.position?.entryPrice ?? display.entry ?? undefined,
+        size: isNautilus ? effectiveQtyBtc : legacyJson.position?.quantity ?? effectiveQtyBtc,
+        stopLoss: legacyJson.position?.stopLoss ?? riskPayload.stopLoss,
+        takeProfit: legacyJson.position?.takeProfit ?? riskPayload.takeProfit,
         riskUsdt: display.riskUsdt,
         rMultiple: display.rMultiple,
         detail:
-          json.message ??
-          "Simulated BingX Perpetual — no real order sent.",
+          legacyJson.message ??
+          (isNautilus
+            ? "Nautilus Paper MARKET filled — proxy pricing provenance available."
+            : "Paper execution — no real order sent."),
       };
       onExecuted(fb);
       emitTerminalAudit(
@@ -533,11 +603,18 @@ export function PaperOrderTicket({
       onMessage(
         type === "market"
           ? "Paper order filled"
-          : (json.message ?? "Paper order created"),
+          : (legacyJson.message ?? "Paper order created"),
       );
       await onRefresh();
     } catch (err) {
-      onMessage(err instanceof Error ? err.message : "Submit failed");
+      if (paperExecutionPort.getBackend() !== backend) return;
+      if (err instanceof PaperExecutionPortError && err.code === "ORDER_EXECUTED_STATE_REFRESH_FAILED") {
+        onMessage("Order executed, state refresh failed");
+      } else {
+        onMessage(err instanceof Error ? err.message : "Submit failed");
+      }
+    } finally {
+      submitInFlight.current = false;
     }
   };
 
@@ -609,6 +686,7 @@ export function PaperOrderTicket({
             value={sizeUsdt}
             onChange={(e) => {
               setSizeEditMode("usdt");
+              setQuantitySource("usdt");
               setSizeUsdt(e.target.value);
             }}
           />
@@ -619,6 +697,7 @@ export function PaperOrderTicket({
             value={qtyBtc}
             onChange={(e) => {
               setSizeEditMode("btc");
+              setQuantitySource("btc");
               setQtyBtc(e.target.value);
             }}
             title="Edit to recalculate Size USDT"
@@ -629,7 +708,7 @@ export function PaperOrderTicket({
           <input
             className={inputClass}
             value={leverage}
-            onChange={(e) => setLeverage(e.target.value)}
+            onChange={(e) => { setLeverageInitialized(true); setLeverage(e.target.value); }}
             min={1}
             max={maxLev}
           />
@@ -735,6 +814,9 @@ export function PaperOrderTicket({
       {softRiskWarning ? (
         <p className="text-[8px] text-amber-400/70">{softRiskWarning}</p>
       ) : null}
+      {selectedBackend === "nautilus" ? (
+        <p className="text-[8px] text-slate-500">Preview not applicable for Nautilus MARKET.</p>
+      ) : null}
       {marketDisabledReason && !marketReady ? (
         <p className="text-[8px] text-amber-400/90">{marketDisabledReason}</p>
       ) : null}
@@ -789,7 +871,7 @@ export function PaperOrderTicket({
         <button
           type="button"
           disabled={
-            busy ||
+            busy || executionUnavailable ||
             !position ||
             position.side === "flat"
           }
@@ -800,7 +882,7 @@ export function PaperOrderTicket({
         </button>
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || executionUnavailable}
           onClick={() => void onCancelAll()}
           className="py-1 text-[8px] font-bold uppercase rounded border border-terminal-border text-slate-400 disabled:opacity-50"
         >

@@ -21,16 +21,16 @@ export function TerminalPanel({
   ...props
 }: TerminalPanelProps) {
   return (
-    <div 
+    <div
       className={cn(
         "flex flex-col bg-terminal-panel border border-terminal-border overflow-hidden",
         className
-      )} 
+      )}
       {...props}
     >
       {title && (
         <div className="px-3 py-1.5 bg-terminal-panel border-b border-terminal-border flex justify-between items-center shrink-0">
-          <span className="text-[10px] font-bold uppercase tracking-[0.15em] terminal-text-primary">
+          <span className="text-[11px] font-bold uppercase tracking-[0.15em] terminal-text-primary">
             {title}
           </span>
           <div className="flex items-center space-x-2">
@@ -55,14 +55,14 @@ export function TerminalPanel({
   );
 }
 
-export function TerminalValue({ 
-  label, 
-  value, 
+export function TerminalValue({
+  label,
+  value,
   trend,
   isBadge = false,
   tooltip
-}: { 
-  label: string; 
+}: {
+  label: string;
   value: React.ReactNode;
   trend?: "positive" | "negative" | "neutral";
   isBadge?: boolean;
@@ -71,29 +71,29 @@ export function TerminalValue({
   const { learnMode } = useLearnMode();
   const labelEl = tooltip && learnMode ? (
     <TooltipWrapper concept={tooltip}>
-      <span className="terminal-text-label text-[10px] transition-colors cursor-help border-b border-dashed border-white/10">{label}</span>
+      <span className="terminal-text-label text-[11px] transition-colors cursor-help border-b border-dashed border-white/10">{label}</span>
     </TooltipWrapper>
   ) : (
-    <span className="terminal-text-label text-[10px] transition-colors">{label}</span>
+    <span className="terminal-text-label text-[11px] transition-colors">{label}</span>
   );
 
   return (
-    <div className="flex justify-between items-center py-1.5 border-b border-white/[0.03] last:border-0 group">
+    <div className="flex justify-between items-center py-2 border-b border-white/[0.03] last:border-0 group">
       {labelEl}
       {isBadge ? (
         <span className={cn(
           "terminal-badge",
-          trend === "positive" ? "terminal-badge-success" : 
-          trend === "negative" ? "terminal-badge-error" : 
+          trend === "positive" ? "terminal-badge-success" :
+          trend === "negative" ? "terminal-badge-error" :
           "bg-terminal-border terminal-text-primary"
         )}>
           {value}
         </span>
       ) : (
         <span className={cn(
-          "text-xs font-mono font-bold",
-          trend === "positive" ? "text-terminal-positive" : 
-          trend === "negative" ? "text-terminal-negative" : 
+          "text-sm font-mono font-bold",
+          trend === "positive" ? "text-terminal-positive" :
+          trend === "negative" ? "text-terminal-negative" :
           "terminal-text-primary"
         )}>
           {value}

@@ -31,6 +31,9 @@ import { getAuthToken } from "@/lib/authToken";
 import { openExternalUrl } from "@/lib/openExternalUrl";
 import { logBingXLoadingState } from "./bingxLoadingDebug";
 import {
+  hydrateExecutionWorkspace,
+} from "@/lib/executionWorkspace";
+import {
   clearBrokerSession,
   DEFAULT_BROKER_SESSION,
   isTransientBrokerPhase,
@@ -76,9 +79,7 @@ type BrokerSessionContextValue = {
   /** Activate persisted BingX read-only without API key/secret. */
   activateSavedBingXConnection: (connectionId?: string) => boolean;
   deactivateBingXSession: () => void;
-  connectPaperTrading: () => void;
-  disconnectPaperTrading: () => void;
-  restoreBingXAfterPaper: () => void;
+
   refreshBrokerStatus: () => Promise<void>;
   refreshSavedBingXConnections: () => Promise<BingXSavedConnection[]>;
 };
@@ -207,6 +208,16 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
 
   const requestInFlight =
     restoreLoading || loginStatusLoading || connectInFlight;
+
+  // Legacy compatibility only: infer the initial workspace once, without
+  // writing the legacy Paper marker back into BrokerSession.
+  useEffect(() => {
+    if (session.exchange === "paper" || session.connectionMode === "paper") {
+      hydrateExecutionWorkspace(
+        session.exchange === "paper" || session.connectionMode === "paper",
+      );
+    }
+  }, []);
 
   useEffect(() => {
     logBingXLoadingState({
@@ -831,67 +842,6 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const connectPaperTrading = useCallback(() => {
-    setSession((prev) => {
-      const saved = savedConnections[0];
-      const bingxRef =
-        prev.exchange === "bingx" &&
-        prev.connectionId &&
-        prev.connectionId !== "session-only" &&
-        prev.connectionId !== "ephemeral"
-          ? prev.connectionId
-          : prev.bingxReferenceConnectionId ?? saved?.id;
-      if (import.meta.env.DEV) {
-        console.debug("[broker] switching to paper; saved BingX retained", bingxRef ?? "none");
-      }
-      emitTerminalAudit(
-        "broker_switched",
-        "Active broker: paper (BingX saved retained)",
-        "info",
-        { exchange: "paper", mode: "paper" },
-      );
-      return applySession({
-        ...prev,
-        exchange: "paper",
-        phase: "connected",
-        connected: true,
-        demo: false,
-        connectionMode: "paper",
-        readOnly: false,
-        tradingEnabled: false,
-        bingxReferenceConnectionId: bingxRef,
-        connectionId: undefined,
-        apiKeyMasked: prev.apiKeyMasked ?? saved?.apiKeyMasked,
-        message:
-          "Paper Trading on BingX Perpetual (simulated). BingX saved read-only available.",
-        connectedAt: new Date().toISOString(),
-        lastError: undefined,
-      });
-    });
-  }, [savedConnections]);
-
-  const disconnectPaperTrading = useCallback(() => {
-    setSession((prev) => {
-      const saved = savedConnections[0];
-      const ref = prev.bingxReferenceConnectionId ?? saved?.id;
-      if (ref) {
-        return applySession(
-          inactiveSessionWithBingxRef(
-            ref,
-            saved?.apiKeyMasked ?? prev.apiKeyMasked,
-            "Paper disconnected. BingX saved connection available.",
-          ),
-        );
-      }
-      clearBrokerSession();
-      return { ...DEFAULT_BROKER_SESSION };
-    });
-  }, [savedConnections]);
-
-  const restoreBingXAfterPaper = useCallback(() => {
-    if (activateSavedBingXConnection()) return;
-    void restoreSavedBingXConnection();
-  }, [activateSavedBingXConnection, restoreSavedBingXConnection]);
 
   const disconnectBroker = useCallback(
     async (options?: { deleteStored?: boolean; connectionId?: string }) => {
@@ -969,9 +919,6 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       deleteSavedBingXConnection,
       activateSavedBingXConnection,
       deactivateBingXSession,
-      connectPaperTrading,
-      disconnectPaperTrading,
-      restoreBingXAfterPaper,
       refreshBrokerStatus,
       refreshSavedBingXConnections,
     }),
@@ -992,9 +939,6 @@ export function BrokerSessionProvider({ children }: { children: ReactNode }) {
       deleteSavedBingXConnection,
       activateSavedBingXConnection,
       deactivateBingXSession,
-      connectPaperTrading,
-      disconnectPaperTrading,
-      restoreBingXAfterPaper,
       refreshBrokerStatus,
       refreshSavedBingXConnections,
     ],

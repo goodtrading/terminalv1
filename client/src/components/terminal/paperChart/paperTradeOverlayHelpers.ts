@@ -1,4 +1,6 @@
-import type { PaperPositionSnapshot } from "../execution/executionTypes";
+import { PAPER_COST_POLICY } from "@shared/trading/paperCostPolicy";
+import { resolveChartFeeBps, type ChartFeeSettings } from "../chartRisk/riskLevelMetrics";
+import type { PaperPositionSnapshot, PaperOrderSnapshot } from "../execution/executionTypes";
 import type { PaperChartTradeOverlay } from "./paperTradeOverlayTypes";
 import {
   normalizePaperQuantity,
@@ -17,10 +19,7 @@ export function mapApiPaperPosition(
   );
 
   if (qtyBTC == null || qtyBTC <= 0) {
-    return {
-      ...raw,
-      quantity: 0,
-    };
+    return null;
   }
 
   const rawAny = raw as PaperPositionSnapshot & Record<string, unknown>;
@@ -87,10 +86,10 @@ export function mapPaperChartOverlay(
         ? position.markPrice
         : null,
     unrealizedPnlUsdt: Number.isFinite(unrealizedPnlUsdt)
-      ? unrealizedPnlUsdt!
+      ? unrealizedPnlUsdt
       : Number.isFinite(position.unrealizedPnl)
         ? position.unrealizedPnl
-        : 0,
+        : undefined,
     status: "open",
     tradeId: null,
   };
@@ -130,12 +129,122 @@ export function formatPnlUsdt(pnl: number): string {
   return `${sign}${pnl.toFixed(2)} USDT`;
 }
 
+const WORKING_ORDER_STATUSES = new Set([
+  "open",
+  "CREATED",
+  "SUBMITTED",
+  "ACCEPTED",
+  "PARTIALLY_FILLED",
+  "CANCEL_PENDING",
+]);
+
+export type CanonicalProtectiveType = "STOP_LOSS" | "TAKE_PROFIT";
+
+export type PaperChartOrderKind = "LIMIT" | CanonicalProtectiveType;
+
+export type PaperChartOrder = {
+  id: string;
+  clientOrderId: string;
+  kind: PaperChartOrderKind;
+  price: number;
+  side: PaperOrderSnapshot["side"];
+  quantity: number;
+  draggable: boolean;
+  cancelable: boolean;
+  source: PaperOrderSnapshot;
+};
+
+export function validateProtectiveDrag(
+  side: "long" | "short",
+  protectionType: CanonicalProtectiveType,
+  price: number,
+  referencePrice: number,
+): string | null {
+  if (!Number.isFinite(price) || price <= 0) return "Price must be positive";
+  if (!Number.isFinite(referencePrice) || referencePrice <= 0) return "Reference price unavailable";
+  const valid = side === "long"
+    ? protectionType === "STOP_LOSS" ? price < referencePrice : price > referencePrice
+    : protectionType === "STOP_LOSS" ? price > referencePrice : price < referencePrice;
+  return valid ? null : protectionType === "STOP_LOSS" ? "SL must protect from this side" : "TP must be beyond the reference price";
+}
+
+export function isWorkingPaperOrder(order: {
+  status: string;
+  remainingQuantity?: string;
+}): boolean {
+  if (!WORKING_ORDER_STATUSES.has(order.status)) return false;
+  if (order.status !== "PARTIALLY_FILLED" || order.remainingQuantity === undefined) return true;
+  const remaining = Number(order.remainingQuantity);
+  return Number.isFinite(remaining) && remaining > 0;
+}
+
+/** Canonical protective orders only; identity is never derived from price/type. */
+export function getCanonicalProtectiveOrders(
+  orders: PaperOrderSnapshot[],
+): Record<CanonicalProtectiveType, PaperOrderSnapshot[]> {
+  const result: Record<CanonicalProtectiveType, PaperOrderSnapshot[]> = {
+    STOP_LOSS: [],
+    TAKE_PROFIT: [],
+  };
+  for (const order of Array.from(new Map(orders.map(order => [order.id, order])).values())) {
+    if (order.protectionType && isWorkingPaperOrder(order)) result[order.protectionType].push(order);
+  }
+  return result;
+}
+
+export function isWorkingPaperLimitOrder(order: {
+  protectionType?: CanonicalProtectiveType;
+  type: string;
+  status: string;
+  price: number | null | undefined;
+  limitPrice?: number | null;
+  orderType?: "MARKET" | "LIMIT" | "STOP_MARKET";
+  remainingQuantity?: string;
+}): boolean {
+  const canonicalType = order.orderType ?? order.type.toUpperCase();
+  const canonicalPrice = order.limitPrice ?? order.price;
+  if (
+    order.protectionType != null ||
+    canonicalType !== "LIMIT" ||
+    canonicalPrice == null ||
+    !Number.isFinite(canonicalPrice) ||
+    canonicalPrice <= 0 ||
+    !WORKING_ORDER_STATUSES.has(order.status)
+  ) {
+    return false;
+  }
+  if (order.status === "PARTIALLY_FILLED" && order.remainingQuantity !== undefined) {
+    const remaining = Number(order.remainingQuantity);
+    return Number.isFinite(remaining) && remaining > 0;
+  }
+  return true;
+}
+
+/** Single projection model for every persistent working chart order. */
+export function toWorkingPaperChartOrders(orders: PaperOrderSnapshot[]): PaperChartOrder[] {
+  return orders.flatMap((order) => {
+    if (!isWorkingPaperOrder(order)) return [];
+    const kind: PaperChartOrderKind | null = order.protectionType ?? (order.type === "limit" ? "LIMIT" : null);
+    const price = kind === "STOP_LOSS" ? order.triggerPrice : order.price ?? order.limitPrice;
+    if (kind == null || price == null || !Number.isFinite(price) || price <= 0) return [];
+    return [{
+      id: order.id,
+      clientOrderId: order.id,
+      kind,
+      price,
+      side: order.side,
+      quantity: order.size,
+      draggable: kind !== "LIMIT" ? true : false,
+      cancelable: true,
+      source: order,
+    }];
+  });
+}
+
 export {
-  DEFAULT_CHART_FEE_DEFAULTS as DEFAULT_PAPER_CHART_FEE_DEFAULTS,
   DEFAULT_ACCOUNT_BASE_USDT as DEFAULT_PAPER_ACCOUNT_BASE_USDT,
   type ChartFeeSettings as PaperChartFeeSettings,
   type RiskLevelNetResult as PaperRiskLevelNetResult,
-  resolveChartFeeBps as resolvePaperChartFeeBps,
   resolveAccountEquityUsdt as resolvePaperAccountBaseUsdt,
   calculateRiskLevelNetPnl as calculatePaperRiskLevelNetPnl,
   formatSignedUsd,
@@ -196,3 +305,6 @@ export {
   type NormalizedPaperQuantity,
   type PaperQuantitySource,
 } from "./normalizePaperQuantity";
+
+export const DEFAULT_PAPER_CHART_FEE_DEFAULTS = PAPER_COST_POLICY;
+export const resolvePaperChartFeeBps = (settings?: Partial<ChartFeeSettings> | null) => resolveChartFeeBps(settings, PAPER_COST_POLICY);

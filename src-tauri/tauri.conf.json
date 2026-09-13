@@ -1,12 +1,12 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "GoodTrading Terminal",
-  "version": "0.1.10",
+  "version": "0.1.12",
   "identifier": "com.goodtrading.terminal",
   "build": {
     "frontendDist": "../dist/public",
     "devUrl": "http://localhost:5000",
-    "beforeDevCommand": "cross-env VITE_PLATFORM=desktop VITE_HEATMAP_ENABLED=true npm run dev",
+    "beforeDevCommand": "cross-env VITE_PLATFORM=desktop VITE_HEATMAP_ENABLED=true VITE_API_BASE_URL=https://goodtrading.up.railway.app npm run dev",
     "beforeBuildCommand": "npm run build:desktop:web"
   },
   "app": {
@@ -35,6 +35,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../build/n2c/runtime/nautilus-runtime/": "nautilus-runtime/"
+    },
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",

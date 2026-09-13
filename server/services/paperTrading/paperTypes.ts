@@ -1,3 +1,4 @@
+import { PAPER_COST_POLICY } from "../../../shared/trading/paperCostPolicy";
 export interface PaperTradingSettings {
   initialBalanceUsdt: number;
   makerFeeBps: number;
@@ -13,9 +14,9 @@ export interface PaperTradingSettings {
 
 export const DEFAULT_PAPER_SETTINGS: PaperTradingSettings = {
   initialBalanceUsdt: 10_000,
-  makerFeeBps: 2,
-  takerFeeBps: 5,
-  slippageBps: 1,
+  makerFeeBps: PAPER_COST_POLICY.makerFeeBps,
+  takerFeeBps: PAPER_COST_POLICY.takerFeeBps,
+  slippageBps: PAPER_COST_POLICY.slippageBps,
   maxLeverage: 20,
   defaultLeverage: 5,
   defaultMarginMode: "isolated",
@@ -27,6 +28,8 @@ export const DEFAULT_PAPER_SETTINGS: PaperTradingSettings = {
 export type PaperOrderSide = "long" | "short";
 export type PaperOrderType = "market" | "limit";
 export type PaperPositionSide = "long" | "short" | "flat";
+export type PaperExecutionIdentity = "paper" | "bingx";
+export const PAPER_EXECUTION_IDENTITY: PaperExecutionIdentity = "paper";
 
 export interface PaperAccountState {
   exchange: "paper";
@@ -57,7 +60,7 @@ export interface PaperFill {
   tradeId: string;
   orderId: string;
   symbol: string;
-  venue?: "bingx";
+  venue?: PaperExecutionIdentity;
   marketType?: "perpetual";
   chartSymbol?: string;
   side: "long" | "short";
@@ -76,7 +79,7 @@ import type { PlaybookMatchResult } from "../reports/playbookMatchTypes";
 export interface PaperTradeLedgerEntry {
   id: string;
   symbol: string;
-  venue?: "bingx";
+  venue?: PaperExecutionIdentity;
   marketType?: "perpetual";
   chartSymbol?: string;
   side: "long" | "short";
@@ -110,7 +113,7 @@ export interface PaperTradeLedgerEntry {
 export interface PaperOrder {
   id: string;
   symbol: string;
-  venue?: "bingx";
+  venue?: PaperExecutionIdentity;
   marketType?: "perpetual";
   chartSymbol?: string;
   side: PaperOrderSide;
@@ -157,18 +160,17 @@ export interface PaperTradingState {
   tradeLedger: PaperTradeLedgerEntry[];
 }
 
-/** Execution venue metadata (simulated fills mirror BingX perpetual). */
+/** Paper execution metadata; BingX is legacy read compatibility only. */
 export interface PaperExecutionVenueMeta {
-  venue: "bingx";
+  venue: "paper";
   marketType: "perpetual";
-  executionExchange: "bingx";
   chartSymbol?: string;
 }
 
 export interface PaperOrderIntent {
   symbol: string;
   chartSymbol?: string;
-  venue?: "bingx";
+  venue?: PaperExecutionIdentity;
   marketType?: "perpetual";
   executionExchange?: "bingx";
   side: PaperOrderSide;
