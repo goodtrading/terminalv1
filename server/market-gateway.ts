@@ -10,6 +10,7 @@ import type { CanonicalL2Book } from "@shared/canonicalL2Book";
 import { getSpotOrderBookHealth } from "./services/orderbookService";
 import { getPerpOrderBookHealth } from "./services/orderbookServicePerp";
 import {
+  ingestCanonicalAggTrade,
   getBufferCoverage,
   getTradesBufferHealth,
   queryBufferedAggTrades,
@@ -525,6 +526,9 @@ export class MarketDataGateway {
         const t = this.normalizeAggTradeRow(row);
         if (Number.isFinite(t.price) && Number.isFinite(t.qty) && Number.isFinite(t.time) && t.qty > 0) {
           rows.push(t);
+          if (sym === "BTCUSDT") {
+            ingestCanonicalAggTrade({ id: t.id, price: t.price, qty: t.qty, time: t.time, eventTime: t.time, side: t.side }, market, "rest");
+          }
         }
       } catch {
         /* skip malformed row */

@@ -635,6 +635,9 @@ function createAggTradeBuffer(config: BufferConfig) {
   healthTimer = setInterval(runTradeHealthCheck, TRADE_HEALTH_MS);
 
   return {
+    ingest(trade: BufferedAggTrade, source: "ws" | "rest" = "ws"): boolean {
+      return pushTrade(trade, source, trade.eventTime ?? trade.time);
+    },
     query(symbol: string, startMs: number, endMs: number): BufferedAggTrade[] {
       const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || streamSymbol;
       if (sym !== streamSymbol) return [];
@@ -807,6 +810,14 @@ const buffers: Partial<Record<BookmapMarketSource, ReturnType<typeof createAggTr
 
 function resolveBuffer(market?: unknown): ReturnType<typeof createAggTradeBuffer> | null {
   return buffers[parseBookmapMarket(market)] ?? null;
+}
+
+export function ingestCanonicalAggTrade(
+  trade: BufferedAggTrade,
+  market: BookmapMarketSource,
+  source: "ws" | "rest",
+): boolean {
+  return resolveBuffer(market)?.ingest(trade, source) ?? false;
 }
 
 export function queryBufferedAggTrades(
