@@ -9,12 +9,14 @@ import type { BookmapMarketSource } from "@shared/bookmapMarket";
 import { DEFAULT_BOOKMAP_MARKET, parseBookmapMarket } from "@shared/bookmapMarket";
 import { getSpotAggTradeWsBase, getSpotAggTradesRestUrls } from "./binanceSpotMarketData";
 import { isHeatmapEnabled } from "../lib/runtimeEnv";
+import { CanonicalTradeTape, type CanonicalTrade } from "@shared/canonicalTradeTape";
 
 export type BufferedAggTrade = {
   id: string;
   price: number;
   qty: number;
   time: number;
+  eventTime?: number | null;
   side: "buy" | "sell";
 };
 
@@ -75,8 +77,7 @@ function createAggTradeBuffer(config: BufferConfig) {
   let lastRestSeedMode: RestSeedMode | null = null;
   const listeners = new Set<(trade: BufferedAggTrade) => void>();
   const wsUrl = `${wsBase}${wsPath}`;
-  const backing: BufferedAggTrade[] = [];
-  let start = 0;
+  const tape = new CanonicalTradeTape({ instrument: streamSymbol, venue: "Binance", marketType: market === "perp" ? "Perpetual" : "Spot" });
 
   type PushSource = "ws" | "rest";
 
@@ -101,17 +102,11 @@ function createAggTradeBuffer(config: BufferConfig) {
   };
 
   function bufferNewestTs(): number | null {
-    trimByRetention();
-    const end = backing.length;
-    if (start >= end) return null;
-    return backing[end - 1]!.time;
+    return tape.newest()?.eventTime ?? tape.newest()?.receiveTime ?? null;
   }
 
   function bufferOldestTs(): number | null {
-    trimByRetention();
-    const end = backing.length;
-    if (start >= end) return null;
-    return backing[start]!.time;
+    return tape.oldest()?.eventTime ?? tape.oldest()?.receiveTime ?? null;
   }
 
   function bufferCoverageMs(): number {
@@ -126,86 +121,42 @@ function createAggTradeBuffer(config: BufferConfig) {
   }
 
   function trimByRetention(): void {
-    const cutoff = Date.now() - RETENTION_MS;
-    while (start < backing.length && backing[start]!.time < cutoff) {
-      start++;
-    }
-    if (start >= COMPACT_AFTER_DROPPED) {
-      backing.splice(0, start);
-      start = 0;
-    }
+    tape.trimBefore(Date.now() - RETENTION_MS);
   }
 
-  function lowerBound(from: number, to: number, timeMs: number): number {
-    let lo = from;
-    let hi = to;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (backing[mid]!.time < timeMs) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
+  function toBufferedTrade(trade: CanonicalTrade): BufferedAggTrade {
+    return { id: trade.tradeId, price: trade.price, qty: trade.quantity, time: trade.eventTime ?? trade.receiveTime, eventTime: trade.eventTime, side: trade.aggressorSide === "BUY" ? "buy" : "sell" };
   }
 
-  function upperBound(from: number, to: number, timeMs: number): number {
-    let lo = from;
-    let hi = to;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (backing[mid]!.time <= timeMs) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
-  }
-
-  function pushTrade(t: BufferedAggTrade, source: PushSource = "ws"): boolean {
-    if (
-      !Number.isFinite(t.price) ||
-      !Number.isFinite(t.qty) ||
-      !Number.isFinite(t.time) ||
-      t.qty <= 0
-    ) {
-      pushTrace.invalidDropCount++;
-      return false;
-    }
-
+  function pushTrade(t: BufferedAggTrade, source: PushSource = "ws", eventTime: number | null = t.time): boolean {
     const newestBefore = bufferNewestTs();
     pushTrace.lastBufferNewestBefore = newestBefore;
     pushTrace.lastPushSource = source;
-
-    trimByRetention();
-    const scanFrom = Math.max(start, backing.length - 80);
-    for (let i = scanFrom; i < backing.length; i++) {
-      if (backing[i]!.id === t.id) {
-        pushTrace.duplicateDropCount++;
-        pushTrace.lastBufferNewestAfter = bufferNewestTs();
-        return false;
-      }
-    }
-    const last = backing[backing.length - 1];
-    if (last && t.time < last.time) {
-      const idx = lowerBound(start, backing.length, t.time);
-      if (backing[idx]?.id === t.id) {
-        pushTrace.duplicateDropCount++;
-        pushTrace.lastBufferNewestAfter = bufferNewestTs();
-        return false;
-      }
-      backing.splice(idx, 0, t);
-      lastAcceptedTradeAt = Date.now();
-      lastTrade = backing[backing.length - 1]!;
-      pushTrace.acceptedPushCount++;
-      pushTrace.lastParsedTradeTs = t.time;
+    const result = tape.ingest({
+      instrument: streamSymbol,
+      venue: "Binance",
+      marketType: market === "perp" ? "Perpetual" : "Spot",
+      tradeId: t.id,
+      price: t.price,
+      quantity: t.qty,
+      aggressorSide: t.side === "buy" ? "BUY" : "SELL",
+      eventTime,
+      receiveTime: Date.now(),
+      source: source === "ws" ? "websocket" : "rest",
+      quality: "VALID",
+    });
+    if (!result.accepted) {
+      if (result.reason === "DUPLICATE") pushTrace.duplicateDropCount++;
+      else pushTrace.invalidDropCount++;
       pushTrace.lastBufferNewestAfter = bufferNewestTs();
-      for (const fn of listeners) fn(t);
-      return true;
+      return false;
     }
-    backing.push(t);
     lastAcceptedTradeAt = Date.now();
-    lastTrade = t;
+    lastTrade = toBufferedTrade(result.trade!);
     pushTrace.acceptedPushCount++;
     pushTrace.lastParsedTradeTs = t.time;
     pushTrace.lastBufferNewestAfter = bufferNewestTs();
-    for (const fn of listeners) fn(t);
+    for (const fn of listeners) fn(lastTrade);
     return true;
   }
 
@@ -231,7 +182,7 @@ function createAggTradeBuffer(config: BufferConfig) {
       lastWsMessageAgeMs: lastWsMessageAt > 0 ? Date.now() - lastWsMessageAt : null,
       lastAcceptedTradeAt: lastAcceptedTradeAt || null,
       latestTradeTs: newest ?? lastTrade?.time ?? null,
-      tradesInBuffer: Math.max(0, backing.length - start),
+      tradesInBuffer: tape.size,
       bufferKey: aggTradeBufferKey(streamSymbol, market),
       reconnectCount: reconnectAttempt,
       sseClients: market === "perp" ? perpSseClients : spotSseClients,
@@ -324,7 +275,7 @@ function createAggTradeBuffer(config: BufferConfig) {
 
   function runTradeHealthCheck(): void {
     const newestAgeMs = bufferNewestAgeMs();
-    const isEmpty = backing.length <= start;
+    const isEmpty = tape.size === 0;
 
     if (isEmpty) {
       logTradesHealth("empty");
@@ -394,6 +345,7 @@ function createAggTradeBuffer(config: BufferConfig) {
       price: p,
       qty: q,
       time,
+      eventTime: Number.isFinite(eventTime) ? eventTime : null,
       side: row.m === true ? "sell" : "buy",
     };
   }
@@ -450,7 +402,7 @@ function createAggTradeBuffer(config: BufferConfig) {
     maxT: number | null;
   } {
     const seen = new Set<string>();
-    for (let i = start; i < backing.length; i++) seen.add(backing[i]!.id);
+    for (const trade of tape.getTrades()) seen.add(trade.tradeId);
     let seedMinT: number | null = null;
     let seedMaxT: number | null = null;
     let seedAccepted = 0;
@@ -597,7 +549,7 @@ function createAggTradeBuffer(config: BufferConfig) {
   async function seedFromRest(): Promise<void> {
     const end = Date.now();
     const newest = bufferNewestTs();
-    const isEmpty = backing.length <= start;
+    const isEmpty = tape.size === 0;
     const bufferStale = newest == null || end - newest > TRADE_STALE_MS;
     const coverageMs = bufferCoverageMs();
     const needsHistorical = isEmpty || coverageMs < HISTORICAL_BACKFILL_MS;
@@ -654,6 +606,7 @@ function createAggTradeBuffer(config: BufferConfig) {
     });
     ws.on("open", () => {
       connected = true;
+      tape.markConnected();
       reconnectAttempt = 0;
       reconnectScheduled = false;
       connectingStartedAt = 0;
@@ -670,6 +623,7 @@ function createAggTradeBuffer(config: BufferConfig) {
     });
     ws.on("close", () => {
       connected = false;
+      tape.markDisconnected();
       connectingStartedAt = 0;
       ws = null;
       scheduleReconnect();
@@ -685,13 +639,7 @@ function createAggTradeBuffer(config: BufferConfig) {
       const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || streamSymbol;
       if (sym !== streamSymbol) return [];
       trimByRetention();
-      const end = backing.length;
-      if (start >= end) return [];
-      const lo = lowerBound(start, end, startMs);
-      const hi = upperBound(lo, end, endMs);
-      const slice = backing.slice(lo, hi);
-      if (slice.length <= MAX_BUFFER_RETURN) return slice;
-      return slice.slice(0, MAX_BUFFER_RETURN);
+      return tape.query(startMs, endMs, MAX_BUFFER_RETURN).map(toBufferedTrade);
     },
     subscribe(symbol: string, listener: (trade: BufferedAggTrade) => void): () => void {
       const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || streamSymbol;
@@ -705,15 +653,16 @@ function createAggTradeBuffer(config: BufferConfig) {
         return { connected: false, oldestMs: null, newestMs: null, size: 0 };
       }
       trimByRetention();
-      const end = backing.length;
-      if (start >= end) {
+      const oldest = tape.oldest();
+      const newest = tape.newest();
+      if (!oldest || !newest) {
         return { connected, oldestMs: null, newestMs: null, size: 0 };
       }
       return {
         connected,
-        oldestMs: backing[start]!.time,
-        newestMs: backing[end - 1]!.time,
-        size: end - start,
+        oldestMs: oldest.eventTime ?? oldest.receiveTime,
+        newestMs: newest.eventTime ?? newest.receiveTime,
+        size: tape.size,
       };
     },
     getHealth(symbol: string) {
