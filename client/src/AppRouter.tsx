@@ -32,6 +32,7 @@ import TermsPage from "@/pages/marketing/TermsPage";
 import PrivacyPage from "@/pages/marketing/PrivacyPage";
 import VerifyEmailPage from "@/pages/marketing/VerifyEmailPage";
 import ResetPasswordPage from "@/pages/marketing/ResetPasswordPage";
+import AcademyHomePage from "@/pages/academy/AcademyHomePage";
 import { isDesktopRuntime } from "@/lib/runtimeFeatures";
 
 function AdminPageRoute() {
@@ -150,6 +151,7 @@ function WebRouter() {
       <Route path="/my-account" component={MyAccountRedirect} />
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
+      <Route path="/academy" component={AcademyHomePage} />
       <Route path="/admin" component={AdminPageRoute} />
       <Route path="/admin/ai-lab" component={CalibrationLabRoute} />
       <Route path="/admin/knowledge-inbox" component={KnowledgeInboxRoute} />
@@ -183,6 +185,7 @@ function DesktopRouter() {
       <Route path="/my-account" component={MyAccountRedirect} />
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
+      <Route path="/academy" component={AcademyHomePage} />
       <Route path="/admin" component={AdminPageRoute} />
       <Route path="/admin/ai-lab" component={CalibrationLabRoute} />
       <Route path="/admin/knowledge-inbox" component={KnowledgeInboxRoute} />
