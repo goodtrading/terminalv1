@@ -23,6 +23,7 @@ export type OrderFlowInference = {
   quality: OrderFlowState["quality"]["overall"] | "UNAVAILABLE";
   window: Readonly<OrderFlowFeatureWindow>;
   provenance: Readonly<OrderFlowState["provenance"]>;
+  passiveSide?: "BID" | "ASK" | "BOTH" | null;
 };
 export type ReplenishmentInferenceConfig = { enabled: boolean; maxReappearanceDelayMs: number; correlationWindowMs: number; priceBand?: OrderFlowFeatureWindow["priceBand"]; minRemovedQuantity?: number; minReappearedQuantity?: number };
 export type PullingInferenceConfig = { enabled: boolean; correlationWindowMs: number; maxObservedAggressionToRemovalRatio: number; priceBand?: OrderFlowFeatureWindow["priceBand"]; minRemovedQuantity?: number };
@@ -32,7 +33,8 @@ export type AbsorptionInferenceConfig = { enabled: boolean; minAggressiveVolume:
 export type SweepInferenceConfig = { enabled: boolean; maxDurationMs: number; minPriceLevels: number; minAggressiveVolume: number; minPriceProgress?: number; priceBand?: OrderFlowFeatureWindow["priceBand"] };
 export type PassiveDefenseInferenceConfig = { enabled: boolean; minAggressiveVolume: number; maxPriceExcursion: number; minPassivePersistenceMs: number; priceBand?: OrderFlowFeatureWindow["priceBand"] };
 export type AggressiveExhaustionInferenceConfig = { enabled: boolean; earlier: Readonly<OrderFlowFeatureWindow>; later: Readonly<OrderFlowFeatureWindow>; minVelocityDrop?: number; minVolumeDrop?: number; maxPriceProgress?: number; minOppositePersistenceMs?: number; priceBand?: OrderFlowFeatureWindow["priceBand"] };
-export type OrderFlowInferenceConfig = { replenishment?: ReplenishmentInferenceConfig; pulling?: PullingInferenceConfig; stacking?: StackingInferenceConfig; liquidityVacuum?: LiquidityVacuumInferenceConfig; absorption?: AbsorptionInferenceConfig; sweep?: SweepInferenceConfig; passiveDefense?: PassiveDefenseInferenceConfig; aggressiveExhaustion?: AggressiveExhaustionInferenceConfig };
+export type CompressionInferenceConfig = { enabled: boolean; priceBand: NonNullable<OrderFlowFeatureWindow["priceBand"]>; minDurationMs: number; maxObservedPriceRange: number; minInteractionCount: number; minInteractionVolume?: number; minPassiveQuantity?: number; minPassivePersistenceMs?: number; minPresenceRatio?: number; minLifecycleActivity?: number; minReappearanceCount?: number; maxDirectionalPriceProgress?: number };
+export type OrderFlowInferenceConfig = { replenishment?: ReplenishmentInferenceConfig; pulling?: PullingInferenceConfig; stacking?: StackingInferenceConfig; liquidityVacuum?: LiquidityVacuumInferenceConfig; absorption?: AbsorptionInferenceConfig; sweep?: SweepInferenceConfig; passiveDefense?: PassiveDefenseInferenceConfig; aggressiveExhaustion?: AggressiveExhaustionInferenceConfig; compression?: CompressionInferenceConfig };
 export type OrderFlowFeatureConfig = { window: Readonly<OrderFlowFeatureWindow>; inference?: Readonly<OrderFlowInferenceConfig> };
 export type FeatureAvailability = "AVAILABLE" | "PARTIAL" | "UNAVAILABLE";
 export type FeatureSource = "book" | "trades" | "lifecycle" | "history";
@@ -165,6 +167,7 @@ export type OrderFlowFeatures = {
     sweep: OrderFlowInference;
     passiveDefense: OrderFlowInference;
     aggressiveExhaustion: OrderFlowInference;
+    compression: OrderFlowInference;
   };
   quality: Readonly<OrderFlowState["quality"]>;
   timestamps: Readonly<OrderFlowState["timestamps"]>;
@@ -397,6 +400,87 @@ function computePassiveDefenseInference(state: Readonly<OrderFlowState>, window:
   if (absorption.status !== "CANDIDATE") return absorption;
   return { ...absorption, evidence: absorption.evidence.map((item) => item.metric === "priceProgress" ? { ...item, metric: "priceExcursion" } : item) };
 }
+function computeCompressionInference(
+  state: Readonly<OrderFlowState>,
+  window: Readonly<OrderFlowFeatureWindow>,
+  config: CompressionInferenceConfig | undefined,
+  midSeries: DerivedMetric<readonly TemporalObservation<number>[]>,
+  interactionCount: DerivedMetric<number>,
+  interactionVolume: DerivedMetric<number>,
+  buyInteraction: DerivedMetric<number>,
+  sellInteraction: DerivedMetric<number>,
+  persistence: DerivedMetric<readonly PersistenceObservation[]>,
+  reappearance: DerivedMetric<readonly LiquidityReappearanceObservation[]>,
+  sequence: DerivedMetric<SequenceCoverage>,
+  added: DerivedMetric<number>,
+  removed: DerivedMetric<number>,
+  lifecycleActivity: number,
+): OrderFlowInference {
+  if (!config || !config.enabled) return inferenceBase(state, window, "NOT_DETECTED");
+  const passiveCriteria = [config.minPassiveQuantity, config.minPassivePersistenceMs, config.minPresenceRatio, config.minReappearanceCount, config.minLifecycleActivity];
+  if (!validInferenceNumber(config.minDurationMs, true) || !validInferenceNumber(config.maxObservedPriceRange, true) || !validInferenceNumber(config.minInteractionCount, true) || passiveCriteria.every((value) => value == null) || passiveCriteria.some((value) => value != null && !validInferenceNumber(value, true)) || (config.minInteractionVolume != null && !validInferenceNumber(config.minInteractionVolume, true)) || (config.maxDirectionalPriceProgress != null && !validInferenceNumber(config.maxDirectionalPriceProgress, true))) return inferenceBase(state, window, "UNAVAILABLE", "UNAVAILABLE");
+  const configBand = config.priceBand;
+  if (!window.priceBand || window.priceBand.mode !== configBand.mode || (configBand.mode === "absolute" && (window.priceBand.mode !== "absolute" || window.priceBand.minPrice !== configBand.minPrice || window.priceBand.maxPrice !== configBand.maxPrice)) || (configBand.mode === "relativeToMid" && (window.priceBand.mode !== "relativeToMid" || window.priceBand.minDistance !== configBand.minDistance || window.priceBand.maxDistance !== configBand.maxDistance))) return inferenceBase(state, window, "UNAVAILABLE", "UNAVAILABLE");
+  if (unusableBook.has(state.quality.book) || !state.book || unusableHistory.has(state.quality.history)) return inferenceBase(state, window, "UNAVAILABLE");
+  if (state.quality.book !== "VALID" || state.quality.history !== "VALID") return inferenceBase(state, window, "PARTIAL", state.quality.overall);
+  if (state.quality.lifecycle === "UNAVAILABLE" || state.quality.lifecycle === "GAP" || state.quality.lifecycle === "RESYNCING" || state.quality.lifecycle === "DISCONNECTED") return inferenceBase(state, window, "UNAVAILABLE");
+  if (state.quality.trades === "UNAVAILABLE" || state.quality.trades === "DISCONNECTED" || state.quality.trades === "RESYNCING") return inferenceBase(state, window, "UNAVAILABLE");
+  if (state.quality.trades !== "VALID") return inferenceBase(state, window, "PARTIAL", state.quality.overall);
+  if (state.liquidityLifecycle.length === 0) return inferenceBase(state, window, "UNAVAILABLE");
+  if (state.trades.length === 0) return inferenceBase(state, window, "UNAVAILABLE");
+  if (sequenceInferenceQuality(sequence) !== "VALID") return inferenceBase(state, window, sequenceInferenceStatus(sequence), sequenceInferenceQuality(sequence));
+  const samples = sampleTimesFor(window);
+  if (samples.length < 2 || midSeries.availability === "UNAVAILABLE") return inferenceBase(state, window, "UNAVAILABLE");
+  if (midSeries.availability === "PARTIAL" || persistence.availability === "PARTIAL") return inferenceBase(state, window, "PARTIAL", state.quality.overall);
+  const observedMids = (midSeries.value ?? []).map((point) => point.value).filter((value): value is number => value != null);
+  if (observedMids.length !== samples.length) return inferenceBase(state, window, "PARTIAL", state.quality.overall);
+  const firstMid = observedMids[0]!; const lastMid = observedMids.at(-1)!; const minObservedMid = Math.min(...observedMids); const maxObservedMid = Math.max(...observedMids); const observedPriceRange = maxObservedMid - minObservedMid; const signedPriceProgress = lastMid - firstMid; const absolutePriceProgress = Math.abs(signedPriceProgress); const duration = window.endTime - window.startTime;
+  if (duration < config.minDurationMs || observedPriceRange > config.maxObservedPriceRange || (config.maxDirectionalPriceProgress != null && absolutePriceProgress > config.maxDirectionalPriceProgress)) return inferenceBase(state, window, "NOT_DETECTED");
+  if (interactionCount.availability === "UNAVAILABLE" || interactionCount.value == null || interactionCount.value < config.minInteractionCount) return interactionCount.availability === "UNAVAILABLE" ? inferenceBase(state, window, "UNAVAILABLE") : inferenceBase(state, window, "NOT_DETECTED");
+  if (config.minInteractionVolume != null && (interactionVolume.availability === "UNAVAILABLE" || interactionVolume.value == null)) return inferenceBase(state, window, "UNAVAILABLE");
+  if (config.minInteractionVolume != null && interactionVolume.value! < config.minInteractionVolume) return inferenceBase(state, window, "NOT_DETECTED");
+  const observations = persistence.value ?? [];
+  const sideSummary = (side: "bid" | "ask") => {
+    const items = observations.filter((item) => item.side === side && levelInBand(item.price, config.priceBand, state.book?.mid ?? null));
+    const quantity = items.reduce((sum, item) => sum + item.quantityPersistence, 0);
+    const lifetime = items.length ? Math.max(...items.map((item) => item.observedLifetime ?? 0)) : null;
+    const presenceRatio = items.length ? Math.min(...items.map((item) => item.presenceRatio ?? 0)) : null;
+    const reappearances = items.reduce((sum, item) => sum + item.reappearanceCount, 0);
+    const meets = items.length > 0 && (config.minPassiveQuantity == null || quantity >= config.minPassiveQuantity) && (config.minPassivePersistenceMs == null || (lifetime ?? 0) >= config.minPassivePersistenceMs) && (config.minPresenceRatio == null || (presenceRatio ?? 0) >= config.minPresenceRatio) && (config.minReappearanceCount == null || reappearances >= config.minReappearanceCount) && (config.minLifecycleActivity == null || lifecycleActivity >= config.minLifecycleActivity);
+    return { meets, quantity, lifetime, presenceRatio, reappearances };
+  };
+  const bid = sideSummary("bid"); const ask = sideSummary("ask"); const sides = [bid.meets ? "BID" : null, ask.meets ? "ASK" : null].filter((side): side is "BID" | "ASK" => side != null); if (sides.length === 0) return inferenceBase(state, window, "NOT_DETECTED");
+  const passiveSide = sides.length === 2 ? "BOTH" : sides[0]!;
+  const evidenceItems = [
+    inferenceEvidence("duration", duration, "milliseconds", window, "history", state.provenance.history),
+    inferenceEvidence("sampleCount", samples.length, "count", window, "history", state.provenance.history, { sampleTimes: samples }),
+    inferenceEvidence("firstMid", firstMid, "price", window, "history", state.provenance.history, { sampleTimes: samples }),
+    inferenceEvidence("lastMid", lastMid, "price", window, "history", state.provenance.history, { sampleTimes: samples }),
+    inferenceEvidence("minObservedMid", minObservedMid, "price", window, "history", state.provenance.history, { sampleTimes: samples }),
+    inferenceEvidence("maxObservedMid", maxObservedMid, "price", window, "history", state.provenance.history, { sampleTimes: samples }),
+    inferenceEvidence("observedPriceRange", observedPriceRange, "price", window, "history", state.provenance.history, { sampleTimes: samples, priceBand: config.priceBand }),
+    inferenceEvidence("signedPriceProgress", signedPriceProgress, "price", window, "history", state.provenance.history, { sampleTimes: samples }),
+    inferenceEvidence("absolutePriceProgress", absolutePriceProgress, "price", window, "history", state.provenance.history, { sampleTimes: samples }),
+    inferenceEvidence("interactionTradeCount", interactionCount.value, "count", window, "trades", state.provenance.trades, { priceBand: config.priceBand }),
+    inferenceEvidence("interactionVolume", interactionVolume.value, "quantity", window, "trades", state.provenance.trades, { priceBand: config.priceBand }),
+    inferenceEvidence("aggressiveBuyInteractionVolume", buyInteraction.value, "quantity", window, "trades", state.provenance.trades, { priceBand: config.priceBand }),
+    inferenceEvidence("aggressiveSellInteractionVolume", sellInteraction.value, "quantity", window, "trades", state.provenance.trades, { priceBand: config.priceBand }),
+    inferenceEvidence("bidPassiveQuantity", bid.quantity, "quantity", window, "history", state.provenance.history, { priceBand: config.priceBand }),
+    inferenceEvidence("askPassiveQuantity", ask.quantity, "quantity", window, "history", state.provenance.history, { priceBand: config.priceBand }),
+    inferenceEvidence("bidPersistence", bid.lifetime, "milliseconds", window, "history", state.provenance.history),
+    inferenceEvidence("askPersistence", ask.lifetime, "milliseconds", window, "history", state.provenance.history),
+    inferenceEvidence("bidPresenceRatio", bid.presenceRatio, "ratio", window, "history", state.provenance.history, { sampleTimes: samples }),
+    inferenceEvidence("askPresenceRatio", ask.presenceRatio, "ratio", window, "history", state.provenance.history, { sampleTimes: samples }),
+    inferenceEvidence("reappearanceCount", (reappearance.value ?? []).reduce((sum, item) => sum + item.reappearanceCount, 0), "count", window, "lifecycle", state.provenance.lifecycle),
+    inferenceEvidence("liquidityAdded", added.value, "quantity", window, "lifecycle", state.provenance.lifecycle),
+    inferenceEvidence("liquidityRemoved", removed.value, "quantity", window, "lifecycle", state.provenance.lifecycle),
+    inferenceEvidence("lifecycleActivity", lifecycleActivity, "count", window, "lifecycle", state.provenance.lifecycle),
+    inferenceEvidence("sequenceContinuity", sequence.value?.continuity ?? null, "count", window, "lifecycle", state.provenance.lifecycle),
+    inferenceEvidence("priceBand", JSON.stringify(config.priceBand), "count", window, "history", state.provenance.history),
+    inferenceEvidence("passiveSide", passiveSide, "count", window, "history", state.provenance.history),
+  ];
+  return { ...inferenceBase(state, window, "CANDIDATE", state.quality.overall, evidenceItems), passiveSide };
+}
 function computeAggressiveExhaustionInference(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, config: AggressiveExhaustionInferenceConfig | undefined, persistence: DerivedMetric<readonly PersistenceObservation[]>, sequence: DerivedMetric<SequenceCoverage>): OrderFlowInference {
   if (!config || !config.enabled) return inferenceBase(state, window, "NOT_DETECTED");
   validateWindow(config.earlier); validateWindow(config.later);
@@ -408,7 +492,7 @@ function computeAggressiveExhaustionInference(state: Readonly<OrderFlowState>, w
   const volume = (items: readonly CanonicalTrade[]) => items.reduce((sum, trade) => sum + trade.quantity, 0); const velocity = (items: readonly CanonicalTrade[], part: Readonly<OrderFlowFeatureWindow>) => volume(items) / ((part.endTime - part.startTime) / 1000); const progress = (items: readonly CanonicalTrade[]) => Math.abs(items.at(-1)!.price - items[0]!.price);
   const earlierVolume = volume(earlier); const laterVolume = volume(later); const earlierVelocity = velocity(earlier, config.earlier); const laterVelocity = velocity(later, config.later); const laterProgress = progress(later); const aggressiveSide = later.reduce((buy, trade) => buy + (trade.aggressorSide === "BUY" ? trade.quantity : -trade.quantity), 0) >= 0 ? "BUY" : "SELL"; const passiveSide = aggressiveSide === "BUY" ? "ask" : "bid"; const minOppositePersistenceMs = config.minOppositePersistenceMs;
   if ((config.minVolumeDrop != null && earlierVolume - laterVolume < config.minVolumeDrop) || (config.minVelocityDrop != null && earlierVelocity - laterVelocity < config.minVelocityDrop) || (config.maxPriceProgress != null && laterProgress > config.maxPriceProgress)) return inferenceBase(state, window, "NOT_DETECTED");
-  if (minOppositePersistenceMs != null && (persistence.availability === "UNAVAILABLE" || !persistence.value?.some((item) => item.side === passiveSide && (item.observedLifetime ?? 0) >= minOppositePersistenceMs))) return inferenceBase(state, window, persistence.availability === "UNAVAILABLE" ? "PARTIAL" : "NOT_DETECTED");
+  if (minOppositePersistenceMs != null && (persistence.availability === "UNAVAILABLE" || !persistence.value?.some((item) => item.side === passiveSide && (item.observedLifetime ?? 0) >= (minOppositePersistenceMs ?? 0)))) return inferenceBase(state, window, persistence.availability === "UNAVAILABLE" ? "PARTIAL" : "NOT_DETECTED");
   return inferenceBase(state, window, "CANDIDATE", state.quality.overall, [inferenceEvidence("earlierVolume", earlierVolume, "quantity", window, "trades", state.provenance.trades), inferenceEvidence("laterVolume", laterVolume, "quantity", window, "trades", state.provenance.trades), inferenceEvidence("earlierVelocity", earlierVelocity, "per-second", config.earlier, "trades", state.provenance.trades), inferenceEvidence("laterVelocity", laterVelocity, "per-second", config.later, "trades", state.provenance.trades), inferenceEvidence("earlierProgress", progress(earlier), "price", config.earlier, "trades", state.provenance.trades), inferenceEvidence("laterProgress", laterProgress, "price", config.later, "trades", state.provenance.trades), inferenceEvidence("oppositePassiveSide", passiveSide, "count", window, "history", state.provenance.history)]);
 }
 
@@ -546,6 +630,16 @@ export function computeOrderFlowFeatures(state: Readonly<OrderFlowState>, config
   const interactionVolume = interactionTrades.reduce((sum, trade) => sum + trade.quantity, 0);
   const interactionBuy = interactionTrades.filter((trade) => trade.aggressorSide === "BUY").reduce((sum, trade) => sum + trade.quantity, 0);
   const interactionSell = interactionTrades.filter((trade) => trade.aggressorSide === "SELL").reduce((sum, trade) => sum + trade.quantity, 0);
+  const interactionTradeCount = interactionMetric(interactionCount, "interactionTradeCount");
+  const interactionVolumeMetric = interactionMetric(interactionVolume, "interactionVolume");
+  const aggressiveBuyInteractionVolumeMetric = interactionMetric(interactionBuy, "aggressiveBuyInteractionVolume");
+  const aggressiveSellInteractionVolumeMetric = interactionMetric(interactionSell, "aggressiveSellInteractionVolume");
+  const firstInteractionTime = interactionMetric(interactionTrades[0] ? eventTime(interactionTrades[0]) : 0, "firstInteractionTime");
+  const lastInteractionTime = interactionMetric(interactionTrades.at(-1) ? eventTime(interactionTrades.at(-1)!) : 0, "lastInteractionTime");
+  const liquidityAddedMetric = lifecycleMetric(added, "liquidityAdded");
+  const liquidityRemovedMetric = lifecycleMetric(removed, "liquidityRemoved");
+  const liquidityAddRate = lifecycleMetric(added / durationSeconds, "liquidityAddRate", "per-second");
+  const liquidityRemoveRate = lifecycleMetric(removed / durationSeconds, "liquidityRemoveRate", "per-second");
   const inferenceConfig = config.inference;
   const inference = {
     replenishment: computeReplenishmentInference(state, window, inferenceConfig?.replenishment, sequenceMetric),
@@ -556,6 +650,7 @@ export function computeOrderFlowFeatures(state: Readonly<OrderFlowState>, config
     sweep: computeSweepInference(state, window, inferenceConfig?.sweep),
     passiveDefense: computePassiveDefenseInference(state, window, inferenceConfig?.passiveDefense, persistence, liquidityReappearance, sequenceMetric),
     aggressiveExhaustion: computeAggressiveExhaustionInference(state, window, inferenceConfig?.aggressiveExhaustion, persistence, sequenceMetric),
+    compression: computeCompressionInference(state, window, inferenceConfig?.compression, midSeries, interactionTradeCount, interactionVolumeMetric, aggressiveBuyInteractionVolumeMetric, aggressiveSellInteractionVolumeMetric, persistence, liquidityReappearance, sequenceMetric, liquidityAddedMetric, liquidityRemovedMetric, lifecycle.length),
   };
 
   return {
@@ -565,9 +660,9 @@ export function computeOrderFlowFeatures(state: Readonly<OrderFlowState>, config
       tradeVelocity: velocity(trades.length, "tradeVelocity"), volumeVelocity: velocity(total, "volumeVelocity"), aggressiveBuyVelocity: velocity(buy, "aggressiveBuyVelocity"), aggressiveSellVelocity: velocity(sell, "aggressiveSellVelocity"),
       bookImbalance, tradeImbalance, bidDepth: bidDepthMetric, askDepth: askDepthMetric, bidLevelCount, askLevelCount, nearestBidDistance, nearestAskDistance,
       startMid, endMid, absolutePriceChange, signedPriceChange, priceRange, midSeries, spreadSeries, bidDepthSeries, askDepthSeries, levelCountSeries,
-      interactionTradeCount: interactionMetric(interactionCount, "interactionTradeCount"), interactionVolume: interactionMetric(interactionVolume, "interactionVolume"), aggressiveBuyInteractionVolume: interactionMetric(interactionBuy, "aggressiveBuyInteractionVolume"), aggressiveSellInteractionVolume: interactionMetric(interactionSell, "aggressiveSellInteractionVolume"), firstInteractionTime: interactionMetric(interactionTrades[0] ? eventTime(interactionTrades[0]) : 0, "firstInteractionTime"), lastInteractionTime: interactionMetric(interactionTrades.at(-1) ? eventTime(interactionTrades.at(-1)!) : 0, "lastInteractionTime"), liquidityReappearance, sequenceCoverage: sequenceMetric,
+      interactionTradeCount, interactionVolume: interactionVolumeMetric, aggressiveBuyInteractionVolume: aggressiveBuyInteractionVolumeMetric, aggressiveSellInteractionVolume: aggressiveSellInteractionVolumeMetric, firstInteractionTime, lastInteractionTime, liquidityReappearance, sequenceCoverage: sequenceMetric,
       additionEventCount, removalEventCount, positiveUpdateCount, decreaseCount, removeCount, netLiquidityChange: lifecycleMetric(added - removed, "netLiquidityChange"), bidNetLiquidityChange, askNetLiquidityChange,
-      liquidityAdded: lifecycleMetric(added, "liquidityAdded"), liquidityRemoved: lifecycleMetric(removed, "liquidityRemoved"), bidAdded: lifecycleMetric(bidAdded, "bidAdded"), askAdded: lifecycleMetric(askAdded, "askAdded"), bidRemoved: lifecycleMetric(bidRemoved, "bidRemoved"), askRemoved: lifecycleMetric(askRemoved, "askRemoved"), liquidityAddRate: lifecycleMetric(added / durationSeconds, "liquidityAddRate", "per-second"), liquidityRemoveRate: lifecycleMetric(removed / durationSeconds, "liquidityRemoveRate", "per-second"), persistence,
+      liquidityAdded: liquidityAddedMetric, liquidityRemoved: liquidityRemovedMetric, bidAdded: lifecycleMetric(bidAdded, "bidAdded"), askAdded: lifecycleMetric(askAdded, "askAdded"), bidRemoved: lifecycleMetric(bidRemoved, "bidRemoved"), askRemoved: lifecycleMetric(askRemoved, "askRemoved"), liquidityAddRate, liquidityRemoveRate, persistence,
     }, inference, quality: { ...state.quality }, timestamps: cloneTimestamps(state.timestamps), provenance: cloneProvenance(state.provenance),
   };
 }

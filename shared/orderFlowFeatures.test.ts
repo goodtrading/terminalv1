@@ -421,3 +421,67 @@ test("N5G.4 fails closed for missing history and preserves candidate replay pari
   assert.notEqual(unavailable.inference.absorption.status, "CANDIDATE");
   assert.ok(["PARTIAL", "UNAVAILABLE"].includes(unavailable.inference.absorption.status));
 });
+
+test("N5G.5 compression requires contained sampled price, repeated interaction and passive persistence", () => {
+  const state = makeState();
+  const result = computeOrderFlowFeatures(state, { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [100, 200, 300] }, inference: { compression: { enabled: true, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, minDurationMs: 150, maxObservedPriceRange: 1, minInteractionCount: 2, minInteractionVolume: 5, minPassiveQuantity: 1, minPassivePersistenceMs: 0 } } });
+  assert.equal(result.inference.compression.status, "CANDIDATE");
+  assert.equal((result.inference.compression as typeof result.inference.compression & { passiveSide?: string }).passiveSide, "BOTH");
+  assert.equal(result.inference.compression.evidence.some((item) => item.metric === "observedPriceRange" && item.value === 0), true);
+  assert.equal("bullishCompression" in result.inference.compression, false);
+});
+
+test("N5G.5 compression is not inferred from range, liquidity or interaction alone", () => {
+  const state = makeState();
+  const base = { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [100, 200, 300] }, inference: { compression: { enabled: true, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, minDurationMs: 150, maxObservedPriceRange: 1, minInteractionCount: 2, minPassiveQuantity: 1, minPassivePersistenceMs: 0 } } } as const;
+  assert.equal(computeOrderFlowFeatures({ ...state, liquidityLifecycle: [] }, base).inference.compression.status, "UNAVAILABLE");
+  assert.equal(computeOrderFlowFeatures({ ...state, trades: [] }, base).inference.compression.status, "UNAVAILABLE");
+  assert.equal(computeOrderFlowFeatures(state, { ...base, inference: { compression: { ...base.inference.compression, minInteractionCount: 99 } } }).inference.compression.status, "NOT_DETECTED");
+});
+
+test("N5G.5 compression preserves sample range semantics and fails closed on missing frames", () => {
+  const state = makeState();
+  const config: OrderFlowFeatureConfig = { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [300, 100, 200, 200] }, inference: { compression: { enabled: true, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, minDurationMs: 150, maxObservedPriceRange: 1, minInteractionCount: 2, minPassiveQuantity: 1, minPassivePersistenceMs: 0 } } };
+  const result = computeOrderFlowFeatures(state, config);
+  assert.equal(result.inference.compression.status, "CANDIDATE");
+  assert.equal(result.inference.compression.evidence.some((item) => item.metric === "sampleCount" && item.value === 3), true);
+  const missing = { ...state, historicalLiquidity: { latestFrame: null, bookAt: (_time: number) => null }, quality: { ...state.quality, history: "UNAVAILABLE" as const } };
+  assert.notEqual(computeOrderFlowFeatures(missing, config).inference.compression.status, "CANDIDATE");
+});
+
+test("N5G.5 compression supports BID, ASK and BOTH passive sides", () => {
+  const state = makeState();
+  const common = { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [100, 200, 300] }, inference: { compression: { enabled: true, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, minDurationMs: 150, maxObservedPriceRange: 1, minInteractionCount: 2, minPassivePersistenceMs: 0 } } } as const;
+  const both = computeOrderFlowFeatures(state, common);
+  assert.equal((both.inference.compression as typeof both.inference.compression & { passiveSide?: string }).passiveSide, "BOTH");
+  const bidOnly = computeOrderFlowFeatures({ ...state, liquidityLifecycle: state.liquidityLifecycle.filter((event) => event.side === "bid") }, common);
+  assert.equal((bidOnly.inference.compression as typeof bidOnly.inference.compression & { passiveSide?: string }).passiveSide, "BID");
+  const askOnly = computeOrderFlowFeatures({ ...state, liquidityLifecycle: state.liquidityLifecycle.filter((event) => event.side === "ask") }, common);
+  assert.equal((askOnly.inference.compression as typeof askOnly.inference.compression & { passiveSide?: string }).passiveSide, "ASK");
+});
+
+test("N5G.5 compression replay parity is end-to-end and deeply deterministic", () => {
+  const events: TruthReplayEvent[] = [
+    { type: "L2_SNAPSHOT", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [{ price: 100, quantity: 10 }], asks: [{ price: 101, quantity: 10 }], sequence: 1, snapshotId: 1, eventTime: 100, receiveTime: 101, quality: "VALID", source: "rest" },
+    { type: "L2_DELTA", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [{ price: 100, quantity: 12 }], asks: [], sequence: 2, eventTime: 150, receiveTime: 151, quality: "VALID", source: "websocket" },
+    { type: "L2_DELTA", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [{ price: 100, quantity: 10 }], asks: [], sequence: 3, eventTime: 200, receiveTime: 201, quality: "VALID", source: "websocket" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "c-1", price: 100.5, quantity: 3, aggressorSide: "BUY", eventTime: 160, receiveTime: 161, quality: "VALID", source: "websocket" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "c-2", price: 100.5, quantity: 3, aggressorSide: "SELL", eventTime: 220, receiveTime: 221, quality: "VALID", source: "websocket" },
+    { type: "ADVANCE_TIME", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", eventTime: 300, receiveTime: 301, quality: "VALID", source: "websocket" },
+  ];
+  const config: OrderFlowFeatureConfig = { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [100, 150, 200, 300] }, inference: { compression: { enabled: true, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, minDurationMs: 150, maxObservedPriceRange: 1, minInteractionCount: 2, minInteractionVolume: 5, minPassiveQuantity: 1, minPassivePersistenceMs: 0 } } };
+  const replayFeature = () => {
+    const replay = replayTruth(events);
+    assert.ok(replay.l2Book);
+    const history = new HistoricalLiquidityTruth(spot);
+    const snapshot = events[0]!;
+    history.addCheckpoint({ ...replay.l2Book, bids: snapshot.bids, asks: snapshot.asks, sequence: snapshot.sequence, snapshotId: snapshot.snapshotId, eventTime: snapshot.eventTime, receiveTime: snapshot.receiveTime, source: snapshot.source, quality: snapshot.quality, provenance: { ...replay.l2Book.provenance, source: snapshot.source, snapshotId: snapshot.snapshotId, sequence: snapshot.sequence, eventTime: snapshot.eventTime, receiveTime: snapshot.receiveTime } });
+    for (const event of replay.lifecycleEvents) history.addEvent(event);
+    const state = composeOrderFlowState({ identity: spot, book: replay.l2Book, trades: replay.tradeTape, tradeQuality: "VALID", liquidityLifecycle: replay.lifecycleEvents, lifecycleQuality: "VALID", historicalLiquidity: history, capturedAt: 300 });
+    return computeOrderFlowFeatures(state, config).inference.compression;
+  };
+  const first = replayFeature();
+  const second = replayFeature();
+  assert.equal(first.status, "CANDIDATE");
+  assert.deepEqual(first, second);
+});
