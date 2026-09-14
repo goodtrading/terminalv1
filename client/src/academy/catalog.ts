@@ -11,6 +11,12 @@ export type AcademyTerminalTarget =
 export type AcademyLabType = "NONE" | "QUIZ" | "REPLAY" | "MARKET_SCAN";
 export type AcademyAccessSummary = AcademyAccess | "FREE + MEMBER";
 
+export type AcademyContentBlock =
+  | { type: "paragraph"; text: string }
+  | { type: "heading"; text: string; level?: 2 | 3 }
+  | { type: "list"; items: string[] }
+  | { type: "callout"; title?: string; text: string };
+
 export type AcademyLesson = {
   id: string;
   slug: string;
@@ -19,6 +25,7 @@ export type AcademyLesson = {
   order: number;
   estimatedMinutes: number;
   access: AcademyAccess;
+  content?: AcademyContentBlock[];
   terminalTarget?: AcademyTerminalTarget;
   labType?: AcademyLabType;
 };
@@ -55,6 +62,7 @@ type LessonSeed = {
   title: string;
   access?: AcademyAccess;
   estimatedMinutes?: number;
+  content?: AcademyContentBlock[];
   terminalTarget?: AcademyTerminalTarget;
   labType?: AcademyLabType;
 };
@@ -127,6 +135,7 @@ function buildCourse(args: {
         order: lessonOrder,
         estimatedMinutes: seed.estimatedMinutes ?? (access === "MEMBER" ? 14 : 10),
         access,
+        ...(seed.content ? { content: seed.content } : {}),
         ...(seed.terminalTarget ? { terminalTarget: seed.terminalTarget } : {}),
         ...(seed.labType ? { labType: seed.labType } : {}),
       } satisfies AcademyLesson;
@@ -161,7 +170,12 @@ export const ACADEMY_CATALOG: readonly AcademyCourse[] = [
     track: "FOUNDATION",
     level: "BEGINNER",
     modules: [
-      moduleSeed("Getting Started", ["Welcome to GoodTrading", "How the Terminal is organized", "Selecting an instrument", "Spot vs Perpetual", "Timeframes", "Layouts and panels"]),
+      moduleSeed("Getting Started", [{ title: "Welcome to GoodTrading", content: [
+        { type: "heading", level: 2, text: "Start with a clear view" },
+        { type: "paragraph", text: "GoodTrading Academy organizes market education around context, participation and disciplined decisions." },
+        { type: "list", items: ["Learn the vocabulary before interpreting signals.", "Separate observation from decision.", "Use the terminal as a structured reading environment."] },
+        { type: "callout", title: "Course boundary", text: "This lesson introduces the Academy and its learning path. Detailed terminal mechanics follow in the next lessons." },
+      ] }, "How the Terminal is organized", "Selecting an instrument", "Spot vs Perpetual", "Timeframes", "Layouts and panels"]),
       moduleSeed("Reading the Terminal", ["Bid, Ask, Mid and Last", "Price and Volume", "Understanding each panel", "Gamma panel overview", "Order Flow panel overview", "Liquidity / Heatmap overview", "Alerts"]),
       moduleSeed("First Workflow", ["Analyze BTC in five minutes", "Save your workspace", "Create your first alert", "Introduction to Paper Trading", free("First Market Scan", 12)]),
     ],
@@ -174,9 +188,15 @@ export const ACADEMY_CATALOG: readonly AcademyCourse[] = [
     level: "BEGINNER",
     modules: [
       moduleSeed("How Markets Work", ["What is a market?", "Buyers and sellers", "Bid and Ask", "Spread", "Liquidity", "Order Book"]),
-      moduleSeed("Market vs Limit", ["Limit Orders", "Market Orders", "Liquidity Makers", "Liquidity Takers", "Aggressive participation", "Passive participation"]),
+      moduleSeed("Market vs Limit", [
+        "Limit Orders", { title: "Market Orders", content: [
+          { type: "heading", level: 2, text: "Immediate execution" },
+          { type: "paragraph", text: "A market order expresses a willingness to trade against available liquidity now, accepting the prices currently offered by the book." },
+          { type: "list", items: ["It prioritizes execution over a guaranteed price.", "Available depth can affect the final average price.", "Context determines whether immediacy is appropriate."] },
+          { type: "callout", title: "Foundation", text: "This lesson explains the mechanism only. Trade selection and execution frameworks belong to later Academy content." },
+        ] }, "Liquidity Makers", "Liquidity Takers", "Aggressive participation", "Passive participation"]),
       moduleSeed("Price Discovery", ["Why price actually moves", "Liquidity consumption", "Auction process", "Acceptance", "Rejection", "Imbalance"]),
-      moduleSeed("Lab", [lab("Who controls the auction?", "CHART", "QUIZ")]),
+      moduleSeed("Lab", [{ title: "Who controls the auction?", access: "FREE", terminalTarget: "CHART", labType: "QUIZ" }]),
     ],
   }),
   buildCourse({
@@ -312,7 +332,12 @@ export const ACADEMY_CATALOG: readonly AcademyCourse[] = [
     track: "EDGE",
     level: "ADVANCED",
     modules: [
-      moduleSeed("The GoodTrading Method", ["What is the GoodTrading Method?", "Market State", "Gamma Map", "Liquidity", "Order Flow", "Acceptance / Rejection", "Execution", "Full Public Example"]),
+      moduleSeed("The GoodTrading Method", [{ title: "What is the GoodTrading Method?", content: [
+        { type: "heading", level: 2, text: "A hierarchy of evidence" },
+        { type: "paragraph", text: "The GoodTrading method organizes observation into a sequence: understand the market state, locate relevant positioning, read participation, and wait for acceptance or rejection before considering execution." },
+        { type: "list", items: ["Market State", "Gamma", "Liquidity", "Order Flow", "Acceptance / Rejection", "Execution"] },
+        { type: "callout", title: "Introduction", text: "This lesson describes the conceptual hierarchy only. Specific setups and operational rules belong to later playbook lessons." },
+      ] }, "Market State", "Gamma Map", "Liquidity", "Order Flow", "Acceptance / Rejection", "Execution", "Full Public Example"]),
       moduleSeed("Market Scan", [member("GoodTrading Market Scan"), member("Trade / Wait / Invalid")]),
       moduleSeed("Setups", [member("Gamma Flip Rejection"), member("Gamma Flip Acceptance"), member("Magnet Rotation"), member("Passive Compression Breakout"), member("Compression Failure"), member("Liquidity Wall Rejection"), member("Liquidity Pull Continuation"), member("Spoof + Execution"), member("Absorption Reversal"), member("Failed Breakout")]),
       moduleSeed("Playbook Lab", [lab("GoodTrading Market Replay"), lab("Complete Market Scan", undefined, "MARKET_SCAN")]),
@@ -353,6 +378,37 @@ export function getAcademyCoursesByTrack(track: AcademyTrack): AcademyCourse[] {
 
 export function getAcademyCourseBySlug(slug: string): AcademyCourse | undefined {
   return ACADEMY_CATALOG.find((course) => course.slug === slug);
+}
+
+export function getAcademyLessonBySlug(course: AcademyCourse, lessonSlug: string): AcademyLesson | undefined {
+  return getCourseLessons(course).find((lesson) => lesson.slug === lessonSlug);
+}
+
+export function getAcademyLessonPosition(course: AcademyCourse, lesson: AcademyLesson): { position: number; total: number } {
+  const lessons = getCourseLessons(course);
+  const index = lessons.findIndex((candidate) => candidate.id === lesson.id);
+  if (index < 0) return { position: 0, total: lessons.length };
+  return { position: index + 1, total: lessons.length };
+}
+
+export function getAcademyLessonContext(course: AcademyCourse, lesson: AcademyLesson) {
+  const moduleIndex = course.modules.findIndex((module) => module.lessons.some((candidate) => candidate.id === lesson.id));
+  const module = moduleIndex >= 0 ? course.modules[moduleIndex] : undefined;
+  return {
+    module,
+    moduleIndex: moduleIndex >= 0 ? moduleIndex : undefined,
+    ...getAcademyLessonPosition(course, lesson),
+  };
+}
+
+export function getAdjacentAcademyLessons(course: AcademyCourse, lesson: AcademyLesson): {
+  previous?: AcademyLesson;
+  next?: AcademyLesson;
+} {
+  const lessons = getCourseLessons(course);
+  const index = lessons.findIndex((candidate) => candidate.id === lesson.id);
+  if (index < 0) return {};
+  return { previous: lessons[index - 1], next: lessons[index + 1] };
 }
 
 export function getCourseLessons(course: AcademyCourse): AcademyLesson[] {

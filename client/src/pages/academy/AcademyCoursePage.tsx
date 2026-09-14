@@ -84,10 +84,10 @@ function CourseHeader({ course }: { course: AcademyCourse }) {
   );
 }
 
-function LessonRow({ lesson }: { lesson: AcademyLesson }) {
+function LessonRow({ course, lesson }: { course: AcademyCourse; lesson: AcademyLesson }) {
   const isMember = lesson.access === "MEMBER";
   return (
-    <div data-academy-lesson-id={lesson.id} className="flex items-start gap-3 border-t border-white/[0.07] py-4 sm:items-center sm:gap-5">
+    <Link href={`/academy/${course.slug}/${lesson.slug}`} data-academy-lesson-id={lesson.id} className="flex items-start gap-3 border-t border-white/[0.07] py-4 transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#ff3b3b]/70 sm:items-center sm:gap-5">
       <div className="w-7 shrink-0 text-xs font-semibold tabular-nums text-[#626b78]">{String(lesson.order).padStart(2, "0")}</div>
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-2">
@@ -100,7 +100,7 @@ function LessonRow({ lesson }: { lesson: AcademyLesson }) {
         </div>
       </div>
       <AccessBadge access={lesson.access} />
-    </div>
+    </Link>
   );
 }
 
@@ -119,7 +119,7 @@ function ModuleSection({ course, moduleIndex }: { course: AcademyCourse; moduleI
         </div>
       </div>
       <div className="mt-1">
-        {module.lessons.map((lesson) => <LessonRow key={lesson.id} lesson={lesson} />)}
+        {module.lessons.map((lesson) => <LessonRow key={lesson.id} course={course} lesson={lesson} />)}
       </div>
     </article>
   );

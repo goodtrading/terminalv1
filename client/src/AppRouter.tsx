@@ -34,6 +34,7 @@ import VerifyEmailPage from "@/pages/marketing/VerifyEmailPage";
 import ResetPasswordPage from "@/pages/marketing/ResetPasswordPage";
 import AcademyHomePage from "@/pages/academy/AcademyHomePage";
 import AcademyCoursePage from "@/pages/academy/AcademyCoursePage";
+import AcademyLessonPage from "@/pages/academy/AcademyLessonPage";
 import { isDesktopRuntime } from "@/lib/runtimeFeatures";
 
 function AdminPageRoute() {
@@ -152,6 +153,7 @@ function WebRouter() {
       <Route path="/my-account" component={MyAccountRedirect} />
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
+      <Route path="/academy/:courseSlug/:lessonSlug" component={AcademyLessonPage} />
       <Route path="/academy/:courseSlug" component={AcademyCoursePage} />
       <Route path="/academy" component={AcademyHomePage} />
       <Route path="/admin" component={AdminPageRoute} />
@@ -187,6 +189,7 @@ function DesktopRouter() {
       <Route path="/my-account" component={MyAccountRedirect} />
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
+      <Route path="/academy/:courseSlug/:lessonSlug" component={AcademyLessonPage} />
       <Route path="/academy/:courseSlug" component={AcademyCoursePage} />
       <Route path="/academy" component={AcademyHomePage} />
       <Route path="/admin" component={AdminPageRoute} />
