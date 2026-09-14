@@ -4,6 +4,7 @@ import { MarketingLayout } from "@/components/marketing/MarketingLayout";
 import NotFound from "@/pages/not-found";
 import { AcademyContentRenderer } from "@/components/academy/AcademyContentRenderer";
 import { AcademyLessonAccessBoundary } from "@/components/academy/AcademyLessonAccessBoundary";
+import { AcademyLessonCompletion } from "@/components/academy/AcademyProgress";
 import {
   getAcademyCourseBySlug,
   getAcademyLessonBySlug,
@@ -177,6 +178,7 @@ export default function AcademyLessonPage() {
               <AcademyLessonAccessBoundary lesson={lesson}>
                 <AcademyContentRenderer blocks={lesson.content} />
               </AcademyLessonAccessBoundary>
+              {lesson.access === "FREE" ? <div className="mt-6"><AcademyLessonCompletion lessonId={lesson.id} /></div> : null}
             </div>
             <div className="mt-8"><LabSection lesson={lesson} /></div>
             <div className="mt-10"><LessonNavigation course={course} lesson={lesson} /></div>

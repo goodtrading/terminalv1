@@ -12,6 +12,8 @@ import {
   type AcademyAccessSummary,
   type AcademyTrack,
 } from "@/academy/catalog";
+import { useAcademyProgress } from "@/academy/progress";
+import { AcademyProgressBar } from "@/components/academy/AcademyProgress";
 
 function accessLabelClass(summary: AcademyAccessSummary): string {
   if (summary === "FREE + MEMBER") {
@@ -42,6 +44,9 @@ function formatDuration(minutes: number): string {
 export default function AcademyHomePage() {
   const trackCourses = (track: AcademyTrack) => getAcademyCoursesByTrack(track);
   const trackCount = ACADEMY_TRACKS.length;
+  const progress = useAcademyProgress();
+  const overallProgress = progress.getOverallProgress();
+  const continueLearning = progress.getContinueLearningLesson();
 
   return (
     <MarketingLayout>
@@ -95,6 +100,27 @@ export default function AcademyHomePage() {
           </div>
         </section>
 
+        <section className="mx-auto max-w-7xl px-4 pb-16 sm:px-6 lg:px-8 lg:pb-20">
+          <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+            <div className="rounded-2xl border border-white/[0.09] bg-[#050505]/80 p-6 sm:p-7">
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#7f8794]">Overall Academy progress</div>
+              <div className="mt-4 text-3xl font-semibold tracking-[-0.04em] text-white">{overallProgress.completed} / {overallProgress.total}</div>
+              <div className="mt-1 text-sm text-[#929aa7]">lessons completed</div>
+              <div className="mt-6"><AcademyProgressBar completed={overallProgress.completed} total={overallProgress.total} label="Academy progress" /></div>
+            </div>
+            {continueLearning ? (
+              <Link href={`/academy/${continueLearning.course.slug}/${continueLearning.lesson.slug}`} className="group rounded-2xl border border-[#ff3b3b]/25 bg-[#0a0707]/70 p-6 transition-colors hover:border-[#ff3b3b]/45 sm:p-7 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff3b3b]/70">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#ff8a8a]">Continue learning</div>
+                <div className="mt-4 text-xl font-semibold text-white group-hover:text-[#ffb0b0]">{continueLearning.lesson.title}</div>
+                <div className="mt-2 text-sm text-[#929aa7]">{continueLearning.course.title}</div>
+                <div className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-[#c4cad4]">Open lesson →</div>
+              </Link>
+            ) : (
+              <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.04] p-6 sm:p-7"><div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300">Academy complete</div><p className="mt-4 text-sm leading-7 text-[#b7c8bd]">All canonical lessons are complete.</p></div>
+            )}
+          </div>
+        </section>
+
         <section id="tracks" className="border-y border-white/[0.07] bg-white/[0.015]">
           <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 lg:py-20">
             <div className="mb-10 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -124,6 +150,7 @@ export default function AcademyHomePage() {
                       {courses.map((course) => {
                         const lessonCount = getCourseLessonCount(course);
                         const estimatedMinutes = getCourseEstimatedMinutes(course);
+                        const courseProgress = progress.getCourseProgress(course);
                         return (
                           <Link href={`/academy/${course.slug}`} key={course.id} data-academy-course-id={course.id} className="block py-3 text-sm transition-colors hover:bg-white/[0.03]">
                             <div className="flex items-center justify-between gap-4">
@@ -135,6 +162,7 @@ export default function AcademyHomePage() {
                               <span>{lessonCount} lessons</span>
                               <span>{formatDuration(estimatedMinutes)}</span>
                             </div>
+                            <div className="mt-3 max-w-sm"><AcademyProgressBar completed={courseProgress.completed} total={courseProgress.total} label="Course progress" /></div>
                           </Link>
                         );
                       })}

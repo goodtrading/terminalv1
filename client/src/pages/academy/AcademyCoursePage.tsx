@@ -14,6 +14,8 @@ import {
   type AcademyCourse,
   type AcademyLesson,
 } from "@/academy/catalog";
+import { useAcademyProgress, type AcademyCourseProgress } from "@/academy/progress";
+import { AcademyCompletedMark, AcademyProgressBar } from "@/components/academy/AcademyProgress";
 
 function formatDuration(minutes: number): string {
   const hours = Math.floor(minutes / 60);
@@ -47,7 +49,7 @@ function LabMetadata({ lesson }: { lesson: AcademyLesson }) {
   );
 }
 
-function CourseHeader({ course }: { course: AcademyCourse }) {
+function CourseHeader({ course, courseProgress }: { course: AcademyCourse; courseProgress: AcademyCourseProgress }) {
   const accessSummary = getCourseAccessSummary(course);
   return (
     <header className="border-b border-white/[0.08] pb-10">
@@ -80,14 +82,15 @@ function CourseHeader({ course }: { course: AcademyCourse }) {
           <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[#7f8794]">Estimated time</div>
         </div>
       </div>
+      <div className="mt-7 max-w-2xl"><AcademyProgressBar completed={courseProgress.completed} total={courseProgress.total} label="Course progress" /></div>
     </header>
   );
 }
 
-function LessonRow({ course, lesson }: { course: AcademyCourse; lesson: AcademyLesson }) {
+function LessonRow({ course, lesson, completed }: { course: AcademyCourse; lesson: AcademyLesson; completed: boolean }) {
   const isMember = lesson.access === "MEMBER";
   return (
-    <Link href={`/academy/${course.slug}/${lesson.slug}`} data-academy-lesson-id={lesson.id} className="flex items-start gap-3 border-t border-white/[0.07] py-4 transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#ff3b3b]/70 sm:items-center sm:gap-5">
+    <Link href={`/academy/${course.slug}/${lesson.slug}`} data-academy-lesson-id={lesson.id} aria-label={`${lesson.title}${completed ? ", completed" : ""}`} className={`flex items-start gap-3 border-t border-white/[0.07] py-4 transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#ff3b3b]/70 sm:items-center sm:gap-5 ${completed ? "bg-emerald-400/[0.025]" : ""}`}>
       <div className="w-7 shrink-0 text-xs font-semibold tabular-nums text-[#626b78]">{String(lesson.order).padStart(2, "0")}</div>
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-2">
@@ -97,6 +100,7 @@ function LessonRow({ course, lesson }: { course: AcademyCourse; lesson: AcademyL
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#737b88]">
           <span>{lesson.estimatedMinutes} min</span>
           <LabMetadata lesson={lesson} />
+          {completed ? <AcademyCompletedMark /> : null}
         </div>
       </div>
       <AccessBadge access={lesson.access} />
@@ -104,7 +108,7 @@ function LessonRow({ course, lesson }: { course: AcademyCourse; lesson: AcademyL
   );
 }
 
-function ModuleSection({ course, moduleIndex }: { course: AcademyCourse; moduleIndex: number }) {
+function ModuleSection({ course, moduleIndex, isLessonCompleted }: { course: AcademyCourse; moduleIndex: number; isLessonCompleted: (lessonId: string) => boolean }) {
   const module = course.modules[moduleIndex];
   return (
     <article data-academy-module-id={module.id} className="rounded-2xl border border-white/[0.09] bg-[#050505]/80 p-5 sm:p-7">
@@ -119,7 +123,7 @@ function ModuleSection({ course, moduleIndex }: { course: AcademyCourse; moduleI
         </div>
       </div>
       <div className="mt-1">
-        {module.lessons.map((lesson) => <LessonRow key={lesson.id} course={course} lesson={lesson} />)}
+        {module.lessons.map((lesson) => <LessonRow key={lesson.id} course={course} lesson={lesson} completed={isLessonCompleted(lesson.id)} />)}
       </div>
     </article>
   );
@@ -128,14 +132,16 @@ function ModuleSection({ course, moduleIndex }: { course: AcademyCourse; moduleI
 export default function AcademyCoursePage() {
   const [, params] = useRoute("/academy/:courseSlug");
   const course = params?.courseSlug ? getAcademyCourseBySlug(params.courseSlug) : undefined;
+  const progress = useAcademyProgress();
 
   if (!course) return <NotFound />;
 
+  const courseProgress = progress.getCourseProgress(course);
   const isFeatured = course.slug === "goodtrading-playbook";
   return (
     <MarketingLayout>
       <main data-academy-course-page={course.slug} className="mx-auto max-w-5xl px-4 py-12 sm:px-6 sm:py-16 lg:px-8 lg:py-20">
-        <CourseHeader course={course} />
+        <CourseHeader course={course} courseProgress={courseProgress} />
         <section className="mt-10 space-y-4" aria-label={`${course.title} curriculum`}>
           <div className="mb-6 flex items-end justify-between gap-4">
             <div>
@@ -144,7 +150,7 @@ export default function AcademyCoursePage() {
             </div>
             {isFeatured ? <span className="rounded-full border border-[#ff3b3b]/30 bg-[#ff3b3b]/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#ffaaaa]">Featured playbook</span> : null}
           </div>
-          {course.modules.map((_, moduleIndex) => <ModuleSection key={course.modules[moduleIndex].id} course={course} moduleIndex={moduleIndex} />)}
+          {course.modules.map((_, moduleIndex) => <ModuleSection key={course.modules[moduleIndex].id} course={course} moduleIndex={moduleIndex} isLessonCompleted={progress.isLessonCompleted} />)}
         </section>
       </main>
     </MarketingLayout>
