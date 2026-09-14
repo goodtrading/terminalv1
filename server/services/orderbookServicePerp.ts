@@ -18,6 +18,7 @@ import type { OrderBookLevel, OrderBookSnapshot } from "./orderbookService";
 import { shouldAcceptMarketDataUpdate } from "@shared/marketDataTruth";
 import { CanonicalL2BookOwner, type CanonicalL2Book } from "@shared/canonicalL2Book";
 import { LiquidityLifecycleProjector, appendLiquidityLifecycleEvents, type LiquidityLifecycleEvent } from "@shared/liquidityLifecycle";
+import { recordHistoricalLiquidityCheckpoint, recordHistoricalLiquidityEvents } from "./historicalLiquidityRegistry";
 
 
 const WS_URL = "wss://fstream.binance.com/ws/btcusdt@depth";
@@ -244,6 +245,7 @@ export async function initializePerpFullDepth(): Promise<void> {
   });
   snapshot = toLegacySnapshot(canonical);
   recentLifecycleEvents.length = 0;
+  recordHistoricalLiquidityCheckpoint(canonical);
   health.lastMessageTs = ts;
   health.latestUpdateId =
     data.lastUpdateId != null && Number.isFinite(Number(data.lastUpdateId))
@@ -408,7 +410,9 @@ function connect(): void {
       });
       if (!result.accepted) return;
       snapshot = toLegacySnapshot(result.book);
-      appendLiquidityLifecycleEvents(recentLifecycleEvents, lifecycleProjector.project(previous, result.book));
+      const lifecycleEvents = lifecycleProjector.project(previous, result.book);
+      appendLiquidityLifecycleEvents(recentLifecycleEvents, lifecycleEvents);
+      recordHistoricalLiquidityEvents(lifecycleEvents);
 
       if (!isPerpBboValid()) {
         invalidatePerpSnapshot();

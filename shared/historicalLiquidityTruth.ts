@@ -118,7 +118,7 @@ export class HistoricalLiquidityTruth {
     if (!sameIdentity(this.identity, event)) throw new Error("Historical lifecycle identity mismatch");
     if (unusable.has(event.quality) || event.quality !== "VALID") return false;
     const segment = this.segments.at(-1);
-    if (!segment || segment.quality !== "VALID") return false;
+    if (!segment || unusable.has(segment.quality)) return false;
     if (segment.checkpoint.sequence != null && event.sequence != null && event.sequence <= segment.checkpoint.sequence) return false;
     const key = eventKey(event);
     if (segment.events.some((existing) => eventKey(existing) === key)) return false;
@@ -138,7 +138,7 @@ export class HistoricalLiquidityTruth {
     const candidates = this.segments.filter((candidate) => checkpointTime(candidate.checkpoint) <= targetTime);
     const segment = candidates.reduce<HistoricalLiquiditySegment | undefined>((latest, candidate) =>
       !latest || checkpointTime(candidate.checkpoint) > checkpointTime(latest.checkpoint) ? candidate : latest, undefined);
-    if (!segment || segment.quality !== "VALID") return null;
+    if (!segment || unusable.has(segment.quality)) return null;
     const bids = mapLevels(segment.checkpoint.bids);
     const asks = mapLevels(segment.checkpoint.asks);
     let lastEvent: LiquidityLifecycleEvent | undefined;

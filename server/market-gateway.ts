@@ -6,6 +6,7 @@ import { parseBookmapMarket, type BookmapMarketSource } from "@shared/bookmapMar
 import { buildMarketDataTruth, deriveMarketDataQuality, type MarketDataMarketType, type MarketDataTruth } from "@shared/marketDataTruth";
 import { getOrderBookForMarket, getCanonicalL2BookForMarket, getLiquidityLifecycleForMarket } from "./services/orderbookMarketRegistry";
 import type { LiquidityLifecycleEvent } from "@shared/liquidityLifecycle";
+import { getHistoricalLiquidityBook } from "./services/historicalLiquidityRegistry";
 import type { CanonicalL2Book } from "@shared/canonicalL2Book";
 import { getSpotOrderBookHealth } from "./services/orderbookService";
 import { getPerpOrderBookHealth } from "./services/orderbookServicePerp";
@@ -381,6 +382,12 @@ export class MarketDataGateway {
     if (input.venue !== "Binance") throw new Error("Unsupported liquidity lifecycle venue");
     if (input.instrument.trim().toUpperCase() !== "BTCUSDT") throw new Error("Unsupported liquidity lifecycle instrument");
     return getLiquidityLifecycleForMarket(input.marketType === "Perpetual" ? "perp" : "spot");
+  }
+
+  static getHistoricalLiquidityBook(input: { instrument: string; venue: "Binance"; marketType: MarketDataMarketType; time: number }) {
+    if (input.venue !== "Binance") throw new Error("Unsupported historical liquidity venue");
+    if (input.instrument.trim().toUpperCase() !== "BTCUSDT") throw new Error("Unsupported historical liquidity instrument");
+    return getHistoricalLiquidityBook({ instrument: input.instrument.trim().toUpperCase(), venue: input.venue, marketType: input.marketType, time: input.time });
   }
 
   static getMarketTruth(input: {

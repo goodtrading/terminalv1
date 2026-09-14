@@ -23,6 +23,7 @@ import type { MarketDataQuality, MarketDataSource } from "@shared/marketDataTrut
 import { shouldAcceptMarketDataUpdate } from "@shared/marketDataTruth";
 import { CanonicalL2BookOwner, type CanonicalL2Book } from "@shared/canonicalL2Book";
 import { LiquidityLifecycleProjector, appendLiquidityLifecycleEvents, type LiquidityLifecycleEvent } from "@shared/liquidityLifecycle";
+import { recordHistoricalLiquidityCheckpoint, recordHistoricalLiquidityEvents } from "./historicalLiquidityRegistry";
 
 export interface OrderBookLevel {
   price: number;
@@ -220,6 +221,7 @@ export async function initializeFullDepth(): Promise<void> {
     });
     snapshot = toLegacySnapshot(canonical);
     recentLifecycleEvents.length = 0;
+    recordHistoricalLiquidityCheckpoint(canonical);
     health.lastMessageTs = ts;
     health.latestUpdateId = depth.latestUpdateId;
     health.lastError = null;
@@ -380,7 +382,9 @@ function connect(): void {
       health.lastMessageTs = receiveTime;
       health.lastError = null;
       snapshot = toLegacySnapshot(result.book);
-      appendLiquidityLifecycleEvents(recentLifecycleEvents, lifecycleProjector.project(previous, result.book));
+      const lifecycleEvents = lifecycleProjector.project(previous, result.book);
+      appendLiquidityLifecycleEvents(recentLifecycleEvents, lifecycleEvents);
+      recordHistoricalLiquidityEvents(lifecycleEvents);
 
       if (bookmapBids.length > 0 || bookmapAsks.length > 0) {
         feedBinanceOrderBook(
