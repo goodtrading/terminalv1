@@ -457,7 +457,13 @@ export function normalizeFills(
         sourceTimestamp,
         timestampOrigin: sourceTimestamp ? "BROKER" : "LOCAL_FALLBACK",
         quantitySource,
-        quantitySemantics: "UNKNOWN",
+        quantitySemantics:
+          quantitySource === "qty" &&
+          priceSource === "price" &&
+          fillIdBasis === "TRADE_ID" &&
+          hasOwn(node, "time")
+            ? "INDIVIDUAL_EXECUTION"
+            : "UNKNOWN",
         priceSource,
         feePresent: hasOwn(node, "commission") || hasOwn(node, "fee"),
         feeAssetPresent: hasOwn(node, "commissionAsset") || hasOwn(node, "feeAsset"),

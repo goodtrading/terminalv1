@@ -35,6 +35,8 @@ import { appendSignature, signBingxQuery, buildSignedQuery } from "./signer";
 import { redactForLog, maskApiKey, pseudonymizeId } from "./redact";
 import { clearTimelineForTests, appendTimelineEvents, getTimeline } from "./timeline";
 import type { BingxAccountSnapshot } from "../../../../shared/goodTradingAiBingxAccount";
+import { buildBingXAccountIdentity, buildBingXMarketIdentity } from "../../../services/exchanges/bingx/bingxCanonicalIdentity";
+import { adaptBingXEconomicFill } from "../../../services/exchanges/bingx/bingxEconomicFillAdapter";
 
 describe("BINGX-1 allowlist + write guard", () => {
   it("classifies private read paths", () => {
@@ -515,6 +517,89 @@ describe("N8.3R source truth preservation", () => {
     assert.equal(fallback?.privateTruth.sourceTimestamp, undefined);
     assert.equal(fallback?.privateTruth.timestampOrigin, "LOCAL_FALLBACK");
     assert.equal((toPublicFill(fill!) as Record<string, unknown>).privateTruth, undefined);
+    assert.equal(trade?.privateTruth.quantitySemantics, "UNKNOWN");
+    const [filledQtyOnly] = normalizeFills([{
+      tradeId: "legacy-filled-qty",
+      orderId: "order-legacy",
+      symbol: "BTC-USDT",
+      side: "BUY",
+      price: "10",
+      filledQty: "1",
+      time: 1_700_000_000_000,
+    }], "account", "salt");
+    assert.equal(filledQtyOnly?.privateTruth.quantitySource, "filledQty");
+    assert.equal(filledQtyOnly?.privateTruth.quantitySemantics, "UNKNOWN");
+    const [avgPriceOnly] = normalizeFills([{
+      tradeId: "legacy-avg-price",
+      orderId: "order-legacy",
+      symbol: "BTC-USDT",
+      side: "BUY",
+      avgPrice: "10",
+      qty: "1",
+      time: 1_700_000_000_000,
+    }], "account", "salt");
+    assert.equal(avgPriceOnly?.privateTruth.priceSource, "avgPrice");
+    assert.equal(avgPriceOnly?.privateTruth.quantitySemantics, "UNKNOWN");
+  });
+
+  it("closes the documented allFillOrders row into the canonical EconomicFill", () => {
+    const [row] = normalizeFills([{
+      tradeId: "trade-e2e-1",
+      orderId: "order-e2e-1",
+      symbol: "BTC-USDT",
+      side: "BUY",
+      price: "42000.5",
+      qty: "0.01",
+      realizedPnl: "0",
+      fee: "0",
+      time: 1_700_000_000_000,
+    }], "GT-TEST-001", "fixture-salt");
+    const identity = buildBingXAccountIdentity({
+      goodTradingAccountId: "GT-TEST-001",
+      sourceEnvironment: "LIVE",
+      brokerAccountId: "bingx-native-1",
+      baseCurrency: "USDT",
+      source: "fixture",
+    });
+    const market = buildBingXMarketIdentity({
+      brokerSymbol: "BTC-USDT",
+      sourceMarketType: "Perpetual",
+      canonicalInstrument: "BTCUSDT",
+      source: "fixture",
+    });
+    assert.ok(row);
+    assert.equal(row?.privateTruth.fillIdBasis, "TRADE_ID");
+    assert.equal(row?.privateTruth.quantitySemantics, "INDIVIDUAL_EXECUTION");
+    assert.equal(row?.privateTruth.quantitySource, "qty");
+    assert.equal(row?.privateTruth.priceSource, "price");
+    assert.equal(row?.privateTruth.timestampOrigin, "BROKER");
+    const result = adaptBingXEconomicFill(row!, identity, market);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.record.executionId, "trade-e2e-1");
+      assert.equal(result.record.accountIdentity.accountId, "GT-TEST-001");
+      assert.equal(result.record.quantity, 0.01);
+      assert.equal(result.record.price, 42000.5);
+      assert.equal(result.record.orderReferences?.venueOrderId, "order-e2e-1");
+    }
+    assert.equal(Object.keys(row!).includes("privateTruth"), false);
+  });
+
+  it("adapts two documented partial fills of one order without collision", () => {
+    const rows = normalizeFills([
+      { tradeId: "trade-a", orderId: "order-shared", symbol: "BTC-USDT", side: "BUY", price: "100", qty: "1", time: 1_700_000_000_000 },
+      { tradeId: "trade-b", orderId: "order-shared", symbol: "BTC-USDT", side: "BUY", price: "101", qty: "2", time: 1_700_000_000_001 },
+    ], "GT-TEST-001", "fixture-salt");
+    const identity = buildBingXAccountIdentity({ goodTradingAccountId: "GT-TEST-001", sourceEnvironment: "LIVE", brokerAccountId: "bingx-native-1", baseCurrency: "USDT", source: "fixture" });
+    const market = buildBingXMarketIdentity({ brokerSymbol: "BTC-USDT", sourceMarketType: "Perpetual", canonicalInstrument: "BTCUSDT", source: "fixture" });
+    assert.equal(rows.length, 2);
+    const adapted = rows.map((fill) => adaptBingXEconomicFill(fill, identity, market));
+    assert.equal(adapted.every((result) => result.ok), true);
+    if (adapted[0]?.ok && adapted[1]?.ok) {
+      assert.notEqual(adapted[0].record.executionId, adapted[1].record.executionId);
+      assert.equal(adapted[0].record.orderReferences?.venueOrderId, "order-shared");
+      assert.equal(adapted[1].record.orderReferences?.venueOrderId, "order-shared");
+    }
   });
 
   it("keeps history truth private and preserves explicit fee zero versus absence", () => {
