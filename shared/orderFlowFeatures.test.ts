@@ -82,7 +82,7 @@ test("computes observable lifecycle rates without economic labels", () => {
   assert.equal(result.derived.liquidityAddRate.value, 35);
   assert.equal(result.derived.liquidityRemoveRate.value, 25);
   assert.equal(result.derived.persistence.availability, "AVAILABLE");
-  assert.equal("pulling" in result, false);
+  assert.equal(result.inference.pulling.status, "NOT_DETECTED");
   assert.equal("score" in result, false);
 });
 
@@ -225,4 +225,60 @@ test("reports observable lifecycle counts, net changes and sequence continuity",
   assert.equal(result.derived.askNetLiquidityChange.value, 2);
   assert.equal(result.derived.sequenceCoverage.value?.continuity, "CONTIGUOUS");
   assert.equal(result.derived.sequenceCoverage.value?.observedEvents, 1);
+});
+
+test("does not infer from isolated REMOVE, UPDATE or single ADD", () => {
+  const result = computeOrderFlowFeatures(makeState(), { ...config, inference: {
+    replenishment: { enabled: true, maxReappearanceDelayMs: 100, correlationWindowMs: 100 },
+    pulling: { enabled: true, correlationWindowMs: 100, maxObservedAggressionToRemovalRatio: 0.5 },
+    stacking: { enabled: true, minLevels: 2, minAddedQuantity: 1 },
+    liquidityVacuum: { enabled: true, maxDepth: 1, minSpread: 2, minDepthReductionRatio: 0.5, },
+  } });
+  assert.equal(result.inference.replenishment.status, "NOT_DETECTED");
+  assert.equal(result.inference.pulling.status, "NOT_DETECTED");
+  assert.equal(result.inference.stacking.status, "NOT_DETECTED");
+  assert.equal(result.inference.liquidityVacuum.status, "UNAVAILABLE");
+});
+
+test("produces a replenishment candidate only with reappearance and compatible observed aggression", () => {
+  const state = makeState();
+  const removal = state.liquidityLifecycle.find((event) => event.eventType === "REMOVE")!;
+  const readd = { ...removal, eventType: "ADD" as const, previousQuantity: 0, newQuantity: 4, deltaQuantity: 4, sequence: 3, eventTime: 250, receiveTime: 251 };
+  const altered = { ...state, liquidityLifecycle: [removal, readd] };
+  const result = computeOrderFlowFeatures(altered, { window: { startTime: 100, endTime: 300, depthLevels: 2, priceBand: { mode: "absolute", minPrice: 98, maxPrice: 101 } }, inference: { replenishment: { enabled: true, maxReappearanceDelayMs: 100, correlationWindowMs: 100, minRemovedQuantity: 1, minReappearedQuantity: 1 } } });
+
+  assert.equal(result.inference.replenishment.status, "CANDIDATE");
+  assert.equal(result.inference.replenishment.evidence.some((item) => item.metric === "observedAggressiveVolume"), true);
+  assert.equal(result.inference.replenishment.quality, "VALID");
+});
+
+test("produces a pulling candidate only when observed aggression is below explicit policy", () => {
+  const state = makeState();
+  const altered = { ...state, trades: [{ ...state.trades.find((trade) => trade.aggressorSide === "SELL")!, price: 99 }] };
+  const result = computeOrderFlowFeatures(altered, { window: { startTime: 100, endTime: 300, depthLevels: 2, priceBand: { mode: "absolute", minPrice: 98, maxPrice: 101 } }, inference: { pulling: { enabled: true, correlationWindowMs: 100, maxObservedAggressionToRemovalRatio: 0.75, minRemovedQuantity: 1, priceBand: { mode: "absolute", minPrice: 98, maxPrice: 101 } } } });
+
+  assert.equal(result.inference.pulling.status, "CANDIDATE");
+  assert.equal(result.inference.pulling.evidence.some((item) => item.metric === "observedAggressionToRemovalRatio"), true);
+  assert.equal(result.inference.pulling.evidence.some((item) => item.metric === "cancel"), false);
+});
+
+test("requires multiple same-side levels for stacking and preserves side evidence", () => {
+  const state = makeState();
+  const base = state.liquidityLifecycle.find((event) => event.eventType === "UPDATE" && event.side === "bid")!;
+  const second = { ...base, price: 98, sequence: 3, eventTime: 250, receiveTime: 251, previousQuantity: 0, newQuantity: 3, deltaQuantity: 3, eventType: "ADD" as const };
+  const altered = { ...state, liquidityLifecycle: [...state.liquidityLifecycle, second] };
+  const result = computeOrderFlowFeatures(altered, { window: { startTime: 100, endTime: 300, depthLevels: 2, priceBand: { mode: "absolute", minPrice: 98, maxPrice: 101 } }, inference: { stacking: { enabled: true, minLevels: 2, minAddedQuantity: 7 } } });
+  assert.equal(result.inference.stacking.status, "CANDIDATE");
+  assert.equal(result.inference.stacking.evidence.some((item) => item.metric === "side" && item.value === "bid"), true);
+});
+
+test("degraded trades cannot produce replenishment or pulling candidates", () => {
+  const state = makeState(spot, { tradeQuality: "STALE" });
+  const result = computeOrderFlowFeatures(state, { ...config, inference: {
+    replenishment: { enabled: true, maxReappearanceDelayMs: 100, correlationWindowMs: 100 },
+    pulling: { enabled: true, correlationWindowMs: 100, maxObservedAggressionToRemovalRatio: 0.5 },
+  } });
+  assert.notEqual(result.inference.replenishment.status, "CANDIDATE");
+  assert.notEqual(result.inference.pulling.status, "CANDIDATE");
+  assert.ok(["PARTIAL", "UNAVAILABLE"].includes(result.inference.replenishment.status));
 });

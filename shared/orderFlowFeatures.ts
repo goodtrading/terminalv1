@@ -16,7 +16,20 @@ export type OrderFlowFeatureWindow = {
   sampleTimes?: readonly number[];
 };
 
-export type OrderFlowFeatureConfig = { window: Readonly<OrderFlowFeatureWindow> };
+export type OrderFlowInferenceStatus = "CANDIDATE" | "NOT_DETECTED" | "PARTIAL" | "UNAVAILABLE";
+export type OrderFlowInference = {
+  status: OrderFlowInferenceStatus;
+  evidence: readonly FeatureEvidence[];
+  quality: OrderFlowState["quality"]["overall"] | "UNAVAILABLE";
+  window: Readonly<OrderFlowFeatureWindow>;
+  provenance: Readonly<OrderFlowState["provenance"]>;
+};
+export type ReplenishmentInferenceConfig = { enabled: boolean; maxReappearanceDelayMs: number; correlationWindowMs: number; priceBand?: OrderFlowFeatureWindow["priceBand"]; minRemovedQuantity?: number; minReappearedQuantity?: number };
+export type PullingInferenceConfig = { enabled: boolean; correlationWindowMs: number; maxObservedAggressionToRemovalRatio: number; priceBand?: OrderFlowFeatureWindow["priceBand"]; minRemovedQuantity?: number };
+export type StackingInferenceConfig = { enabled: boolean; minLevels: number; minAddedQuantity: number; minPersistenceMs?: number; priceBand?: OrderFlowFeatureWindow["priceBand"] };
+export type LiquidityVacuumInferenceConfig = { enabled: boolean; maxDepth: number; minSpread: number; minDepthReductionRatio: number; minDistanceToNextLiquidity?: number; priceBand?: OrderFlowFeatureWindow["priceBand"] };
+export type OrderFlowInferenceConfig = { replenishment?: ReplenishmentInferenceConfig; pulling?: PullingInferenceConfig; stacking?: StackingInferenceConfig; liquidityVacuum?: LiquidityVacuumInferenceConfig };
+export type OrderFlowFeatureConfig = { window: Readonly<OrderFlowFeatureWindow>; inference?: Readonly<OrderFlowInferenceConfig> };
 export type FeatureAvailability = "AVAILABLE" | "PARTIAL" | "UNAVAILABLE";
 export type FeatureSource = "book" | "trades" | "lifecycle" | "history";
 export type FeatureUnit = "quantity" | "count" | "ratio" | "per-second" | "milliseconds" | "price";
@@ -139,6 +152,12 @@ export type OrderFlowFeatures = {
     bidNetLiquidityChange: DerivedMetric<number>;
     askNetLiquidityChange: DerivedMetric<number>;
   };
+  inference: {
+    replenishment: OrderFlowInference;
+    pulling: OrderFlowInference;
+    stacking: OrderFlowInference;
+    liquidityVacuum: OrderFlowInference;
+  };
   quality: Readonly<OrderFlowState["quality"]>;
   timestamps: Readonly<OrderFlowState["timestamps"]>;
   provenance: Readonly<OrderFlowState["provenance"]>;
@@ -206,6 +225,116 @@ function frameSpread(frame: { bids: readonly { price: number }[]; asks: readonly
   return bid != null && ask != null && bid < ask ? ask - bid : null;
 }
 function sampleTimesFor(window: Readonly<OrderFlowFeatureWindow>): number[] { return [...new Set(window.sampleTimes ?? [])].sort((a, b) => a - b); }
+function inferenceBase(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, status: OrderFlowInferenceStatus, quality: OrderFlowInference["quality"] = state.quality.overall, evidenceItems: readonly FeatureEvidence[] = []): OrderFlowInference {
+  return { status, evidence: evidenceItems, quality, window: { ...window, priceBand: window.priceBand ? { ...window.priceBand } : undefined }, provenance: cloneProvenance(state.provenance) };
+}
+function validInferenceNumber(value: number | undefined, allowZero = false): boolean { return value != null && Number.isFinite(value) && (allowZero ? value >= 0 : value > 0); }
+function inferenceEvidence(metric: string, value: number | string | boolean | null, unit: FeatureUnit, window: Readonly<OrderFlowFeatureWindow>, source: FeatureSource, provenance: unknown, extra: Partial<FeatureEvidence> = {}): FeatureEvidence { return evidence(metric, value, unit, window, source, provenance, extra)[0]!; }
+function compatibleObservedTrades(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, side: "bid" | "ask", price: number, atTime: number, correlationWindowMs: number, priceBand?: OrderFlowFeatureWindow["priceBand"]): CanonicalTrade[] {
+  const expected = side === "bid" ? "SELL" : "BUY";
+  return state.trades.filter((trade) => trade.aggressorSide === expected && inWindow(eventTime(trade), window) && Math.abs(eventTime(trade) - atTime) <= correlationWindowMs && (priceBand ? levelInBand(trade.price, priceBand, state.book?.mid ?? null) : trade.price === price)).sort(compareTrades);
+}
+function validateInferenceConfig(value: { enabled: boolean }, numbers: Array<number | undefined>, allowZero = false): boolean { return value.enabled && numbers.every((number) => validInferenceNumber(number, allowZero)); }
+function sequenceInferenceQuality(sequence: DerivedMetric<SequenceCoverage>): "VALID" | "PARTIAL" | "UNAVAILABLE" {
+  if (sequence.availability === "UNAVAILABLE" || sequence.value?.continuity === "UNAVAILABLE") return "UNAVAILABLE";
+  return sequence.availability === "PARTIAL" || sequence.value?.continuity === "PARTIAL" ? "PARTIAL" : "VALID";
+}
+function sequenceInferenceStatus(sequence: DerivedMetric<SequenceCoverage>): OrderFlowInferenceStatus {
+  const quality = sequenceInferenceQuality(sequence);
+  return quality === "VALID" ? "NOT_DETECTED" : quality;
+}
+function computeReplenishmentInference(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, config: ReplenishmentInferenceConfig | undefined, sequence: DerivedMetric<SequenceCoverage>): OrderFlowInference {
+  if (!config || !config.enabled) return inferenceBase(state, window, "NOT_DETECTED");
+  if (!validateInferenceConfig(config, [config.maxReappearanceDelayMs, config.correlationWindowMs], true)) return inferenceBase(state, window, "UNAVAILABLE", "UNAVAILABLE");
+  if (state.quality.lifecycle === "UNAVAILABLE" || state.quality.lifecycle === "GAP" || state.quality.lifecycle === "RESYNCING" || state.quality.lifecycle === "DISCONNECTED") return inferenceBase(state, window, "UNAVAILABLE");
+  if (state.quality.trades !== "VALID") return inferenceBase(state, window, "PARTIAL", state.quality.trades === "UNAVAILABLE" ? "UNAVAILABLE" : state.quality.overall);
+  if (sequenceInferenceQuality(sequence) !== "VALID") return inferenceBase(state, window, sequenceInferenceStatus(sequence), sequenceInferenceQuality(sequence));
+  const lifecycle = state.liquidityLifecycle.filter((event) => inWindow(eventTime(event), window)).sort(compareLifecycle);
+  const effectiveBand = config.priceBand ?? window.priceBand;
+  for (const removal of lifecycle.filter((event) => (event.eventType === "DECREASE" || event.eventType === "REMOVE") && -event.deltaQuantity >= (config.minRemovedQuantity ?? 0))) {
+    const reappearance = lifecycle.find((event) => event.side === removal.side && event.price === removal.price && eventTime(event) > eventTime(removal) && (event.eventType === "ADD" || event.eventType === "UPDATE") && event.deltaQuantity > 0 && eventTime(event) - eventTime(removal) <= config.maxReappearanceDelayMs && event.deltaQuantity >= (config.minReappearedQuantity ?? 0));
+    if (!reappearance) continue;
+    const trades = compatibleObservedTrades(state, window, removal.side, removal.price, eventTime(removal), config.correlationWindowMs, effectiveBand);
+    if (trades.length === 0) continue;
+    const observedAggression = trades.reduce((sum, trade) => sum + trade.quantity, 0);
+    return inferenceBase(state, window, "CANDIDATE", state.quality.overall, [
+      inferenceEvidence("removedQuantity", -removal.deltaQuantity, "quantity", window, "lifecycle", removal.provenance),
+      inferenceEvidence("reappearedQuantity", reappearance.deltaQuantity, "quantity", window, "lifecycle", reappearance.provenance),
+      inferenceEvidence("observedAggressiveVolume", observedAggression, "quantity", window, "trades", state.provenance.trades, { priceBand: config.priceBand }),
+      inferenceEvidence("reappearanceDelay", eventTime(reappearance) - eventTime(removal), "milliseconds", window, "lifecycle", reappearance.provenance, { sequenceRange: { startSequence: removal.sequence, endSequence: reappearance.sequence } }),
+      inferenceEvidence("price", removal.price, "price", window, "lifecycle", removal.provenance),
+      inferenceEvidence("side", removal.side, "count", window, "lifecycle", removal.provenance),
+    ]);
+  }
+  return inferenceBase(state, window, "NOT_DETECTED");
+}
+function computePullingInference(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, config: PullingInferenceConfig | undefined, sequence: DerivedMetric<SequenceCoverage>): OrderFlowInference {
+  if (!config || !config.enabled) return inferenceBase(state, window, "NOT_DETECTED");
+  if (!validateInferenceConfig(config, [config.correlationWindowMs, config.maxObservedAggressionToRemovalRatio], true)) return inferenceBase(state, window, "UNAVAILABLE", "UNAVAILABLE");
+  if (state.quality.lifecycle === "UNAVAILABLE" || state.quality.lifecycle === "GAP" || state.quality.lifecycle === "RESYNCING" || state.quality.lifecycle === "DISCONNECTED") return inferenceBase(state, window, "UNAVAILABLE");
+  if (state.quality.trades !== "VALID") return inferenceBase(state, window, "PARTIAL", state.quality.trades === "UNAVAILABLE" ? "UNAVAILABLE" : state.quality.overall);
+  if (sequenceInferenceQuality(sequence) !== "VALID") return inferenceBase(state, window, sequenceInferenceStatus(sequence), sequenceInferenceQuality(sequence));
+  const lifecycle = state.liquidityLifecycle.filter((event) => inWindow(eventTime(event), window)).sort(compareLifecycle);
+  const effectiveBand = config.priceBand ?? window.priceBand;
+  for (const removal of lifecycle.filter((event) => (event.eventType === "DECREASE" || event.eventType === "REMOVE") && -event.deltaQuantity >= (config.minRemovedQuantity ?? 0))) {
+    if (effectiveBand && !levelInBand(removal.price, effectiveBand, state.book?.mid ?? null)) continue;
+    const removed = -removal.deltaQuantity;
+    const compatibleTrades = compatibleObservedTrades(state, window, removal.side, removal.price, eventTime(removal), config.correlationWindowMs, effectiveBand);
+    if (compatibleTrades.length === 0) continue;
+    const observed = compatibleTrades.reduce((sum, trade) => sum + trade.quantity, 0);
+    const ratio = removed > 0 ? observed / removed : null;
+    if (ratio != null && ratio <= config.maxObservedAggressionToRemovalRatio) return inferenceBase(state, window, "CANDIDATE", state.quality.overall, [
+      inferenceEvidence("removedQuantity", removed, "quantity", window, "lifecycle", removal.provenance),
+      inferenceEvidence("observedAggressiveVolume", observed, "quantity", window, "trades", state.provenance.trades, { priceBand: config.priceBand }),
+      inferenceEvidence("observedAggressionToRemovalRatio", ratio, "ratio", window, "trades", state.provenance.trades),
+      inferenceEvidence("price", removal.price, "price", window, "lifecycle", removal.provenance),
+      inferenceEvidence("side", removal.side, "count", window, "lifecycle", removal.provenance),
+    ]);
+  }
+  return inferenceBase(state, window, "NOT_DETECTED");
+}
+function computeStackingInference(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, config: StackingInferenceConfig | undefined, persistence: DerivedMetric<readonly PersistenceObservation[]>, sequence: DerivedMetric<SequenceCoverage>): OrderFlowInference {
+  if (!config || !config.enabled) return inferenceBase(state, window, "NOT_DETECTED");
+  if (!validateInferenceConfig(config, [config.minLevels, config.minAddedQuantity], true) || (config.minPersistenceMs != null && !validInferenceNumber(config.minPersistenceMs, true))) return inferenceBase(state, window, "UNAVAILABLE", "UNAVAILABLE");
+  if (state.quality.book === "GAP" || state.quality.book === "RESYNCING" || state.quality.book === "DISCONNECTED" || state.quality.lifecycle === "UNAVAILABLE") return inferenceBase(state, window, "UNAVAILABLE");
+  if (sequenceInferenceQuality(sequence) !== "VALID") return inferenceBase(state, window, sequenceInferenceStatus(sequence), sequenceInferenceQuality(sequence));
+  const events = state.liquidityLifecycle.filter((event) => inWindow(eventTime(event), window) && (event.eventType === "ADD" || event.eventType === "UPDATE") && event.deltaQuantity > 0 && (!config.priceBand || levelInBand(event.price, config.priceBand, state.book?.mid ?? null))).sort(compareLifecycle);
+  const persistenceThreshold = config.minPersistenceMs;
+  for (const side of ["bid", "ask"] as const) {
+    const sideEvents = events.filter((event) => event.side === side);
+    const levels = new Map<number, number>();
+    for (const event of sideEvents) levels.set(event.price, (levels.get(event.price) ?? 0) + event.deltaQuantity);
+    const total = Array.from(levels.values()).reduce((sum, value) => sum + value, 0);
+    const persistent = persistenceThreshold == null || (persistence.availability !== "UNAVAILABLE" && Array.from(levels.keys()).every((price) => persistence.value?.some((item) => item.side === side && item.price === price && (item.observedLifetime ?? 0) >= persistenceThreshold) === true));
+    if (levels.size >= config.minLevels && total >= config.minAddedQuantity && persistent) return inferenceBase(state, window, "CANDIDATE", state.quality.overall, [
+      inferenceEvidence("affectedLevels", levels.size, "count", window, "lifecycle", state.provenance.lifecycle, { priceBand: config.priceBand }),
+      inferenceEvidence("addedQuantity", total, "quantity", window, "lifecycle", state.provenance.lifecycle, { priceBand: config.priceBand }),
+      inferenceEvidence("side", side, "count", window, "lifecycle", state.provenance.lifecycle),
+      inferenceEvidence("persistence", config.minPersistenceMs ?? 0, "milliseconds", window, "history", state.provenance.history),
+    ]);
+    if (levels.size >= config.minLevels && config.minPersistenceMs != null && persistence.availability === "UNAVAILABLE") return inferenceBase(state, window, "PARTIAL");
+  }
+  return inferenceBase(state, window, "NOT_DETECTED");
+}
+function computeLiquidityVacuumInference(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, config: LiquidityVacuumInferenceConfig | undefined, sequence: DerivedMetric<SequenceCoverage>): OrderFlowInference {
+  if (!config || !config.enabled) return inferenceBase(state, window, "NOT_DETECTED");
+  if (!validateInferenceConfig(config, [config.maxDepth, config.minSpread, config.minDepthReductionRatio], true) || (config.minDistanceToNextLiquidity != null && !validInferenceNumber(config.minDistanceToNextLiquidity, true))) return inferenceBase(state, window, "UNAVAILABLE", "UNAVAILABLE");
+  if (state.quality.book === "GAP" || state.quality.book === "RESYNCING" || state.quality.book === "DISCONNECTED" || !state.book) return inferenceBase(state, window, "UNAVAILABLE");
+  if (sequenceInferenceQuality(sequence) !== "VALID") return inferenceBase(state, window, sequenceInferenceStatus(sequence), sequenceInferenceQuality(sequence));
+  const samples = sampleTimesFor(window); if (samples.length < 2) return inferenceBase(state, window, "UNAVAILABLE", state.quality.history === "UNAVAILABLE" ? "UNAVAILABLE" : "PARTIAL");
+  const frames = samples.map((time) => ({ time, frame: state.historicalLiquidity.bookAt(time) })).filter((item) => item.frame && item.frame.quality === "VALID") as Array<{ time: number; frame: NonNullable<ReturnType<OrderFlowState["historicalLiquidity"]["bookAt"]>> }>;
+  if (frames.length < 2) return inferenceBase(state, window, "PARTIAL");
+  const first = frames[0]!.frame; const last = frames.at(-1)!.frame;
+  const scoped = (frame: typeof first, side: "bid" | "ask") => scopedLevels(side === "bid" ? frame.bids : frame.asks, { ...window, priceBand: config.priceBand ?? window.priceBand }, side === "bid", frameMid(frame));
+  const depth = (frame: typeof first, side: "bid" | "ask") => scoped(frame, side).reduce((sum, level) => sum + level.quantity, 0);
+  const bidStart = depth(first, "bid"); const askStart = depth(first, "ask"); const bidEnd = depth(last, "bid"); const askEnd = depth(last, "ask");
+  const startTotal = bidStart + askStart; const endTotal = bidEnd + askEnd; const reduction = startTotal > 0 ? (startTotal - endTotal) / startTotal : 0;
+  const spread = frameSpread(last); const startCount = scoped(first, "bid").length + scoped(first, "ask").length; const endCount = scoped(last, "bid").length + scoped(last, "ask").length;
+  if (endTotal <= config.maxDepth && spread != null && spread >= config.minSpread && reduction >= config.minDepthReductionRatio && endCount < startCount) return inferenceBase(state, window, "CANDIDATE", state.quality.overall, [
+    inferenceEvidence("bidDepth", bidEnd, "quantity", window, "history", last.provenance, { sampleTimes: samples, sampleCount: frames.length }), inferenceEvidence("askDepth", askEnd, "quantity", window, "history", last.provenance, { sampleTimes: samples, sampleCount: frames.length }), inferenceEvidence("depthReductionRatio", reduction, "ratio", window, "history", last.provenance, { sampleTimes: samples }), inferenceEvidence("spread", spread, "price", window, "history", last.provenance, { sampleTimes: samples }), inferenceEvidence("levelCount", endCount, "count", window, "history", last.provenance, { sampleTimes: samples }),
+  ]);
+  return inferenceBase(state, window, "NOT_DETECTED");
+}
 
 export function computeOrderFlowFeatures(state: Readonly<OrderFlowState>, config: Readonly<OrderFlowFeatureConfig>): OrderFlowFeatures {
   validateWindow(config.window);
@@ -341,6 +470,13 @@ export function computeOrderFlowFeatures(state: Readonly<OrderFlowState>, config
   const interactionVolume = interactionTrades.reduce((sum, trade) => sum + trade.quantity, 0);
   const interactionBuy = interactionTrades.filter((trade) => trade.aggressorSide === "BUY").reduce((sum, trade) => sum + trade.quantity, 0);
   const interactionSell = interactionTrades.filter((trade) => trade.aggressorSide === "SELL").reduce((sum, trade) => sum + trade.quantity, 0);
+  const inferenceConfig = config.inference;
+  const inference = {
+    replenishment: computeReplenishmentInference(state, window, inferenceConfig?.replenishment, sequenceMetric),
+    pulling: computePullingInference(state, window, inferenceConfig?.pulling, sequenceMetric),
+    stacking: computeStackingInference(state, window, inferenceConfig?.stacking, persistence, sequenceMetric),
+    liquidityVacuum: computeLiquidityVacuumInference(state, window, inferenceConfig?.liquidityVacuum, sequenceMetric),
+  };
 
   return {
     identity: { ...state.identity }, window,
@@ -352,6 +488,6 @@ export function computeOrderFlowFeatures(state: Readonly<OrderFlowState>, config
       interactionTradeCount: interactionMetric(interactionCount, "interactionTradeCount"), interactionVolume: interactionMetric(interactionVolume, "interactionVolume"), aggressiveBuyInteractionVolume: interactionMetric(interactionBuy, "aggressiveBuyInteractionVolume"), aggressiveSellInteractionVolume: interactionMetric(interactionSell, "aggressiveSellInteractionVolume"), firstInteractionTime: interactionMetric(interactionTrades[0] ? eventTime(interactionTrades[0]) : 0, "firstInteractionTime"), lastInteractionTime: interactionMetric(interactionTrades.at(-1) ? eventTime(interactionTrades.at(-1)!) : 0, "lastInteractionTime"), liquidityReappearance, sequenceCoverage: sequenceMetric,
       additionEventCount, removalEventCount, positiveUpdateCount, decreaseCount, removeCount, netLiquidityChange: lifecycleMetric(added - removed, "netLiquidityChange"), bidNetLiquidityChange, askNetLiquidityChange,
       liquidityAdded: lifecycleMetric(added, "liquidityAdded"), liquidityRemoved: lifecycleMetric(removed, "liquidityRemoved"), bidAdded: lifecycleMetric(bidAdded, "bidAdded"), askAdded: lifecycleMetric(askAdded, "askAdded"), bidRemoved: lifecycleMetric(bidRemoved, "bidRemoved"), askRemoved: lifecycleMetric(askRemoved, "askRemoved"), liquidityAddRate: lifecycleMetric(added / durationSeconds, "liquidityAddRate", "per-second"), liquidityRemoveRate: lifecycleMetric(removed / durationSeconds, "liquidityRemoveRate", "per-second"), persistence,
-    }, quality: { ...state.quality }, timestamps: cloneTimestamps(state.timestamps), provenance: cloneProvenance(state.provenance),
+    }, inference, quality: { ...state.quality }, timestamps: cloneTimestamps(state.timestamps), provenance: cloneProvenance(state.provenance),
   };
 }
