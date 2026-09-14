@@ -351,8 +351,20 @@ export function getAcademyCoursesByTrack(track: AcademyTrack): AcademyCourse[] {
   return ACADEMY_CATALOG.filter((course) => course.track === track).sort((a, b) => a.order - b.order);
 }
 
+export function getAcademyCourseBySlug(slug: string): AcademyCourse | undefined {
+  return ACADEMY_CATALOG.find((course) => course.slug === slug);
+}
+
 export function getCourseLessons(course: AcademyCourse): AcademyLesson[] {
   return course.modules.flatMap((module) => module.lessons).sort((a, b) => a.order - b.order);
+}
+
+export function getModuleLessonCount(module: AcademyModule): number {
+  return module.lessons.length;
+}
+
+export function getModuleEstimatedMinutes(module: AcademyModule): number {
+  return module.lessons.reduce((total, lesson) => total + lesson.estimatedMinutes, 0);
 }
 
 export function getCourseLessonCount(course: AcademyCourse): number {

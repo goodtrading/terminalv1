@@ -125,7 +125,7 @@ export default function AcademyHomePage() {
                         const lessonCount = getCourseLessonCount(course);
                         const estimatedMinutes = getCourseEstimatedMinutes(course);
                         return (
-                          <div key={course.id} data-academy-course-id={course.id} className="py-3 text-sm">
+                          <Link href={`/academy/${course.slug}`} key={course.id} data-academy-course-id={course.id} className="block py-3 text-sm transition-colors hover:bg-white/[0.03]">
                             <div className="flex items-center justify-between gap-4">
                               <span className="text-[#d7dbe2]">{course.number} {course.title}</span>
                               <AccessLabel summary={getCourseAccessSummary(course)} />
@@ -135,7 +135,7 @@ export default function AcademyHomePage() {
                               <span>{lessonCount} lessons</span>
                               <span>{formatDuration(estimatedMinutes)}</span>
                             </div>
-                          </div>
+                          </Link>
                         );
                       })}
                     </div>
