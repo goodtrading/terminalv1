@@ -61,6 +61,7 @@ import {
 import { fetchDeribitOptionsBook } from "./services/deribitOptionsBookService";
 import { buildDesktopUpdatePayload } from "./lib/desktopUpdateManifest";
 import { registerNautilusQuoteStream } from "./services/nautilusQuoteStream";
+import { registerOrderFlowStateRoute } from "./routes/orderFlowState.routes";
 
 // Debug flags to prevent event-loop blocking from log spam.
 // Keep these false by default; enable locally when diagnosing.
@@ -336,6 +337,7 @@ export async function registerRoutes(
   registerKnowledgeDistillationRoutes(app);
   registerKnowledgeEvolutionRoutes(app);
   registerKnowledgeProvenanceRoutes(app);
+  registerOrderFlowStateRoute(app);
 
   app.get("/api/desktop/update", (_req: Request, res: Response) => {
     res.json(buildDesktopUpdatePayload());
