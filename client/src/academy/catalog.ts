@@ -18,6 +18,7 @@ export type AcademyContentBlock =
   | { type: "callout"; title?: string; text: string };
 
 import { TERMINAL_QUICKSTART_CONTENT } from "@/academy/content/terminalQuickstart";
+import { MARKET_MECHANICS_CONTENT } from "@/academy/content/marketMechanics";
 
 export type AcademyLesson = {
   id: string;
@@ -363,7 +364,7 @@ const editorialCatalog = ACADEMY_METADATA_CATALOG.map((course) => ({
   modules: course.modules.map((module) => ({
     ...module,
     lessons: module.lessons.map((lesson) => {
-      const content = TERMINAL_QUICKSTART_CONTENT[lesson.slug];
+      const content = TERMINAL_QUICKSTART_CONTENT[lesson.slug] ?? MARKET_MECHANICS_CONTENT[lesson.slug];
       return content ? { ...lesson, content } : lesson;
     }),
   })),
