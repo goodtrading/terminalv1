@@ -30,6 +30,55 @@ function makeState(identity = spot, options: { tradeQuality?: "VALID" | "STALE" 
   return composeOrderFlowState(input);
 }
 
+function stateFromReplay(events: readonly TruthReplayEvent[], identity: OrderFlowIdentity, capturedAt: number) {
+  const replay = replayTruth(events);
+  assert.equal(replay.l2Book?.instrument, identity.instrument);
+  assert.equal(replay.l2Book?.marketType, identity.marketType);
+  assert.ok(replay.l2Book);
+  const history = new HistoricalLiquidityTruth(identity);
+  const initialSnapshot = events.find((event) => event.type === "L2_SNAPSHOT" || event.type === "RESNAPSHOT");
+  assert.ok(initialSnapshot);
+  history.addCheckpoint({
+    ...replay.l2Book,
+    bids: initialSnapshot.bids,
+    asks: initialSnapshot.asks,
+    sequence: initialSnapshot.sequence,
+    snapshotId: initialSnapshot.snapshotId ?? initialSnapshot.sequence,
+    eventTime: initialSnapshot.eventTime,
+    receiveTime: initialSnapshot.receiveTime,
+    source: initialSnapshot.source,
+    quality: initialSnapshot.quality,
+    provenance: { ...replay.l2Book.provenance, source: initialSnapshot.source, snapshotId: initialSnapshot.snapshotId ?? initialSnapshot.sequence, sequence: initialSnapshot.sequence, eventTime: initialSnapshot.eventTime, receiveTime: initialSnapshot.receiveTime },
+  });
+  for (const event of replay.lifecycleEvents) history.addEvent(event);
+  return {
+    replay,
+    state: composeOrderFlowState({
+      identity,
+      book: replay.l2Book,
+      trades: replay.tradeTape,
+      tradeQuality: "VALID",
+      liquidityLifecycle: replay.lifecycleEvents,
+      lifecycleQuality: "VALID",
+      historicalLiquidity: history,
+      capturedAt,
+    }),
+  };
+}
+
+function replayInferenceParity(events: readonly TruthReplayEvent[], identity: OrderFlowIdentity, capturedAt: number, config: OrderFlowFeatureConfig, feature: keyof ReturnType<typeof computeOrderFlowFeatures>["inference"]) {
+  const first = computeOrderFlowFeatures(stateFromReplay(events, identity, capturedAt).state, config);
+  const second = computeOrderFlowFeatures(stateFromReplay(events, identity, capturedAt).state, config);
+  const firstInference = first.inference[feature];
+  const secondInference = second.inference[feature];
+  assert.equal(firstInference.status, "CANDIDATE");
+  assert.deepEqual(
+    { status: firstInference.status, evidence: firstInference.evidence, quality: firstInference.quality, window: firstInference.window, provenance: firstInference.provenance },
+    { status: secondInference.status, evidence: secondInference.evidence, quality: secondInference.quality, window: secondInference.window, provenance: secondInference.provenance },
+  );
+  return { inference: firstInference, replay: stateFromReplay(events, identity, capturedAt).replay };
+}
+
 test("computes deterministic trade metrics and velocities per second", () => {
   const result = computeOrderFlowFeatures(makeState(), config);
   assert.deepEqual(result.derived.totalVolume.value, 10);
@@ -315,6 +364,52 @@ test("N5G.4 compares explicit earlier and later windows for aggressive exhaustio
   assert.equal(result.inference.aggressiveExhaustion.evidence.some((item) => item.metric === "earlierVolume"), true);
 });
 
+test("N5G.4R closes sweep replay parity end-to-end", () => {
+  const events: TruthReplayEvent[] = [
+    { type: "L2_SNAPSHOT", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [{ price: 100, quantity: 20 }], asks: [{ price: 101, quantity: 20 }, { price: 102, quantity: 20 }, { price: 103, quantity: 20 }], sequence: 1, snapshotId: 1, eventTime: 100, receiveTime: 101, quality: "VALID", source: "rest" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "s-3", price: 100.8, quantity: 2, aggressorSide: "BUY", eventTime: 120, receiveTime: 121, quality: "VALID", source: "websocket" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "s-1", price: 101.2, quantity: 2, aggressorSide: "BUY", eventTime: 120, receiveTime: 122, quality: "VALID", source: "websocket" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "s-2", price: 101.8, quantity: 2, aggressorSide: "BUY", eventTime: 140, receiveTime: 141, quality: "VALID", source: "websocket" },
+    { type: "ADVANCE_TIME", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", eventTime: 300, receiveTime: 301, quality: "VALID", source: "websocket" },
+  ];
+  const config: OrderFlowFeatureConfig = { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } }, inference: { sweep: { enabled: true, maxDurationMs: 100, minPriceLevels: 3, minAggressiveVolume: 5, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } } } };
+  const { inference, replay } = replayInferenceParity(events, spot, 300, config, "sweep");
+  assert.equal(inference.status, "CANDIDATE");
+  assert.deepEqual(replay.tradeTape.map((trade) => trade.tradeId), ["s-1", "s-3", "s-2"]);
+  assert.equal(replay.tradeTape.every((trade) => trade.aggressorSide === "BUY"), true);
+});
+
+test("N5G.4R closes passive defense replay parity end-to-end", () => {
+  const events: TruthReplayEvent[] = [
+    { type: "L2_SNAPSHOT", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [{ price: 99, quantity: 20 }], asks: [{ price: 101, quantity: 10 }, { price: 102, quantity: 10 }], sequence: 1, snapshotId: 1, eventTime: 100, receiveTime: 101, quality: "VALID", source: "rest" },
+    { type: "L2_DELTA", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [], asks: [{ price: 101, quantity: 5 }], sequence: 2, eventTime: 200, receiveTime: 201, quality: "VALID", source: "websocket" },
+    { type: "L2_DELTA", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [], asks: [{ price: 101, quantity: 10 }], sequence: 3, eventTime: 250, receiveTime: 251, quality: "VALID", source: "websocket" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "pd-1", price: 100.8, quantity: 6, aggressorSide: "BUY", eventTime: 220, receiveTime: 221, quality: "VALID", source: "websocket" },
+    { type: "ADVANCE_TIME", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", eventTime: 300, receiveTime: 301, quality: "VALID", source: "websocket" },
+  ];
+  const config: OrderFlowFeatureConfig = { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [100, 200, 250, 300] }, inference: { passiveDefense: { enabled: true, minAggressiveVolume: 5, maxPriceExcursion: 1, minPassivePersistenceMs: 0, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } } } };
+  const { inference } = replayInferenceParity(events, spot, 300, config, "passiveDefense");
+  assert.equal(inference.status, "CANDIDATE");
+  assert.equal(inference.evidence.some((item) => item.metric === "passiveSide" && item.value === "ASK"), true);
+});
+
+test("N5G.4R closes aggressive exhaustion replay parity end-to-end", () => {
+  const events: TruthReplayEvent[] = [
+    { type: "L2_SNAPSHOT", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [{ price: 99, quantity: 20 }], asks: [{ price: 101, quantity: 20 }], sequence: 1, snapshotId: 1, eventTime: 100, receiveTime: 101, quality: "VALID", source: "rest" },
+    { type: "L2_DELTA", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [{ price: 99, quantity: 21 }], asks: [], sequence: 2, eventTime: 150, receiveTime: 151, quality: "VALID", source: "websocket" },
+    { type: "L2_DELTA", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [], asks: [{ price: 101, quantity: 19 }], sequence: 3, eventTime: 180, receiveTime: 181, quality: "VALID", source: "websocket" },
+    { type: "L2_DELTA", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [{ price: 99, quantity: 20 }], asks: [], sequence: 4, eventTime: 250, receiveTime: 251, quality: "VALID", source: "websocket" },
+    { type: "L2_DELTA", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [], asks: [{ price: 101, quantity: 20 }], sequence: 5, eventTime: 260, receiveTime: 261, quality: "VALID", source: "websocket" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "ae-1", price: 100.5, quantity: 10, aggressorSide: "BUY", eventTime: 120, receiveTime: 121, quality: "VALID", source: "websocket" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "ae-2", price: 100.5, quantity: 8, aggressorSide: "BUY", eventTime: 140, receiveTime: 141, quality: "VALID", source: "websocket" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "ae-3", price: 100.5, quantity: 1, aggressorSide: "BUY", eventTime: 220, receiveTime: 221, quality: "VALID", source: "websocket" },
+    { type: "ADVANCE_TIME", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", eventTime: 300, receiveTime: 301, quality: "VALID", source: "websocket" },
+  ];
+  const config: OrderFlowFeatureConfig = { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } }, inference: { aggressiveExhaustion: { enabled: true, earlier: { startTime: 100, endTime: 199 }, later: { startTime: 200, endTime: 300 }, minVolumeDrop: 1, minVelocityDrop: 1, maxPriceProgress: 1, minOppositePersistenceMs: 0, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } } } };
+  const { inference } = replayInferenceParity(events, spot, 300, config, "aggressiveExhaustion");
+  assert.equal(inference.status, "CANDIDATE");
+  assert.equal(inference.evidence.some((item) => item.metric === "earlierVolume" && item.value === 18), true);
+});
 test("N5G.4 fails closed for missing history and preserves candidate replay parity", () => {
   const state = makeState();
   const absorptionConfig: OrderFlowFeatureConfig = { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [100, 200, 300] }, inference: { absorption: { enabled: true, minAggressiveVolume: 1, maxPriceProgress: 1, minPassivePersistenceMs: 0, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } } } };
