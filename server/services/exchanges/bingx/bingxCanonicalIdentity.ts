@@ -2,11 +2,13 @@ import type { AccountIdentity, AccountType } from "../../../../shared/portfolioS
 import type { ExecutionMarketIdentity } from "../../../../shared/marketTruth";
 
 export type BingXSourceEnvironment = "LIVE" | "TESTNET" | "DEMO" | "UNKNOWN";
-export type BingXIdentityBasis = "BROKER_ACCOUNT_ID" | "CONNECTION_PSEUDONYM";
+export type BingXIdentityBasis = "GOODTRADING_ACCOUNT_ID";
+export type BingXBrokerLinkBasis = "BROKER_ACCOUNT_ID" | "CONNECTION_PSEUDONYM";
 export type BingXIdentityQuality = "CONFIRMED" | "PARTIAL";
 export type BingXSourceMarketType = "Spot" | "Perpetual";
 
 export type BingXCanonicalAccountIdentityInput = Readonly<{
+  goodTradingAccountId: string;
   sourceEnvironment?: BingXSourceEnvironment;
   connectionId?: string;
   brokerAccountId?: string;
@@ -28,11 +30,13 @@ export type BingXCanonicalMarketIdentityInput = Readonly<{
 }>;
 
 export type BingXIdentityProvenance = Readonly<{
+  goodTradingAccountId: string;
   broker: "BINGX";
   source: string;
   sourceEnvironment: BingXSourceEnvironment;
   canonicalEnvironment: "LIVE";
   accountIdBasis: BingXIdentityBasis;
+  brokerLinkBasis: BingXBrokerLinkBasis;
   brokerAccountIdAvailable: boolean;
   brokerNativeAccountId?: string;
   connectionPseudonymBasis?: string;
@@ -119,23 +123,24 @@ export function buildBingXAccountIdentity(
   const baseCurrency = text(input.baseCurrency);
   if (!baseCurrency) return failure("BASE_CURRENCY_REQUIRED", "baseCurrency is required");
 
+  const goodTradingAccountId = text(input.goodTradingAccountId);
+  if (!goodTradingAccountId) return failure("ACCOUNT_ID_REQUIRED", "goodTradingAccountId is required");
+
   const brokerAccountId = text(input.brokerAccountId);
   const connectionPseudonym = text(input.existingConnectionPseudonym);
-  const accountId = brokerAccountId ?? connectionPseudonym;
-  if (!accountId) {
+  const accountLink = brokerAccountId ? "BROKER_ACCOUNT_ID" : connectionPseudonym ? "CONNECTION_PSEUDONYM" : null;
+  if (!accountLink) {
     return failure(
       "ACCOUNT_ID_REQUIRED",
-      "brokerAccountId or existingConnectionPseudonym is required",
+      "brokerAccountId or existingConnectionPseudonym is required for broker linkage",
     );
   }
 
-  const accountIdBasis: BingXIdentityBasis = brokerAccountId
-    ? "BROKER_ACCOUNT_ID"
-    : "CONNECTION_PSEUDONYM";
+  const accountIdBasis: BingXIdentityBasis = "GOODTRADING_ACCOUNT_ID";
   const quality: BingXIdentityQuality = brokerAccountId ? "CONFIRMED" : "PARTIAL";
 
   const identity: AccountIdentity = {
-    accountId,
+    accountId: goodTradingAccountId,
     broker: "BINGX",
     environment: "LIVE",
     baseCurrency,
@@ -143,11 +148,13 @@ export function buildBingXAccountIdentity(
   };
 
   const provenance: BingXIdentityProvenance = {
+    goodTradingAccountId,
     broker: "BINGX",
     source,
     sourceEnvironment,
     canonicalEnvironment: "LIVE",
     accountIdBasis,
+    brokerLinkBasis: accountLink,
     brokerAccountIdAvailable: Boolean(brokerAccountId),
     ...(brokerAccountId ? { brokerNativeAccountId: brokerAccountId } : {}),
     ...(connectionPseudonym ? { connectionPseudonymBasis: connectionPseudonym } : {}),

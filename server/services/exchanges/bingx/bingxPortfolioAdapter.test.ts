@@ -7,6 +7,7 @@ import {
 } from "./bingxPortfolioAdapter";
 
 const identityResult = buildBingXAccountIdentity({
+  goodTradingAccountId: "GT-TEST-001",
   sourceEnvironment: "LIVE",
   brokerAccountId: "uid-1",
   baseCurrency: "USDT",
@@ -27,7 +28,7 @@ if (!marketResult.ok) throw new Error("market fixture invalid");
 const position = (overrides: Partial<NonNullable<BingXPortfolioInput["positions"]>[number]["source"]> = {}) => ({
   source: {
     positionId: "pos-1",
-    accountId: "uid-1",
+    accountId: "GT-TEST-001",
     symbol: "BTC-USDT",
     side: "long" as const,
     quantity: 2,
@@ -86,6 +87,7 @@ test("maps explicit account facts and reuses the N8.1 identity", () => {
 
 test("preserves connection-pseudonym identity as partial and rejects unsupported modes", () => {
   const partial = buildBingXAccountIdentity({
+    goodTradingAccountId: "GT-TEST-001",
     sourceEnvironment: "LIVE",
     existingConnectionPseudonym: "conn-1",
     baseCurrency: "USDT",

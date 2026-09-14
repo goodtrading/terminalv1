@@ -9,6 +9,7 @@ import {
 
 const liveAccount = (overrides: Partial<BingXCanonicalAccountIdentityInput> = {}) =>
   buildBingXAccountIdentity({
+    goodTradingAccountId: "GT-123",
     sourceEnvironment: "LIVE",
     brokerAccountId: " uid-123 ",
     baseCurrency: "USDT",
@@ -25,20 +26,39 @@ const perpetualMarket = (overrides: Partial<BingXCanonicalMarketIdentityInput> =
     ...overrides,
   });
 
+test("requires explicit GoodTrading UID and never substitutes broker linkage", () => {
+  assert.equal(liveAccount({ goodTradingAccountId: "" }).ok, false);
+  const result = liveAccount({ goodTradingAccountId: "GT-123", brokerAccountId: "bingx-native-9" });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.identity.accountId, "GT-123");
+  assert.equal(result.provenance.goodTradingAccountId, "GT-123");
+  assert.equal(result.provenance.brokerNativeAccountId, "bingx-native-9");
+  assert.notEqual(result.identity.accountId, result.provenance.brokerNativeAccountId);
+});
+
+test("preserves the same GoodTrading UID across conceptual PAPER and BingX scopes", () => {
+  const bingx = liveAccount({ goodTradingAccountId: "GT-123", brokerAccountId: "bingx-native-9" });
+  const paperAccount = { accountId: "GT-123", broker: "NAUTILUS_PAPER", environment: "PAPER", baseCurrency: "USDT" } as const;
+  assert.equal(bingx.ok, true);
+  if (bingx.ok) assert.equal(bingx.identity.accountId, paperAccount.accountId);
+  assert.notEqual(bingx.ok && bingx.identity.broker, paperAccount.broker);
+  assert.notEqual(bingx.ok && bingx.identity.environment, paperAccount.environment);
+});
 test("maps explicit LIVE account identity to confirmed canonical identity", () => {
   const result = liveAccount();
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.deepEqual(result.identity, {
-    accountId: "uid-123",
+    accountId: "GT-123",
     broker: "BINGX",
     environment: "LIVE",
     baseCurrency: "USDT",
   });
   assert.equal(result.quality, "CONFIRMED");
   assert.equal(result.executionIdentityReady, true);
-  assert.equal(result.provenance.accountIdBasis, "BROKER_ACCOUNT_ID");
-  assert.equal(result.provenance.brokerAccountIdAvailable, true);
+  assert.equal(result.provenance.accountIdBasis, "GOODTRADING_ACCOUNT_ID");
+  assert.equal(result.provenance.brokerLinkBasis, "BROKER_ACCOUNT_ID");
 });
 
 test("rejects TESTNET, DEMO, UNKNOWN, missing environment, and URL inference", () => {
@@ -57,12 +77,13 @@ test("uses a stable connection pseudonym only as partial read-only identity", ()
   const result = liveAccount({ brokerAccountId: undefined, existingConnectionPseudonym: "conn-a" });
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.identity.accountId, "conn-a");
+  assert.equal(result.identity.accountId, "GT-123");
   assert.equal(result.quality, "PARTIAL");
   assert.equal(result.executionIdentityReady, false);
-  assert.equal(result.provenance.accountIdBasis, "CONNECTION_PSEUDONYM");
+  assert.equal(result.provenance.accountIdBasis, "GOODTRADING_ACCOUNT_ID");
+  assert.equal(result.provenance.brokerLinkBasis, "CONNECTION_PSEUDONYM");
+  assert.equal(result.provenance.connectionPseudonymBasis, "conn-a");
   assert.equal(result.provenance.brokerNativeAccountId, undefined);
-  assert.notEqual(result.provenance.accountIdBasis, "BROKER_ACCOUNT_ID");
 });
 
 test("does not merge different connection pseudonyms", () => {
@@ -71,8 +92,9 @@ test("does not merge different connection pseudonyms", () => {
   assert.equal(a.ok, true);
   assert.equal(b.ok, true);
   if (!a.ok || !b.ok) return;
-  assert.notEqual(a.identity.accountId, b.identity.accountId);
-  assert.notDeepEqual(a.identity, b.identity);
+  assert.equal(a.identity.accountId, "GT-123");
+  assert.equal(b.identity.accountId, "GT-123");
+  assert.notEqual(a.provenance.connectionPseudonymBasis, b.provenance.connectionPseudonymBasis);
 });
 
 test("requires explicit base currency and does not infer it from a symbol", () => {
