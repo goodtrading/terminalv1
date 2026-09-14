@@ -27,6 +27,7 @@ import {
   normalizePositions,
   normalizeOpenOrders,
   normalizeFills,
+  normalizeOrderHistory,
   toPublicOrder,
   toPublicFill,
 } from "./normalizers";
@@ -460,6 +461,79 @@ describe("BINGX-1 read model + timeline", () => {
     ]);
     assert.equal(events.length, 1);
     assert.equal(getTimeline(1, "account_t").length, 1);
+  });
+});
+
+describe("N8.3R source truth preservation", () => {
+  it("preserves order facts and distinguishes absent booleans and remaining origin", () => {
+    const [explicit] = normalizeOpenOrders([{
+      orderId: "native-order-1", symbol: "BTC-USDT", side: "BUY", type: "LIMIT", status: "NEW",
+      origQty: "2", executedQty: "0", remainingQty: "2", clientOrderId: "client-1",
+      timeInForce: "IOC", reduceOnly: false, postOnly: true, createTime: 1_700_000_000_000,
+    }], "account", "salt", false);
+    assert.equal(explicit?.privateTruth.sourceClientOrderId, "client-1");
+    assert.equal(explicit?.privateTruth.sourceTimeInForce, "IOC");
+    assert.equal(explicit?.privateTruth.sourceReduceOnly, false);
+    assert.equal(explicit?.privateTruth.sourcePostOnly, true);
+    assert.equal(explicit?.privateTruth.reduceOnlyPresent, true);
+    assert.equal(explicit?.privateTruth.postOnlyPresent, true);
+    assert.equal(explicit?.privateTruth.remainingQuantityOrigin, "BROKER_REPORTED");
+    assert.equal(explicit?.privateTruth.createdAtOrigin, "BROKER");
+    assert.equal(explicit?.privateTruth.updatedAtOrigin, "MISSING");
+
+    const [derived] = normalizeOpenOrders([{
+      orderId: "native-order-2", symbol: "BTC-USDT", side: "BUY", type: "LIMIT", status: "NEW",
+      origQty: "2", executedQty: "1",
+    }], "account", "salt", false);
+    assert.equal(derived?.privateTruth.reduceOnlyPresent, false);
+    assert.equal(derived?.privateTruth.sourceReduceOnly, undefined);
+    assert.equal(derived?.privateTruth.postOnlyPresent, false);
+    assert.equal(derived?.privateTruth.remainingQuantityOrigin, "DERIVED_ORIGINAL_MINUS_EXECUTED");
+    assert.equal(derived?.privateTruth.sourceClientOrderId, undefined);
+    assert.equal(derived?.privateTruth.sourceTimeInForce, undefined);
+    assert.equal((toPublicOrder(explicit!) as Record<string, unknown>).privateTruth, undefined);
+  });
+
+  it("preserves factual fill identity candidates and timestamp provenance", () => {
+    const [fill, trade, generic, fallback] = normalizeFills([
+      { fillId: "f1", symbol: "BTC-USDT", side: "BUY", price: "10", qty: "1", filledTime: 1_700_000_000_000, fee: "0", feeAsset: "USDT" },
+      { tradeId: "t1", symbol: "BTC-USDT", side: "SELL", price: "11", qty: "1", timestamp: 1_700_000_000_001 },
+      { id: "g1", symbol: "BTC-USDT", side: "BUY", price: "12", qty: "1", time: 1_700_000_000_002 },
+      { orderId: "o1", symbol: "BTC-USDT", side: "SELL", price: "13", qty: "1" },
+    ], "account", "salt");
+    assert.equal(fill?.privateTruth.fillIdBasis, "FILL_ID");
+    assert.equal(fill?.privateTruth.sourceFillId, "f1");
+    assert.equal(fill?.privateTruth.sourceTimestamp, "2023-11-14T22:13:20.000Z");
+    assert.equal(fill?.privateTruth.timestampOrigin, "BROKER");
+    assert.equal(fill?.privateTruth.feePresent, true);
+    assert.equal(fill?.privateTruth.quantitySource, "qty");
+    assert.equal(fill?.privateTruth.priceSource, "price");
+    assert.equal(trade?.privateTruth.fillIdBasis, "TRADE_ID");
+    assert.equal(generic?.privateTruth.fillIdBasis, "GENERIC_ID");
+    assert.equal(fallback?.privateTruth.fillIdBasis, "ORDER_ID_FALLBACK");
+    assert.equal(fallback?.privateTruth.sourceOrderId, "o1");
+    assert.equal(fallback?.privateTruth.sourceTimestamp, undefined);
+    assert.equal(fallback?.privateTruth.timestampOrigin, "LOCAL_FALLBACK");
+    assert.equal((toPublicFill(fill!) as Record<string, unknown>).privateTruth, undefined);
+  });
+
+  it("keeps history truth private and preserves explicit fee zero versus absence", () => {
+    const [history] = normalizeOrderHistory([{
+      orderId: "h1", symbol: "BTC-USDT", side: "BUY", type: "LIMIT", status: "FILLED",
+      origQty: 1, executedQty: 1, clientOrderID: "client-h", postOnly: false,
+    }], "account", "salt");
+    assert.equal(history?.privateTruth.sourceClientOrderId, "client-h");
+    assert.equal(history?.privateTruth.sourcePostOnly, false);
+    assert.equal(Object.keys(history ?? {}).includes("privateTruth"), false);
+
+    const [zero, absent] = normalizeFills([
+      { fillId: "z", symbol: "BTC-USDT", side: "BUY", price: 1, qty: 1, fee: 0 },
+      { fillId: "a", symbol: "BTC-USDT", side: "BUY", price: 1, qty: 1 },
+    ], "account", "salt");
+    assert.equal(zero?.privateTruth.feePresent, true);
+    assert.equal(absent?.privateTruth.feePresent, false);
+    assert.equal(zero?.fee, 0);
+    assert.equal(absent?.fee, undefined);
   });
 });
 
