@@ -644,6 +644,13 @@ function createAggTradeBuffer(config: BufferConfig) {
       trimByRetention();
       return tape.query(startMs, endMs, MAX_BUFFER_RETURN).map(toBufferedTrade);
     },
+    getCanonicalTrades(symbol: string): CanonicalTrade[] | null {
+      const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || streamSymbol;
+      return sym === streamSymbol ? tape.getTrades() : null;
+    },
+    getCanonicalTradeQuality(): CanonicalTrade["quality"] {
+      return tape.quality;
+    },
     subscribe(symbol: string, listener: (trade: BufferedAggTrade) => void): () => void {
       const sym = symbol.replace(/[^A-Z0-9]/gi, "").toUpperCase() || streamSymbol;
       if (sym !== streamSymbol) return () => {};
@@ -827,6 +834,16 @@ export function queryBufferedAggTrades(
   market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
 ): BufferedAggTrade[] {
   return resolveBuffer(market)?.query(symbol, startMs, endMs) ?? [];
+}
+
+export function getCanonicalTradeTapeSnapshot(
+  symbol = "BTCUSDT",
+  market: BookmapMarketSource = DEFAULT_BOOKMAP_MARKET,
+): { trades: CanonicalTrade[]; quality: CanonicalTrade["quality"] } | null {
+  const buffer = resolveBuffer(market);
+  if (!buffer) return null;
+  const trades = buffer.getCanonicalTrades(symbol);
+  return trades ? { trades, quality: buffer.getCanonicalTradeQuality() } : null;
 }
 
 export function subscribeAggTradeBuffer(

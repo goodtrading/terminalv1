@@ -364,6 +364,10 @@ export class MarketDataGateway {
     throw new Error("Ticker unavailable from all providers");
   }
 
+  static getOrderFlowState(identity: OrderFlowIdentity, capturedAt?: number): OrderFlowState {
+    return provideOrderFlowState(identity, capturedAt);
+  }
+
   static getCanonicalL2Book(input: {
     instrument: string;
     venue: "Binance";

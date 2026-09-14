@@ -31,6 +31,10 @@ export function getHistoricalLiquidityBook(input: HistoricalLiquidityIdentity & 
   return owner(input).bookAt(input.time);
 }
 
+export function getHistoricalLiquidityOwner(input: HistoricalLiquidityIdentity): HistoricalLiquidityTruth | null {
+  return histories.get(key(input)) ?? null;
+}
+
 export function getHistoricalLiquiditySegments(input: HistoricalLiquidityIdentity) {
   return owner(input).getSegments();
 }
