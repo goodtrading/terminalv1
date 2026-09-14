@@ -156,3 +156,73 @@ test("replay to state to features is deterministic for Spot and Perpetual", () =
   assert.deepEqual(features1, features2);
   assert.equal(features1.identity.marketType, "Spot");
 });
+
+test("supports absolute and relative price bands with deterministic intersection depth", () => {
+  const absolute = computeOrderFlowFeatures(makeState(), { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 101 } } });
+  assert.equal(absolute.derived.bidDepth.value, 15);
+  assert.equal(absolute.derived.askDepth.value, 8);
+  const relative = computeOrderFlowFeatures(makeState(), { window: { startTime: 100, endTime: 300, priceBand: { mode: "relativeToMid", minDistance: 0.5, maxDistance: 1 } } });
+  assert.equal(relative.derived.bidDepth.value, 15);
+  assert.equal(relative.derived.askDepth.value, 8);
+  const intersection = computeOrderFlowFeatures(makeState(), { window: { startTime: 100, endTime: 300, depthLevels: 1, priceBand: { mode: "absolute", minPrice: 99, maxPrice: 102 } } });
+  assert.equal(intersection.derived.bidDepth.value, 15);
+  assert.equal(intersection.derived.askDepth.value, 8);
+  assert.throws(() => computeOrderFlowFeatures(makeState(), { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 0, maxPrice: 1 } } }), /priceBand/);
+});
+
+test("exposes explicit price response and leaves unsampled price range unavailable", () => {
+  const result = computeOrderFlowFeatures(makeState(), config);
+  assert.equal(result.derived.startMid.value, 100.5);
+  assert.equal(result.derived.endMid.value, 100.5);
+  assert.equal(result.derived.signedPriceChange.value, 0);
+  assert.equal(result.derived.absolutePriceChange.value, 0);
+  assert.equal(result.derived.priceRange.value, null);
+  const sampled = computeOrderFlowFeatures(makeState(), { window: { startTime: 100, endTime: 300, depthLevels: 2, sampleTimes: [300, 100, 200, 200] } });
+  assert.deepEqual(sampled.derived.midSeries.value?.map((point) => point.time), [100, 200, 300]);
+  assert.equal(sampled.derived.priceRange.value, 0);
+});
+
+test("explicit samples preserve missing frames and never synthesize zero", () => {
+  const state = makeState();
+  const missingHistory = { ...state, historicalLiquidity: { latestFrame: null, bookAt: (_time: number) => null }, quality: { ...state.quality, history: "UNAVAILABLE" as const } };
+  const result = computeOrderFlowFeatures(missingHistory, { window: { startTime: 100, endTime: 300, sampleTimes: [200, 100] } });
+  assert.deepEqual(result.derived.midSeries.value?.map((point) => point.value), [null, null]);
+  assert.equal(result.derived.midSeries.availability, "PARTIAL");
+  assert.notEqual(result.derived.midSeries.value?.[0]?.value, 0);
+  assert.deepEqual(result.derived.midSeries.evidence[0]?.sampleTimes, [100, 200]);
+});
+
+test("measures interactions only inside an explicit price band", () => {
+  const result = computeOrderFlowFeatures(makeState(), { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 101 } } });
+  assert.equal(result.derived.interactionTradeCount.value, 3);
+  assert.equal(result.derived.interactionVolume.value, 10);
+  assert.equal(result.derived.aggressiveBuyInteractionVolume.value, 5);
+  assert.equal(result.derived.aggressiveSellInteractionVolume.value, 5);
+  assert.equal(result.derived.firstInteractionTime.value, 150);
+  assert.equal(result.derived.lastInteractionTime.value, 250);
+  assert.equal(computeOrderFlowFeatures(makeState(), config).derived.interactionTradeCount.value, null);
+});
+
+test("measures same-level liquidity reappearance without naming its cause", () => {
+  const state = makeState();
+  const removal = state.liquidityLifecycle.find((event) => event.eventType === "REMOVE")!;
+  const readd = { ...removal, eventType: "ADD" as const, previousQuantity: 0, newQuantity: 4, deltaQuantity: 4, sequence: 3, eventTime: 250, receiveTime: 251 };
+  const altered = { ...state, liquidityLifecycle: [removal, readd], quality: { ...state.quality, lifecycle: "VALID" as const } };
+  const result = computeOrderFlowFeatures(altered, config);
+  assert.deepEqual(result.derived.liquidityReappearance.value, [{ side: "bid", price: 99, reappearanceCount: 1, reappearedQuantity: 4, firstRemovalTime: 200, firstReappearanceTime: 250, delayToReappearance: 50 }]);
+  assert.equal("replenishment" in result, false);
+});
+
+test("reports observable lifecycle counts, net changes and sequence continuity", () => {
+  const result = computeOrderFlowFeatures(makeState(), config);
+  assert.equal(result.derived.additionEventCount.value, 0);
+  assert.equal(result.derived.removalEventCount.value, 1);
+  assert.equal(result.derived.positiveUpdateCount.value, 2);
+  assert.equal(result.derived.decreaseCount.value, 0);
+  assert.equal(result.derived.removeCount.value, 1);
+  assert.equal(result.derived.netLiquidityChange.value, 2);
+  assert.equal(result.derived.bidNetLiquidityChange.value, 0);
+  assert.equal(result.derived.askNetLiquidityChange.value, 2);
+  assert.equal(result.derived.sequenceCoverage.value?.continuity, "CONTIGUOUS");
+  assert.equal(result.derived.sequenceCoverage.value?.observedEvents, 1);
+});
