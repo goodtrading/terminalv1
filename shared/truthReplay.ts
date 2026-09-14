@@ -36,6 +36,7 @@ type MarketState = {
 };
 
 function identityKey(identity: TruthReplayIdentity): string { return `${identity.instrument}|${identity.venue}|${identity.marketType}`; }
+function identityOnly(value: TruthReplayIdentity): TruthReplayIdentity { return { instrument: value.instrument, venue: value.venue, marketType: value.marketType }; }
 function sameIdentity(a: TruthReplayIdentity, b: TruthReplayIdentity): boolean { return identityKey(a) === identityKey(b); }
 function cloneBook(book: CanonicalL2Book): CanonicalL2Book { return { ...book, bids: book.bids.map((x) => ({ ...x })), asks: book.asks.map((x) => ({ ...x })), bbo: { ...book.bbo }, provenance: { ...book.provenance } }; }
 function cloneLifecycle(event: LiquidityLifecycleEvent): LiquidityLifecycleEvent { return { ...event, provenance: { ...event.provenance } }; }
@@ -68,15 +69,16 @@ export function replayTruth(events: readonly TruthReplayEvent[]): TruthReplayRes
 
   const stateFor = (identity: TruthReplayIdentity): MarketState => {
     const key = identityKey(identity); const existing = states.get(key); if (existing) return existing;
-    const l2 = new CanonicalL2BookOwner(identity); const history = new HistoricalLiquidityTruth(identity); const initial = l2.getBook();
+    const cleanIdentity = identityOnly(identity); const l2 = new CanonicalL2BookOwner(cleanIdentity); const history = new HistoricalLiquidityTruth(cleanIdentity); const initial = l2.getBook();
     const state = { l2, projector: new LiquidityLifecycleProjector(), history, previous: initial }; states.set(key, state); return state;
   };
   const tapeFor = (identity: TruthReplayIdentity): CanonicalTradeTape => {
     const key = identityKey(identity); const existing = tapes.get(key); if (existing) return existing;
-    const tape = new CanonicalTradeTape(identity); tapes.set(key, tape); return tape;
+    const tape = new CanonicalTradeTape(identityOnly(identity)); tapes.set(key, tape); return tape;
   };
   const usableMeta = (event: ReplayMeta): boolean => validIdentity(event) && validTime(event);
   const cut = (state: MarketState, book: CanonicalL2Book): void => { state.history.addCheckpoint(book); state.previous = book; };
+  const controlBook = (book: CanonicalL2Book, event: ReplayControl): CanonicalL2Book => ({ ...book, eventTime: event.eventTime, receiveTime: event.receiveTime, provenance: { ...book.provenance, eventTime: event.eventTime, receiveTime: event.receiveTime } });
 
   for (const event of events) {
     if (!usableMeta(event)) continue;
@@ -92,15 +94,15 @@ export function replayTruth(events: readonly TruthReplayEvent[]): TruthReplayRes
       cut(state, book); latestBook = book; latestIdentity = event; continue;
     }
     if (event.type === "L2_DELTA") {
-      if (!validLevels(event.bids) || !validLevels(event.asks) || !Number.isInteger(event.sequence) || event.sequence < 0) continue;
+      if (!validLevels(event.bids) || !validLevels(event.asks) || (event.sequence != null && (!Number.isInteger(event.sequence) || event.sequence < 0))) continue;
       const state = states.get(identityKey(event)); if (!state) continue;
       const result = state.l2.applyDelta({ bids: event.bids, asks: event.asks, sequence: event.sequence, eventTime: event.eventTime, receiveTime: event.receiveTime, source: event.source, quality: event.quality as CanonicalL2Quality, firstUpdateId: event.firstUpdateId, previousUpdateId: event.previousUpdateId });
-      if (result.accepted) { const emitted = state.projector.project(state.previous, result.book); lifecycleEvents.push(...emitted.map(cloneLifecycle)); for (const lifecycle of emitted) state.history.addEvent(lifecycle); state.previous = result.book; latestBook = result.book; latestIdentity = event; } else if (result.reason === "GAP" || result.reason === "INVALID") cut(state, result.book);
+      if (result.accepted) { const emitted = state.projector.project(state.previous, result.book); lifecycleEvents.push(...emitted.map(cloneLifecycle)); for (const lifecycle of emitted) state.history.addEvent(lifecycle); state.previous = result.book; latestBook = result.book; latestIdentity = event; } else if (result.reason === "GAP" || result.reason === "INVALID") { const degradedBook = controlBook(result.book, event); cut(state, degradedBook); latestBook = degradedBook; latestIdentity = event; }
       continue;
     }
     const state = states.get(identityKey(event)); if (!state) continue;
-    if (event.type === "DISCONNECT") { const book = state.l2.markDisconnected(); cut(state, book); latestBook = book; latestIdentity = event; }
-    else if (event.type === "RESYNC") { const book = state.l2.markResyncing(); cut(state, book); latestBook = book; latestIdentity = event; }
+    if (event.type === "DISCONNECT") { const book = controlBook(state.l2.markDisconnected(), event); cut(state, book); latestBook = book; latestIdentity = event; }
+    else if (event.type === "RESYNC") { const book = controlBook(state.l2.markResyncing(), event); cut(state, book); latestBook = book; latestIdentity = event; }
     else if (event.type === "RECONNECT") { /* Reconnect alone never restores continuity. */ }
   }
 
