@@ -28,7 +28,11 @@ export type ReplenishmentInferenceConfig = { enabled: boolean; maxReappearanceDe
 export type PullingInferenceConfig = { enabled: boolean; correlationWindowMs: number; maxObservedAggressionToRemovalRatio: number; priceBand?: OrderFlowFeatureWindow["priceBand"]; minRemovedQuantity?: number };
 export type StackingInferenceConfig = { enabled: boolean; minLevels: number; minAddedQuantity: number; minPersistenceMs?: number; priceBand?: OrderFlowFeatureWindow["priceBand"] };
 export type LiquidityVacuumInferenceConfig = { enabled: boolean; maxDepth: number; minSpread: number; minDepthReductionRatio: number; minDistanceToNextLiquidity?: number; priceBand?: OrderFlowFeatureWindow["priceBand"] };
-export type OrderFlowInferenceConfig = { replenishment?: ReplenishmentInferenceConfig; pulling?: PullingInferenceConfig; stacking?: StackingInferenceConfig; liquidityVacuum?: LiquidityVacuumInferenceConfig };
+export type AbsorptionInferenceConfig = { enabled: boolean; minAggressiveVolume: number; maxPriceProgress: number; priceBand?: OrderFlowFeatureWindow["priceBand"]; minPassivePersistenceMs?: number; minReappearedQuantity?: number };
+export type SweepInferenceConfig = { enabled: boolean; maxDurationMs: number; minPriceLevels: number; minAggressiveVolume: number; minPriceProgress?: number; priceBand?: OrderFlowFeatureWindow["priceBand"] };
+export type PassiveDefenseInferenceConfig = { enabled: boolean; minAggressiveVolume: number; maxPriceExcursion: number; minPassivePersistenceMs: number; priceBand?: OrderFlowFeatureWindow["priceBand"] };
+export type AggressiveExhaustionInferenceConfig = { enabled: boolean; earlier: Readonly<OrderFlowFeatureWindow>; later: Readonly<OrderFlowFeatureWindow>; minVelocityDrop?: number; minVolumeDrop?: number; maxPriceProgress?: number; minOppositePersistenceMs?: number; priceBand?: OrderFlowFeatureWindow["priceBand"] };
+export type OrderFlowInferenceConfig = { replenishment?: ReplenishmentInferenceConfig; pulling?: PullingInferenceConfig; stacking?: StackingInferenceConfig; liquidityVacuum?: LiquidityVacuumInferenceConfig; absorption?: AbsorptionInferenceConfig; sweep?: SweepInferenceConfig; passiveDefense?: PassiveDefenseInferenceConfig; aggressiveExhaustion?: AggressiveExhaustionInferenceConfig };
 export type OrderFlowFeatureConfig = { window: Readonly<OrderFlowFeatureWindow>; inference?: Readonly<OrderFlowInferenceConfig> };
 export type FeatureAvailability = "AVAILABLE" | "PARTIAL" | "UNAVAILABLE";
 export type FeatureSource = "book" | "trades" | "lifecycle" | "history";
@@ -157,6 +161,10 @@ export type OrderFlowFeatures = {
     pulling: OrderFlowInference;
     stacking: OrderFlowInference;
     liquidityVacuum: OrderFlowInference;
+    absorption: OrderFlowInference;
+    sweep: OrderFlowInference;
+    passiveDefense: OrderFlowInference;
+    aggressiveExhaustion: OrderFlowInference;
   };
   quality: Readonly<OrderFlowState["quality"]>;
   timestamps: Readonly<OrderFlowState["timestamps"]>;
@@ -336,6 +344,74 @@ function computeLiquidityVacuumInference(state: Readonly<OrderFlowState>, window
   return inferenceBase(state, window, "NOT_DETECTED");
 }
 
+function computeInteractionInference(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, config: AbsorptionInferenceConfig | undefined, persistence: DerivedMetric<readonly PersistenceObservation[]>, reappearance: DerivedMetric<readonly LiquidityReappearanceObservation[]>, sequence: DerivedMetric<SequenceCoverage>): OrderFlowInference {
+  if (!config || !config.enabled) return inferenceBase(state, window, "NOT_DETECTED");
+  if (!validateInferenceConfig(config, [config.minAggressiveVolume, config.maxPriceProgress], true) || (config.minPassivePersistenceMs == null && config.minReappearedQuantity == null) || (config.minPassivePersistenceMs != null && !validInferenceNumber(config.minPassivePersistenceMs, true)) || (config.minReappearedQuantity != null && !validInferenceNumber(config.minReappearedQuantity, true))) return inferenceBase(state, window, "UNAVAILABLE", "UNAVAILABLE");
+  if (state.quality.trades !== "VALID") return inferenceBase(state, window, "PARTIAL", state.quality.trades === "UNAVAILABLE" ? "UNAVAILABLE" : state.quality.overall);
+  if (state.quality.book === "GAP" || state.quality.book === "RESYNCING" || state.quality.book === "DISCONNECTED") return inferenceBase(state, window, "UNAVAILABLE");
+  if (sequenceInferenceQuality(sequence) !== "VALID") return inferenceBase(state, window, sequenceInferenceStatus(sequence), sequenceInferenceQuality(sequence));
+  const band = config.priceBand ?? window.priceBand;
+  const trades = state.trades.filter((trade) => inWindow(eventTime(trade), window) && (!band || levelInBand(trade.price, band, state.book?.mid ?? null))).sort(compareTrades);
+  if (trades.length === 0) return inferenceBase(state, window, "NOT_DETECTED");
+  const buy = trades.filter((trade) => trade.aggressorSide === "BUY").reduce((sum, trade) => sum + trade.quantity, 0);
+  const sell = trades.filter((trade) => trade.aggressorSide === "SELL").reduce((sum, trade) => sum + trade.quantity, 0);
+  const aggressiveVolume = Math.max(buy, sell);
+  if (aggressiveVolume < config.minAggressiveVolume) return inferenceBase(state, window, "NOT_DETECTED");
+  const aggressorSide = buy >= sell ? "AGGRESSION_BUY" : "AGGRESSION_SELL";
+  const passiveSide = aggressorSide === "AGGRESSION_BUY" ? "ASK" : "BID";
+  const observedPriceChange = derivedPriceChange(state, window);
+  if (observedPriceChange == null) return inferenceBase(state, window, "UNAVAILABLE");
+  const priceProgress = Math.abs(observedPriceChange);
+  if (priceProgress > config.maxPriceProgress) return inferenceBase(state, window, "NOT_DETECTED");
+  if (config.minPassivePersistenceMs != null && persistence.availability === "UNAVAILABLE") return inferenceBase(state, window, "PARTIAL");
+  const passive = persistence.value?.filter((item) => item.side === passiveSide.toLowerCase() && (!band || levelInBand(item.price, band, state.book?.mid ?? null))) ?? [];
+  const persistent = passive.filter((item) => config.minPassivePersistenceMs == null || (item.observedLifetime ?? 0) >= config.minPassivePersistenceMs);
+  if (config.minPassivePersistenceMs != null && persistent.length === 0) return inferenceBase(state, window, "NOT_DETECTED");
+  if (config.minReappearedQuantity != null && reappearance.availability === "UNAVAILABLE") return inferenceBase(state, window, "PARTIAL");
+  const reappearedQuantity = reappearance.value?.filter((item) => item.side === passiveSide.toLowerCase() && (!band || levelInBand(item.price, band, state.book?.mid ?? null))).reduce((sum, item) => sum + item.reappearedQuantity, 0) ?? 0;
+  if (config.minReappearedQuantity != null && reappearedQuantity < config.minReappearedQuantity) return inferenceBase(state, window, "NOT_DETECTED");
+  const passiveQuantity = persistent.reduce((sum, item) => sum + item.quantityPersistence, 0);
+  return inferenceBase(state, window, "CANDIDATE", state.quality.overall, [
+    inferenceEvidence("aggressiveVolume", aggressiveVolume, "quantity", window, "trades", state.provenance.trades, { priceBand: band }), inferenceEvidence("aggressorSide", aggressorSide, "count", window, "trades", state.provenance.trades), inferenceEvidence("passiveSide", passiveSide, "count", window, "history", state.provenance.history, { priceBand: band }), inferenceEvidence("priceProgress", priceProgress, "price", window, "book", state.provenance.book, { priceBand: band }), inferenceEvidence("passivePersistence", persistent.length, "count", window, "history", state.provenance.history), inferenceEvidence("passiveQuantity", passiveQuantity, "quantity", window, "history", state.provenance.history), inferenceEvidence("reappearedQuantity", reappearedQuantity, "quantity", window, "lifecycle", state.provenance.lifecycle), inferenceEvidence("duration", window.endTime - window.startTime, "milliseconds", window, "trades", state.provenance.trades),
+  ]);
+}
+function derivedPriceChange(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>): number | null {
+  const start = state.historicalLiquidity.bookAt(window.startTime); const end = state.historicalLiquidity.bookAt(window.endTime);
+  const startMid = start?.quality === "VALID" ? frameMid(start) : null; const endMid = end?.quality === "VALID" ? frameMid(end) : (state.book?.quality === "VALID" ? frameMid(state.book) : null);
+  return startMid != null && endMid != null ? endMid - startMid : null;
+}
+function computeSweepInference(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, config: SweepInferenceConfig | undefined): OrderFlowInference {
+  if (!config || !config.enabled) return inferenceBase(state, window, "NOT_DETECTED");
+  if (!validateInferenceConfig(config, [config.maxDurationMs, config.minPriceLevels, config.minAggressiveVolume], true) || (config.minPriceProgress != null && !validInferenceNumber(config.minPriceProgress, true))) return inferenceBase(state, window, "UNAVAILABLE", "UNAVAILABLE");
+  if (state.quality.trades !== "VALID") return inferenceBase(state, window, "UNAVAILABLE", state.quality.trades === "UNAVAILABLE" ? "UNAVAILABLE" : state.quality.overall);
+  const band = config.priceBand ?? window.priceBand; const trades = state.trades.filter((trade) => inWindow(eventTime(trade), window) && (!band || levelInBand(trade.price, band, state.book?.mid ?? null))).sort(compareTrades);
+  for (const side of ["BUY", "SELL"] as const) {
+    const sequence = trades.filter((trade) => trade.aggressorSide === side); if (sequence.length < config.minPriceLevels) continue;
+    const levels = Array.from(new Set(sequence.map((trade) => trade.price))); const duration = eventTime(sequence.at(-1)!) - eventTime(sequence[0]!); const volume = sequence.reduce((sum, trade) => sum + trade.quantity, 0); const progress = Math.abs(sequence.at(-1)!.price - sequence[0]!.price);
+    if (levels.length >= config.minPriceLevels && duration <= config.maxDurationMs && volume >= config.minAggressiveVolume && (config.minPriceProgress == null || progress >= config.minPriceProgress)) return inferenceBase(state, window, "CANDIDATE", state.quality.overall, [inferenceEvidence("tradeCount", sequence.length, "count", window, "trades", state.provenance.trades, { priceBand: band }), inferenceEvidence("distinctPriceLevels", levels.length, "count", window, "trades", state.provenance.trades), inferenceEvidence("aggressiveVolume", volume, "quantity", window, "trades", state.provenance.trades), inferenceEvidence("aggressorSide", side, "count", window, "trades", state.provenance.trades), inferenceEvidence("duration", duration, "milliseconds", window, "trades", state.provenance.trades), inferenceEvidence("priceProgress", progress, "price", window, "trades", state.provenance.trades), inferenceEvidence("tradeIdRange", `${sequence[0]!.tradeId}:${sequence.at(-1)!.tradeId}`, "count", window, "trades", state.provenance.trades)]);
+  }
+  return inferenceBase(state, window, "NOT_DETECTED");
+}
+function computePassiveDefenseInference(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, config: PassiveDefenseInferenceConfig | undefined, persistence: DerivedMetric<readonly PersistenceObservation[]>, reappearance: DerivedMetric<readonly LiquidityReappearanceObservation[]>, sequence: DerivedMetric<SequenceCoverage>): OrderFlowInference {
+  const absorption = computeInteractionInference(state, window, config ? { ...config, maxPriceProgress: config.maxPriceExcursion } : undefined, persistence, reappearance, sequence);
+  if (absorption.status !== "CANDIDATE") return absorption;
+  return { ...absorption, evidence: absorption.evidence.map((item) => item.metric === "priceProgress" ? { ...item, metric: "priceExcursion" } : item) };
+}
+function computeAggressiveExhaustionInference(state: Readonly<OrderFlowState>, window: Readonly<OrderFlowFeatureWindow>, config: AggressiveExhaustionInferenceConfig | undefined, persistence: DerivedMetric<readonly PersistenceObservation[]>, sequence: DerivedMetric<SequenceCoverage>): OrderFlowInference {
+  if (!config || !config.enabled) return inferenceBase(state, window, "NOT_DETECTED");
+  validateWindow(config.earlier); validateWindow(config.later);
+  if ((config.minVelocityDrop == null && config.minVolumeDrop == null) || (config.minVelocityDrop != null && !validInferenceNumber(config.minVelocityDrop, true)) || (config.minVolumeDrop != null && !validInferenceNumber(config.minVolumeDrop, true)) || (config.maxPriceProgress != null && !validInferenceNumber(config.maxPriceProgress, true)) || (config.minOppositePersistenceMs != null && !validInferenceNumber(config.minOppositePersistenceMs, true))) return inferenceBase(state, window, "UNAVAILABLE", "UNAVAILABLE");
+  if (state.quality.trades !== "VALID") return inferenceBase(state, window, "UNAVAILABLE", state.quality.trades === "UNAVAILABLE" ? "UNAVAILABLE" : state.quality.overall);
+  if (sequenceInferenceQuality(sequence) !== "VALID") return inferenceBase(state, window, sequenceInferenceStatus(sequence), sequenceInferenceQuality(sequence));
+  const band = config.priceBand ?? window.priceBand; const read = (part: Readonly<OrderFlowFeatureWindow>) => state.trades.filter((trade) => inWindow(eventTime(trade), part) && (!band || levelInBand(trade.price, band, state.book?.mid ?? null))).sort(compareTrades);
+  const earlier = read(config.earlier); const later = read(config.later); if (!earlier.length || !later.length) return inferenceBase(state, window, "UNAVAILABLE", "UNAVAILABLE");
+  const volume = (items: readonly CanonicalTrade[]) => items.reduce((sum, trade) => sum + trade.quantity, 0); const velocity = (items: readonly CanonicalTrade[], part: Readonly<OrderFlowFeatureWindow>) => volume(items) / ((part.endTime - part.startTime) / 1000); const progress = (items: readonly CanonicalTrade[]) => Math.abs(items.at(-1)!.price - items[0]!.price);
+  const earlierVolume = volume(earlier); const laterVolume = volume(later); const earlierVelocity = velocity(earlier, config.earlier); const laterVelocity = velocity(later, config.later); const laterProgress = progress(later); const aggressiveSide = later.reduce((buy, trade) => buy + (trade.aggressorSide === "BUY" ? trade.quantity : -trade.quantity), 0) >= 0 ? "BUY" : "SELL"; const passiveSide = aggressiveSide === "BUY" ? "ask" : "bid"; const minOppositePersistenceMs = config.minOppositePersistenceMs;
+  if ((config.minVolumeDrop != null && earlierVolume - laterVolume < config.minVolumeDrop) || (config.minVelocityDrop != null && earlierVelocity - laterVelocity < config.minVelocityDrop) || (config.maxPriceProgress != null && laterProgress > config.maxPriceProgress)) return inferenceBase(state, window, "NOT_DETECTED");
+  if (minOppositePersistenceMs != null && (persistence.availability === "UNAVAILABLE" || !persistence.value?.some((item) => item.side === passiveSide && (item.observedLifetime ?? 0) >= minOppositePersistenceMs))) return inferenceBase(state, window, persistence.availability === "UNAVAILABLE" ? "PARTIAL" : "NOT_DETECTED");
+  return inferenceBase(state, window, "CANDIDATE", state.quality.overall, [inferenceEvidence("earlierVolume", earlierVolume, "quantity", window, "trades", state.provenance.trades), inferenceEvidence("laterVolume", laterVolume, "quantity", window, "trades", state.provenance.trades), inferenceEvidence("earlierVelocity", earlierVelocity, "per-second", config.earlier, "trades", state.provenance.trades), inferenceEvidence("laterVelocity", laterVelocity, "per-second", config.later, "trades", state.provenance.trades), inferenceEvidence("earlierProgress", progress(earlier), "price", config.earlier, "trades", state.provenance.trades), inferenceEvidence("laterProgress", laterProgress, "price", config.later, "trades", state.provenance.trades), inferenceEvidence("oppositePassiveSide", passiveSide, "count", window, "history", state.provenance.history)]);
+}
+
 export function computeOrderFlowFeatures(state: Readonly<OrderFlowState>, config: Readonly<OrderFlowFeatureConfig>): OrderFlowFeatures {
   validateWindow(config.window);
   const window = { ...config.window, priceBand: config.window.priceBand ? { ...config.window.priceBand } : undefined };
@@ -476,6 +552,10 @@ export function computeOrderFlowFeatures(state: Readonly<OrderFlowState>, config
     pulling: computePullingInference(state, window, inferenceConfig?.pulling, sequenceMetric),
     stacking: computeStackingInference(state, window, inferenceConfig?.stacking, persistence, sequenceMetric),
     liquidityVacuum: computeLiquidityVacuumInference(state, window, inferenceConfig?.liquidityVacuum, sequenceMetric),
+    absorption: computeInteractionInference(state, window, inferenceConfig?.absorption, persistence, liquidityReappearance, sequenceMetric),
+    sweep: computeSweepInference(state, window, inferenceConfig?.sweep),
+    passiveDefense: computePassiveDefenseInference(state, window, inferenceConfig?.passiveDefense, persistence, liquidityReappearance, sequenceMetric),
+    aggressiveExhaustion: computeAggressiveExhaustionInference(state, window, inferenceConfig?.aggressiveExhaustion, persistence, sequenceMetric),
   };
 
   return {

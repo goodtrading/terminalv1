@@ -193,7 +193,7 @@ test("explicit samples preserve missing frames and never synthesize zero", () =>
 });
 
 test("measures interactions only inside an explicit price band", () => {
-  const result = computeOrderFlowFeatures(makeState(), { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 101 } } });
+  const result = computeOrderFlowFeatures(makeState(), { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } } });
   assert.equal(result.derived.interactionTradeCount.value, 3);
   assert.equal(result.derived.interactionVolume.value, 10);
   assert.equal(result.derived.aggressiveBuyInteractionVolume.value, 5);
@@ -281,4 +281,48 @@ test("degraded trades cannot produce replenishment or pulling candidates", () =>
   assert.notEqual(result.inference.replenishment.status, "CANDIDATE");
   assert.notEqual(result.inference.pulling.status, "CANDIDATE");
   assert.ok(["PARTIAL", "UNAVAILABLE"].includes(result.inference.replenishment.status));
+});
+
+test("N5G.4 detects absorption only with aggression, limited progress and passive persistence", () => {
+  const state = makeState();
+  const result = computeOrderFlowFeatures(state, { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [100, 200, 300] }, inference: { absorption: { enabled: true, minAggressiveVolume: 1, maxPriceProgress: 1, minPassivePersistenceMs: 0, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } } } });
+  assert.equal(result.inference.absorption.status, "CANDIDATE");
+  assert.equal(result.inference.absorption.evidence.some((item) => item.metric === "passiveSide" && item.value === "ASK"), true);
+});
+
+test("N5G.4 detects a multi-price sweep and rejects a single price", () => {
+  const state = makeState();
+  const trades = [100.1, 100.4, 100.8].map((price, index) => ({ ...state.trades[0]!, tradeId: `s${index}`, price, quantity: 2, aggressorSide: "BUY" as const, eventTime: 120 + index * 20 }));
+  const result = computeOrderFlowFeatures({ ...state, trades }, { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } }, inference: { sweep: { enabled: true, maxDurationMs: 100, minPriceLevels: 3, minAggressiveVolume: 5, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } } } });
+  assert.equal(result.inference.sweep.status, "CANDIDATE");
+  assert.equal(result.inference.sweep.evidence.some((item) => item.metric === "distinctPriceLevels" && item.value === 3), true);
+  const single = computeOrderFlowFeatures({ ...state, trades: [trades[0]!] }, { window: { startTime: 100, endTime: 300 }, inference: { sweep: { enabled: true, maxDurationMs: 100, minPriceLevels: 2, minAggressiveVolume: 1 } } });
+  assert.equal(single.inference.sweep.status, "NOT_DETECTED");
+});
+
+test("N5G.4 maps passive defense sides without actor or direction labels", () => {
+  const state = makeState();
+  const result = computeOrderFlowFeatures(state, { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [100, 200, 300] }, inference: { passiveDefense: { enabled: true, minAggressiveVolume: 1, maxPriceExcursion: 1, minPassivePersistenceMs: 0, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } } } });
+  assert.equal(result.inference.passiveDefense.status, "CANDIDATE");
+  assert.equal(result.inference.passiveDefense.evidence.some((item) => item.metric === "passiveSide" && item.value === "ASK"), true);
+  assert.equal("bullish" in result.inference.passiveDefense, false);
+});
+
+test("N5G.4 compares explicit earlier and later windows for aggressive exhaustion", () => {
+  const state = makeState();
+  const result = computeOrderFlowFeatures(state, { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } }, inference: { aggressiveExhaustion: { enabled: true, earlier: { startTime: 100, endTime: 199 }, later: { startTime: 200, endTime: 300 }, minVolumeDrop: 1, minVelocityDrop: 1, maxPriceProgress: 1, minOppositePersistenceMs: 0, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } } } });
+  assert.equal(result.inference.aggressiveExhaustion.status, "CANDIDATE");
+  assert.equal(result.inference.aggressiveExhaustion.evidence.some((item) => item.metric === "earlierVolume"), true);
+});
+
+test("N5G.4 fails closed for missing history and preserves candidate replay parity", () => {
+  const state = makeState();
+  const absorptionConfig: OrderFlowFeatureConfig = { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [100, 200, 300] }, inference: { absorption: { enabled: true, minAggressiveVolume: 1, maxPriceProgress: 1, minPassivePersistenceMs: 0, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 } } } };
+  const candidate = computeOrderFlowFeatures(state, absorptionConfig);
+  assert.equal(candidate.inference.absorption.status, "CANDIDATE");
+  assert.deepEqual(candidate.inference, computeOrderFlowFeatures(state, absorptionConfig).inference);
+  const missingHistory = { ...state, historicalLiquidity: { latestFrame: null, bookAt: (_time: number) => null }, quality: { ...state.quality, history: "UNAVAILABLE" as const } };
+  const unavailable = computeOrderFlowFeatures(missingHistory, absorptionConfig);
+  assert.notEqual(unavailable.inference.absorption.status, "CANDIDATE");
+  assert.ok(["PARTIAL", "UNAVAILABLE"].includes(unavailable.inference.absorption.status));
 });
