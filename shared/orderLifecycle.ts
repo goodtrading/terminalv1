@@ -183,9 +183,11 @@ export function createOrderIntent(input: OrderIntent): OrderIntent {
   if (!Number.isFinite(input.quantity) || input.quantity <= 0) throw new Error("quantity must be finite and positive");
   if (input.timeInForce !== "GTC") throw new Error("timeInForce must be GTC");
   if (typeof input.reduceOnly !== "boolean" || typeof input.postOnly !== "boolean") throw new Error("reduceOnly and postOnly are required booleans");
-  if (input.orderType === "MARKET" && input.limitPrice != null) throw new Error("MARKET cannot have limitPrice");
-  if (input.orderType === "LIMIT" && (!Number.isFinite(input.limitPrice) || input.limitPrice <= 0)) throw new Error("LIMIT requires positive limitPrice");
-  if (input.orderType === "STOP_MARKET" && (!Number.isFinite(input.triggerPrice) || input.triggerPrice <= 0)) throw new Error("STOP_MARKET requires positive triggerPrice");
+  const limitPrice = input.limitPrice;
+  const triggerPrice = input.triggerPrice;
+  if (input.orderType === "MARKET" && limitPrice != null) throw new Error("MARKET cannot have limitPrice");
+  if (input.orderType === "LIMIT" && (limitPrice == null || !Number.isFinite(limitPrice) || limitPrice <= 0)) throw new Error("LIMIT requires positive limitPrice");
+  if (input.orderType === "STOP_MARKET" && (triggerPrice == null || !Number.isFinite(triggerPrice) || triggerPrice <= 0)) throw new Error("STOP_MARKET requires positive triggerPrice");
   if (input.orderType !== "STOP_MARKET" && input.triggerPrice != null) throw new Error(`${input.orderType} cannot have triggerPrice`);
   if (input.orderType === "STOP_MARKET" && input.reduceOnly !== true) throw new Error("STOP_MARKET requires reduceOnly for canonical PAPER");
   if (input.sourceMetadata !== undefined) clone(input.sourceMetadata);
