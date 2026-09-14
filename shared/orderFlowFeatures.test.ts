@@ -5,7 +5,7 @@ import { CanonicalTradeTape } from "./canonicalTradeTape";
 import { LiquidityLifecycleProjector } from "./liquidityLifecycle";
 import { HistoricalLiquidityTruth } from "./historicalLiquidityTruth";
 import { composeOrderFlowState, type OrderFlowCompositionInput, type OrderFlowIdentity } from "./orderFlowState";
-import { computeOrderFlowFeatures, type OrderFlowFeatureConfig } from "./orderFlowFeatures";
+import { computeOrderFlowFeatures, type FeatureEvidence, type OrderFlowFeatureConfig } from "./orderFlowFeatures";
 import { replayTruth, type TruthReplayEvent } from "./truthReplay";
 
 const spot: OrderFlowIdentity = { instrument: "BTCUSDT", venue: "Binance", marketType: "Spot" };
@@ -458,6 +458,82 @@ test("N5G.5 compression supports BID, ASK and BOTH passive sides", () => {
   assert.equal((bidOnly.inference.compression as typeof bidOnly.inference.compression & { passiveSide?: string }).passiveSide, "BID");
   const askOnly = computeOrderFlowFeatures({ ...state, liquidityLifecycle: state.liquidityLifecycle.filter((event) => event.side === "ask") }, common);
   assert.equal((askOnly.inference.compression as typeof askOnly.inference.compression & { passiveSide?: string }).passiveSide, "ASK");
+});
+
+test("N5G.6 acceptance preserves the nine-feature contract and all layers", () => {
+  const state = makeState();
+  const before = structuredClone({ book: state.book, trades: state.trades, liquidityLifecycle: state.liquidityLifecycle, quality: state.quality, provenance: state.provenance });
+  const result = computeOrderFlowFeatures(state, config);
+  assert.deepEqual(Object.keys(result.inference).sort(), ["absorption", "aggressiveExhaustion", "compression", "liquidityVacuum", "passiveDefense", "pulling", "replenishment", "stacking", "sweep"]);
+  for (const inference of Object.values(result.inference)) {
+    assert.ok(["CANDIDATE", "NOT_DETECTED", "PARTIAL", "UNAVAILABLE"].includes(inference.status));
+    for (const item of inference.evidence) {
+      assert.equal(typeof item.metric, "string");
+      assert.ok("value" in item);
+      assert.equal(typeof item.unit, "string");
+      assert.ok(item.window);
+      assert.ok("source" in item);
+      assert.ok("provenance" in item);
+    }
+  }
+  (result.inference as { compression: { evidence: FeatureEvidence[] } }).compression.evidence.push({ metric: "mutated", value: 1, unit: "count", window: result.window, source: "book", provenance: null });
+  assert.deepEqual({ book: state.book, trades: state.trades, liquidityLifecycle: state.liquidityLifecycle, quality: state.quality, provenance: state.provenance }, before);
+  assert.equal("LONG" in JSON.parse(JSON.stringify(result)), false);
+  assert.equal("SHORT" in JSON.parse(JSON.stringify(result)), false);
+  assert.equal("score" in JSON.parse(JSON.stringify(result)), false);
+  assert.equal("probability" in JSON.parse(JSON.stringify(result)), false);
+});
+
+test("N5G.6 acceptance is deterministic across replay runs and execution order", () => {
+  const events: TruthReplayEvent[] = [
+    { type: "L2_SNAPSHOT", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [{ price: 100, quantity: 10 }], asks: [{ price: 101, quantity: 10 }], sequence: 1, snapshotId: 1, eventTime: 100, receiveTime: 101, quality: "VALID", source: "rest" },
+    { type: "L2_DELTA", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", bids: [{ price: 100, quantity: 12 }], asks: [], sequence: 2, eventTime: 150, receiveTime: 151, quality: "VALID", source: "websocket" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "n6-1", price: 100.5, quantity: 2, aggressorSide: "BUY", eventTime: 160, receiveTime: 161, quality: "VALID", source: "websocket" },
+    { type: "TRADE", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", tradeId: "n6-2", price: 100.5, quantity: 2, aggressorSide: "SELL", eventTime: 220, receiveTime: 221, quality: "VALID", source: "websocket" },
+    { type: "ADVANCE_TIME", instrument: "BTCUSDT", venue: "Binance", marketType: "Spot", eventTime: 300, receiveTime: 301, quality: "VALID", source: "websocket" },
+  ];
+  const featureConfig: OrderFlowFeatureConfig = { window: { startTime: 100, endTime: 300, depthLevels: 1 }, };
+  const run = () => {
+    const first = stateFromReplay(events, spot, 300).state;
+    return computeOrderFlowFeatures(first, featureConfig);
+  };
+  const a = run();
+  const b = run();
+  assert.deepEqual(a, b);
+  const reverse = [run(), run()].reverse();
+  assert.deepEqual(reverse[0], reverse[1]);
+  assert.equal(a.identity.marketType, "Spot");
+  assert.equal(a.timestamps.book.eventTime, 150);
+  assert.equal(a.timestamps.book.receiveTime, 151);
+});
+
+test("N5G.6 acceptance gates compression by component quality without blocking healthy L1", () => {
+  const compressionConfig: OrderFlowFeatureConfig = { window: { startTime: 100, endTime: 300, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, sampleTimes: [100, 200, 300] }, inference: { compression: { enabled: true, priceBand: { mode: "absolute", minPrice: 100, maxPrice: 102 }, minDurationMs: 150, maxObservedPriceRange: 1, minInteractionCount: 2, minPassiveQuantity: 1, minPassivePersistenceMs: 0 } } };
+  const state = makeState();
+  const bookGap = { ...state, book: { ...state.book!, quality: "GAP" as const }, quality: { ...state.quality, book: "GAP" as const } };
+  const gapResult = computeOrderFlowFeatures(bookGap, compressionConfig);
+  assert.equal(gapResult.inference.compression.status, "UNAVAILABLE");
+  assert.equal(gapResult.derived.totalVolume.value, 10);
+  const staleTrades = { ...state, quality: { ...state.quality, trades: "STALE" as const } };
+  assert.equal(computeOrderFlowFeatures(staleTrades, compressionConfig).inference.compression.status, "PARTIAL");
+  const missingHistory = { ...state, historicalLiquidity: { latestFrame: null, bookAt: (_time: number) => null }, quality: { ...state.quality, history: "UNAVAILABLE" as const } };
+  assert.equal(computeOrderFlowFeatures(missingHistory, compressionConfig).inference.compression.status, "UNAVAILABLE");
+  const unavailableLifecycle = { ...state, quality: { ...state.quality, lifecycle: "UNAVAILABLE" as const } };
+  assert.equal(computeOrderFlowFeatures(unavailableLifecycle, compressionConfig).inference.compression.status, "UNAVAILABLE");
+});
+
+test("N5G.6 acceptance keeps Spot and Perpetual data, provenance and inference isolated", () => {
+  const spotResult = computeOrderFlowFeatures(makeState(spot), config);
+  const perpResult = computeOrderFlowFeatures(makeState(perp), config);
+  assert.equal(spotResult.identity.marketType, "Spot");
+  assert.equal(perpResult.identity.marketType, "Perpetual");
+  assert.equal(spotResult.provenance.book?.source, "websocket");
+  assert.equal(perpResult.provenance.book?.source, "websocket");
+  assert.deepEqual(spotResult.provenance, perpResult.provenance);
+  assert.notDeepEqual(spotResult.identity, perpResult.identity);
+  assert.deepEqual(Object.keys(spotResult.inference).sort(), Object.keys(perpResult.inference).sort());
+  assert.deepEqual(spotResult.inference, computeOrderFlowFeatures(makeState(spot), config).inference);
+  assert.deepEqual(perpResult.inference, computeOrderFlowFeatures(makeState(perp), config).inference);
 });
 
 test("N5G.5 compression replay parity is end-to-end and deeply deterministic", () => {
