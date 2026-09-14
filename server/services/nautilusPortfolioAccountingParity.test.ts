@@ -69,7 +69,7 @@ for (const [name, actions] of [["profitable LONG", profitableLong], ["losing LON
     const result = adapt(actions);
     assert.equal(result.portfolio.accountIdentity.environment, "PAPER");
     assert.equal(result.portfolio.accountIdentity.accountId, "SIM-001");
-    assert.equal(result.portfolio.pnl.realized.basis, "GROSS_PRICE_PNL");
+    assert.equal(result.portfolio.pnl.realized.basis, "NET");
     assert.notEqual(result.portfolio.pnl.realized.value, null);
     assert.notEqual(result.portfolio.equity.value, null);
     assert.equal(result.portfolio.funding.total.value, null);
@@ -93,10 +93,14 @@ test("explicit nonzero Nautilus fee configuration survives the canonical boundar
   const result = adapt(profitableLong, true);
   assert.equal(result.fills.every((fill) => (fill.fee?.value ?? 0) > 0), true);
   assert.equal((result.portfolio.fees.total.value ?? 0) > 0, true);
+  assert.equal(result.portfolio.pnl.realized.value, 7.895);
+  assert.equal(result.portfolio.fees.total.value, 0.105);
+  assert.equal(result.portfolio.balances.total.value, 100007.895);
+  assert.equal(result.portfolio.equity.value, 100007.895);
   assert.equal(result.fills.every((fill) => fill.fee?.currency === "USDT"), true);
 });
 
-test("reported equity and balance remain observations; realized PnL is not added twice", () => {
+ test("reported equity and balance remain observations; realized PnL is not added twice", () => {
   const raw = run(profitableLong);
   const result = adapt(profitableLong);
   const account = raw.account;

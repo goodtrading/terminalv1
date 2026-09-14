@@ -146,8 +146,9 @@ function pnlComponent(
   account: NautilusAccountSnapshotInput,
   market: ExecutionMarketIdentity,
   timestamp: number | null,
+  basis: "GROSS_PRICE_PNL" | "NET" = "GROSS_PRICE_PNL",
 ): PnlComponent {
-  return { ...component(value, currency, account, market, timestamp), basis: "GROSS_PRICE_PNL" };
+  return { ...component(value, currency, account, market, timestamp), basis };
 }
 
 function unavailableComponent(currency: string, account: NautilusAccountSnapshotInput, market: ExecutionMarketIdentity): BalanceComponent {
@@ -277,7 +278,7 @@ export function adaptNautilusPaperPortfolio(
   const locked = component(numberOrNull(accountInput.balance_locked, "account.balance_locked"), accountInput.base_currency, accountInput, market, timestamp);
   const marginUsed = unavailableComponent(accountInput.base_currency, accountInput, market);
   const equity: EquityComponent = component(numberOrNull(accountInput.equity, "account.equity"), accountInput.base_currency, accountInput, market, timestamp);
-  const realized = pnlComponent(numberOrNull(accountInput.realized_pnl, "account.realized_pnl"), accountInput.base_currency, accountInput, market, timestamp);
+  const realized = pnlComponent(numberOrNull(accountInput.realized_pnl, "account.realized_pnl"), accountInput.base_currency, accountInput, market, timestamp, "NET");
   const unrealized = pnlComponent(numberOrNull(accountInput.unrealized_pnl, "account.unrealized_pnl"), accountInput.base_currency, accountInput, market, timestamp);
   const fees = { total: component(numberOrNull(accountInput.fees_total, "account.fees_total"), accountInput.base_currency, accountInput, market, timestamp) };
   const unavailable = unavailableComponent(accountInput.base_currency, accountInput, market);
