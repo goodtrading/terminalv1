@@ -100,6 +100,9 @@ function provenance(
     source: SOURCE,
     broker: identity.broker,
     accountId: identity.accountId,
+    ...(identityProvenance.brokerNativeAccountId
+      ? { executionAccountId: identityProvenance.brokerNativeAccountId }
+      : {}),
     snapshotIds: sourceSnapshotId ? [sourceSnapshotId] : undefined,
     upstream: {
       identitySource: identityProvenance.source,

@@ -34,6 +34,8 @@ export type PortfolioTimestamps = Readonly<{
 export type PortfolioProvenance = Readonly<{
   source: string;
   broker?: string;
+  /** Native account identifier supplied by the execution/source backend; not logical ownership. */
+  executionAccountId?: string;
   accountId?: string;
   marketIdentity?: ExecutionMarketIdentity;
   eventIds?: readonly string[];

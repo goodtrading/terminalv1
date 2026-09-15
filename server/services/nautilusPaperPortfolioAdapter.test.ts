@@ -64,6 +64,8 @@ test("adapts the authoritative Nautilus account into canonical Paper state", () 
   assert.deepEqual(result.portfolio.accountIdentity, {
     accountId: "SIM-ACCOUNT-001", broker: "NAUTILUS_PAPER", environment: "PAPER", baseCurrency: "USDT", accountType: "MARGIN",
   });
+  assert.equal(result.portfolio.provenance.executionAccountId, "SIM-ACCOUNT-001");
+  assert.equal(result.portfolio.provenance.accountId, result.portfolio.accountIdentity.accountId);
   assert.equal(result.portfolio.balances.total.value, 1000);
   assert.equal(result.portfolio.balances.available?.value, 900);
   assert.equal(result.portfolio.balances.locked?.value, 100);

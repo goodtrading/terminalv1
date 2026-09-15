@@ -5,6 +5,7 @@ import {
   buildBingXPortfolioState,
   type BingXPortfolioInput,
 } from "./bingxPortfolioAdapter";
+import type { PortfolioProvenance } from "../../../../shared/portfolioState";
 
 const identityResult = buildBingXAccountIdentity({
   goodTradingAccountId: "GT-TEST-001",
@@ -64,11 +65,27 @@ const baseInput = (overrides: Partial<BingXPortfolioInput> = {}): BingXPortfolio
   ...overrides,
 });
 
+test("keeps legacy provenance valid and leaves room for future logical/native separation", () => {
+  const legacy: PortfolioProvenance = { source: "LEGACY", accountId: "legacy-account" };
+  const future: PortfolioProvenance = {
+    source: "NAUTILUS_PAPER",
+    accountId: "GT-X",
+    executionAccountId: "SIM-X",
+  };
+  assert.equal(legacy.executionAccountId, undefined);
+  assert.equal(future.accountId, "GT-X");
+  assert.equal(future.executionAccountId, "SIM-X");
+  assert.notEqual(future.accountId, future.executionAccountId);
+});
+
 test("maps explicit account facts and reuses the N8.1 identity", () => {
   const result = buildBingXPortfolioState(baseInput());
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.deepEqual(result.state.accountIdentity, identityResult.identity);
+  assert.equal(result.state.accountIdentity.accountId, "GT-TEST-001");
+  assert.equal(result.state.provenance.executionAccountId, "uid-1");
+  assert.notEqual(result.state.accountIdentity.accountId, result.state.provenance.executionAccountId);
   assert.equal(result.state.balances.total.value, 1000);
   assert.equal(result.state.balances.available?.value, 700);
   assert.equal(result.state.equity.value, 1020);
@@ -95,7 +112,10 @@ test("preserves connection-pseudonym identity as partial and rejects unsupported
   });
   const result = buildBingXPortfolioState(baseInput({ identity: partial }));
   assert.equal(result.ok, true);
-  if (result.ok) assert.equal(result.state.quality.overall, "PARTIAL");
+  if (result.ok) {
+    assert.equal(result.state.quality.overall, "PARTIAL");
+    assert.equal(result.state.provenance.executionAccountId, undefined);
+  }
   for (const positionMode of ["HEDGE", "UNKNOWN"] as const) {
     const rejected = buildBingXPortfolioState(baseInput({ positionMode }));
     assert.equal(rejected.ok, false);

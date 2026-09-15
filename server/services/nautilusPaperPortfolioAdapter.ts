@@ -116,6 +116,7 @@ function provenanceFor(account: NautilusAccountSnapshotInput, market: ExecutionM
     source: SOURCE,
     broker: SOURCE,
     accountId: account.account_id,
+    executionAccountId: account.account_id,
     marketIdentity: market,
     ...(account.snapshot_id ? { snapshotIds: [account.snapshot_id] } : {}),
     ...extra,
