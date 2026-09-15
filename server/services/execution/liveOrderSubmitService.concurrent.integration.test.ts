@@ -68,7 +68,7 @@ describePostgres("isolated concurrent live submit idempotency", () => {
       const durable = await observer.query("SELECT i.logical_order_uid, a.attempt_number, a.broker_client_order_id, a.transport_state FROM goodtrading_order_intents i JOIN goodtrading_order_submission_attempts a ON a.intent_id = i.id WHERE i.goodtrading_account_uid = $1 AND i.request_idempotency_key = $2", [accountUid, key]);
       assert.equal(durable.rows.length, 1);
       assert.equal(durable.rows[0].attempt_number, 1);
-      assert.equal(durable.rows[0].transport_state, "SUBMISSION_STARTED");
+      assert.equal(durable.rows[0].transport_state, "SUBMISSION_RESPONSE_OBSERVED");
       assert.ok(brokerCalls <= 1);
       assert.equal(brokerCalls, 1);
       assert.equal(brokerClientIds.length, 1);

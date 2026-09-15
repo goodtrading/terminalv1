@@ -115,6 +115,9 @@ export class BingXHttpClient {
       return json.data as T;
     } catch (err) {
       if (err instanceof BingXApiError) throw err;
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new BingXApiError("BingX request timed out", "BINGX_TIMEOUT");
+      }
       const msg = err instanceof Error ? err.message : "Unknown BingX error";
       throw new BingXApiError(msg, "BINGX_REQUEST_FAILED");
     } finally {

@@ -197,3 +197,72 @@ export async function markSubmissionStarted(intentId: string): Promise<DurableSu
   if (result.rowCount !== 1) throw new Error("SUBMISSION_STARTED_TRANSITION_REJECTED");
   return mapAttempt(result.rows[0] as Record<string, unknown>);
 }
+
+export type SubmissionResponseEvidence = Readonly<{
+  brokerOrderId?: string | null;
+  rawBrokerStatus?: string | null;
+  httpStatus?: number | null;
+}>;
+
+export type SubmissionUnknownEvidence = Readonly<{
+  errorCode: string;
+  errorClass: string;
+  rawBrokerStatus?: string | null;
+  httpStatus?: number | null;
+}>;
+
+function unknownEvidenceValues(evidence: SubmissionUnknownEvidence) {
+  return [
+    evidence.rawBrokerStatus ?? null,
+    evidence.httpStatus ?? null,
+    evidence.errorCode,
+    evidence.errorClass,
+  ];
+}
+
+export async function markSubmissionResponseObserved(
+  intentId: string,
+  evidence: SubmissionResponseEvidence,
+): Promise<DurableSubmissionAttempt> {
+  const result = await requirePool().query(
+    `UPDATE goodtrading_order_submission_attempts
+        SET transport_state = 'SUBMISSION_RESPONSE_OBSERVED', response_at = now(),
+            broker_order_id = $2, raw_broker_status = $3, http_status = $4,
+            error_code = NULL, error_class = NULL
+      WHERE intent_id = $1 AND attempt_number = 1 AND transport_state = 'SUBMISSION_STARTED'
+      RETURNING ${attemptColumns}`,
+    [intentId, evidence.brokerOrderId ?? null, evidence.rawBrokerStatus ?? null, evidence.httpStatus ?? null],
+  );
+  if (result.rowCount !== 1) throw new Error("SUBMISSION_RESPONSE_OBSERVED_TRANSITION_REJECTED");
+  return mapAttempt(result.rows[0] as Record<string, unknown>);
+}
+
+export async function markUnknownSubmissionOutcome(
+  intentId: string,
+  evidence: SubmissionUnknownEvidence,
+): Promise<DurableSubmissionAttempt> {
+  const result = await requirePool().query(
+    `UPDATE goodtrading_order_submission_attempts
+        SET transport_state = 'UNKNOWN_SUBMISSION_OUTCOME', outcome_at = now(),
+            raw_broker_status = $2, http_status = $3, error_code = $4, error_class = $5
+      WHERE intent_id = $1 AND attempt_number = 1 AND transport_state = 'SUBMISSION_STARTED'
+      RETURNING ${attemptColumns}`,
+    [intentId, ...unknownEvidenceValues(evidence)],
+  );
+  if (result.rowCount !== 1) throw new Error("UNKNOWN_SUBMISSION_OUTCOME_TRANSITION_REJECTED");
+  return mapAttempt(result.rows[0] as Record<string, unknown>);
+}
+
+export async function markReconciliationRequired(
+  intentId: string,
+): Promise<DurableSubmissionAttempt> {
+  const result = await requirePool().query(
+    `UPDATE goodtrading_order_submission_attempts
+        SET transport_state = 'RECONCILIATION_REQUIRED', reconciliation_required_at = now()
+      WHERE intent_id = $1 AND attempt_number = 1 AND transport_state = 'UNKNOWN_SUBMISSION_OUTCOME'
+      RETURNING ${attemptColumns}`,
+    [intentId],
+  );
+  if (result.rowCount !== 1) throw new Error("RECONCILIATION_REQUIRED_TRANSITION_REJECTED");
+  return mapAttempt(result.rows[0] as Record<string, unknown>);
+}

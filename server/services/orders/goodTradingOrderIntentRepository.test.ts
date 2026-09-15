@@ -12,6 +12,9 @@ import {
   listAttemptsForIntent,
   appendSubmissionAttempt,
   markSubmissionStarted,
+  markSubmissionResponseObserved,
+  markUnknownSubmissionOutcome,
+  markReconciliationRequired,
   type CreateDurableIntentWithInitialAttemptInput,
 } from "./goodTradingOrderIntentRepository";
 
@@ -193,6 +196,33 @@ describePostgres("durable GoodTrading order intent PostgreSQL evidence", () => {
       await assert.rejects(() => markSubmissionStarted(first.intent.logicalOrderUid), /SUBMISSION_STARTED_TRANSITION_REJECTED/);
       const raw = await pool!.query("SELECT transport_state FROM goodtrading_order_submission_attempts WHERE intent_id = $1 AND attempt_number = 1", [first.intent.logicalOrderUid]);
       assert.equal(raw.rows[0].transport_state, "SUBMISSION_STARTED");
+    } finally {
+      if (accountUid) {
+        await pool!.query("DELETE FROM goodtrading_order_submission_attempts WHERE intent_id IN (SELECT id FROM goodtrading_order_intents WHERE goodtrading_account_uid = $1)", [accountUid]);
+        await pool!.query("DELETE FROM goodtrading_order_intents WHERE goodtrading_account_uid = $1", [accountUid]);
+      }
+      await pool!.query("DELETE FROM goodtrading_accounts WHERE user_id = $1", [userId]);
+      await pool!.query("DELETE FROM users WHERE id = $1", [userId]);
+    }
+  });
+
+  it("enforces monotonic outcome transitions", async () => {
+    const marker = `${Date.now().toString(36)}-outcome`;
+    const user = await pool!.query("INSERT INTO users (email, password_hash, full_name) VALUES ($1, $2, $3) RETURNING id", [`${marker}@example.test`, "d3b1-test-hash", "B3-B1 outcome test"]);
+    const userId = Number(user.rows[0].id);
+    let accountUid = "";
+    try {
+      accountUid = (await ensureGoodTradingAccountForUser(userId)).accountUid;
+      const first = input({ intent: { ...input().intent, goodTradingAccountUid: accountUid, logicalOrderUid: `GT-ORD-${marker}`, requestIdempotencyKey: `idem-${marker}` }, attempt: { ...input().attempt, intentId: `GT-ORD-${marker}`, attemptId: `GT-ATT-${marker}`, brokerClientOrderId: `GT-CLIENT-${marker}` } });
+      await createIntentWithInitialAttempt(first);
+      await markSubmissionStarted(first.intent.logicalOrderUid);
+      const unknown = await markUnknownSubmissionOutcome(first.intent.logicalOrderUid, { errorCode: "BINGX_TIMEOUT", errorClass: "BingXApiError" });
+      assert.equal(unknown.transportState, "UNKNOWN_SUBMISSION_OUTCOME");
+      const required = await markReconciliationRequired(first.intent.logicalOrderUid);
+      assert.equal(required.transportState, "RECONCILIATION_REQUIRED");
+      await assert.rejects(() => markUnknownSubmissionOutcome(first.intent.logicalOrderUid, { errorCode: "AGAIN", errorClass: "Error" }), /UNKNOWN_SUBMISSION_OUTCOME_TRANSITION_REJECTED/);
+      await assert.rejects(() => markSubmissionStarted(first.intent.logicalOrderUid), /SUBMISSION_STARTED_TRANSITION_REJECTED/);
+      await assert.rejects(() => markSubmissionResponseObserved(first.intent.logicalOrderUid, {}), /SUBMISSION_RESPONSE_OBSERVED_TRANSITION_REJECTED/);
     } finally {
       if (accountUid) {
         await pool!.query("DELETE FROM goodtrading_order_submission_attempts WHERE intent_id IN (SELECT id FROM goodtrading_order_intents WHERE goodtrading_account_uid = $1)", [accountUid]);

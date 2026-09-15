@@ -51,12 +51,19 @@ import {
   getIntentByRequestIdempotencyKey,
   listAttemptsForIntent,
   markSubmissionStarted,
+  markSubmissionResponseObserved,
+  markUnknownSubmissionOutcome,
+  markReconciliationRequired,
 } from "../orders/goodTradingOrderIntentRepository";
 import {
   generateBrokerClientOrderId,
   generateLogicalOrderUid,
   generateSubmissionAttemptId,
 } from "../../../shared/durableOrderIntent";
+
+import {
+  classifyLiveSubmissionError,
+} from "./liveSubmissionOutcomeClassifier";
 
 export type LiveSubmitDependencies = Readonly<{
   getReadiness?: typeof getLiveTradingReadiness;
@@ -70,6 +77,9 @@ export type LiveSubmitDependencies = Readonly<{
   listIntentAttempts?: typeof listAttemptsForIntent;
   createIntent?: typeof createIntentWithInitialAttempt;
   markStarted?: typeof markSubmissionStarted;
+  markResponseObserved?: typeof markSubmissionResponseObserved;
+  markUnknownOutcome?: typeof markUnknownSubmissionOutcome;
+  markReconciliation?: typeof markReconciliationRequired;
 }>;
 
 function normalizeSymbol(symbol: string): string {
@@ -150,6 +160,9 @@ export async function submitBingXLiveLimitOrder(
   const listAttemptsFn = dependencies.listIntentAttempts ?? listAttemptsForIntent;
   const createIntentFn = dependencies.createIntent ?? createIntentWithInitialAttempt;
   const markStartedFn = dependencies.markStarted ?? markSubmissionStarted;
+  const markResponseObservedFn = dependencies.markResponseObserved ?? markSubmissionResponseObserved;
+  const markUnknownOutcomeFn = dependencies.markUnknownOutcome ?? markUnknownSubmissionOutcome;
+  const markReconciliationFn = dependencies.markReconciliation ?? markReconciliationRequired;
   const uid = Math.floor(Number(userId));
   if (!Number.isFinite(uid) || uid <= 0) {
     throw new Error("INVALID_USER_ID");
@@ -628,6 +641,14 @@ export async function submitBingXLiveLimitOrder(
       submittedQuantity: durable.attempt.submittedQuantity!,
     });
 
+    await markResponseObservedFn(durable.intent.logicalOrderUid, {
+      // The current adapter parses JSON through JavaScript numbers; do not promote
+      // broker order IDs to durable reconciliation authority until that is fixed.
+      brokerOrderId: null,
+      rawBrokerStatus: exchangeResult.status ?? "submitted",
+      httpStatus: null,
+    });
+
     if (!exchangeResult.protectiveSlAttached) {
       warnings.push(
         "Protective SL was validated for risk but not placed on exchange in this phase.",
@@ -668,6 +689,21 @@ export async function submitBingXLiveLimitOrder(
 
     return result;
   } catch (err) {
+    const outcome = classifyLiveSubmissionError(err);
+    let outcomePersistenceError: string | undefined;
+    try {
+      await markUnknownOutcomeFn(durable.intent.logicalOrderUid, {
+        errorCode: outcome.errorCode,
+        errorClass: outcome.errorClass,
+        httpStatus: outcome.httpStatus ?? null,
+      });
+      await markReconciliationFn(durable.intent.logicalOrderUid);
+    } catch (persistenceError) {
+      outcomePersistenceError = persistenceError instanceof Error
+        ? persistenceError.message.slice(0, 160)
+        : "UNKNOWN_OUTCOME_PERSISTENCE_FAILED";
+    }
+
     if (err instanceof LiveMarketOrdersDisabledError) {
       const result = baseBlockedResult(
         request,
@@ -680,12 +716,14 @@ export async function submitBingXLiveLimitOrder(
       return result;
     }
 
-    const safeMessage =
+    const safeMessage = [
       err instanceof BingXApiError
         ? err.message.slice(0, 160)
         : err instanceof Error
           ? err.message.slice(0, 160)
-          : "Exchange submit failed";
+          : "Exchange submit failed",
+      ...(outcomePersistenceError ? [`Outcome persistence failed: ${outcomePersistenceError}`] : []),
+    ].join("; ");
 
     await emitLiveOrderSubmitFailed(uid, request, safeMessage, durable.attempt.brokerClientOrderId);
 
