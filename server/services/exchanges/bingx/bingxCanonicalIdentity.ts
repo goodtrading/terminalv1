@@ -1,5 +1,7 @@
 import type { AccountIdentity, AccountType } from "../../../../shared/portfolioState";
 import type { ExecutionMarketIdentity } from "../../../../shared/marketTruth";
+import type { CanonicalEconomicMarketIdentity, ContractStyle } from "../../../../shared/canonicalMarketIdentity";
+import { resolveCanonicalMarket } from "../../marketIdentity/canonicalMarketResolver";
 
 export type BingXSourceEnvironment = "LIVE" | "TESTNET" | "DEMO" | "UNKNOWN";
 export type BingXIdentityBasis = "GOODTRADING_ACCOUNT_ID";
@@ -23,7 +25,9 @@ export type BingXCanonicalAccountIdentityInput = Readonly<{
 export type BingXCanonicalMarketIdentityInput = Readonly<{
   brokerSymbol: string;
   sourceMarketType: BingXSourceMarketType;
+  /** @deprecated Compatibility-only provenance; never used for resolution. */
   canonicalInstrument?: string;
+  runtimeContractStyle?: ContractStyle;
   venue?: string;
   source: string;
   sourceEndpoint?: string;
@@ -49,10 +53,11 @@ export type BingXMarketIdentityProvenance = Readonly<{
   broker: "BINGX";
   source: string;
   brokerSymbol: string;
-  mappingPolicy: "EXPLICIT_CANONICAL_INSTRUMENT";
+  mappingPolicy: "EXACT_V1_REGISTRY";
+  metadataSource: "server-owned-v1-registry";
   sourceMarketType: BingXSourceMarketType;
   venue: "BINGX";
-  canonicalInstrument: string;
+  canonicalInstrument?: string;
   sourceEndpoint?: string;
 }>;
 
@@ -67,6 +72,7 @@ type AccountSuccess = Readonly<{
 type MarketSuccess = Readonly<{
   ok: true;
   identity: ExecutionMarketIdentity;
+  economicIdentity: CanonicalEconomicMarketIdentity;
   quality: "CONFIRMED";
   executionIdentityReady: true;
   provenance: BingXMarketIdentityProvenance;
@@ -83,7 +89,8 @@ type IdentityFailure = Readonly<{
     | "MARKET_SYMBOL_REQUIRED"
     | "MARKET_TYPE_REQUIRED"
     | "CANONICAL_INSTRUMENT_REQUIRED"
-    | "VENUE_UNSUPPORTED";
+    | "VENUE_UNSUPPORTED"
+    | "MARKET_IDENTITY_UNRESOLVED";
   message: string;
   executionIdentityReady: false;
 }>;
@@ -183,30 +190,29 @@ export function buildBingXMarketIdentity(
   const source = text(input.source);
   if (!source) return failure("SOURCE_REQUIRED", "source is required");
 
-  const canonicalInstrument = text(input.canonicalInstrument);
-  if (!canonicalInstrument) {
-    return failure(
-      "CANONICAL_INSTRUMENT_REQUIRED",
-      "canonicalInstrument must be explicit; arbitrary symbol normalization is unsupported",
-    );
-  }
   if (input.venue !== undefined && text(input.venue) !== "BINGX") {
     return failure("VENUE_UNSUPPORTED", "venue must be the canonical BINGX venue");
   }
 
-  const identity: ExecutionMarketIdentity = {
-    instrument: canonicalInstrument,
-    venue: "BINGX",
-    marketType: input.sourceMarketType,
-  };
+  const resolved = resolveCanonicalMarket({
+    sourceBackend: "BINGX",
+    sourceVenue: "BINGX",
+    nativeSymbol: brokerSymbol,
+    sourceMarketType: input.sourceMarketType,
+    ...(input.runtimeContractStyle === undefined ? {} : { runtimeContractStyle: input.runtimeContractStyle }),
+  });
+  if (!resolved.ok) return failure("MARKET_IDENTITY_UNRESOLVED", resolved.message);
+
+  const identity = resolved.executionIdentity;
   const provenance: BingXMarketIdentityProvenance = {
     broker: "BINGX",
     source,
     brokerSymbol,
-    mappingPolicy: "EXPLICIT_CANONICAL_INSTRUMENT",
+    mappingPolicy: "EXACT_V1_REGISTRY",
+    metadataSource: "server-owned-v1-registry",
     sourceMarketType: input.sourceMarketType,
     venue: "BINGX",
-    canonicalInstrument,
+    ...(text(input.canonicalInstrument) ? { canonicalInstrument: text(input.canonicalInstrument) as string } : {}),
     ...(text(input.sourceEndpoint)
       ? { sourceEndpoint: text(input.sourceEndpoint) as string }
       : {}),
@@ -215,6 +221,7 @@ export function buildBingXMarketIdentity(
   return {
     ok: true,
     identity,
+    economicIdentity: resolved.identity,
     quality: "CONFIRMED",
     executionIdentityReady: true,
     provenance,

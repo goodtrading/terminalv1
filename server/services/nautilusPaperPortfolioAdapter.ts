@@ -5,6 +5,8 @@ import {
   type EconomicFillRecord,
 } from "../../shared/economicFill";
 import type { ExecutionMarketIdentity } from "../../shared/marketTruth";
+import type { CanonicalEconomicMarketIdentity } from "../../shared/canonicalMarketIdentity";
+import { resolveCanonicalMarket } from "./marketIdentity/canonicalMarketResolver";
 import type {
   AccountIdentity,
   BalanceComponent,
@@ -91,6 +93,8 @@ export type NautilusPaperAdapterConfig = Readonly<{
 export type NautilusPaperPortfolioAdapterResult = Readonly<{
   portfolio: PortfolioState;
   fills: readonly EconomicFillRecord[];
+  executionIdentity: ExecutionMarketIdentity;
+  economicIdentity: CanonicalEconomicMarketIdentity;
 }>;
 
 const SOURCE = "NAUTILUS_PAPER";
@@ -163,14 +167,26 @@ function unavailableComponent(currency: string, account: NautilusPaperPortfolioA
   return component(null, currency, account, market, null);
 }
 
-function marketIdentity(account: NautilusPaperPortfolioAccountInput): ExecutionMarketIdentity {
+function marketIdentities(account: NautilusPaperPortfolioAccountInput): {
+  executionIdentity: ExecutionMarketIdentity;
+  economicIdentity: CanonicalEconomicMarketIdentity;
+} {
   const instrument = account.instrument;
   requiredText(instrument.symbol, "account.instrument.symbol");
   requiredText(instrument.venue, "account.instrument.venue");
   const marketType = instrument.market_type.toLowerCase();
-  if (marketType === "perpetual" || marketType === "perp") return { instrument: instrument.symbol, venue: instrument.venue, marketType: "Perpetual" };
-  if (marketType === "spot") return { instrument: instrument.symbol, venue: instrument.venue, marketType: "Spot" };
-  throw new Error("unsupported Nautilus market type");
+  const sourceMarketType = marketType === "perpetual" || marketType === "perp"
+    ? "Perpetual"
+    : marketType === "spot" ? "Spot" : null;
+  if (!sourceMarketType) throw new Error("unsupported Nautilus market type");
+  const resolved = resolveCanonicalMarket({
+    sourceBackend: "NAUTILUS_PAPER",
+    sourceVenue: instrument.venue,
+    nativeSymbol: instrument.symbol,
+    sourceMarketType,
+  });
+  if (!resolved.ok) throw new Error(`${resolved.code}: ${resolved.message}`);
+  return { executionIdentity: resolved.executionIdentity, economicIdentity: resolved.identity };
 }
 
 function accountIdentity(input: NautilusPaperPortfolioAccountInput): AccountIdentity {
@@ -279,7 +295,8 @@ export function adaptNautilusPaperPortfolio(
   if (!Number.isFinite(config.capturedAt) || config.capturedAt < 0) throw new Error("capturedAt must be finite and non-negative");
   const accountInput: NautilusPaperPortfolioAccountInput = { ...input.account, logicalAccountId: config.goodTradingAccountId };
   const identity = accountIdentity(accountInput);
-  const market = marketIdentity(accountInput);
+  const resolvedMarket = marketIdentities(accountInput);
+  const market = resolvedMarket.executionIdentity;
   const timestamp = accountInput.timestamp;
   if (!Number.isFinite(timestamp) || timestamp < 0) throw new Error("account.timestamp must be finite and non-negative");
   const total = component(numberOrNull(accountInput.balance_total, "account.balance_total"), accountInput.base_currency, accountInput, market, timestamp);
@@ -337,5 +354,5 @@ export function adaptNautilusPaperPortfolio(
     consistency: { status: issues.length ? "INCONSISTENT" : "CONSISTENT", issues },
     capturedAt: config.capturedAt,
   };
-  return clone({ portfolio, fills });
+  return clone({ portfolio, fills, executionIdentity: resolvedMarket.executionIdentity, economicIdentity: resolvedMarket.economicIdentity });
 }

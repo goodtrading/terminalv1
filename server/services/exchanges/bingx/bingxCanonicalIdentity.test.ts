@@ -6,6 +6,8 @@ import {
   type BingXCanonicalAccountIdentityInput,
   type BingXCanonicalMarketIdentityInput,
 } from "./bingxCanonicalIdentity";
+import { adaptNautilusPaperPortfolio, type NautilusPortfolioSnapshotInput } from "../../nautilusPaperPortfolioAdapter";
+import { sameCanonicalEconomicMarket } from "../../../../shared/canonicalMarketIdentity";
 
 const liveAccount = (overrides: Partial<BingXCanonicalAccountIdentityInput> = {}) =>
   buildBingXAccountIdentity({
@@ -115,9 +117,11 @@ test("maps perpetual market identity and preserves broker symbol provenance", ()
   const result = perpetualMarket();
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.deepEqual(result.identity, { instrument: "BTCUSDT", venue: "BINGX", marketType: "Perpetual" });
+  assert.deepEqual(result.identity, { instrument: "BTC-USDT", venue: "BINGX", marketType: "Perpetual" });
+  assert.deepEqual(result.economicIdentity, { baseAsset: "BTC", quoteAsset: "USDT", settlementAsset: "USDT", productType: "Perpetual", contractStyle: "Linear", expiry: null });
   assert.equal(result.provenance.brokerSymbol, "BTC-USDT");
-  assert.equal(result.provenance.mappingPolicy, "EXPLICIT_CANONICAL_INSTRUMENT");
+  assert.equal(result.provenance.mappingPolicy, "EXACT_V1_REGISTRY");
+  assert.equal(result.provenance.metadataSource, "server-owned-v1-registry");
 });
 
 test("keeps Spot and Perpetual distinct and rejects unknown symbols", () => {
@@ -128,11 +132,9 @@ test("keeps Spot and Perpetual distinct and rejects unknown symbols", () => {
     source: "fixture",
   });
   const perp = perpetualMarket();
-  assert.equal(spot.ok, true);
+  assert.equal(spot.ok, false);
   assert.equal(perp.ok, true);
-  if (!spot.ok || !perp.ok) return;
-  assert.notDeepEqual(spot.identity, perp.identity);
-  assert.equal(spot.identity.marketType, "Spot");
+  if (!perp.ok) return;
   assert.equal(perp.identity.marketType, "Perpetual");
 
   const unknown = buildBingXMarketIdentity({
@@ -142,6 +144,27 @@ test("keeps Spot and Perpetual distinct and rejects unknown symbols", () => {
     source: "fixture",
   });
   assert.equal(unknown.ok, false);
+});
+
+test("resolves the same economic market across factual BingX and Nautilus adapter boundaries", () => {
+  const bingx = perpetualMarket({ canonicalInstrument: "ETH-FAKE" });
+  const paperInput: NautilusPortfolioSnapshotInput = {
+    account: {
+      account_id: "SIM-ACCOUNT-001", venue: "SIM", account_type: "margin", base_currency: "USDT",
+      balance_total: 1, timestamp: 1_000,
+      instrument: { venue: "SIM", market_type: "perpetual", symbol: "BTCUSDT-PERP" },
+    },
+    positions: [],
+    fills: [],
+  };
+  const paper = adaptNautilusPaperPortfolio(paperInput, { capturedAt: 2_000, goodTradingAccountId: "GT-SAME-001" });
+  assert.equal(bingx.ok, true);
+  if (!bingx.ok) return;
+  assert.equal(sameCanonicalEconomicMarket(bingx.economicIdentity, paper.economicIdentity), true);
+  assert.notDeepEqual(bingx.identity, paper.executionIdentity);
+  assert.deepEqual(bingx.identity, { instrument: "BTC-USDT", venue: "BINGX", marketType: "Perpetual" });
+  assert.deepEqual(paper.executionIdentity, { instrument: "BTCUSDT-PERP", venue: "SIM", marketType: "Perpetual" });
+  assert.equal(paper.portfolio.provenance.accountId, "GT-SAME-001");
 });
 
 test("returns deterministic defensive results without credential or environment access", () => {

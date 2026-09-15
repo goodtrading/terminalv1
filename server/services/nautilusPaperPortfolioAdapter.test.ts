@@ -20,7 +20,7 @@ const account = (): NautilusAccountSnapshotInput => ({
   unrealized_pnl: 0,
   fees_total: 0,
   timestamp: 1_000,
-  instrument: { venue: "SIM", market_type: "perpetual", symbol: "BTCUSDT" },
+  instrument: { venue: "SIM", market_type: "perpetual", symbol: "BTCUSDT-PERP" },
 });
 
 const position = (overrides: Record<string, unknown> = {}) => ({
@@ -64,7 +64,9 @@ test("adapts the authoritative Nautilus account into canonical Paper state", () 
   assert.deepEqual(result.portfolio.accountIdentity, {
     accountId: "GT-TEST-001", broker: "NAUTILUS_PAPER", environment: "PAPER", baseCurrency: "USDT", accountType: "MARGIN",
   });
-  assert.equal(result.portfolio.provenance.accountId, "GT-TEST-001");
+  assert.equal(result.portfolio.accountIdentity.accountId, "GT-TEST-001");
+  assert.deepEqual(result.executionIdentity, { instrument: "BTCUSDT-PERP", venue: "SIM", marketType: "Perpetual" });
+  assert.deepEqual(result.economicIdentity, { baseAsset: "BTC", quoteAsset: "USDT", settlementAsset: "USDT", productType: "Perpetual", contractStyle: "Linear", expiry: null });
   assert.equal(result.portfolio.provenance.executionAccountId, "SIM-ACCOUNT-001");
   assert.notEqual(result.portfolio.accountIdentity.accountId, result.portfolio.provenance.executionAccountId);
   assert.equal(result.portfolio.balances.total.value, 1000);
@@ -80,6 +82,21 @@ test("adapts the authoritative Nautilus account into canonical Paper state", () 
 test("rejects missing account ID and unsupported market type", () => {
   assert.throws(() => adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), account_id: "" } }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" }));
   assert.throws(() => adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), instrument: { ...account().instrument, market_type: "options" } } }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" }));
+});
+
+test("rejects unknown registered market facts without normalization", () => {
+  for (const instrument of [
+    { venue: "SIM", market_type: "perpetual", symbol: "ETHUSDT" },
+    { venue: "SIM", market_type: "perpetual", symbol: "BTCUSDT-FOO" },
+    { venue: "UNKNOWN", market_type: "perpetual", symbol: "BTCUSDT-PERP" },
+    { venue: "SIM", market_type: "spot", symbol: "BTCUSDT-PERP" },
+  ]) {
+    assert.throws(() => adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), instrument } }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" }), /MARKET_IDENTITY_UNRESOLVED/);
+  }
+});
+
+test("does not infer runtime modality from native symbol", () => {
+  assert.doesNotThrow(() => adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" }));
 });
 
 test("does not reinterpret locked balance as margin, collateral, or maintenance margin", () => {
