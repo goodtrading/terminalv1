@@ -78,6 +78,13 @@ const V1_REGISTRY: readonly RegistryEntry[] = Object.freeze([
     sourceMarketType: "Perpetual",
     identity: V1_IDENTITY,
   }),
+  Object.freeze({
+    sourceBackend: "NAUTILUS_PAPER",
+    sourceVenue: "SIM",
+    nativeSymbol: "BTCUSDT-PERP",
+    sourceMarketType: "Perpetual",
+    identity: V1_IDENTITY,
+  }),
 ]);
 
 function cloneIdentity(identity: CanonicalEconomicMarketIdentity): CanonicalEconomicMarketIdentity {

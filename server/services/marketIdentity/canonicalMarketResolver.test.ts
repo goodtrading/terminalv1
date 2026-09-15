@@ -45,6 +45,14 @@ const nautilus: CanonicalMarketResolverInput = {
   nativeInstrumentId: "SIM-BTC-001",
 };
 
+const nautilusPerp: CanonicalMarketResolverInput = {
+  sourceBackend: "NAUTILUS_PAPER",
+  sourceVenue: "SIM",
+  nativeSymbol: "BTCUSDT-PERP",
+  sourceMarketType: "Perpetual",
+  nativeInstrumentId: "SIM-BTC-PERP-001",
+};
+
 function expectUnresolved(input: CanonicalMarketResolverInput): void {
   const result = resolveCanonicalMarket(input);
   assert.equal(result.ok, false);
@@ -135,6 +143,21 @@ test("exact Nautilus V1 key resolves to the same economic identity", () => {
   assert.equal(result.provenance.nativeInstrumentId, "SIM-BTC-001");
 });
 
+test("exact factual Nautilus BTCUSDT-PERP key preserves native execution identity", () => {
+  const result = resolveCanonicalMarket(nautilusPerp);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.identity, linear);
+  assert.deepEqual(result.executionIdentity, {
+    instrument: "BTCUSDT-PERP",
+    venue: "SIM",
+    marketType: "Perpetual",
+  });
+  assert.equal(result.provenance.nativeSymbol, "BTCUSDT-PERP");
+  assert.equal(result.provenance.metadataSource, "server-owned-v1-registry");
+  assert.equal(result.provenance.mappingPolicy, "EXACT_V1_REGISTRY");
+});
+
 test("BingX and Nautilus share economics but retain different execution identities", () => {
   const bingxResult = resolveCanonicalMarket(bingx);
   const nautilusResult = resolveCanonicalMarket(nautilus);
@@ -162,12 +185,12 @@ test("unknown keys fail closed without symbol heuristics", () => {
   expectUnresolved({ ...bingx, sourceBackend: "UNKNOWN" } as never);
   expectUnresolved({ ...bingx, nativeSymbol: "BTC/USDT" });
   expectUnresolved({ ...bingx, nativeSymbol: "btC-uSdT" });
-  expectUnresolved({ ...bingx, nativeSymbol: "BTCUSDT-PERP" });
+  expectUnresolved({ ...bingx, nativeSymbol: "BTCUSDT-PERPX" });
 });
 
 test("registry snapshot is defensive and canonical target is not caller-injectable", () => {
   const before = canonicalMarketRegistrySnapshot();
-  assert.equal(before.length, 2);
+  assert.equal(before.length, 3);
   const first = before[0];
   assert.ok(first);
   if (!first) return;
