@@ -6,6 +6,7 @@ import {
   type BingXPortfolioInput,
 } from "./bingxPortfolioAdapter";
 import type { PortfolioProvenance } from "../../../../shared/portfolioState";
+import { adaptNautilusPaperPortfolio } from "../../nautilusPaperPortfolioAdapter";
 
 const identityResult = buildBingXAccountIdentity({
   goodTradingAccountId: "GT-TEST-001",
@@ -76,6 +77,42 @@ test("keeps legacy provenance valid and leaves room for future logical/native se
   assert.equal(future.accountId, "GT-X");
   assert.equal(future.executionAccountId, "SIM-X");
   assert.notEqual(future.accountId, future.executionAccountId);
+});
+
+test("proves the same logical UID across canonical PAPER and BingX outputs", () => {
+  const paper = adaptNautilusPaperPortfolio({
+    account: {
+      account_id: "SIM-ACCOUNT-001",
+      venue: "SIM",
+      account_type: "margin",
+      base_currency: "USDT",
+      balance_total: 1000,
+      balance_free: 900,
+      balance_locked: 100,
+      equity: 1000,
+      realized_pnl: 0,
+      unrealized_pnl: 0,
+      fees_total: 0,
+      timestamp: 1_700_000_000_000,
+      instrument: { venue: "SIM", market_type: "perpetual", symbol: "BTCUSDT-PERP" },
+    },
+  }, { capturedAt: 2_000, goodTradingAccountId: "GT-SAME-001" });
+  const bingx = buildBingXPortfolioState(baseInput({
+    identity: buildBingXAccountIdentity({
+      goodTradingAccountId: "GT-SAME-001",
+      sourceEnvironment: "LIVE",
+      brokerAccountId: "uid-1",
+      baseCurrency: "USDT",
+      source: "fixture",
+    }),
+  }));
+  assert.equal(bingx.ok, true);
+  if (!bingx.ok) return;
+  assert.equal(paper.portfolio.accountIdentity.accountId, "GT-SAME-001");
+  assert.equal(bingx.state.accountIdentity.accountId, "GT-SAME-001");
+  assert.equal(paper.portfolio.provenance.executionAccountId, "SIM-ACCOUNT-001");
+  assert.equal(bingx.state.provenance.executionAccountId, "uid-1");
+  assert.notEqual(paper.portfolio.provenance.executionAccountId, bingx.state.provenance.executionAccountId);
 });
 
 test("maps explicit account facts and reuses the N8.1 identity", () => {

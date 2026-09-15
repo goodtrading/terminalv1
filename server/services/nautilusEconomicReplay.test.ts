@@ -59,7 +59,7 @@ function canonicalInput(raw: Raw) {
 
 function project(actions: readonly Action[], nonzeroFees = false) {
   const raw = replay(actions, nonzeroFees);
-  const result = adaptNautilusPaperPortfolio(canonicalInput(raw), { capturedAt: 2_000 });
+  const result = adaptNautilusPaperPortfolio(canonicalInput(raw), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   const aggregates = derivePortfolioAggregates(result.portfolio, aggregateConfig);
   return { ...result, aggregates };
 }

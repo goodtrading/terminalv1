@@ -60,12 +60,13 @@ const snapshot = (overrides: Partial<NautilusPortfolioSnapshotInput> = {}): Naut
 });
 
 test("adapts the authoritative Nautilus account into canonical Paper state", () => {
-  const result = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000 });
+  const result = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.deepEqual(result.portfolio.accountIdentity, {
-    accountId: "SIM-ACCOUNT-001", broker: "NAUTILUS_PAPER", environment: "PAPER", baseCurrency: "USDT", accountType: "MARGIN",
+    accountId: "GT-TEST-001", broker: "NAUTILUS_PAPER", environment: "PAPER", baseCurrency: "USDT", accountType: "MARGIN",
   });
+  assert.equal(result.portfolio.provenance.accountId, "GT-TEST-001");
   assert.equal(result.portfolio.provenance.executionAccountId, "SIM-ACCOUNT-001");
-  assert.equal(result.portfolio.provenance.accountId, result.portfolio.accountIdentity.accountId);
+  assert.notEqual(result.portfolio.accountIdentity.accountId, result.portfolio.provenance.executionAccountId);
   assert.equal(result.portfolio.balances.total.value, 1000);
   assert.equal(result.portfolio.balances.available?.value, 900);
   assert.equal(result.portfolio.balances.locked?.value, 100);
@@ -77,12 +78,12 @@ test("adapts the authoritative Nautilus account into canonical Paper state", () 
 });
 
 test("rejects missing account ID and unsupported market type", () => {
-  assert.throws(() => adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), account_id: "" } }), { capturedAt: 2_000 }));
-  assert.throws(() => adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), instrument: { ...account().instrument, market_type: "options" } } }), { capturedAt: 2_000 }));
+  assert.throws(() => adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), account_id: "" } }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" }));
+  assert.throws(() => adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), instrument: { ...account().instrument, market_type: "options" } } }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" }));
 });
 
 test("does not reinterpret locked balance as margin, collateral, or maintenance margin", () => {
-  const { portfolio } = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000 });
+  const { portfolio } = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.equal(portfolio.balances.locked?.value, 100);
   assert.equal(portfolio.balances.marginUsed?.value, null);
   assert.equal(portfolio.margin.marginUsed?.value, null);
@@ -92,23 +93,23 @@ test("does not reinterpret locked balance as margin, collateral, or maintenance 
 });
 
 test("preserves reported equity and never adds realized PnL again", () => {
-  const { portfolio } = adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), equity: 1010, realized_pnl: 500, unrealized_pnl: 10 } }), { capturedAt: 2_000 });
+  const { portfolio } = adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), equity: 1010, realized_pnl: 500, unrealized_pnl: 10 } }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.equal(portfolio.equity.value, 1010);
   assert.equal(portfolio.pnl.realized.value, 500);
 });
 
 test("maps factual LONG, SHORT and FLAT invariants without deriving from fills", () => {
-  const longResult = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000 });
+  const longResult = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.equal(longResult.portfolio.positions[0]?.side, "LONG");
-  const shortResult = adaptNautilusPaperPortfolio(snapshot({ positions: [position({ side: "short", quantity: 2 })] }), { capturedAt: 2_000 });
+  const shortResult = adaptNautilusPaperPortfolio(snapshot({ positions: [position({ side: "short", quantity: 2 })] }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.equal(shortResult.portfolio.positions[0]?.side, "SHORT");
-  const flatResult = adaptNautilusPaperPortfolio(snapshot({ positions: [position({ side: "flat", quantity: 0 })] }), { capturedAt: 2_000 });
+  const flatResult = adaptNautilusPaperPortfolio(snapshot({ positions: [position({ side: "flat", quantity: 0 })] }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.equal(flatResult.portfolio.positions[0]?.side, "FLAT");
-  assert.throws(() => adaptNautilusPaperPortfolio(snapshot({ positions: [position({ quantity: -1 })] }), { capturedAt: 2_000 }));
+  assert.throws(() => adaptNautilusPaperPortfolio(snapshot({ positions: [position({ quantity: -1 })] }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" }));
 });
 
 test("maps mark as MARK with incomplete mark provenance and no synthetic mark time", () => {
-  const result = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000 });
+  const result = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   const reference = result.portfolio.positions[0]?.referencePrice;
   assert.equal(reference?.value, 110);
   assert.equal(reference?.priceType, "MARK");
@@ -119,7 +120,7 @@ test("maps mark as MARK with incomplete mark provenance and no synthetic mark ti
 });
 
 test("maps authoritative position economics and provenance without stops or order state", () => {
-  const result = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000 });
+  const result = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   const pos = result.portfolio.positions[0]!;
   assert.equal(pos.averageEntryPrice, 100);
   assert.equal(pos.unrealizedPnl.value, 10);
@@ -130,7 +131,7 @@ test("maps authoritative position economics and provenance without stops or orde
 });
 
 test("maps Nautilus fill to EconomicFillRecord without calculating portfolio state", () => {
-  const result = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000 });
+  const result = adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.equal(result.fills.length, 1);
   assert.equal(result.fills[0]?.executionId, "fill-1");
   assert.equal(result.fills[0]?.side, "BUY");
@@ -145,7 +146,7 @@ test("maps Nautilus fill to EconomicFillRecord without calculating portfolio sta
 });
 
 test("missing account fields remain unavailable rather than zero", () => {
-  const result = adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), balance_free: null, equity: null, fees_total: null } }), { capturedAt: 2_000 });
+  const result = adaptNautilusPaperPortfolio(snapshot({ account: { ...account(), balance_free: null, equity: null, fees_total: null } }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.equal(result.portfolio.balances.available?.value, null);
   assert.equal(result.portfolio.balances.available?.quality, "UNAVAILABLE");
   assert.equal(result.portfolio.equity.value, null);
@@ -155,15 +156,15 @@ test("missing account fields remain unavailable rather than zero", () => {
 
 test("marks duplicate fills as consistency issues without silently deduplicating output", () => {
   const duplicate = fill({ fill_id: "fill-1" });
-  const result = adaptNautilusPaperPortfolio(snapshot({ fills: [fill(), duplicate] }), { capturedAt: 2_000 });
+  const result = adaptNautilusPaperPortfolio(snapshot({ fills: [fill(), duplicate] }), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.equal(result.fills.length, 2);
   assert.equal(result.portfolio.consistency.issues.includes("DUPLICATE_FILL"), true);
 });
 
 test("is deterministic, defensive, and exposes no second mutable owner", () => {
   const source = snapshot();
-  const first = adaptNautilusPaperPortfolio(source, { capturedAt: 2_000 });
-  const second = adaptNautilusPaperPortfolio(source, { capturedAt: 2_000 });
+  const first = adaptNautilusPaperPortfolio(source, { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
+  const second = adaptNautilusPaperPortfolio(source, { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.deepEqual(first, second);
   (first.portfolio.accountIdentity as { accountId: string }).accountId = "changed";
   (first.fills[0]!.provenance as { source: string }).source = "changed";
@@ -173,6 +174,7 @@ test("is deterministic, defensive, and exposes no second mutable owner", () => {
 });
 
 test("requires explicit capturedAt and never imports or uses legacy Paper state", () => {
-  assert.throws(() => adaptNautilusPaperPortfolio(snapshot(), { capturedAt: Number.NaN }));
-  assert.equal("orders" in adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000 }).portfolio, false);
+  assert.throws(() => adaptNautilusPaperPortfolio(snapshot(), { capturedAt: Number.NaN, goodTradingAccountId: "GT-TEST-001" }));
+  assert.throws(() => adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000, goodTradingAccountId: "" }));
+  assert.equal("orders" in adaptNautilusPaperPortfolio(snapshot(), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" }).portfolio, false);
 });

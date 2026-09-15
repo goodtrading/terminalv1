@@ -56,7 +56,7 @@ function input(raw: Raw) {
 }
 
 function adapt(actions: readonly Action[], fees = false) {
-  return adaptNautilusPaperPortfolio(input(run(actions, fees)), { capturedAt: 2_000 });
+  return adaptNautilusPaperPortfolio(input(run(actions, fees)), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
 }
 
 const profitableLong: Action[] = [["buy", "1", "99", "101"], ["sell", "1", "109", "111"]];
@@ -68,7 +68,7 @@ for (const [name, actions] of [["profitable LONG", profitableLong], ["losing LON
   test(`preserves authoritative accounting for ${name}`, () => {
     const result = adapt(actions);
     assert.equal(result.portfolio.accountIdentity.environment, "PAPER");
-    assert.equal(result.portfolio.accountIdentity.accountId, "SIM-001");
+    assert.equal(result.portfolio.accountIdentity.accountId, "GT-TEST-001");
     assert.equal(result.portfolio.pnl.realized.basis, "NET");
     assert.notEqual(result.portfolio.pnl.realized.value, null);
     assert.notEqual(result.portfolio.equity.value, null);

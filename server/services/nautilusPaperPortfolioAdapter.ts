@@ -79,7 +79,14 @@ export type NautilusPortfolioSnapshotInput = Readonly<{
   fills?: readonly NautilusFillSnapshotInput[];
 }>;
 
-export type NautilusPaperAdapterConfig = Readonly<{ capturedAt: number }>;
+export type NautilusPaperPortfolioAccountInput = NautilusAccountSnapshotInput & Readonly<{
+  logicalAccountId: string;
+}>;
+
+export type NautilusPaperAdapterConfig = Readonly<{
+  capturedAt: number;
+  goodTradingAccountId: string;
+}>;
 
 export type NautilusPaperPortfolioAdapterResult = Readonly<{
   portfolio: PortfolioState;
@@ -111,11 +118,11 @@ function qualityFor(value: number | null): PortfolioComponentQuality {
   return value === null ? "UNAVAILABLE" : "VALID";
 }
 
-function provenanceFor(account: NautilusAccountSnapshotInput, market: ExecutionMarketIdentity, extra: (Partial<PortfolioProvenance> & Record<string, unknown>) = {}): PortfolioProvenance {
+function provenanceFor(account: NautilusPaperPortfolioAccountInput, market: ExecutionMarketIdentity, extra: (Partial<PortfolioProvenance> & Record<string, unknown>) = {}): PortfolioProvenance {
   return {
     source: SOURCE,
     broker: SOURCE,
-    accountId: account.account_id,
+    accountId: account.logicalAccountId,
     executionAccountId: account.account_id,
     marketIdentity: market,
     ...(account.snapshot_id ? { snapshotIds: [account.snapshot_id] } : {}),
@@ -126,7 +133,7 @@ function provenanceFor(account: NautilusAccountSnapshotInput, market: ExecutionM
 function component(
   value: number | null,
   currency: string,
-  account: NautilusAccountSnapshotInput,
+  account: NautilusPaperPortfolioAccountInput,
   market: ExecutionMarketIdentity,
   timestamp: number | null,
   extra: Partial<PortfolioProvenance> = {},
@@ -144,7 +151,7 @@ function component(
 function pnlComponent(
   value: number | null,
   currency: string,
-  account: NautilusAccountSnapshotInput,
+  account: NautilusPaperPortfolioAccountInput,
   market: ExecutionMarketIdentity,
   timestamp: number | null,
   basis: "GROSS_PRICE_PNL" | "NET" = "GROSS_PRICE_PNL",
@@ -152,11 +159,11 @@ function pnlComponent(
   return { ...component(value, currency, account, market, timestamp), basis };
 }
 
-function unavailableComponent(currency: string, account: NautilusAccountSnapshotInput, market: ExecutionMarketIdentity): BalanceComponent {
+function unavailableComponent(currency: string, account: NautilusPaperPortfolioAccountInput, market: ExecutionMarketIdentity): BalanceComponent {
   return component(null, currency, account, market, null);
 }
 
-function marketIdentity(account: NautilusAccountSnapshotInput): ExecutionMarketIdentity {
+function marketIdentity(account: NautilusPaperPortfolioAccountInput): ExecutionMarketIdentity {
   const instrument = account.instrument;
   requiredText(instrument.symbol, "account.instrument.symbol");
   requiredText(instrument.venue, "account.instrument.venue");
@@ -166,12 +173,13 @@ function marketIdentity(account: NautilusAccountSnapshotInput): ExecutionMarketI
   throw new Error("unsupported Nautilus market type");
 }
 
-function accountIdentity(input: NautilusAccountSnapshotInput): AccountIdentity {
+function accountIdentity(input: NautilusPaperPortfolioAccountInput): AccountIdentity {
   requiredText(input.account_id, "account.account_id");
+  requiredText(input.logicalAccountId, "goodTradingAccountId");
   requiredText(input.base_currency, "account.base_currency");
   const accountType = input.account_type?.toLowerCase();
   return {
-    accountId: input.account_id,
+    accountId: input.logicalAccountId,
     broker: SOURCE,
     environment: "PAPER",
     baseCurrency: input.base_currency,
@@ -181,7 +189,7 @@ function accountIdentity(input: NautilusAccountSnapshotInput): AccountIdentity {
 
 function referencePrice(
   value: number | null,
-  account: NautilusAccountSnapshotInput,
+  account: NautilusPaperPortfolioAccountInput,
   market: ExecutionMarketIdentity,
 ): PortfolioReferencePrice | null {
   if (value === null) return null;
@@ -205,7 +213,7 @@ function positionId(position: NautilusPositionSnapshotInput, identity: AccountId
 
 function adaptPosition(
   position: NautilusPositionSnapshotInput,
-  accountInput: NautilusAccountSnapshotInput,
+  accountInput: NautilusPaperPortfolioAccountInput,
   identity: AccountIdentity,
   market: ExecutionMarketIdentity,
 ): PositionState {
@@ -235,7 +243,7 @@ function adaptPosition(
   };
 }
 
-function adaptFill(fill: NautilusFillSnapshotInput, accountInput: NautilusAccountSnapshotInput, market: ExecutionMarketIdentity): EconomicFillRecord {
+function adaptFill(fill: NautilusFillSnapshotInput, accountInput: NautilusPaperPortfolioAccountInput, market: ExecutionMarketIdentity): EconomicFillRecord {
   requiredText(fill.fill_id, "fill.fill_id");
   requiredText(fill.client_order_id, "fill.client_order_id");
   const side = fill.side.toUpperCase();
@@ -269,7 +277,7 @@ export function adaptNautilusPaperPortfolio(
   config: NautilusPaperAdapterConfig,
 ): NautilusPaperPortfolioAdapterResult {
   if (!Number.isFinite(config.capturedAt) || config.capturedAt < 0) throw new Error("capturedAt must be finite and non-negative");
-  const accountInput = input.account;
+  const accountInput: NautilusPaperPortfolioAccountInput = { ...input.account, logicalAccountId: config.goodTradingAccountId };
   const identity = accountIdentity(accountInput);
   const market = marketIdentity(accountInput);
   const timestamp = accountInput.timestamp;

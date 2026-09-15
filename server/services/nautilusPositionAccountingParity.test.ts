@@ -98,7 +98,7 @@ function bridgeInput(snapshot: Snapshot) {
 
 test("validates all Nautilus canonical position accounting transitions through N6.3", () => {
   for (const scenario of scenarios) {
-    const adapted = adaptNautilusPaperPortfolio(bridgeInput(runNautilusScenario(scenario.actions)), { capturedAt: 2_000 });
+    const adapted = adaptNautilusPaperPortfolio(bridgeInput(runNautilusScenario(scenario.actions)), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
     const position = adapted.portfolio.positions[0];
     if (scenario.expectedSide === null) {
       assert.equal(position, undefined, `${scenario.name}: closed position must be absent`);
@@ -109,7 +109,7 @@ test("validates all Nautilus canonical position accounting transitions through N
       assert.equal(position?.accountIdentity.environment, "PAPER");
       assert.equal(position?.unrealizedPnl.value !== null, true, `${scenario.name}: authoritative unrealized PnL`);
     }
-    assert.equal(adapted.portfolio.accountIdentity.accountId, "SIM-001");
+    assert.equal(adapted.portfolio.accountIdentity.accountId, "GT-TEST-001");
     assert.equal(adapted.portfolio.consistency.status, "CONSISTENT", scenario.name);
     assert.equal(adapted.fills.length, scenario.actions.length, `${scenario.name}: fill count`);
     assert.equal(adapted.fills.every((fill) => fill.side === "BUY" || fill.side === "SELL"), true);
@@ -118,13 +118,13 @@ test("validates all Nautilus canonical position accounting transitions through N
 });
 
 test("Nautilus accounting is deterministic and isolated across scenario order", () => {
-  const first = scenarios.map((scenario) => adaptNautilusPaperPortfolio(bridgeInput(runNautilusScenario(scenario.actions)), { capturedAt: 2_000 }));
-  const reversed = [...scenarios].reverse().map((scenario) => adaptNautilusPaperPortfolio(bridgeInput(runNautilusScenario(scenario.actions)), { capturedAt: 2_000 })).reverse();
+  const first = scenarios.map((scenario) => adaptNautilusPaperPortfolio(bridgeInput(runNautilusScenario(scenario.actions)), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" }));
+  const reversed = [...scenarios].reverse().map((scenario) => adaptNautilusPaperPortfolio(bridgeInput(runNautilusScenario(scenario.actions)), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" })).reverse();
   assert.deepEqual(first, reversed);
 });
 
 test("preserves authoritative fee and balance observations without TypeScript accounting", () => {
-  const adapted = adaptNautilusPaperPortfolio(bridgeInput(runNautilusScenario([["buy", "1"], ["sell", "1"]])), { capturedAt: 2_000 });
+  const adapted = adaptNautilusPaperPortfolio(bridgeInput(runNautilusScenario([["buy", "1"], ["sell", "1"]])), { capturedAt: 2_000, goodTradingAccountId: "GT-TEST-001" });
   assert.equal(adapted.fills.every((fill) => fill.fee?.currency === "USDT"), true);
   assert.equal(adapted.fills.every((fill) => fill.fee?.value === 0), true);
   assert.equal(adapted.portfolio.fees.total.value, 0);
