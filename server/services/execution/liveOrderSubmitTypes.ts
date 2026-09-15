@@ -12,6 +12,7 @@ export interface LiveOrderSubmitRequest {
   takeProfitPrice?: number;
   leverage?: number;
   reduceOnly?: boolean;
+  requestIdempotencyKey: string;
   confirmationText: string;
   previewId?: string;
 }
@@ -23,6 +24,7 @@ export interface LiveOrderSubmitResult {
   side: "buy" | "sell";
   type: "limit";
   orderSubmitted: boolean;
+  idempotentReplay?: boolean;
   orderId?: string;
   clientOrderId?: string;
   status: "submitted" | "blocked" | "failed";

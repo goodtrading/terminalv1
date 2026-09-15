@@ -55,6 +55,7 @@ const baseRequest: LiveOrderSubmitRequest = {
   notionalUsdt: 2,
   limitPrice: 50000,
   stopLossPrice: 49000,
+  requestIdempotencyKey: "test-request-idempotency-key",
   confirmationText: LIVE_LIMIT_CONFIRMATION_TEXT,
 };
 

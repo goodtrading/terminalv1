@@ -44,6 +44,33 @@ import type {
 import type { LiveOrderPreviewResult } from "./liveOrderPreviewTypes";
 import { assertBingxWriteNotFrozen } from "../exchanges/bingx/bingxReadOnlyFreeze";
 import { isLiveLimitTestMode } from "./riskGuard";
+import { getGoodTradingAccountByUserId } from "../accounts/goodTradingAccountRepository";
+import { resolveCanonicalMarket } from "../marketIdentity/canonicalMarketResolver";
+import {
+  createIntentWithInitialAttempt,
+  getIntentByRequestIdempotencyKey,
+  listAttemptsForIntent,
+  markSubmissionStarted,
+} from "../orders/goodTradingOrderIntentRepository";
+import {
+  generateBrokerClientOrderId,
+  generateLogicalOrderUid,
+  generateSubmissionAttemptId,
+} from "../../../shared/durableOrderIntent";
+
+export type LiveSubmitDependencies = Readonly<{
+  getReadiness?: typeof getLiveTradingReadiness;
+  previewOrder?: typeof previewBingXLiveOrder;
+  getConnection?: typeof getFirstConnectedConnectionForUser;
+  getCredentials?: typeof getCredentialsForUser;
+  getSymbolRules?: typeof getBingXSymbolRules;
+  submitOrder?: typeof submitBingXLimitOrder;
+  getAccount?: typeof getGoodTradingAccountByUserId;
+  getExistingIntent?: typeof getIntentByRequestIdempotencyKey;
+  listIntentAttempts?: typeof listAttemptsForIntent;
+  createIntent?: typeof createIntentWithInitialAttempt;
+  markStarted?: typeof markSubmissionStarted;
+}>;
 
 function normalizeSymbol(symbol: string): string {
   return symbol.trim().toUpperCase().replace(/\s+/g, "");
@@ -110,13 +137,29 @@ function buildEstimateFromPreview(
 export async function submitBingXLiveLimitOrder(
   userId: string | number,
   request: LiveOrderSubmitRequest,
+  dependencies: LiveSubmitDependencies = {},
 ): Promise<LiveOrderSubmitResult> {
+  const readinessFn = dependencies.getReadiness ?? getLiveTradingReadiness;
+  const previewFn = dependencies.previewOrder ?? previewBingXLiveOrder;
+  const connectionFn = dependencies.getConnection ?? getFirstConnectedConnectionForUser;
+  const credentialsFn = dependencies.getCredentials ?? getCredentialsForUser;
+  const symbolRulesFn = dependencies.getSymbolRules ?? getBingXSymbolRules;
+  const submitFn = dependencies.submitOrder ?? submitBingXLimitOrder;
+  const accountFn = dependencies.getAccount ?? getGoodTradingAccountByUserId;
+  const existingIntentFn = dependencies.getExistingIntent ?? getIntentByRequestIdempotencyKey;
+  const listAttemptsFn = dependencies.listIntentAttempts ?? listAttemptsForIntent;
+  const createIntentFn = dependencies.createIntent ?? createIntentWithInitialAttempt;
+  const markStartedFn = dependencies.markStarted ?? markSubmissionStarted;
   const uid = Math.floor(Number(userId));
   if (!Number.isFinite(uid) || uid <= 0) {
     throw new Error("INVALID_USER_ID");
   }
 
-  const clientOrderId = generateLiveClientOrderId();
+  let clientOrderId: string | undefined;
+  const ensureClientOrderId = (): string => {
+    if (!clientOrderId) clientOrderId = generateLiveClientOrderId();
+    return clientOrderId;
+  };
 
   const freeze = assertBingxWriteNotFrozen();
   if (!freeze.ok) {
@@ -125,7 +168,7 @@ export async function submitBingXLiveLimitOrder(
       freeze.blockers,
       "LIVE ORDER BLOCKED — read-only freeze",
     );
-    result.clientOrderId = clientOrderId;
+    result.clientOrderId = ensureClientOrderId();
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
   }
@@ -137,7 +180,29 @@ export async function submitBingXLiveLimitOrder(
       shapeBlockers,
       "LIVE ORDER BLOCKED — invalid request",
     );
-    result.clientOrderId = clientOrderId;
+    result.clientOrderId = ensureClientOrderId();
+    await emitLiveOrderSubmitBlocked(uid, request, result);
+    return result;
+  }
+
+  if (normalizeSymbol(request.symbol) !== "BTC-USDT") {
+    const result = baseBlockedResult(
+      request,
+      ["MARKET_IDENTITY_UNRESOLVED"],
+      "LIVE ORDER BLOCKED — unsupported LIVE BingX market",
+    );
+    result.clientOrderId = ensureClientOrderId();
+    await emitLiveOrderSubmitBlocked(uid, request, result);
+    return result;
+  }
+
+  if (request.reduceOnly === true) {
+    const result = baseBlockedResult(
+      request,
+      ["REDUCE_ONLY_NOT_SUPPORTED_FOR_OPENING_ONLY_V1"],
+      "LIVE ORDER BLOCKED — reduceOnly is not permitted",
+    );
+    result.clientOrderId = ensureClientOrderId();
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
   }
@@ -149,7 +214,7 @@ export async function submitBingXLiveLimitOrder(
       confirmBlockers,
       "LIVE ORDER BLOCKED — confirmation required",
     );
-    result.clientOrderId = clientOrderId;
+    result.clientOrderId = ensureClientOrderId();
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
   }
@@ -161,7 +226,7 @@ export async function submitBingXLiveLimitOrder(
       envBlockers,
       "LIVE ORDER BLOCKED — live flags or kill switch",
     );
-    result.clientOrderId = clientOrderId;
+    result.clientOrderId = ensureClientOrderId();
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
   }
@@ -175,21 +240,21 @@ export async function submitBingXLiveLimitOrder(
       guardBlockers,
       "LIVE ORDER BLOCKED — live trading guard",
     );
-    result.clientOrderId = clientOrderId;
+    result.clientOrderId = ensureClientOrderId();
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
   }
 
   let readiness: Awaited<ReturnType<typeof getLiveTradingReadiness>>;
   try {
-    readiness = await getLiveTradingReadiness(uid, "bingx");
+    readiness = await readinessFn(uid, "bingx");
   } catch {
     const result = baseBlockedResult(
       request,
       ["Live readiness unavailable."],
       "LIVE ORDER BLOCKED — readiness check failed",
     );
-    result.clientOrderId = clientOrderId;
+    result.clientOrderId = ensureClientOrderId();
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
   }
@@ -201,12 +266,12 @@ export async function submitBingXLiveLimitOrder(
       readinessBlockers,
       "LIVE ORDER BLOCKED — not ready for live",
     );
-    result.clientOrderId = clientOrderId;
+    result.clientOrderId = ensureClientOrderId();
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
   }
 
-  const preview = await previewBingXLiveOrder(uid, toPreviewRequest(request));
+  const preview = await previewFn(uid, toPreviewRequest(request));
   const estimate = buildEstimateFromPreview(preview, request.limitPrice);
   const testMode = isLiveLimitTestMode();
 
@@ -236,7 +301,7 @@ export async function submitBingXLiveLimitOrder(
       side: request.side,
       type: "limit",
       orderSubmitted: false,
-      clientOrderId,
+      clientOrderId: ensureClientOrderId(),
       status: "blocked",
       blockers: nonMarketableBlockers,
       warnings: preview.warnings.slice(0, 8),
@@ -269,7 +334,7 @@ export async function submitBingXLiveLimitOrder(
       side: request.side,
       type: "limit",
       orderSubmitted: false,
-      clientOrderId,
+      clientOrderId: ensureClientOrderId(),
       status: "blocked",
       blockers: finalBlockers,
       warnings: [...preview.warnings.slice(0, 8), ...additionalWarnings],
@@ -284,7 +349,7 @@ export async function submitBingXLiveLimitOrder(
   let submitQuantity = estimate.quantity;
 
   try {
-    const symbolRules = await getBingXSymbolRules(normalizeSymbol(request.symbol));
+    const symbolRules = await symbolRulesFn(normalizeSymbol(request.symbol));
     const validation = validateQuantityAgainstRules(
       estimate.quantity,
       request.limitPrice,
@@ -306,7 +371,7 @@ export async function submitBingXLiveLimitOrder(
           side: request.side,
           type: "limit",
           orderSubmitted: false,
-          clientOrderId,
+          clientOrderId: ensureClientOrderId(),
           status: "blocked",
           blockers: [validation.error || "Quantity validation failed"],
           warnings: preview.warnings.slice(0, 8),
@@ -338,7 +403,7 @@ export async function submitBingXLiveLimitOrder(
         side: request.side,
         type: "limit",
         orderSubmitted: false,
-        clientOrderId,
+        clientOrderId: ensureClientOrderId(),
         status: "blocked",
         blockers: [`Live submit blocked: BingX symbol rules unavailable. Error: ${errorMsg}`],
         warnings: preview.warnings.slice(0, 8),
@@ -350,7 +415,143 @@ export async function submitBingXLiveLimitOrder(
     }
   }
 
-  const conn = getFirstConnectedConnectionForUser(uid);
+  const preConn = connectionFn(uid);
+  if (!preConn || preConn.readOnly || preConn.connectionMode === "read-only" || !preConn.tradingPermissionConfirmed) {
+    const result = baseBlockedResult(request, ["BINGX_CONNECTION_NOT_LIVE_CAPABLE"], "LIVE ORDER BLOCKED — connection not live-capable", estimate);
+    result.clientOrderId = ensureClientOrderId();
+    await emitLiveOrderSubmitBlocked(uid, request, result);
+    return result;
+  }
+  const preCredentials = credentialsFn(preConn.id, uid);
+  if (!preCredentials) {
+    const result = baseBlockedResult(request, ["BINGX_CREDENTIALS_UNAVAILABLE"], "LIVE ORDER BLOCKED — credentials unavailable", estimate);
+    result.clientOrderId = ensureClientOrderId();
+    await emitLiveOrderSubmitBlocked(uid, request, result);
+    return result;
+  }
+
+  const account = await accountFn(uid);
+  if (!account) {
+    const result = baseBlockedResult(request, ["GOODTRADING_ACCOUNT_NOT_FOUND"], "LIVE ORDER BLOCKED — GoodTrading account not found", estimate);
+    result.clientOrderId = ensureClientOrderId();
+    await emitLiveOrderSubmitBlocked(uid, request, result);
+    return result;
+  }
+
+  const market = resolveCanonicalMarket({
+    sourceBackend: "BINGX",
+    sourceVenue: "BINGX",
+    nativeSymbol: normalizeSymbol(request.symbol),
+    sourceMarketType: "Perpetual",
+  });
+  if (!market.ok) {
+    const result = baseBlockedResult(request, [market.code], "LIVE ORDER BLOCKED — market identity unresolved", estimate);
+    result.clientOrderId = ensureClientOrderId();
+    await emitLiveOrderSubmitBlocked(uid, request, result);
+    return result;
+  }
+
+  const existing = await existingIntentFn(account.accountUid, request.requestIdempotencyKey);
+  if (existing) {
+    const attempts = await listAttemptsFn(existing.logicalOrderUid);
+    const firstAttempt = attempts.find((attempt) => attempt.attemptNumber === 1);
+    return {
+      mode: "live",
+      exchange: "bingx",
+      symbol: normalizeSymbol(request.symbol),
+      side: request.side,
+      type: "limit",
+      orderSubmitted: false,
+      idempotentReplay: true,
+      clientOrderId: firstAttempt?.brokerClientOrderId,
+      status: "blocked",
+      blockers: [],
+      warnings: ["Existing durable submit found; broker call was not repeated."],
+      estimate,
+      message: "IDEMPOTENT REPLAY — durable submit already exists",
+    };
+  }
+
+  const logicalOrderUid = generateLogicalOrderUid();
+  const brokerClientOrderId = generateBrokerClientOrderId();
+  const durableInput = {
+    intent: {
+      logicalOrderUid,
+      goodTradingAccountUid: account.accountUid,
+      executionBroker: "BINGX",
+      executionEnvironment: "LIVE",
+      executionMarketInstrument: market.executionIdentity.instrument,
+      executionMarketVenue: market.executionIdentity.venue,
+      executionMarketType: market.executionIdentity.marketType,
+      canonicalBaseAsset: market.identity.baseAsset,
+      canonicalQuoteAsset: market.identity.quoteAsset,
+      canonicalSettlementAsset: market.identity.settlementAsset,
+      canonicalProductType: market.identity.productType,
+      canonicalContractStyle: market.identity.productType === "Perpetual" ? market.identity.contractStyle : null,
+      canonicalExpiry: null,
+      sourceNativeSymbol: market.provenance.nativeSymbol,
+      sourceNativeInstrumentId: market.provenance.nativeInstrumentId ?? null,
+      marketMetadataSource: market.provenance.metadataSource,
+      marketMappingPolicy: market.provenance.mappingPolicy,
+      requestedSide: request.side,
+      orderType: "LIMIT" as const,
+      requestedSize: String(request.quantity ?? request.notionalUsdt ?? request.marginUsdt ?? submitQuantity),
+      requestedSizeUnit: request.quantity != null ? "BTC" as const : "USDT" as const,
+      requestedSizingMode: request.quantity != null ? "quantity" as const : request.sizingMode ?? "notional" as const,
+      resolvedQuantity: String(submitQuantity),
+      resolvedQuantityUnit: "BTC" as const,
+      limitPrice: String(request.limitPrice),
+      stopLossPrice: request.stopLossPrice == null ? null : String(request.stopLossPrice),
+      takeProfitPrice: request.takeProfitPrice == null ? null : String(request.takeProfitPrice),
+      timeInForce: "GTC" as const,
+      postOnly: false,
+      reduceOnly: false,
+      requestIdempotencyKey: request.requestIdempotencyKey,
+    },
+    attempt: {
+      attemptId: generateSubmissionAttemptId(),
+      intentId: logicalOrderUid,
+      attemptNumber: 1,
+      brokerClientOrderId,
+      submittedQuantity: String(submitQuantity),
+      transportState: "PERSISTED" as const,
+      startedAt: null,
+      responseAt: null,
+      outcomeAt: null,
+      reconciliationRequiredAt: null,
+      brokerOrderId: null,
+      rawBrokerStatus: null,
+      httpStatus: null,
+      errorCode: null,
+      errorClass: null,
+    },
+  };
+
+  let durable;
+  try {
+    durable = await createIntentFn(durableInput);
+  } catch (error) {
+    if ((error as { code?: string })?.code === "23505") {
+      const raced = await existingIntentFn(account.accountUid, request.requestIdempotencyKey);
+      if (raced) {
+        const attempts = await listAttemptsFn(raced.logicalOrderUid);
+        return { mode: "live", exchange: "bingx", symbol: normalizeSymbol(request.symbol), side: request.side, type: "limit", orderSubmitted: false, idempotentReplay: true, clientOrderId: attempts.find((attempt) => attempt.attemptNumber === 1)?.brokerClientOrderId, status: "blocked", blockers: [], warnings: ["Concurrent durable submit won; broker call was not repeated."], estimate, message: "IDEMPOTENT REPLAY — concurrent request" };
+      }
+    }
+    throw error;
+  }
+
+  let started;
+  try {
+    started = await markStartedFn(durable.intent.logicalOrderUid);
+  } catch (error) {
+    const result = baseBlockedResult(request, ["SUBMISSION_STARTED_PERSISTENCE_FAILED"], "LIVE ORDER BLOCKED — durable submission start failed", estimate);
+    result.clientOrderId = durable.attempt.brokerClientOrderId;
+    await emitLiveOrderSubmitBlocked(uid, request, result);
+    return result;
+  }
+
+  const conn = connectionFn(uid);
   if (!conn) {
     const result = baseBlockedResult(
       request,
@@ -358,7 +559,7 @@ export async function submitBingXLiveLimitOrder(
       "LIVE ORDER BLOCKED — no connection",
       estimate,
     );
-    result.clientOrderId = clientOrderId;
+    result.clientOrderId = ensureClientOrderId();
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
   }
@@ -378,12 +579,12 @@ export async function submitBingXLiveLimitOrder(
       "LIVE ORDER BLOCKED — connection not live-capable",
       estimate,
     );
-    result.clientOrderId = clientOrderId;
+    result.clientOrderId = ensureClientOrderId();
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
   }
 
-  const credentials = getCredentialsForUser(conn.id, uid);
+  const credentials = credentialsFn(conn.id, uid);
   if (!credentials) {
     const result = baseBlockedResult(
       request,
@@ -391,7 +592,7 @@ export async function submitBingXLiveLimitOrder(
       "LIVE ORDER BLOCKED — credentials unavailable",
       estimate,
     );
-    result.clientOrderId = clientOrderId;
+    result.clientOrderId = ensureClientOrderId();
     await emitLiveOrderSubmitBlocked(uid, request, result);
     return result;
   }
@@ -402,7 +603,7 @@ export async function submitBingXLiveLimitOrder(
     uid,
     request,
     estimate.notionalUsdt,
-    clientOrderId,
+    durable.attempt.brokerClientOrderId,
   );
 
   const warnings: string[] = [
@@ -411,17 +612,20 @@ export async function submitBingXLiveLimitOrder(
   ];
 
   try {
-    const exchangeResult = await submitBingXLimitOrder({
+    const exchangeResult = await submitFn({
       credentials,
-      symbol: request.symbol,
+      symbol: market.executionIdentity.instrument,
       side: request.side,
       type: "limit",
       quantity: submitQuantity,
       limitPrice: request.limitPrice,
-      clientOrderId,
+      clientOrderId: durable.attempt.brokerClientOrderId,
       stopLossPrice: request.stopLossPrice,
       takeProfitPrice: request.takeProfitPrice,
-      reduceOnly: request.reduceOnly,
+      timeInForce: "GTC",
+      postOnly: false,
+      reduceOnly: false,
+      submittedQuantity: durable.attempt.submittedQuantity!,
     });
 
     if (!exchangeResult.protectiveSlAttached) {
@@ -471,7 +675,7 @@ export async function submitBingXLiveLimitOrder(
         "LIVE ORDER BLOCKED — market disabled",
         estimate,
       );
-      result.clientOrderId = clientOrderId;
+      result.clientOrderId = ensureClientOrderId();
       await emitLiveOrderSubmitBlocked(uid, request, result);
       return result;
     }
@@ -483,7 +687,7 @@ export async function submitBingXLiveLimitOrder(
           ? err.message.slice(0, 160)
           : "Exchange submit failed";
 
-    await emitLiveOrderSubmitFailed(uid, request, safeMessage, clientOrderId);
+    await emitLiveOrderSubmitFailed(uid, request, safeMessage, durable.attempt.brokerClientOrderId);
 
     return {
       mode: "live",
@@ -492,7 +696,7 @@ export async function submitBingXLiveLimitOrder(
       side: request.side,
       type: "limit",
       orderSubmitted: false,
-      clientOrderId,
+      clientOrderId: durable.attempt.brokerClientOrderId,
       status: "failed",
       blockers: [safeMessage],
       warnings: [],

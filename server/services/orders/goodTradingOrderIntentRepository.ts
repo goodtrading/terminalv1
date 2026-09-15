@@ -184,3 +184,16 @@ export async function appendSubmissionAttempt(input: DurableSubmissionAttemptInp
   );
   return attempt;
 }
+
+export async function markSubmissionStarted(intentId: string): Promise<DurableSubmissionAttempt> {
+  const database = requirePool();
+  const result = await database.query(
+    `UPDATE goodtrading_order_submission_attempts
+        SET transport_state = 'SUBMISSION_STARTED', started_at = now()
+      WHERE intent_id = $1 AND attempt_number = 1 AND transport_state = 'PERSISTED'
+      RETURNING ${attemptColumns}`,
+    [intentId],
+  );
+  if (result.rowCount !== 1) throw new Error("SUBMISSION_STARTED_TRANSITION_REJECTED");
+  return mapAttempt(result.rows[0] as Record<string, unknown>);
+}

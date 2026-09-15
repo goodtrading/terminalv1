@@ -25,6 +25,10 @@ export function parseLiveOrderSubmitBody(
   const symbol = typeof body.symbol === "string" ? body.symbol.trim() : "";
   if (!symbol) return { ok: false, message: "symbol is required." };
 
+  if (symbol !== "BTC-USDT") {
+    return { ok: false, message: 'symbol must be the supported LIVE BingX market "BTC-USDT".' };
+  }
+
   const side = body.side === "buy" || body.side === "sell" ? body.side : null;
   if (!side) return { ok: false, message: 'side must be "buy" or "sell".' };
 
@@ -63,6 +67,17 @@ export function parseLiveOrderSubmitBody(
     return { ok: false, message: "leverage must be > 0." };
   }
 
+  const requestIdempotencyKey =
+    typeof body.requestIdempotencyKey === "string"
+      ? body.requestIdempotencyKey.trim()
+      : "";
+  if (!requestIdempotencyKey || requestIdempotencyKey.length > 200) {
+    return { ok: false, message: "requestIdempotencyKey is required and must be <= 200 characters." };
+  }
+  if (body.reduceOnly === true) {
+    return { ok: false, message: "reduceOnly is not supported by GoodTrading V1 live submit." };
+  }
+
   const previewId =
     typeof body.previewId === "string" && body.previewId.trim()
       ? body.previewId.trim()
@@ -85,7 +100,8 @@ export function parseLiveOrderSubmitBody(
       stopLossPrice,
       takeProfitPrice: num("takeProfitPrice"),
       leverage: leverageRaw,
-      reduceOnly: body.reduceOnly === true,
+      reduceOnly: body.reduceOnly === false ? false : undefined,
+      requestIdempotencyKey,
       confirmationText,
       previewId,
     },

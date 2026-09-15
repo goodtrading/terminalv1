@@ -168,6 +168,7 @@ export function LiveOrderPreviewPanel({
       limitPrice: lp,
       stopLossPrice: sl,
       confirmationText: confirmationText.trim(),
+      requestIdempotencyKey: crypto.randomUUID(),
       takeProfitPrice: takeProfit.trim() ? Number(takeProfit) : undefined,
       leverage: Number(leverage),
       sizingMode: sizeMode as "notional" | "margin",

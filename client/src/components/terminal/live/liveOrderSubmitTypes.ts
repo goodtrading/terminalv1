@@ -12,6 +12,7 @@ export interface LiveOrderSubmitRequest {
   takeProfitPrice?: number;
   leverage?: number;
   reduceOnly?: boolean;
+  requestIdempotencyKey: string;
   confirmationText: string;
   previewId?: string;
 }

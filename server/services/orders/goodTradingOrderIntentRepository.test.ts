@@ -11,6 +11,7 @@ import {
   getIntentByRequestIdempotencyKey,
   listAttemptsForIntent,
   appendSubmissionAttempt,
+  markSubmissionStarted,
   type CreateDurableIntentWithInitialAttemptInput,
 } from "./goodTradingOrderIntentRepository";
 
@@ -167,6 +168,31 @@ describePostgres("durable GoodTrading order intent PostgreSQL evidence", () => {
       assert.equal(second.attemptNumber, 2);
       assert.equal((await listAttemptsForIntent(created.intent.logicalOrderUid)).length, 2);
       assert.equal((await getIntentByLogicalOrderUid(created.intent.logicalOrderUid))?.logicalOrderUid, created.intent.logicalOrderUid);
+    } finally {
+      if (accountUid) {
+        await pool!.query("DELETE FROM goodtrading_order_submission_attempts WHERE intent_id IN (SELECT id FROM goodtrading_order_intents WHERE goodtrading_account_uid = $1)", [accountUid]);
+        await pool!.query("DELETE FROM goodtrading_order_intents WHERE goodtrading_account_uid = $1", [accountUid]);
+      }
+      await pool!.query("DELETE FROM goodtrading_accounts WHERE user_id = $1", [userId]);
+      await pool!.query("DELETE FROM users WHERE id = $1", [userId]);
+    }
+  });
+
+  it("commits the narrow PERSISTED to SUBMISSION_STARTED transition exactly once", async () => {
+    const marker = `${Date.now().toString(36)}-started`;
+    const user = await pool!.query("INSERT INTO users (email, password_hash, full_name) VALUES ($1, $2, $3) RETURNING id", [`${marker}@example.test`, "d1b1-test-hash", "B2 started test"]);
+    const userId = Number(user.rows[0].id);
+    let accountUid = "";
+    try {
+      accountUid = (await ensureGoodTradingAccountForUser(userId)).accountUid;
+      const first = input({ intent: { ...input().intent, goodTradingAccountUid: accountUid, logicalOrderUid: `GT-ORD-${marker}`, requestIdempotencyKey: `idem-${marker}` }, attempt: { ...input().attempt, intentId: `GT-ORD-${marker}`, attemptId: `GT-ATT-${marker}`, brokerClientOrderId: `GT-CLIENT-${marker}` } });
+      await createIntentWithInitialAttempt(first);
+      const started = await markSubmissionStarted(first.intent.logicalOrderUid);
+      assert.equal(started.transportState, "SUBMISSION_STARTED");
+      assert.ok(started.startedAt instanceof Date);
+      await assert.rejects(() => markSubmissionStarted(first.intent.logicalOrderUid), /SUBMISSION_STARTED_TRANSITION_REJECTED/);
+      const raw = await pool!.query("SELECT transport_state FROM goodtrading_order_submission_attempts WHERE intent_id = $1 AND attempt_number = 1", [first.intent.logicalOrderUid]);
+      assert.equal(raw.rows[0].transport_state, "SUBMISSION_STARTED");
     } finally {
       if (accountUid) {
         await pool!.query("DELETE FROM goodtrading_order_submission_attempts WHERE intent_id IN (SELECT id FROM goodtrading_order_intents WHERE goodtrading_account_uid = $1)", [accountUid]);

@@ -50,7 +50,10 @@ export interface SubmitBingXLimitOrderParams {
   clientOrderId: string;
   stopLossPrice: number;
   takeProfitPrice?: number;
-  reduceOnly?: boolean;
+  timeInForce: "GTC";
+  postOnly: false;
+  reduceOnly: false;
+  submittedQuantity: string;
 }
 
 export interface SubmitBingXLimitOrderResult {
@@ -144,12 +147,14 @@ export async function submitBingXLimitOrder(
   }
 
   // Format quantity according to BingX symbol rules
-  let formattedQuantity: string;
+  let formattedQuantity: string = params.submittedQuantity;
   const testMode = isLiveLimitTestMode();
 
   try {
-    const symbolRules = await getBingXSymbolRules(symbol);
-    formattedQuantity = formatQuantityForBingX(qty, symbolRules.quantityPrecision);
+    if (!formattedQuantity) {
+      const symbolRules = await getBingXSymbolRules(symbol);
+      formattedQuantity = formatQuantityForBingX(qty, symbolRules.quantityPrecision);
+    }
   } catch {
     // In test mode, use fallback formatter; otherwise use simple fallback
     if (testMode) {
@@ -171,8 +176,10 @@ export async function submitBingXLimitOrder(
     type: "LIMIT",
     quantity: formattedQuantity,
     price: params.limitPrice,
-    timeInForce: "GTC",
-    clientOrderId: params.clientOrderId.toLowerCase(),
+    timeInForce: params.timeInForce,
+    postOnly: params.postOnly,
+    reduceOnly: params.reduceOnly,
+    clientOrderId: params.clientOrderId,
   };
 
   // Only include stopLoss/takeProfit if NOT in test mode
