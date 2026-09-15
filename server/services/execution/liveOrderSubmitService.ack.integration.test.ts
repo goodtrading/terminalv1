@@ -4,6 +4,13 @@ import pg from "pg";
 import { pool } from "../../db";
 import { ensureGoodTradingAccountForUser } from "../accounts/goodTradingAccountRepository";
 import { LIVE_LIMIT_CONFIRMATION_TEXT } from "./liveOrderSubmitTypes";
+
+// This integration test uses a mocked submitter; make the test-only live guards explicit.
+process.env.BINGX_READ_ONLY_FREEZE = "false";
+process.env.BINGX_ENABLE_LIVE_TRADING = "true";
+process.env.BINGX_ENABLE_API_TRADING = "true";
+process.env.BINGX_ENABLE_ORDER_SUBMIT = "true";
+process.env.BINGX_LIVE_LIMIT_TEST_MODE = "true";
 const d=pool?describe:describe.skip;
 const ready={status:"ready_for_live" as const,exchange:"bingx" as const,liveTradingEnabled:true,apiTradingEnabled:true,orderSubmitEnabled:true,orderCancelEnabled:false,positionCloseEnabled:false,marketOrdersAllowed:false,killSwitchActive:false,checks:[],blockers:[],warnings:[],readyForDryRun:true,readyForLive:true,readOnlyFreezeActive:false};
 const prev={mode:"dry_run" as const,exchange:"bingx" as const,symbol:"BTC-USDT",side:"buy" as const,type:"limit" as const,orderWouldBeSent:false as const,tradingLocked:true,validated:true,blocked:false,blockers:[],warnings:[],estimate:{entryPrice:65000,quantity:.001,notionalUsdt:65}};
