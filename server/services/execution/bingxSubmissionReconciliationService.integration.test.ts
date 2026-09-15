@@ -1,0 +1,24 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { pool } from "../../db";
+import { ensureGoodTradingAccountForUser } from "../accounts/goodTradingAccountRepository";
+import { createIntentWithInitialAttempt, markSubmissionStarted, markUnknownSubmissionOutcome, markReconciliationRequired } from "../orders/goodTradingOrderIntentRepository";
+import { reconcileBingXSubmissionForUser } from "./bingxSubmissionReconciliationService";
+
+const d = pool ? describe : describe.skip;
+const baseIntent = (accountUid: string, uid: string, key: string) => ({ intent: { logicalOrderUid: uid, goodTradingAccountUid: accountUid, executionBroker: "BINGX", executionEnvironment: "LIVE", executionMarketInstrument: "BTC-USDT", executionMarketVenue: "BINGX", executionMarketType: "Perpetual" as const, canonicalBaseAsset: "BTC", canonicalQuoteAsset: "USDT", canonicalSettlementAsset: "USDT", canonicalProductType: "Perpetual" as const, canonicalContractStyle: "Linear" as const, canonicalExpiry: null, sourceNativeSymbol: "BTC-USDT", sourceNativeInstrumentId: null, marketMetadataSource: "server-owned-v1-registry", marketMappingPolicy: "EXACT_V1_REGISTRY", requestedSide: "buy" as const, orderType: "LIMIT" as const, requestedSize: "0.001", requestedSizeUnit: "BTC" as const, requestedSizingMode: "quantity" as const, resolvedQuantity: "0.001", resolvedQuantityUnit: "BTC" as const, limitPrice: "64000", stopLossPrice: "63000", takeProfitPrice: null, timeInForce: "GTC" as const, postOnly: false, reduceOnly: false, requestIdempotencyKey: key }, attempt: { attemptId: `${uid}-attempt`, intentId: uid, attemptNumber: 1, brokerClientOrderId: `${uid}-client`, submittedQuantity: "0.001", transportState: "PERSISTED" as const, startedAt: null, responseAt: null, outcomeAt: null, reconciliationRequiredAt: null, brokerOrderId: null, rawBrokerStatus: null, httpStatus: null, errorCode: null, errorClass: null } });
+async function cleanup(accountUid: string, userId: number) { await pool!.query("DELETE FROM goodtrading_order_submission_attempts WHERE intent_id IN (SELECT id FROM goodtrading_order_intents WHERE goodtrading_account_uid=$1)", [accountUid]); await pool!.query("DELETE FROM goodtrading_order_intents WHERE goodtrading_account_uid=$1", [accountUid]); await pool!.query("DELETE FROM goodtrading_accounts WHERE user_id=$1", [userId]); await pool!.query("DELETE FROM users WHERE id=$1", [userId]); }
+
+d("read-only reconciliation against durable evidence", () => {
+  it("uses only eligible durable attempts and never mutates them", { timeout: 120000 }, async () => {
+    const marker = `${Date.now()}-b3b2`; const row = await pool!.query("INSERT INTO users (email,password_hash,full_name) VALUES ($1,$2,$3) RETURNING id", [`${marker}@example.test`, "test", "B3-B2"]); const userId = Number(row.rows[0].id); const account = await ensureGoodTradingAccountForUser(userId); const uid = `GT-ORD-${marker}`; let reads = 0;
+    try {
+      const input = baseIntent(account.accountUid, uid, `key-${marker}`); await createIntentWithInitialAttempt(input);
+      const ineligible = await reconcileBingXSubmissionForUser(userId, uid, { getConnection: () => ({ id: "b3b2-test", readOnly: true, connectionMode: "read-only", tradingPermissionConfirmed: false }), getCredentials: () => ({ apiKey: "test", secretKey: "test" }), readSources: async () => { reads++; return { OPEN_ORDERS: { status: "loaded", observations: [] }, ORDER_HISTORY: { status: "loaded", observations: [] }, FILL_HISTORY: { status: "loaded", observations: [] } }; } });
+      assert.equal(ineligible.status, "UNRESOLVED"); assert.equal(reads, 0);
+      await markSubmissionStarted(uid); await markUnknownSubmissionOutcome(uid, { errorCode: "BINGX_TIMEOUT", errorClass: "BingXApiError" }); await markReconciliationRequired(uid);
+      const matched = await reconcileBingXSubmissionForUser(userId, uid, { getConnection: () => ({ id: "b3b2-test", readOnly: true, connectionMode: "read-only", tradingPermissionConfirmed: false }), getCredentials: () => ({ apiKey: "test", secretKey: "test" }), readSources: async (_credentials, symbol) => { reads++; assert.equal(symbol, "BTC-USDT"); return { OPEN_ORDERS: { status: "loaded", observations: [{ source: "OPEN_ORDERS", clientOrderId: `${uid}-client`, brokerOrderId: "order-string", brokerOrderIdPrecisionTrusted: true, symbol: "BTC-USDT", side: "BUY", quantity: "0.001", price: "64000", observedAt: new Date().toISOString() }] }, ORDER_HISTORY: { status: "loaded", observations: [] }, FILL_HISTORY: { status: "loaded", observations: [] } }; } });
+      assert.equal(matched.status, "MATCHED"); assert.equal(matched.brokerClientOrderId, `${uid}-client`); assert.equal(reads, 1); assert.equal(matched.retryAuthorized, false);
+    } finally { await cleanup(account.accountUid, userId); }
+  });
+});
