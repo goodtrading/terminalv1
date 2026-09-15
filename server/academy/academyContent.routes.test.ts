@@ -4,6 +4,7 @@ import { afterEach, test } from "node:test";
 import express from "express";
 import { registerAcademyRoutes } from "../routes/academy.routes";
 import { __setAcademyAccessResolverForTests } from "./academyContentService";
+import { getMemberContentLessonCount } from "./memberContent";
 import { __setSaasAuthResolverForTests } from "../middleware/saasAuth";
 
 const fixturePath = "/api/academy/lessons/execution-and-risk/execution-and-risk-20-aggressive-vs-confirmed-entry/content";
@@ -55,7 +56,7 @@ test("Academy Member content returns the harmless fixture after canonical access
   assert.equal(result.status, 200);
   const body = JSON.parse(result.body);
   assert.equal(body.lessonId, "course-02-execution-and-risk-module-04-lesson-01");
-  assert.match(body.content[0].text, /Contenido Member/);
+  assert.match(body.content[0].text, /Agresiva frente a confirmada/);
   assert.equal(result.cacheControl, "private, no-store");
 });
 
@@ -70,5 +71,27 @@ test("Academy Member content returns safe 404 for invalid, missing, or FREE rout
   ]) {
     const result = await request(path);
     assert.equal(result.status, 404, path);
+  }
+});
+
+
+test("Execution & Risk Member registry serves lessons 20 through 26", async () => {
+  assert.equal(getMemberContentLessonCount(), 7);
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  const slugs = [
+    "aggressive-vs-confirmed-entry",
+    "choosing-invalidation",
+    "limit-vs-market-in-context",
+    "partial-management",
+    "when-not-to-move-to-break-even",
+    "managing-around-liquidity",
+    "execution-replay",
+  ];
+  for (let index = 0; index < slugs.length; index += 1) {
+    const lessonNumber = index + 20;
+    const result = await request(`/api/academy/lessons/execution-and-risk/execution-and-risk-${lessonNumber}-${slugs[index]}/content`);
+    assert.equal(result.status, 200, `lesson ${lessonNumber}`);
+    assert.ok(JSON.parse(result.body).content.length > 0);
   }
 });

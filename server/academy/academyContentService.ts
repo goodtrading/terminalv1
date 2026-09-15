@@ -4,10 +4,13 @@ import { getMemberContentByLessonId } from "./memberContent";
 import type { AcademyMemberContentResponse } from "@shared/academy-content";
 
 const MEMBER_ROUTE_INDEX: ReadonlyMap<string, { lessonId: string }> = new Map([
-  [
-    "execution-and-risk/execution-and-risk-20-aggressive-vs-confirmed-entry",
-    { lessonId: "course-02-execution-and-risk-module-04-lesson-01" },
-  ],
+  ["execution-and-risk/execution-and-risk-20-aggressive-vs-confirmed-entry", { lessonId: "course-02-execution-and-risk-module-04-lesson-01" }],
+  ["execution-and-risk/execution-and-risk-21-choosing-invalidation", { lessonId: "course-02-execution-and-risk-module-04-lesson-02" }],
+  ["execution-and-risk/execution-and-risk-22-limit-vs-market-in-context", { lessonId: "course-02-execution-and-risk-module-04-lesson-03" }],
+  ["execution-and-risk/execution-and-risk-23-partial-management", { lessonId: "course-02-execution-and-risk-module-04-lesson-04" }],
+  ["execution-and-risk/execution-and-risk-24-when-not-to-move-to-break-even", { lessonId: "course-02-execution-and-risk-module-04-lesson-05" }],
+  ["execution-and-risk/execution-and-risk-25-managing-around-liquidity", { lessonId: "course-02-execution-and-risk-module-04-lesson-06" }],
+  ["execution-and-risk/execution-and-risk-26-execution-replay", { lessonId: "course-02-execution-and-risk-module-04-lesson-07" }],
 ]);
 
 type AccessResolver = (userId: number) => Promise<AccessSnapshot>;

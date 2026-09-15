@@ -17,6 +17,7 @@ import type { AcademyContentBlock } from "@shared/academy-content";
 import { TERMINAL_QUICKSTART_CONTENT } from "@/academy/content/terminalQuickstart";
 import { MARKET_MECHANICS_CONTENT } from "@/academy/content/marketMechanics";
 import { OPTIONS_FOUNDATIONS_CONTENT } from "@/academy/content/optionsFoundations";
+import { EXECUTION_AND_RISK_CONTENT } from "@/academy/content/executionAndRisk";
 
 export type AcademyLesson = {
   id: string;
@@ -365,7 +366,8 @@ const editorialCatalog = ACADEMY_METADATA_CATALOG.map((course) => ({
       const content =
         TERMINAL_QUICKSTART_CONTENT[lesson.slug] ??
         MARKET_MECHANICS_CONTENT[lesson.slug] ??
-        OPTIONS_FOUNDATIONS_CONTENT[lesson.slug];
+        OPTIONS_FOUNDATIONS_CONTENT[lesson.slug] ??
+        EXECUTION_AND_RISK_CONTENT[lesson.slug];
       return content ? { ...lesson, content } : lesson;
     }),
   })),
