@@ -9,6 +9,14 @@ import {
   type PaperExecutionAvailability,
 } from "@/lib/paperExecutionPort";
 import {
+  assertPaperOwnerCurrent,
+  bindPaperOwner,
+  capturePaperOwner,
+  enablePaperOwnershipEnforcement,
+  getPaperOwner,
+  invalidatePaperOwner,
+} from "./paperOwnerContext";
+import {
   EXECUTION_WORKSPACE_CHANGED_EVENT,
   getExecutionWorkspace,
   subscribeExecutionWorkspace,
@@ -59,6 +67,7 @@ type PaperRuntime = {
   backend: PaperExecutionBackend;
   authReady: boolean;
   authenticated: boolean;
+  authenticatedUserId?: number | null;
 };
 
 type PaperFetcher = (path: string, init?: RequestInit) => Promise<Response>;
@@ -118,7 +127,9 @@ export class PaperStateController {
     backend: "legacy",
     authReady: false,
     authenticated: false,
+    authenticatedUserId: null,
   };
+  private ownerTransition: Promise<void> | null = null;
   private listeners = new Set<() => void>();
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private fetcher: PaperFetcher;
@@ -174,75 +185,94 @@ export class PaperStateController {
   };
 
   setRuntime(runtime: PaperRuntime): void {
+    enablePaperOwnershipEnforcement();
+    const previous = this.runtime;
     const changed =
-      this.runtime.workspace !== runtime.workspace ||
-      this.runtime.backend !== runtime.backend ||
-      this.runtime.authReady !== runtime.authReady ||
-      this.runtime.authenticated !== runtime.authenticated;
+      previous.workspace !== runtime.workspace ||
+      previous.backend !== runtime.backend ||
+      previous.authReady !== runtime.authReady ||
+      previous.authenticated !== runtime.authenticated ||
+      previous.authenticatedUserId !== runtime.authenticatedUserId;
     this.runtime = runtime;
-    if (!changed) {
-      if (runtime.workspace === "paper" && runtime.backend === "nautilus") {
-        if (runtime.authReady && runtime.authenticated && getPaperExecutionPortState().availability === "AVAILABLE") {
-          this.startNautilusTimers();
-        } else {
-          this.stopTimers();
-        }
+    const eligible =
+      runtime.workspace === "paper" &&
+      runtime.backend === "nautilus" &&
+      runtime.authReady &&
+      runtime.authenticated &&
+      Number.isSafeInteger(runtime.authenticatedUserId) &&
+      (runtime.authenticatedUserId ?? 0) > 0;
+    const owner = getPaperOwner();
+    const ownerChanged = owner != null && owner.userId !== runtime.authenticatedUserId;
+    const ownerInvalidated = owner != null && !eligible;
+
+    if (!changed && eligible && owner?.userId === runtime.authenticatedUserId) {
+      if (!this.ownerTransition && getPaperExecutionPortState().availability === "AVAILABLE") {
+        this.startNautilusTimers();
+      } else {
+        this.stopTimers();
       }
       return;
     }
 
-    this.stopTimers();
+    if (ownerChanged || ownerInvalidated || (!eligible && owner != null)) {
+      invalidatePaperOwner();
+      this.stopTimers();
+      this.clearVisibleState();
+      const requiresNativeBarrier = owner != null && previous.backend === "nautilus";
+      if (requiresNativeBarrier) {
+        this.ownerTransition = paperExecutionPort.deactivateNautilus()
+          .then((result) => {
+            if (result.availability !== "UNAVAILABLE") {
+              throw new Error("BLOCKED_NATIVE_RUNTIME_RESET_BARRIER");
+            }
+          })
+          .finally(() => { this.ownerTransition = null; });
+        void this.ownerTransition.catch(() => undefined);
+      }
+    } else {
+      this.stopTimers();
+    }
+
     if (runtime.workspace !== "paper") {
       this.setState({ active: false, loading: false, error: null });
       return;
     }
     if (runtime.backend === "nautilus") {
-      const portState = getPaperExecutionPortState();
-      this.setState({
-        active: true,
-        backend: "nautilus",
-        source: "nautilus",
-        availability: portState.availability === "AVAILABLE" ? "PARTIAL" : "NOT_WIRED",
-        loading: false,
-        error: null,
-        account: undefined,
-        position: null,
-        orders: [],
-        settings: undefined,
-        trades: [],
-        fills: [],
-        resources: {
-          account: portState.availability === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
-          position: portState.availability === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
-          orders: portState.availability === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
-          trades: "NOT_WIRED",
-          fills: portState.availability === "AVAILABLE" ? "AVAILABLE" : "UNAVAILABLE",
-          settings: "NOT_WIRED",
-        },
-      });
-      if (runtime.authReady && runtime.authenticated && portState.availability === "AVAILABLE") {
-        this.startNautilusTimers();
+      this.setState({ active: true, backend: "nautilus", source: "nautilus", availability: "NOT_WIRED", loading: false, error: null });
+      if (eligible) {
+        const bind = async (): Promise<void> => {
+          try {
+            if (this.ownerTransition) await this.ownerTransition;
+          } catch (error) {
+            this.setState({ availability: "UNAVAILABLE", loading: false, error: error instanceof Error ? error : new Error(String(error)) });
+            return;
+          }
+          if (this.runtime !== runtime && !this.runtimeMatches(runtime)) return;
+          bindPaperOwner(runtime.authenticatedUserId as number);
+          const portState = getPaperExecutionPortState();
+          if (portState.availability === "AVAILABLE") this.startNautilusTimers();
+        };
+        void bind();
       }
       return;
     }
-    this.setState({
-      active: true,
-      backend: "legacy",
-      source: "legacy",
-      availability: "AVAILABLE",
-      resources: {
-        account: "AVAILABLE",
-        position: "AVAILABLE",
-        orders: "AVAILABLE",
-        trades: "AVAILABLE",
-        fills: "AVAILABLE",
-        settings: "AVAILABLE",
-      },
-    });
+    this.setState({ active: true, backend: "legacy", source: "legacy", availability: "AVAILABLE", resources: { account: "AVAILABLE", position: "AVAILABLE", orders: "AVAILABLE", trades: "AVAILABLE", fills: "AVAILABLE", settings: "AVAILABLE" } });
     if (runtime.authReady && runtime.authenticated) {
       this.startTimers();
       void this.refresh();
     }
+  }
+
+  private runtimeMatches(runtime: PaperRuntime): boolean {
+    return this.runtime.workspace === runtime.workspace &&
+      this.runtime.backend === runtime.backend &&
+      this.runtime.authReady === runtime.authReady &&
+      this.runtime.authenticated === runtime.authenticated &&
+      this.runtime.authenticatedUserId === runtime.authenticatedUserId;
+  }
+
+  private clearVisibleState(): void {
+    this.setState({ account: undefined, position: null, orders: [], trades: [], fills: [], loading: false, lastUpdatedAt: null, error: null });
   }
 
   async refresh(): Promise<void> {
@@ -252,6 +282,7 @@ export class PaperStateController {
     }
     if (this.runtime.backend === "nautilus") {
       if (!this.runtime.authReady || !this.runtime.authenticated) return;
+      if (!getPaperOwner()) return;
       if (this.refreshInFlight) {
         if (import.meta.env?.DEV) console.debug("[PAPERSTATE_REFRESH_SKIPPED]", { reason: "in_flight" });
         return this.refreshInFlight;
@@ -331,6 +362,8 @@ export class PaperStateController {
   }
 
   private async refreshNautilus(): Promise<void> {
+    const owner = capturePaperOwner();
+    assertPaperOwnerCurrent(owner);
     this.debug.refreshStartCount += 1;
     this.debug.lastRefreshStartAt = Date.now();
     this.debug.lastRefreshError = null;
@@ -365,6 +398,11 @@ export class PaperStateController {
         orders: ordersResult.status,
         fills: fillsResult.status,
       });
+    }
+    try {
+      assertPaperOwnerCurrent(owner);
+    } catch {
+      return;
     }
     this.debug.refreshEndCount += 1;
     this.debug.lastRefreshEndAt = Date.now();
@@ -447,7 +485,7 @@ if (import.meta.hot) {
 }
 
 export function usePaperState(): PaperState {
-  const { authReady, authenticated } = useTerminalAuth();
+  const { authReady, authenticated, user } = useTerminalAuth();
   const workspace = useSyncExternalStore(
     subscribeExecutionWorkspace,
     getExecutionWorkspace,
@@ -476,8 +514,8 @@ export function usePaperState(): PaperState {
   );
 
   useEffect(() => {
-    paperStateController.setRuntime({ workspace, backend, authReady, authenticated });
-  }, [workspace, backend, authReady, authenticated, portAvailability]);
+    paperStateController.setRuntime({ workspace, backend, authReady, authenticated, authenticatedUserId: user?.id ?? null });
+  }, [workspace, backend, authReady, authenticated, user?.id, portAvailability]);
 
   useEffect(() => {
     const refreshOnNativeStateChange = () => {

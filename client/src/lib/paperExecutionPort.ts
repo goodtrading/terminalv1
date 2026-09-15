@@ -1,4 +1,5 @@
 import { isDesktopApp } from "./desktopRuntime";
+import { assertPaperOwnerCurrent, capturePaperOwner } from "./paperOwnerContext";
 import {
   PAPER_EXECUTION_STATE_CHANGED_EVENT,
   getPaperExecutionBackend as getSelectedPaperExecutionBackend,
@@ -848,6 +849,7 @@ export const paperExecutionPort: PaperExecutionPort = {
   },
   async submitOrder(input: PaperExecutionPortOrderRequest, deps?: PaperExecutionPortDependencies): Promise<unknown> {
     const context = resolveContext(deps);
+    const owner = !isLegacyBackend() ? capturePaperOwner() : null;
     if (isLegacyBackend()) {
       return legacyOrderResponse<unknown>(context, "/api/paper/order", input as Record<string, unknown>);
     }
@@ -864,6 +866,7 @@ export const paperExecutionPort: PaperExecutionPort = {
     }
 
     if (input.orderType === "limit") {
+      if (owner) assertPaperOwnerCurrent(owner);
       return context.simulation.submitOrder(toNautilusOrderIntent(input, deps));
     }
 
@@ -876,6 +879,7 @@ export const paperExecutionPort: PaperExecutionPort = {
     });
 
     try {
+      if (owner) assertPaperOwnerCurrent(owner);
       return await marketAdapter.submitMarketOrder(toNautilusBackendState(), toNautilusMarketIntent(input, deps));
     } catch (error) {
       if (error instanceof PaperExecutionPortError) {
@@ -886,9 +890,11 @@ export const paperExecutionPort: PaperExecutionPort = {
   },
   async closePosition(input, deps): Promise<PaperOrderSnapshot> {
     const context = resolveContext(deps);
+    const owner = !isLegacyBackend() ? capturePaperOwner() : null;
     if (isLegacyBackend()) throw buildError("BACKEND_NOT_AVAILABLE", "Canonical close requires Nautilus.");
     if (!context.runtime.isDesktopApp()) throw ensureNautilusSelected(context.runtime);
     try {
+      if (owner) assertPaperOwnerCurrent(owner);
       return mapNautilusOrder(await context.simulation.closePosition(input.instrument, input.quantity));
     } catch (error) {
       throw error instanceof PaperExecutionPortError ? error : buildError("NAUTILUS_BACKEND_NOT_READY", error instanceof Error ? `Nautilus close failed: ${error.message}` : "Nautilus close failed.", error);
@@ -896,8 +902,10 @@ export const paperExecutionPort: PaperExecutionPort = {
   },
   async cancelOrder(clientOrderId: string, deps?: PaperExecutionPortDependencies): Promise<unknown> {
     const context = resolveContext(deps);
+    const owner = !isLegacyBackend() ? capturePaperOwner() : null;
     if (!isLegacyBackend()) {
       if (!context.runtime.isDesktopApp()) throw ensureNautilusSelected(context.runtime);
+      if (owner) assertPaperOwnerCurrent(owner);
       return context.simulation.cancelOrder(clientOrderId);
     }
     return legacyOrderResponse<unknown>(
@@ -908,6 +916,7 @@ export const paperExecutionPort: PaperExecutionPort = {
   },
   async amendOrder(input: PaperOrderAmendRequest, deps?: PaperExecutionPortDependencies): Promise<PaperOrderAmendResult> {
     const context = resolveContext(deps);
+    const owner = !isLegacyBackend() ? capturePaperOwner() : null;
     if (isLegacyBackend()) throw buildError("BACKEND_NOT_AVAILABLE", "Paper order amend requires Nautilus.");
     if (!context.runtime.isDesktopApp()) throw ensureNautilusSelected(context.runtime);
     const replacementPrice = input.triggerPrice ?? input.limitPrice;
@@ -922,6 +931,7 @@ export const paperExecutionPort: PaperExecutionPort = {
     }
     const replacementClientOrderId = deps?.clientOrderIdFactory?.() || defaultClientOrderIdFactory();
     try {
+      if (owner) assertPaperOwnerCurrent(owner);
       const result = await context.simulation.replaceOrder(order.clientOrderId, replacementClientOrderId, String(replacementPrice));
       return { operation: "CANCEL_REPLACE", originalOrder: mapNautilusOrder(result.originalOrder), replacementOrder: mapNautilusOrder(result.replacementOrder) };
     } catch (error) {
@@ -932,6 +942,7 @@ export const paperExecutionPort: PaperExecutionPort = {
   },
   async submitProtectiveOrder(input: PaperProtectiveOrderRequest, deps?: PaperExecutionPortDependencies): Promise<PaperOrderSnapshot> {
     const context = resolveContext(deps);
+    const owner = !isLegacyBackend() ? capturePaperOwner() : null;
     if (isLegacyBackend()) throw buildError("BACKEND_NOT_AVAILABLE", "Protective orders require Nautilus.");
     if (!context.runtime.isDesktopApp()) throw ensureNautilusSelected(context.runtime);
     if (!input.clientOrderId.trim() || !Number.isFinite(input.price) || input.price <= 0) {
@@ -946,6 +957,7 @@ export const paperExecutionPort: PaperExecutionPort = {
       throw buildError("ORDER_TYPE_NOT_ENABLED", "Protective quantity must not exceed the open position.");
     }
     const orderType = input.protectionType === "STOP_LOSS" ? "STOP_MARKET" as const : "LIMIT" as const;
+    if (owner) assertPaperOwnerCurrent(owner);
     const wire = await context.simulation.submitOrder({
       clientOrderId: input.clientOrderId,
       instrument: position.instrument,
@@ -962,9 +974,11 @@ export const paperExecutionPort: PaperExecutionPort = {
   },
   async getAccount(deps?: PaperExecutionPortDependencies): Promise<PaperAccountSnapshot> {
     const context = resolveContext(deps);
+    const owner = !isLegacyBackend() ? capturePaperOwner() : null;
     if (!isLegacyBackend()) {
       if (!context.runtime.isDesktopApp()) throw ensureNautilusSelected(context.runtime);
       try {
+        if (owner) assertPaperOwnerCurrent(owner);
         return mapNautilusAccount(await context.simulation.getAccount());
       } catch (error) {
         throw error instanceof PaperExecutionPortError
@@ -976,9 +990,11 @@ export const paperExecutionPort: PaperExecutionPort = {
   },
   async getPosition(deps?: PaperExecutionPortDependencies): Promise<PaperPositionSnapshot | null> {
     const context = resolveContext(deps);
+    const owner = !isLegacyBackend() ? capturePaperOwner() : null;
     if (!isLegacyBackend()) {
       if (!context.runtime.isDesktopApp()) throw ensureNautilusSelected(context.runtime);
       try {
+        if (owner) assertPaperOwnerCurrent(owner);
         return mapNautilusPosition(await context.simulation.getPosition());
       } catch (error) {
         throw error instanceof PaperExecutionPortError
@@ -991,9 +1007,11 @@ export const paperExecutionPort: PaperExecutionPort = {
   },
   async getOrders(deps?: PaperExecutionPortDependencies): Promise<PaperOrderSnapshot[]> {
     const context = resolveContext(deps);
+    const owner = !isLegacyBackend() ? capturePaperOwner() : null;
     if (!isLegacyBackend()) {
       if (!context.runtime.isDesktopApp()) throw ensureNautilusSelected(context.runtime);
       try {
+        if (owner) assertPaperOwnerCurrent(owner);
         return (await context.simulation.listOrders()).map(mapNautilusOrder);
       } catch (error) {
         throw error instanceof PaperExecutionPortError
@@ -1006,9 +1024,11 @@ export const paperExecutionPort: PaperExecutionPort = {
   },
   async getFills(deps?: PaperExecutionPortDependencies): Promise<PaperFillSnapshot[]> {
     const context = resolveContext(deps);
+    const owner = !isLegacyBackend() ? capturePaperOwner() : null;
     if (!isLegacyBackend()) {
       if (!context.runtime.isDesktopApp()) throw ensureNautilusSelected(context.runtime);
       try {
+        if (owner) assertPaperOwnerCurrent(owner);
         return (await context.simulation.listFills()).map(mapNautilusFill);
       } catch (error) {
         throw error instanceof PaperExecutionPortError

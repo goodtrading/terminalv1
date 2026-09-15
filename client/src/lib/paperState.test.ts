@@ -24,6 +24,7 @@ const legacyRuntime = {
   backend: "legacy" as const,
   authReady: true,
   authenticated: true,
+  authenticatedUserId: 101,
 };
 
 test.beforeEach(() => {
@@ -280,7 +281,17 @@ test("Nautilus lifecycle reconciles availability, transitions, and repeated runt
   controller.setRuntime(legacyRuntime);
   await controller.refresh();
   assert.equal(controller.getDebugSnapshot().timerExists, false);
+  await activateNautilusPaperBackend({
+    runtime: { isDesktopApp: () => true },
+    engine: {
+      start: async () => ({ state: "HEALTHY" }), status: async () => ({ state: "HEALTHY" }),
+      version: async () => ({ protocolVersion: 1, nautilusVersion: "1.231.0", pythonVersion: "3.12.10", pid: 1 }),
+      ping: async () => ({ pong: true }),
+    } as never,
+    simulation: { start: async () => ({ state: "RUNNING" }), status: async () => ({ state: "RUNNING" }) } as never,
+  });
   controller.setRuntime(runtime);
+  await new Promise<void>((resolve) => setImmediate(resolve));
   await controller.refresh();
   assert.equal(controller.getDebugSnapshot().timerExists, true, "legacy to available Nautilus starts timer");
   const before = controller.getDebugSnapshot().tickCount;
