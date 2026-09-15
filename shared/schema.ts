@@ -334,6 +334,17 @@ export const payments = pgTable("saas_payments", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+/** Broker-agnostic logical trading identity, distinct from users.id. */
+export const goodTradingAccounts = pgTable("goodtrading_accounts", {
+  id: serial("id").primaryKey(),
+  accountUid: text("account_uid").notNull().unique(),
+  userId: integer("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
 export type Subscription = typeof subscriptions.$inferSelect;

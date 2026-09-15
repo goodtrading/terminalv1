@@ -7,4 +7,5 @@ export {
   subscriptionPlans,
   subscriptions,
   payments,
+  goodTradingAccounts,
 } from "./schema";
