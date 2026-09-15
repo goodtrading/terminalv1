@@ -19,6 +19,7 @@ import { registerCriticalCalibrationRoutes } from "./routes/criticalCalibration.
 import { registerKnowledgeDistillationRoutes } from "./routes/knowledgeDistillation.routes";
 import { registerKnowledgeEvolutionRoutes } from "./routes/knowledgeEvolution.routes";
 import { registerKnowledgeProvenanceRoutes } from "./routes/knowledgeProvenance.routes";
+import { registerAccountContextRoutes } from "./routes/accountContext.routes";
 import { isGoodTradingAiEnabled } from "./ai/goodTradingAi/features";
 import { isGoodTradingAiCalibrationEnabled } from "./ai/goodTradingAi/calibration/features";
 import { processVacuumDetection, type VacuumEvent, type VacuumState } from "./engine/liquidityVacuum";
@@ -336,6 +337,7 @@ export async function registerRoutes(
   registerCriticalCalibrationRoutes(app);
   registerKnowledgeDistillationRoutes(app);
   registerKnowledgeEvolutionRoutes(app);
+  registerAccountContextRoutes(app);
   registerKnowledgeProvenanceRoutes(app);
   registerOrderFlowStateRoute(app);
 

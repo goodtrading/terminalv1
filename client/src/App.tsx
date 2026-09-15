@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { LearnModeProvider } from "@/hooks/useLearnMode";
 import { TerminalAuthProvider } from "@/contexts/TerminalAuthContext";
+import { GoodTradingAccountProvider } from "@/contexts/GoodTradingAccountContext";
 import { initDesktopStorage, isDesktopBuild, writeDesktopLog } from "@/lib/desktopStorage";
 import { initCandleHistoryStore } from "@/lib/candleHistoryCache";
 import { isDesktopApp } from "@/lib/desktopRuntime";
@@ -35,15 +36,17 @@ function App() {
       <DesktopUpdateProvider>
         <DesktopUpdateStartup />
         <TerminalAuthProvider>
-          <TooltipProvider>
-            <LearnModeProvider>
-              <Toaster />
-              <DesktopAppErrorBoundary>
-                <AppRouter />
-              </DesktopAppErrorBoundary>
-              <DesktopUpdateModal />
-            </LearnModeProvider>
-          </TooltipProvider>
+          <GoodTradingAccountProvider>
+            <TooltipProvider>
+              <LearnModeProvider>
+                <Toaster />
+                <DesktopAppErrorBoundary>
+                  <AppRouter />
+                </DesktopAppErrorBoundary>
+                <DesktopUpdateModal />
+              </LearnModeProvider>
+            </TooltipProvider>
+          </GoodTradingAccountProvider>
         </TerminalAuthProvider>
       </DesktopUpdateProvider>
     </QueryClientProvider>
