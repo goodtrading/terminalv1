@@ -1,4 +1,4 @@
-import type { AcademyContentBlock } from "@/academy/catalog";
+import type { AcademyContentBlock } from "@shared/academy-content";
 
 export const OPTIONS_FOUNDATIONS_CONTENT: Record<string, AcademyContentBlock[]> = {
   "options-foundations-01-what-is-an-option": [

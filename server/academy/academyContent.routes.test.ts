@@ -1,0 +1,74 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { afterEach, test } from "node:test";
+import express from "express";
+import { registerAcademyRoutes } from "../routes/academy.routes";
+import { __setAcademyAccessResolverForTests } from "./academyContentService";
+import { __setSaasAuthResolverForTests } from "../middleware/saasAuth";
+
+const fixturePath = "/api/academy/lessons/execution-and-risk/execution-and-risk-20-aggressive-vs-confirmed-entry/content";
+
+async function request(path: string): Promise<{ status: number; body: any; cacheControl: string | null }> {
+  const app = express();
+  app.use(express.json());
+  registerAcademyRoutes(app);
+  const server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}${path}`);
+    return {
+      status: response.status,
+      body: await response.text(),
+      cacheControl: response.headers.get("cache-control"),
+    };
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+afterEach(() => {
+  __setSaasAuthResolverForTests(null);
+  __setAcademyAccessResolverForTests(null);
+});
+
+test("Academy Member content denies signed-out requests", async () => {
+  __setSaasAuthResolverForTests(() => null);
+  const result = await request(fixturePath);
+  assert.equal(result.status, 401);
+  assert.equal(JSON.parse(result.body).error, "UNAUTHORIZED");
+});
+
+test("Academy Member content denies authenticated users without entitlement", async () => {
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: false, reason: "no_subscription" }));
+  const result = await request(fixturePath);
+  assert.equal(result.status, 403);
+  assert.equal(JSON.parse(result.body).error, "SUBSCRIPTION_REQUIRED");
+});
+
+test("Academy Member content returns the harmless fixture after canonical access allows it", async () => {
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true, reason: undefined }));
+  const result = await request(fixturePath);
+  assert.equal(result.status, 200);
+  const body = JSON.parse(result.body);
+  assert.equal(body.lessonId, "course-02-execution-and-risk-module-04-lesson-01");
+  assert.match(body.content[0].text, /Contenido Member/);
+  assert.equal(result.cacheControl, "private, no-store");
+});
+
+test("Academy Member content returns safe 404 for invalid, missing, or FREE routes", async () => {
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  for (const path of [
+    "/api/academy/lessons/not-a-course/not-a-lesson/content",
+    "/api/academy/lessons/execution-and-risk/execution-and-risk-01-market-entry/content",
+    "/api/academy/lessons/market-mechanics/market-mechanics-01-what-is-a-market/content",
+    "/api/academy/lessons/%2e%2e/execution-and-risk-20-aggressive-vs-confirmed-entry/content",
+  ]) {
+    const result = await request(path);
+    assert.equal(result.status, 404, path);
+  }
+});

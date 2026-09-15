@@ -11,11 +11,8 @@ export type AcademyTerminalTarget =
 export type AcademyLabType = "NONE" | "QUIZ" | "REPLAY" | "MARKET_SCAN";
 export type AcademyAccessSummary = AcademyAccess | "FREE + MEMBER";
 
-export type AcademyContentBlock =
-  | { type: "paragraph"; text: string }
-  | { type: "heading"; text: string; level?: 2 | 3 }
-  | { type: "list"; items: string[] }
-  | { type: "callout"; title?: string; text: string };
+export type { AcademyContentBlock } from "@shared/academy-content";
+import type { AcademyContentBlock } from "@shared/academy-content";
 
 import { TERMINAL_QUICKSTART_CONTENT } from "@/academy/content/terminalQuickstart";
 import { MARKET_MECHANICS_CONTENT } from "@/academy/content/marketMechanics";

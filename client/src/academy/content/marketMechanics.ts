@@ -1,4 +1,4 @@
-import type { AcademyContentBlock } from "@/academy/catalog";
+import type { AcademyContentBlock } from "@shared/academy-content";
 
 export const MARKET_MECHANICS_CONTENT: Record<string, AcademyContentBlock[]> = {
   "market-mechanics-01-what-is-a-market": [

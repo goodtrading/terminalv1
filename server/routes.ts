@@ -59,6 +59,7 @@ import {
 } from "./lib/runtimeEnv";
 import { fetchDeribitOptionsBook } from "./services/deribitOptionsBookService";
 import { buildDesktopUpdatePayload } from "./lib/desktopUpdateManifest";
+import { registerAcademyRoutes } from "./routes/academy.routes";
 
 // Debug flags to prevent event-loop blocking from log spam.
 // Keep these false by default; enable locally when diagnosing.
@@ -1702,6 +1703,7 @@ export async function registerRoutes(
   console.log("[routes] risk mirror registered");
   app.use("/api/paper", paperTradingRouter);
   app.use("/api/reports", reportsRouter);
+  registerAcademyRoutes(app);
 
   return httpServer;
 }

@@ -1,4 +1,4 @@
-import type { AcademyContentBlock } from "@/academy/catalog";
+import type { AcademyContentBlock } from "@shared/academy-content";
 
 export const TERMINAL_QUICKSTART_CONTENT: Record<string, AcademyContentBlock[]> = {
   "terminal-quickstart-01-welcome-to-goodtrading": [

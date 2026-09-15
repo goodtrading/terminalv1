@@ -175,10 +175,14 @@ export default function AcademyLessonPage() {
               <span>{course.title}</span>
             </div>
             <div className="mt-10">
-              <AcademyLessonAccessBoundary lesson={lesson}>
-                <AcademyContentRenderer blocks={lesson.content} />
+              <AcademyLessonAccessBoundary courseSlug={course.slug} lesson={lesson}>
+                {(blocks) => (
+                  <>
+                    <AcademyContentRenderer blocks={blocks} />
+                    <div className="mt-6"><AcademyLessonCompletion lessonId={lesson.id} /></div>
+                  </>
+                )}
               </AcademyLessonAccessBoundary>
-              {lesson.access === "FREE" ? <div className="mt-6"><AcademyLessonCompletion lessonId={lesson.id} /></div> : null}
             </div>
             <div className="mt-8"><LabSection lesson={lesson} /></div>
             <div className="mt-10"><LessonNavigation course={course} lesson={lesson} /></div>
