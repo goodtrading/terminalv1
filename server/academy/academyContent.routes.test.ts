@@ -77,7 +77,7 @@ test("Academy Member content returns safe 404 for invalid, missing, or FREE rout
 
 
 test("Execution & Risk Member registry serves lessons 20 through 26", async () => {
-  assert.equal(getMemberContentLessonCount(), 15);
+  assert.equal(getMemberContentLessonCount(), 21);
   __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   const slugs = [
@@ -103,6 +103,18 @@ test("Order Flow Member content serves lessons 25, 31, and 32", async () => {
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   for (const lesson of [[25, "absorption-context"], [31, "when-to-ignore-an-of-signal"], [32, "goodtrading-order-flow-replay-lab"]] as const) {
     const path = "/api/academy/lessons/order-flow-foundations/order-flow-foundations-" + lesson[0] + "-" + lesson[1] + "/content";
+    const result = await request(path);
+    assert.equal(result.status, 200, "lesson " + lesson[0]);
+    assert.ok(JSON.parse(result.body).content.length > 0);
+  }
+});
+
+
+test("Footprint Mastery Member content serves lessons 24, 26, and 29", async () => {
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  for (const lesson of [[24, "absorption-oi"], [26, "footprint-gamma"], [29, "footprint-replay-lab"]] as const) {
+    const path = "/api/academy/lessons/footprint-mastery/footprint-mastery-" + lesson[0] + "-" + lesson[1] + "/content";
     const result = await request(path);
     assert.equal(result.status, 200, "lesson " + lesson[0]);
     assert.ok(JSON.parse(result.body).content.length > 0);

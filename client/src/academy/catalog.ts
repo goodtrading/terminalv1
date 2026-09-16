@@ -19,6 +19,7 @@ import { MARKET_MECHANICS_CONTENT } from "@/academy/content/marketMechanics";
 import { OPTIONS_FOUNDATIONS_CONTENT } from "@/academy/content/optionsFoundations";
 import { EXECUTION_AND_RISK_CONTENT } from "@/academy/content/executionAndRisk";
 import { ORDER_FLOW_FOUNDATIONS_CONTENT } from "@/academy/content/orderFlowFoundations";
+import { FOOTPRINT_MASTERY_CONTENT } from "@/academy/content/footprintMastery";
 
 export type AcademyLesson = {
   id: string;
@@ -369,7 +370,8 @@ const editorialCatalog = ACADEMY_METADATA_CATALOG.map((course) => ({
         MARKET_MECHANICS_CONTENT[lesson.slug] ??
         OPTIONS_FOUNDATIONS_CONTENT[lesson.slug] ??
         EXECUTION_AND_RISK_CONTENT[lesson.slug] ??
-        ORDER_FLOW_FOUNDATIONS_CONTENT[lesson.slug];
+        ORDER_FLOW_FOUNDATIONS_CONTENT[lesson.slug] ??
+        FOOTPRINT_MASTERY_CONTENT[lesson.slug];
       return content ? { ...lesson, content } : lesson;
     }),
   })),

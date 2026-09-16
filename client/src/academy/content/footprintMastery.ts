@@ -1,0 +1,142 @@
+import type { AcademyContentBlock } from "@shared/academy-content";
+
+export const FOOTPRINT_MASTERY_CONTENT: Record<string, AcademyContentBlock[]> = {
+  "footprint-mastery-01-how-to-read-a-footprint": [
+    { type: "heading", level: 2, text: "Una vela organizada por precio" },
+    { type: "paragraph", text: "Un Footprint descompone una barra en niveles de precio y muestra el volumen que se ejecutó en cada uno. En lugar de ver solo apertura, máximo, mínimo y cierre, puedes observar cómo se distribuyeron las transacciones entre Bid y Ask." },
+    { type: "list", items: ["Cada nivel agrupa ejecuciones al tick efectivo.", "Bid y Ask representan lados de ejecución, no identidades.", "La barra resume transacciones completadas.", "El libro resting y la intención privada no aparecen completos en el Footprint."] },
+    { type: "callout", title: "Punto de partida", text: "Footprint muestra datos ejecutados organizados por precio. La interpretación necesita contexto y no revela directamente quién o por qué operó." },
+  ],
+  "footprint-mastery-02-bid-ask": [
+    { type: "heading", level: 2, text: "Bid × Ask" },
+    { type: "paragraph", text: "En la representación actual, Bid Volume corresponde a ejecuciones clasificadas contra el Bid y Ask Volume a ejecuciones clasificadas contra el Ask. Una venta agresiva suele ejecutarse contra el Bid; una compra agresiva suele ejecutarse contra el Ask." },
+    { type: "paragraph", text: "La implementación organiza los niveles por precio descendente y el renderer pinta el volumen Bid a la izquierda y Ask a la derecha cuando muestra los números. La orientación visual no cambia el significado de la ejecución." },
+    { type: "callout", title: "No confundir", text: "Bid × Ask describe dónde se ejecutó el volumen. No identifica al participante ni garantiza qué hará el precio después." },
+  ],
+  "footprint-mastery-03-volume": [
+    { type: "heading", level: 2, text: "Volumen por nivel" },
+    { type: "paragraph", text: "Total Volume de un nivel es la suma de Bid Volume y Ask Volume. La barra agrega esos niveles en totalVolume y también conserva buyVolume y sellVolume para observar la composición de la ejecución." },
+    { type: "list", items: ["Volumen alto indica concentración de transacciones.", "La concentración puede aparecer en uno o varios niveles.", "Executed Volume no es lo mismo que liquidez resting.", "Volumen alto no es inherentemente bullish ni bearish."] },
+    { type: "callout", title: "Lectura", text: "Primero describe dónde se ejecutó el volumen; solo después estudia cómo respondió el precio." },
+  ],
+  "footprint-mastery-04-delta": [
+    { type: "heading", level: 2, text: "Delta en cada nivel" },
+    { type: "paragraph", text: "La convención del Footprint actual es Delta = Ask Volume − Bid Volume. En cada nivel, un Delta positivo significa más ejecución contra Ask; un Delta negativo significa más ejecución contra Bid." },
+    { type: "list", items: ["Delta positivo: mayor ejecución compradora agresiva.", "Delta negativo: mayor ejecución vendedora agresiva.", "Delta cercano a cero: interacción más equilibrada.", "El signo no predice automáticamente la dirección del precio."] },
+    { type: "callout", title: "Convención comprobada", text: "buildFootprintBars.ts calcula level.delta como askVolume − bidVolume. No mezcles esta convención con indicadores de otra fuente sin verificarla." },
+  ],
+  "footprint-mastery-05-candle-delta": [
+    { type: "heading", level: 2, text: "El Delta agregado de la barra" },
+    { type: "paragraph", text: "Candle Delta es el Delta neto de toda la barra: buyVolume − sellVolume, equivalente a Ask Volume − Bid Volume bajo la convención actual. deltaPct expresa ese resultado como proporción del volumen total." },
+    { type: "list", items: ["Delta positivo fuerte: predominio de ejecución contra Ask.", "Delta negativo fuerte: predominio de ejecución contra Bid.", "Delta cercano a cero: mayor equilibrio agregado.", "La comparación con progreso y aceptación del precio es indispensable."] },
+    { type: "callout", title: "Ejemplo", text: "Delta positivo grande con poco avance alcista describe algo distinto de Delta positivo grande con aceptación limpia más arriba. El número aislado no decide." },
+  ],
+  "footprint-mastery-06-bar-statistics": [
+    { type: "heading", level: 2, text: "Qué resume una barra" },
+    { type: "paragraph", text: "El modelo actual de Footprint conserva tiempo de apertura, niveles, POC, volumen total, buyVolume, sellVolume, Delta, Delta porcentual y flags de stacked imbalance. El renderer puede mostrar Delta, volumen total, POC y números Bid/Ask según el espacio disponible." },
+    { type: "list", items: ["POC: nivel con mayor volumen de la barra.", "Total Volume: suma de ejecuciones de sus niveles.", "Delta y DeltaPct: balance y proporción de ejecución.", "El modo visual cambia según ancho de vela, alto de fila y rango visible."] },
+    { type: "callout", title: "Alcance actual", text: "El modelo contiene campos para unfinished auction, absorption y exhaustion, pero el builder actual no los calcula a partir de los trades. No los presentes como detecciones activas del Terminal." },
+  ],
+  "footprint-mastery-07-bid-imbalance": [
+    { type: "heading", level: 2, text: "Imbalance del lado Bid" },
+    { type: "paragraph", text: "Un Bid Imbalance representa una dominancia inusual de ejecución contra Bid frente a la ejecución opuesta bajo la comparación configurada del Footprint. Conceptualmente señala concentración de agresión vendedora en un nivel." },
+    { type: "paragraph", text: "En la implementación actual, un nivel se marca sell cuando bid >= ask × imbalanceRatio y además supera un umbral mínimo de volumen. El preset ATAS_DARK_PRO usa imbalanceRatio 3 y minLevelVolumeBtc 0.25; el builder calcula su mínimo por volumen medio de niveles." },
+    { type: "callout", title: "Límite", text: "Bid Imbalance es evidencia de ejecución relativa. No implica automáticamente continuación bajista ni identifica al vendedor." },
+  ],
+  "footprint-mastery-08-ask-imbalance": [
+    { type: "heading", level: 2, text: "Imbalance del lado Ask" },
+    { type: "paragraph", text: "Un Ask Imbalance representa una dominancia inusual de ejecución contra Ask frente a la ejecución opuesta bajo la comparación configurada. Conceptualmente señala concentración de agresión compradora en un nivel." },
+    { type: "paragraph", text: "El builder marca buy cuando ask >= bid × imbalanceRatio y ask supera el mínimo de volumen. La comparación usa el ratio del config; no es una etiqueta direccional universal para todos los mercados." },
+    { type: "callout", title: "Límite", text: "Ask Imbalance describe una relación de volúmenes ejecutados. No convierte una celda verde en confirmación bullish automática." },
+  ],
+  "footprint-mastery-09-stacked-imbalance": [
+    { type: "heading", level: 2, text: "Varios niveles consecutivos" },
+    { type: "paragraph", text: "Stacked Imbalance ocurre cuando niveles adyacentes muestran imbalance del mismo lado. El builder actual considera una secuencia de al menos tres niveles consecutivos con la misma dirección y marca stackedBuyImbalance o stackedSellImbalance en la barra." },
+    { type: "list", items: ["La continuidad entre niveles aporta más estructura que una celda aislada.", "La secuencia debe existir en los niveles construidos y ordenados por precio.", "El flag pertenece a la barra, no es una predicción.", "La agresión concentrada puede ser absorbida o perder continuidad."] },
+    { type: "callout", title: "No automático", text: "Stacked imbalance es evidencia de concentración ejecutada; necesita ubicación y respuesta del precio para ser interpretable." },
+  ],
+  "footprint-mastery-10-diagonal-imbalance": [
+    { type: "heading", level: 2, text: "Comparar niveles vecinos" },
+    { type: "paragraph", text: "Diagonal Imbalance es un concepto de Footprint que compara volumen de lados opuestos en niveles de precio adyacentes, en lugar de mirar solo Bid y Ask del mismo nivel. La diagonal exacta depende de la convención del producto y del orden de comparación." },
+    { type: "paragraph", text: "El builder actual de GoodTrading compara ask y bid dentro del mismo FootprintLevel. No expone una función separada de diagonal imbalance ni un flag diagonal en FootprintLevel." },
+    { type: "callout", title: "Alcance", text: "La diagonal se estudia aquí como concepto educativo. El Terminal actual no debe describirse como detector automático de diagonal imbalance." },
+  ],
+  "footprint-mastery-11-single-imbalance": [
+    { type: "heading", level: 2, text: "Una celda aislada" },
+    { type: "paragraph", text: "Single Imbalance es una única celda cuyo volumen Bid o Ask supera la relación configurada frente al lado opuesto y el mínimo de volumen. Puede mostrar un burst local de agresión, pero una sola observación tiene poca información contextual." },
+    { type: "list", items: ["Revisa el nivel y la ubicación.", "Mira los niveles vecinos.", "Compara con el progreso del precio.", "Distingue ejecución real de cualquier liquidez que no se ejecutó."] },
+    { type: "callout", title: "Criterio", text: "Una celda aislada puede ser señal de actividad o ruido. El contexto decide cuánto peso merece." },
+  ],
+  "footprint-mastery-12-why-isolated-imbalances-matter-less": [
+    { type: "heading", level: 2, text: "La secuencia importa" },
+    { type: "paragraph", text: "Un imbalance aislado aporta menos contexto que una secuencia de imbalances, progreso del precio y respuesta en una ubicación relevante. El motivo no es que una celda sea inútil, sino que contiene menos evidencia sobre el proceso completo." },
+    { type: "list", items: ["Aislado: una comparación local.", "Stacked: concentración en niveles consecutivos.", "Repetido: interacción que persiste a través del tiempo.", "Contextual: relación con estructura, liquidez y aceptación."] },
+    { type: "callout", title: "Sin scoring", text: "No sumes puntos mecánicos. Describe la evidencia, sus límites y la respuesta que realmente ocurrió." },
+  ],
+  "footprint-mastery-13-buyer-absorption": [
+    { type: "heading", level: 2, text: "Ventas agresivas absorbidas por compradores pasivos" },
+    { type: "paragraph", text: "En esta lesson, Buyer Absorption significa que aparecen ventas agresivas contra Bid, pero compradores pasivos absorben suficiente flujo para limitar el progreso bajista. El nombre puede variar entre plataformas; el mecanismo explícito es la referencia correcta." },
+    { type: "list", items: ["Existe ejecución vendedora.", "El precio progresa poco o no sostiene la caída.", "La oposición pasiva puede permanecer, reponerse o cambiar.", "No se identifica con certeza quién compró ni su intención."] },
+    { type: "callout", title: "Precisión", text: "Absorption no es simplemente volumen alto. Es agresión ejecutada más una respuesta de precio restringida." },
+  ],
+  "footprint-mastery-14-seller-absorption": [
+    { type: "heading", level: 2, text: "Compras agresivas absorbidas por vendedores pasivos" },
+    { type: "paragraph", text: "Seller Absorption significa que aparecen compras agresivas contra Ask, pero vendedores pasivos absorben suficiente flujo para limitar el progreso alcista. La etiqueta describe el lado pasivo inferido, no una identidad verificable." },
+    { type: "list", items: ["Existe ejecución compradora.", "El precio progresa poco o no sostiene el avance.", "La liquidez opuesta puede cambiar o desaparecer.", "La observación no garantiza una reversión."] },
+    { type: "callout", title: "Precisión", text: "La absorción se evalúa por la relación entre agresión y progreso, no por un color, una vela o un print aislado." },
+  ],
+  "footprint-mastery-15-repeated-absorption": [
+    { type: "heading", level: 2, text: "Absorción que se repite" },
+    { type: "paragraph", text: "Repeated Absorption describe varios tests alrededor de una zona en los que continúa la ejecución agresiva pero el precio avanza poco. La repetición añade dimensión temporal a la observación, aunque no convierte la zona en defensa infinita." },
+    { type: "list", items: ["Compara cada test con el anterior.", "Observa si la agresión aumenta o disminuye.", "Revisa si la liquidez permanece o se consume.", "Una nueva respuesta del precio puede invalidar la lectura anterior."] },
+    { type: "callout", title: "Evolución", text: "Repeated Absorption es una condición dinámica. Más tests no significan automáticamente más probabilidad de defensa." },
+  ],
+  "footprint-mastery-16-absorption-failure": [
+    { type: "heading", level: 2, text: "Cuando deja de sostener" },
+    { type: "paragraph", text: "Absorption Failure ocurre cuando un área que había limitado el progreso deja de hacerlo. La agresión puede persistir, la liquidez puede agotarse o modificarse y el precio puede comenzar a aceptar valores más allá del área." },
+    { type: "list", items: ["El test vuelve a encontrar la zona.", "La oposición ya no limita suficiente progreso.", "El precio atraviesa o se sostiene más allá.", "El fallo actualiza la observación; no demuestra que la lectura anterior fuera falsa."] },
+    { type: "callout", title: "Criterio", text: "Una observación histórica pierde vigencia cuando la respuesta actual del mercado cambia." },
+  ],
+  "footprint-mastery-17-delta-divergence": [
+    { type: "heading", level: 2, text: "Delta y progreso del precio" },
+    { type: "paragraph", text: "En Footprint, Delta Divergence compara el comportamiento del precio con el Delta de la barra o de sus niveles. Puede haber progreso con Delta decreciente o mucho Delta sin desplazamiento equivalente." },
+    { type: "list", items: ["Precio avanza mientras la agresión pierde intensidad.", "Delta grande aparece sin progreso proporcional.", "La liquidez pasiva puede explicar parte de la diferencia.", "La ventana de medición debe ser comparable."] },
+    { type: "callout", title: "Límite", text: "Divergencia es una observación de relación; no es una señal autónoma de reversión." },
+  ],
+  "footprint-mastery-18-trapped-traders": [
+    { type: "heading", level: 2, text: "Posicionamiento potencialmente vulnerable" },
+    { type: "paragraph", text: "Una condición potencialmente atrapada aparece cuando la agresión entra en una dirección, el precio no sostiene el progreso y vuelve contra el área donde esa participación pudo haberse concentrado. Es una inferencia de comportamiento." },
+    { type: "list", items: ["Se observa agresión direccional.", "El intento no consigue aceptación.", "El precio retorna a través del área.", "No conocemos cada stop, posición o intención individual."] },
+    { type: "callout", title: "Precisión", text: "Trapped Traders describe vulnerabilidad potencial inferida desde el flujo y el precio; no una lectura literal de las cuentas." },
+  ],
+  "footprint-mastery-19-initiative-buying": [
+    { type: "heading", level: 2, text: "Comprar y conseguir progreso" },
+    { type: "paragraph", text: "Initiative Buying describe agresión compradora que consigue desplazar la subasta hacia precios más altos y encuentra aceptación en el nuevo territorio. No todo Delta positivo alcanza esta condición." },
+    { type: "list", items: ["Hay ejecución contra Ask.", "El precio produce avance observable.", "La nueva zona recibe negociación sostenida.", "La liquidez, el tiempo y el contexto siguen importando."] },
+    { type: "callout", title: "Distinción", text: "Positive Delta sin progreso no es automáticamente Initiative Buying. La característica adicional es la respuesta efectiva del precio." },
+  ],
+  "footprint-mastery-20-initiative-selling": [
+    { type: "heading", level: 2, text: "Vender y conseguir progreso" },
+    { type: "paragraph", text: "Initiative Selling describe agresión vendedora que consigue descubrir precios más bajos y encuentra aceptación en el nuevo territorio. Negative Delta por sí solo no demuestra esta condición." },
+    { type: "list", items: ["Hay ejecución contra Bid.", "El precio produce avance bajista.", "La nueva zona recibe negociación sostenida.", "La aceptación debe distinguirse de un desplazamiento breve."] },
+    { type: "callout", title: "Distinción", text: "Negative Delta sin progreso puede ser absorción, ruido o una subasta equilibrada. No lo llames Initiative Selling automáticamente." },
+  ],
+  "footprint-mastery-21-exhaustion": [
+    { type: "heading", level: 2, text: "La agresión pierde intensidad" },
+    { type: "paragraph", text: "Desde la perspectiva del Footprint, Exhaustion describe una disminución de la participación agresiva cerca de un extremo o durante un intento de continuación. El rasgo principal es que el flujo agresivo se debilita." },
+    { type: "list", items: ["Absorption: la agresión sigue presente pero encuentra oposición.", "Exhaustion: la agresión misma disminuye.", "Una barra de poco volumen no prueba agotamiento.", "La respuesta posterior ayuda a evaluar la observación."] },
+    { type: "callout", title: "No confluir", text: "El modelo actual contiene un campo exhaustion, pero buildFootprintBars no lo calcula automáticamente. Esta lesson enseña el concepto, no una detección activa." },
+  ],
+  "footprint-mastery-22-poor-highs-lows": [
+    { type: "heading", level: 2, text: "Extremos con una subasta poco terminada" },
+    { type: "paragraph", text: "Poor High o Poor Low es un concepto de auction market que describe un extremo sin una terminación especialmente diferenciada bajo la convención de lectura utilizada. Su significado depende de datos, resolución y contexto del mercado." },
+    { type: "paragraph", text: "El tipo Footprint actual contiene flags unfinishedAuctionHigh y unfinishedAuctionLow, pero el builder no implementa cálculo de Poor Highs/Lows. Por eso el Terminal no debe describirse como detector automático de estos extremos." },
+    { type: "callout", title: "No prometer", text: "Un Poor High o Low no obliga al precio a volver. Es una descripción de subasta, no una predicción de revisit." },
+  ],
+  "footprint-mastery-23-unfinished-auctions": [
+    { type: "heading", level: 2, text: "Un extremo sin firma terminal completa" },
+    { type: "paragraph", text: "Unfinished Auction es un concepto que identifica un extremo donde la ejecución de ambos lados o la firma terminal esperada no permite considerar la subasta completamente terminada, según la convención elegida." },
+    { type: "paragraph", text: "El modelo de Footprint reserva los campos unfinishedAuctionHigh y unfinishedAuctionLow, pero buildFootprintBars los deja en false desde emptyBar y no los recalcula. En esta versión se enseña como concepto, no como marca activa del producto." },
+    { type: "callout", title: "Corrección importante", text: "Un Unfinished Auction no significa que el precio deba regresar. No conviertas una descripción de extremo en una regla futura." },
+  ],
+};

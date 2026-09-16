@@ -19,6 +19,12 @@ const MEMBER_ROUTE_INDEX: ReadonlyMap<string, { lessonId: string }> = new Map([
   ["order-flow-foundations/order-flow-foundations-30-continuation-vs-reversal", { lessonId: "course-03-order-flow-foundations-module-05-lesson-06" }],
   ["order-flow-foundations/order-flow-foundations-31-when-to-ignore-an-of-signal", { lessonId: "course-03-order-flow-foundations-module-05-lesson-07" }],
   ["order-flow-foundations/order-flow-foundations-32-goodtrading-order-flow-replay-lab", { lessonId: "course-03-order-flow-foundations-module-06-lesson-01" }],
+  ["footprint-mastery/footprint-mastery-24-absorption-oi", { lessonId: "course-04-footprint-mastery-module-05-lesson-01" }],
+  ["footprint-mastery/footprint-mastery-25-repeated-absorption-in-context", { lessonId: "course-04-footprint-mastery-module-05-lesson-02" }],
+  ["footprint-mastery/footprint-mastery-26-footprint-gamma", { lessonId: "course-04-footprint-mastery-module-05-lesson-03" }],
+  ["footprint-mastery/footprint-mastery-27-footprint-heatmap", { lessonId: "course-04-footprint-mastery-module-05-lesson-04" }],
+  ["footprint-mastery/footprint-mastery-28-trade-wait-framework", { lessonId: "course-04-footprint-mastery-module-05-lesson-05" }],
+  ["footprint-mastery/footprint-mastery-29-footprint-replay-lab", { lessonId: "course-04-footprint-mastery-module-05-lesson-06" }],
 ]);
 
 type AccessResolver = (userId: number) => Promise<AccessSnapshot>;
