@@ -9,6 +9,12 @@ import {
 } from "../orders/goodTradingOrderIntentRepository";
 import { LIVE_LIMIT_CONFIRMATION_TEXT } from "./liveOrderSubmitTypes";
 
+process.env.BINGX_READ_ONLY_FREEZE = "false";
+process.env.BINGX_ENABLE_LIVE_TRADING = "true";
+process.env.BINGX_ENABLE_API_TRADING = "true";
+process.env.BINGX_ENABLE_ORDER_SUBMIT = "true";
+process.env.BINGX_LIVE_LIMIT_TEST_MODE = "true";
+
 const describePostgres = pool ? describe : describe.skip;
 function makeObserverPool() {
   return new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1, connectionTimeoutMillis: 5000, statement_timeout: 5000 });
@@ -179,10 +185,7 @@ describePostgres("productive live submit durability integration", () => {
             const found = await getIntentByRequestIdempotencyKey(account, idemKey);
             return found;
           },
-          listIntentAttempts: async (intentId: string) => {
-            const r = await observer.query("SELECT id, intent_id, attempt_number, broker_client_order_id, submitted_quantity, transport_state, started_at, response_at, outcome_at, reconciliation_required_at, broker_order_id, raw_broker_status, http_status, error_code, error_class FROM goodtrading_order_submission_attempts WHERE intent_id = $1 ORDER BY attempt_number", [intentId]);
-            return r.rows.map((row) => ({ attemptId: String(row.id), intentId: String(row.intent_id), attemptNumber: Number(row.attempt_number), brokerClientOrderId: String(row.broker_client_order_id), submittedQuantity: row.submitted_quantity == null ? null : String(row.submitted_quantity), transportState: row.transport_state, startedAt: row.started_at, responseAt: row.response_at, outcomeAt: row.outcome_at, reconciliationRequiredAt: row.reconciliation_required_at, brokerOrderId: row.broker_order_id, rawBrokerStatus: row.raw_broker_status, httpStatus: row.http_status, errorCode: row.error_code, errorClass: row.error_class } as any));
-          },
+          listIntentAttempts: listAttemptsForIntent,
         }));
       };
       const first = await submit("FIRST_CALL");
