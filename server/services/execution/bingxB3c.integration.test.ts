@@ -4,6 +4,7 @@ import { pool } from "../../db";
 import { ensureGoodTradingAccountForUser } from "../accounts/goodTradingAccountRepository";
 import { createIntentWithInitialAttempt } from "../orders/goodTradingOrderIntentRepository";
 import {
+  completeReconciliationConflict,
   completeReconciliationMatched,
   completeReconciliationNoMatch,
   completeReconciliationUnresolved,
@@ -66,7 +67,7 @@ async function cleanup(f: Awaited<ReturnType<typeof fixture>>, extraAccounts: st
 }
 
 function observation(source: "OPEN_ORDERS" | "ORDER_HISTORY" | "FILL_HISTORY", clientOrderId?: string, status = "OPEN", brokerOrderId?: string): BrokerObservationSnapshot {
-  return { source, clientOrderId, brokerOrderId, brokerOrderIdPrecisionTrusted: !!brokerOrderId, symbol: "BTC-USDT", side: "BUY", quantity: "1", price: "65000", rawBrokerStatus: status, observedAt: new Date("2026-01-01T00:00:00Z") };
+  return { source, clientOrderId, brokerOrderId, brokerOrderIdPrecisionTrusted: !!brokerOrderId, symbol: "BTC-USDT", side: "BUY", quantity: "1", price: "65000", rawStatus: status, observedAt: new Date("2026-01-01T00:00:00Z") };
 }
 
 function readResult(observations: Awaited<ReturnType<typeof observation>>[], failed: "OPEN_ORDERS" | "ORDER_HISTORY" | "FILL_HISTORY" | null = null) {
@@ -247,6 +248,100 @@ suite("B3-C real PostgreSQL integration", () => {
       assert.equal(numeric.brokerOrderIdPrecisionTrusted, false);
       const result = await observeBingXBrokerObjects({ brokerAccountIdentity: f.accountUid, read: async () => readResult([numeric]) });
       assert.deepEqual(result, { scanned: 1, persisted: 0, deduped: 0, rejected: 1, insufficientIdentity: 1, knownGtMatches: 0, sourceFailures: [] });
+    } finally { await cleanup(f); }
+  });
+
+  it("persists an external OPEN to PARTIALLY_FILLED to FILLED snapshot sequence", { timeout: 120000 }, async () => {
+    const f = await fixture();
+    try {
+      for (const status of ["OPEN", "PARTIALLY_FILLED", "FILLED"] as const) {
+        const result = await observeBingXBrokerObjects({
+          brokerAccountIdentity: f.accountUid,
+          read: async () => readResult([observation("ORDER_HISTORY", `${f.client}-external`, status, "987654321012345678")]),
+        });
+        assert.equal(result.persisted, 1);
+      }
+      const row = await pool!.query("SELECT o.id,o.classification,count(s.id)::int AS snapshots,array_agg(s.raw_broker_status ORDER BY s.observed_at) AS statuses FROM goodtrading_broker_objects o JOIN goodtrading_broker_observation_snapshots s ON s.broker_object_id=o.id WHERE o.broker_account_identity=$1 GROUP BY o.id,o.classification", [f.accountUid]);
+      assert.equal(row.rows.length, 1);
+      assert.equal(row.rows[0].classification, "BROKER_OBSERVED_ONLY");
+      assert.equal(row.rows[0].snapshots, 3);
+      assert.deepEqual(row.rows[0].statuses, ["OPEN", "PARTIALLY_FILLED", "FILLED"]);
+    } finally { await cleanup(f); }
+  });
+
+  it("excludes a fresh SUBMISSION_STARTED attempt from real recovery candidates", { timeout: 120000 }, async () => {
+    const f = await fixture();
+    try {
+      await pool!.query("UPDATE goodtrading_order_submission_attempts SET transport_state='SUBMISSION_STARTED',started_at=$2 WHERE id=$1", [f.attemptId, new Date("2026-01-01T00:01:30Z")]);
+      const candidates = await listRecoveryCandidates(new Date("2026-01-01T00:00:30Z"), 25);
+      assert.equal(candidates.some(candidate => candidate.attemptId === f.attemptId), false);
+    } finally { await cleanup(f); }
+  });
+
+  it("directly recovers UNKNOWN_SUBMISSION_OUTCOME and RECONCILIATION_REQUIRED attempts", { timeout: 120000 }, async () => {
+    const fixtures = [await fixture(), await fixture()];
+    try {
+      await pool!.query("UPDATE goodtrading_order_submission_attempts SET transport_state='UNKNOWN_SUBMISSION_OUTCOME' WHERE id=$1", [fixtures[0].attemptId]);
+      const consumed: string[] = [];
+      const listCandidates = async (cutoff: Date, limit: number) => (await listRecoveryCandidates(cutoff, limit)).filter(candidate => fixtures.some(f => f.attemptId === candidate.attemptId));
+      const result = await runBingXCrashRecoverySweep({ now: new Date("2026-01-01T00:02:00Z"), listCandidates, consume: async (_user, uid) => { consumed.push(uid); return { status: "UNRESOLVED" as const }; } });
+      assert.equal(result.scanned, 2);
+      assert.equal(result.promoted, 1);
+      assert.equal(result.consumed, 2);
+      assert.deepEqual(new Set(consumed), new Set(fixtures.map(f => f.uid)));
+      const rows = await pool!.query("SELECT id,transport_state FROM goodtrading_order_submission_attempts WHERE id=ANY($1::text[]) ORDER BY id", [fixtures.map(f => f.attemptId)]);
+      assert.deepEqual(rows.rows.map(row => row.transport_state), ["RECONCILIATION_REQUIRED", "RECONCILIATION_REQUIRED"]);
+    } finally { await Promise.all(fixtures.map(f => cleanup(f))); }
+  });
+
+  it("skips a latest CONFLICT result without invoking recovery consumption", { timeout: 120000 }, async () => {
+    const f = await fixture();
+    try {
+      const run = await createReconciliationRun({ attemptId: f.attemptId, intentId: f.uid, logicalOrderUid: f.uid, runKey: "conflict-latest", queriedSources: [] });
+      await completeReconciliationConflict(String(run.id));
+      const result = await runBingXCrashRecoverySweep({
+        now: new Date("2026-01-01T00:02:00Z"),
+        listCandidates: async (cutoff, limit) => (await listRecoveryCandidates(cutoff, limit)).filter(candidate => candidate.attemptId === f.attemptId),
+        consume: async () => { throw new Error("CONFLICT must be terminal"); },
+      });
+      assert.deepEqual(result, { scanned: 1, promoted: 0, consumed: 0, skipped: 1, failed: 0 });
+    } finally { await cleanup(f); }
+  });
+
+  it("skips recent UNRESOLVED and consumes old UNRESOLVED generations", { timeout: 120000 }, async () => {
+    const f = await fixture();
+    try {
+      const run = await createReconciliationRun({ attemptId: f.attemptId, intentId: f.uid, logicalOrderUid: f.uid, runKey: "unresolved-timing", queriedSources: [] });
+      await completeReconciliationUnresolved(String(run.id));
+      await pool!.query("UPDATE goodtrading_order_reconciliation_runs SET completed_at='2026-01-01T00:01:30Z' WHERE id=$1", [run.id]);
+      const deps = { now: new Date("2026-01-01T00:02:00Z"), listCandidates: async (cutoff: Date, limit: number) => (await listRecoveryCandidates(cutoff, limit)).filter(candidate => candidate.attemptId === f.attemptId), consume: async () => ({ status: "UNRESOLVED" as const }) };
+      assert.deepEqual(await runBingXCrashRecoverySweep(deps), { scanned: 1, promoted: 0, consumed: 0, skipped: 1, failed: 0 });
+      await pool!.query("UPDATE goodtrading_order_reconciliation_runs SET completed_at='2025-12-31T23:00:00Z' WHERE id=$1", [run.id]);
+      assert.deepEqual(await runBingXCrashRecoverySweep(deps), { scanned: 1, promoted: 0, consumed: 1, skipped: 0, failed: 0 });
+    } finally { await cleanup(f); }
+  });
+
+  it("isolates one failed recovery candidate while a second candidate succeeds", { timeout: 120000 }, async () => {
+    const fixtures = [await fixture(), await fixture()];
+    try {
+      const listCandidates = async (cutoff: Date, limit: number) => (await listRecoveryCandidates(cutoff, limit)).filter(candidate => fixtures.some(f => f.attemptId === candidate.attemptId));
+      const result = await runBingXCrashRecoverySweep({ now: new Date("2026-01-01T00:02:00Z"), listCandidates, consume: async (_user, uid) => { if (uid === fixtures[0].uid) throw new Error("candidate A failed"); return { status: "UNRESOLVED" as const }; } });
+      assert.deepEqual(result, { scanned: 2, promoted: 0, consumed: 1, skipped: 0, failed: 1 });
+    } finally { await Promise.all(fixtures.map(f => cleanup(f))); }
+  });
+
+  it("races GT MATCHED recovery with external observation into one original GT_LINKED object", { timeout: 120000 }, async () => {
+    const f = await fixture();
+    try {
+      const matched = { status: "MATCHED" as const, logicalOrderUid: f.uid, brokerClientOrderId: f.client, sources: ["ORDER_HISTORY" as const], observations: [observation("ORDER_HISTORY", f.client, "FILLED", "987654321012345678")], sourceStatuses: { OPEN_ORDERS: "loaded" as const, ORDER_HISTORY: "loaded" as const, FILL_HISTORY: "loaded" as const }, absenceProven: false as const, retryAuthorized: false as const };
+      const recovery = consumeBingXSubmissionReconciliation(f.userId, f.uid, { runKey: "gt-race", reconcile: async () => matched });
+      const external = observeBingXBrokerObjects({ brokerAccountIdentity: f.accountUid, read: async () => readResult([observation("OPEN_ORDERS", f.client, "FILLED", "987654321012345678")]), findOrCreate: async () => { throw new Error("external observer must not create GT-linked order"); } });
+      const [recovered, scanned] = await Promise.all([recovery, external]);
+      assert.equal(recovered.status, "MATCHED");
+      assert.equal(scanned.knownGtMatches, 1);
+      const rows = await pool!.query("SELECT id,classification,attempt_id,intent_id FROM goodtrading_broker_objects WHERE broker_account_identity=$1", [f.accountUid]);
+      assert.deepEqual(rows.rows, [{ id: rows.rows[0].id, classification: "GT_LINKED", attempt_id: f.attemptId, intent_id: f.uid }]);
+      assert.equal(rows.rows.length, 1);
     } finally { await cleanup(f); }
   });
 
