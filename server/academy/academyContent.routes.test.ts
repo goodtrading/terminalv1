@@ -8,6 +8,7 @@ import { getMemberContentLessonCount } from "./memberContent";
 import { __setSaasAuthResolverForTests } from "../middleware/saasAuth";
 
 const fixturePath = "/api/academy/lessons/execution-and-risk/execution-and-risk-20-aggressive-vs-confirmed-entry/content";
+const orderFlowMember25Path = "/api/academy/lessons/order-flow-foundations/order-flow-foundations-25-absorption-context/content";
 
 async function request(path: string): Promise<{ status: number; body: any; cacheControl: string | null }> {
   const app = express();
@@ -36,7 +37,7 @@ afterEach(() => {
 
 test("Academy Member content denies signed-out requests", async () => {
   __setSaasAuthResolverForTests(() => null);
-  const result = await request(fixturePath);
+  const result = await request(orderFlowMember25Path);
   assert.equal(result.status, 401);
   assert.equal(JSON.parse(result.body).error, "UNAUTHORIZED");
 });
@@ -44,7 +45,7 @@ test("Academy Member content denies signed-out requests", async () => {
 test("Academy Member content denies authenticated users without entitlement", async () => {
   __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
   __setAcademyAccessResolverForTests(async () => ({ allowed: false, reason: "no_subscription" }));
-  const result = await request(fixturePath);
+  const result = await request(orderFlowMember25Path);
   assert.equal(result.status, 403);
   assert.equal(JSON.parse(result.body).error, "SUBSCRIPTION_REQUIRED");
 });
@@ -76,7 +77,7 @@ test("Academy Member content returns safe 404 for invalid, missing, or FREE rout
 
 
 test("Execution & Risk Member registry serves lessons 20 through 26", async () => {
-  assert.equal(getMemberContentLessonCount(), 7);
+  assert.equal(getMemberContentLessonCount(), 15);
   __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   const slugs = [
@@ -92,6 +93,18 @@ test("Execution & Risk Member registry serves lessons 20 through 26", async () =
     const lessonNumber = index + 20;
     const result = await request(`/api/academy/lessons/execution-and-risk/execution-and-risk-${lessonNumber}-${slugs[index]}/content`);
     assert.equal(result.status, 200, `lesson ${lessonNumber}`);
+    assert.ok(JSON.parse(result.body).content.length > 0);
+  }
+});
+
+
+test("Order Flow Member content serves lessons 25, 31, and 32", async () => {
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  for (const lesson of [[25, "absorption-context"], [31, "when-to-ignore-an-of-signal"], [32, "goodtrading-order-flow-replay-lab"]] as const) {
+    const path = "/api/academy/lessons/order-flow-foundations/order-flow-foundations-" + lesson[0] + "-" + lesson[1] + "/content";
+    const result = await request(path);
+    assert.equal(result.status, 200, "lesson " + lesson[0]);
     assert.ok(JSON.parse(result.body).content.length > 0);
   }
 });

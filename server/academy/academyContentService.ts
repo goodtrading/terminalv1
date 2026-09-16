@@ -11,6 +11,14 @@ const MEMBER_ROUTE_INDEX: ReadonlyMap<string, { lessonId: string }> = new Map([
   ["execution-and-risk/execution-and-risk-24-when-not-to-move-to-break-even", { lessonId: "course-02-execution-and-risk-module-04-lesson-05" }],
   ["execution-and-risk/execution-and-risk-25-managing-around-liquidity", { lessonId: "course-02-execution-and-risk-module-04-lesson-06" }],
   ["execution-and-risk/execution-and-risk-26-execution-replay", { lessonId: "course-02-execution-and-risk-module-04-lesson-07" }],
+  ["order-flow-foundations/order-flow-foundations-25-absorption-context", { lessonId: "course-03-order-flow-foundations-module-05-lesson-01" }],
+  ["order-flow-foundations/order-flow-foundations-26-absorption-open-interest", { lessonId: "course-03-order-flow-foundations-module-05-lesson-02" }],
+  ["order-flow-foundations/order-flow-foundations-27-failed-absorption", { lessonId: "course-03-order-flow-foundations-module-05-lesson-03" }],
+  ["order-flow-foundations/order-flow-foundations-28-contextual-delta", { lessonId: "course-03-order-flow-foundations-module-05-lesson-04" }],
+  ["order-flow-foundations/order-flow-foundations-29-trapped-traders", { lessonId: "course-03-order-flow-foundations-module-05-lesson-05" }],
+  ["order-flow-foundations/order-flow-foundations-30-continuation-vs-reversal", { lessonId: "course-03-order-flow-foundations-module-05-lesson-06" }],
+  ["order-flow-foundations/order-flow-foundations-31-when-to-ignore-an-of-signal", { lessonId: "course-03-order-flow-foundations-module-05-lesson-07" }],
+  ["order-flow-foundations/order-flow-foundations-32-goodtrading-order-flow-replay-lab", { lessonId: "course-03-order-flow-foundations-module-06-lesson-01" }],
 ]);
 
 type AccessResolver = (userId: number) => Promise<AccessSnapshot>;

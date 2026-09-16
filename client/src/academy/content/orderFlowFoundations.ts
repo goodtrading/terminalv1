@@ -1,0 +1,148 @@
+import type { AcademyContentBlock } from "@shared/academy-content";
+
+export const ORDER_FLOW_FOUNDATIONS_CONTENT: Record<string, AcademyContentBlock[]> = {
+  "order-flow-foundations-01-what-is-order-flow": [
+    { type: "heading", level: 2, text: "Observar transacciones ejecutadas" },
+    { type: "paragraph", text: "Order Flow estudia las transacciones que realmente se ejecutaron y la interacción inmediata entre órdenes agresivas y liquidez pasiva. Una vela resume el resultado de un intervalo; Order Flow permite observar más del proceso que produjo ese resultado." },
+    { type: "list", items: ["El agresor cruza la liquidez disponible.", "La contraparte pasiva espera en una cotización.", "El volumen ejecutado registra intercambios completados.", "El contexto y la respuesta del precio siguen siendo necesarios."] },
+    { type: "callout", title: "Límite", text: "Order Flow describe interacción ejecutada. Por sí solo no predice el siguiente movimiento ni revela la intención privada de cada participante." },
+  ],
+  "order-flow-foundations-02-order-flow-vs-technical-analysis": [
+    { type: "heading", level: 2, text: "Dos formas complementarias de observar el mercado" },
+    { type: "paragraph", text: "El análisis técnico estudia principalmente estructura e historia derivada del precio. Order Flow estudia ejecuciones, agresión, liquidez consumida y respuesta inmediata. No son enfoques enemigos: la estructura puede aportar contexto y el flujo puede aportar evidencia del proceso actual." },
+    { type: "list", items: ["Precio: dónde se movió y qué estructura formó.", "Order Flow: cómo se ejecutó la interacción.", "Una vela no muestra toda la secuencia de transacciones.", "Una lectura de flujo sin contexto puede sobrerreaccionar al ruido."] },
+    { type: "callout", title: "Integración", text: "Usa la estructura para ubicar el problema y las ejecuciones para estudiar cómo responde el mercado allí." },
+  ],
+  "order-flow-foundations-03-passive-vs-aggressive-orders": [
+    { type: "heading", level: 2, text: "Quién cruza y quién espera" },
+    { type: "paragraph", text: "Una orden agresiva cruza el Bid o el Ask disponible para obtener ejecución. Una orden pasiva descansa en el libro y aporta liquidez para que otra orden pueda cruzarla. Ambas participan en la misma transacción desde funciones distintas." },
+    { type: "list", items: ["Agresiva describe urgencia de ejecución.", "Pasiva describe una orden que espera contraparte.", "Pasiva no significa débil ni agresiva significa correcta.", "Una Limit puede ser pasiva o marketable según su precio y resultado."] },
+    { type: "callout", title: "Base", text: "El flujo observado es la interacción entre ambos lados, no una clasificación permanente de personas o entidades." },
+  ],
+  "order-flow-foundations-04-executed-volume": [
+    { type: "heading", level: 2, text: "Volumen que realmente se negoció" },
+    { type: "paragraph", text: "Executed Volume es la cantidad de contratos o unidades que completaron una transacción durante un intervalo. Solo cuenta el intercambio ejecutado; las órdenes que permanecen esperando pertenecen a la liquidez resting, no al volumen negociado." },
+    { type: "list", items: ["Volumen ejecutado: transacciones completadas.", "Profundidad: liquidez disponible en el libro.", "Una orden grande sin fill no es volumen ejecutado.", "El volumen bruto no indica dirección ni resultado."] },
+    { type: "callout", title: "Distinción", text: "No confundas cuánto se negoció con cuánto estaba esperando en el Order Book." },
+  ],
+  "order-flow-foundations-05-bid-volume": [
+    { type: "heading", level: 2, text: "Ejecuciones contra el Bid" },
+    { type: "paragraph", text: "Bid Volume representa las ejecuciones clasificadas en el lado Bid. En la convención del Footprint actual, una venta ejecutada incrementa sellVolume y bidVolume, porque el vendedor agresivo cruza hacia la compra disponible." },
+    { type: "paragraph", text: "Ejemplo: si se ejecutan 3 BTC contra el Bid y luego 2 BTC contra el Ask, Bid Volume es 3 BTC y Ask Volume es 2 BTC. El vendedor cruzó en la primera interacción, pero eso no significa automáticamente que el vendedor haya ganado la subasta." },
+    { type: "callout", title: "Respuesta", text: "Bid Volume describe dónde ocurrió la ejecución. Para evaluar el resultado debes observar el precio y su respuesta posterior." },
+  ],
+  "order-flow-foundations-06-ask-volume": [
+    { type: "heading", level: 2, text: "Ejecuciones contra el Ask" },
+    { type: "paragraph", text: "Ask Volume representa las ejecuciones clasificadas en el lado Ask. En la convención del Footprint actual, una compra ejecutada incrementa buyVolume y askVolume, porque el comprador agresivo cruza hacia la venta disponible." },
+    { type: "paragraph", text: "Si 5 BTC se ejecutan contra el Ask y el precio apenas avanza, existe una diferencia entre agresión compradora y progreso del precio. Puede haber liquidez pasiva suficiente, reposición u otra condición que limite el desplazamiento." },
+    { type: "callout", title: "Cierre", text: "Ask Volume muestra interacción compradora ejecutada; no demuestra por sí solo continuación alcista." },
+  ],
+  "order-flow-foundations-07-delta": [
+    { type: "heading", level: 2, text: "El balance de la agresión ejecutada" },
+    { type: "paragraph", text: "En la implementación del Footprint de este repositorio, Delta se calcula como Ask Volume menos Bid Volume. A nivel de barra y de nivel: delta = askVolume − bidVolume; buyVolume − sellVolume produce la misma convención agregada." },
+    { type: "list", items: ["Delta positivo: más volumen ejecutado contra Ask.", "Delta negativo: más volumen ejecutado contra Bid.", "Delta cero: volúmenes ejecutados iguales o redondeados.", "Delta mide desequilibrio de ejecución, no dirección futura."] },
+    { type: "callout", title: "Convención", text: "Esta explicación usa la convención comprobada en buildFootprintBars.ts: Ask − Bid. Verifica siempre la fuente antes de comparar indicadores de distintos venues." },
+  ],
+  "order-flow-foundations-08-positive-delta": [
+    { type: "heading", level: 2, text: "Más ejecución contra Ask" },
+    { type: "paragraph", text: "Positive Delta significa que durante la ventana medida se ejecutó más volumen contra el Ask que contra el Bid. Es evidencia de mayor participación compradora agresiva dentro de esa muestra." },
+    { type: "list", items: ["Puede coexistir con precio plano.", "Puede coexistir con precio descendente.", "Puede aparecer mientras liquidez pasiva absorbe la agresión.", "Puede cambiar si cambia la ventana o la fuente de datos."] },
+    { type: "callout", title: "No automático", text: "Positive Delta no equivale automáticamente a mercado bullish. El precio debe mostrar qué hizo con esa ejecución." },
+  ],
+  "order-flow-foundations-09-negative-delta": [
+    { type: "heading", level: 2, text: "Más ejecución contra Bid" },
+    { type: "paragraph", text: "Negative Delta significa que durante la ventana medida se ejecutó más volumen contra el Bid que contra el Ask. Es evidencia de mayor participación vendedora agresiva dentro de esa muestra." },
+    { type: "list", items: ["Puede coexistir con precio plano.", "Puede coexistir con precio ascendente.", "Puede aparecer mientras compradores pasivos absorben ventas.", "La interpretación depende del intervalo, venue y respuesta del precio."] },
+    { type: "callout", title: "No automático", text: "Negative Delta no equivale automáticamente a mercado bearish. Observa si el precio progresa, acepta o rechaza el área." },
+  ],
+  "order-flow-foundations-10-cumulative-delta": [
+    { type: "heading", level: 2, text: "Acumular el Delta en el tiempo" },
+    { type: "paragraph", text: "Cumulative Delta suma sucesivos valores de Delta para observar la presión agresiva acumulada desde un punto de inicio. En las superficies actuales del repositorio aparece como CVD / Delta o como resumen de buy volume, sell volume, delta y ventana temporal cuando la fuente está disponible." },
+    { type: "list", items: ["Es path-dependent: depende de dónde comenzó la acumulación.", "Un reset cambia la lectura aunque las operaciones sean iguales.", "La fuente puede cubrir un venue, instrumento o alcance concreto.", "CVD persistente no es una garantía de dirección futura."] },
+    { type: "callout", title: "Contexto", text: "Cumulative Delta es una serie acumulada de ejecuciones. Antes de compararla, confirma fuente, ventana, reset y alcance del mercado." },
+  ],
+  "order-flow-foundations-11-delta-divergence": [
+    { type: "heading", level: 2, text: "Cuando precio y Delta no avanzan igual" },
+    { type: "paragraph", text: "Delta divergence describe una relación en la que el precio y el Delta muestran comportamientos distintos. Por ejemplo, el precio puede subir mientras el agresive buying pierde intensidad, o puede no avanzar pese a un Delta positivo fuerte." },
+    { type: "list", items: ["La divergencia es una observación comparativa.", "La ventana de precio y la ventana de Delta deben ser compatibles.", "Puede reflejar absorción, cambio de liquidez o agregación distinta.", "No es una señal automática de reversión."] },
+    { type: "callout", title: "Criterio", text: "Primero describe la diferencia; después busca contexto y respuesta. No conviertas divergencia en una orden mecánica." },
+  ],
+  "order-flow-foundations-12-when-delta-lies": [
+    { type: "heading", level: 2, text: "Cuando la interpretación queda incompleta" },
+    { type: "paragraph", text: "Delta no miente literalmente: resume un desequilibrio de ejecución según una convención. La lectura falla cuando se ignoran absorción, venue, liquidez, liquidaciones, ventana temporal o calidad de los datos." },
+    { type: "list", items: ["Una gran agresión puede ser absorbida.", "Un solo venue no representa necesariamente todo el mercado.", "La agregación puede ocultar la secuencia.", "Sin respuesta del precio, el Delta describe presión pero no resultado."] },
+    { type: "callout", title: "Idea clave", text: "Delta describe ejecución neta. El resultado de la subasta exige combinarlo con precio, ubicación, liquidez y tiempo." },
+  ],
+  "order-flow-foundations-13-aggression": [
+    { type: "heading", level: 2, text: "Urgencia para cruzar liquidez" },
+    { type: "paragraph", text: "Aggression es la participación que cruza repetidamente la liquidez disponible: compradores levantan Ask y vendedores golpean Bid. La intensidad puede observarse por volumen, repetición, persistencia y progreso del precio." },
+    { type: "list", items: ["Más tamaño no siempre produce más desplazamiento.", "La persistencia importa más que un print aislado.", "La liquidez disponible cambia durante la secuencia.", "Agresión sin progreso puede señalar oposición pasiva o falta de continuidad."] },
+    { type: "callout", title: "Límite", text: "Aggression describe urgencia de ejecución, no certeza de que esa dirección sea correcta." },
+  ],
+  "order-flow-foundations-14-absorption": [
+    { type: "heading", level: 2, text: "Agresión que encuentra oposición" },
+    { type: "paragraph", text: "Absorption ocurre cuando existe ejecución agresiva significativa y la contraparte pasiva absorbe suficiente flujo para limitar el progreso del precio. La observación útil combina agresión con respuesta y no se reduce a una vela o a un print grande." },
+    { type: "list", items: ["Hay volumen ejecutado en una dirección.", "El precio progresa poco o no sostiene el avance.", "La liquidez opuesta puede permanecer, reponerse o cambiar.", "No se puede identificar con certeza la identidad del participante pasivo."] },
+    { type: "callout", title: "Distinción", text: "Absorption = agresión presente con progreso restringido. No es simplemente volumen alto ni una señal direccional automática." },
+  ],
+  "order-flow-foundations-15-exhaustion": [
+    { type: "heading", level: 2, text: "Cuando la agresión pierde fuerza" },
+    { type: "paragraph", text: "Exhaustion describe una disminución de la participación agresiva o de su capacidad de seguir cruzando. A diferencia de la absorción, aquí el rasgo principal es que la agresión se debilita; no necesariamente que una contraparte la esté absorbiendo con gran volumen." },
+    { type: "list", items: ["Absorption: la agresión existe, pero el precio progresa poco.", "Exhaustion: la agresión misma disminuye.", "Una pausa breve no demuestra agotamiento.", "La liquidez y la respuesta posterior ayudan a distinguir los casos."] },
+    { type: "callout", title: "No confluir", text: "Agresión, absorción y agotamiento son fenómenos relacionados pero distintos. No los sustituyas entre sí." },
+  ],
+  "order-flow-foundations-16-acceptance": [
+    { type: "heading", level: 2, text: "Negociar de forma sostenida en una nueva zona" },
+    { type: "paragraph", text: "Desde Order Flow, acceptance describe que el mercado explora un área de precio y continúa ejecutando allí, en lugar de abandonarla inmediatamente. La permanencia se observa por actividad y transacciones sostenidas, no por una sola impresión." },
+    { type: "list", items: ["El precio llega a una zona nueva.", "Aparecen transacciones dentro o alrededor del área.", "El mercado permanece el tiempo suficiente para observar negocio.", "La aceptación depende de ventana y fuente de datos."] },
+    { type: "callout", title: "Cuidado", text: "Acceptance es una descripción de comportamiento de la subasta, no un umbral propietario ni una confirmación automática de entrada." },
+  ],
+  "order-flow-foundations-17-rejection": [
+    { type: "heading", level: 2, text: "Explorar sin sostener" },
+    { type: "paragraph", text: "Rejection describe una exploración de precio que no logra sostener suficiente negociación en el área. El mercado puede volver hacia una zona previa, pero la causa exacta no se deduce de una sola vela o de un único dato de flujo." },
+    { type: "list", items: ["La actividad aparece en un área nueva.", "El precio no mantiene la permanencia observada.", "La liquidez y la agresión pueden cambiar durante el retorno.", "Rejection no implica automáticamente reversión completa."] },
+    { type: "callout", title: "Observación", text: "Describe qué área fue explorada y qué ocurrió después; no conviertas rechazo en una dirección garantizada." },
+  ],
+  "order-flow-foundations-18-failed-auction": [
+    { type: "heading", level: 2, text: "Intento de descubrimiento que no se sostiene" },
+    { type: "paragraph", text: "Failed Auction ocurre cuando el mercado intenta descubrir o aceptar un nuevo precio, pero no logra sostener la negociación allí y vuelve hacia la estructura previa. Requiere una secuencia, no solo una mecha o una pausa." },
+    { type: "list", items: ["Hay desplazamiento o exploración inicial.", "Se observa actividad en el nuevo territorio.", "La aceptación no se consolida.", "El retorno permite estudiar qué ocurrió con la agresión y la liquidez."] },
+    { type: "callout", title: "Diferencia", text: "Una pausa o pullback no es necesariamente una Failed Auction. La diferencia está en la incapacidad de sostener el nuevo territorio." },
+  ],
+  "order-flow-foundations-19-order-flow-in-trend": [
+    { type: "heading", level: 2, text: "Leer ejecuciones dentro de una dirección" },
+    { type: "paragraph", text: "En una tendencia, Order Flow se interpreta contra una estructura que ya muestra dirección. La agresión puede acompañar el avance, pero también puede aparecer durante un pullback, ser absorbida o perder progreso sin que la tendencia termine automáticamente." },
+    { type: "list", items: ["Compara agresión con progreso del precio.", "Observa si los retrocesos encuentran o pierden aceptación.", "Distingue continuación de una sola ráfaga.", "La tendencia es contexto, no una regla de entrada."] },
+    { type: "callout", title: "Criterio", text: "El flujo agrega evidencia sobre el proceso de la tendencia; no reemplaza el análisis de estructura ni garantiza continuación." },
+  ],
+  "order-flow-foundations-20-order-flow-in-range": [
+    { type: "heading", level: 2, text: "Una subasta de dos lados" },
+    { type: "paragraph", text: "En un rango, compradores y vendedores pueden obtener ejecuciones alrededor de un área de valor sin que el precio sostenga un desplazamiento amplio. La agresión en un extremo puede fallar y devolver el mercado hacia la zona aceptada." },
+    { type: "list", items: ["La actividad suele ser bilateral.", "La aceptación repetida no implica dirección inmediata.", "Agresión en el borde puede ser absorbida o agotarse.", "Un borde de rango no es automáticamente una entrada."] },
+    { type: "callout", title: "Contexto", text: "En rango, pregunta si el mercado está aceptando o escapando del área antes de interpretar un desequilibrio aislado." },
+  ],
+  "order-flow-foundations-21-breakout": [
+    { type: "heading", level: 2, text: "Salir de un área previa" },
+    { type: "paragraph", text: "Un breakout es una salida del área previa hacia precios nuevos. Desde Order Flow, interesa observar si hubo ejecuciones reales en el nuevo territorio y si el mercado puede continuar negociando allí." },
+    { type: "list", items: ["Precio abandona la estructura anterior.", "Aparece volumen ejecutado en el nuevo espacio.", "La liquidez puede cambiar durante el desplazamiento.", "Volumen o Delta por sí solos no validan el breakout."] },
+    { type: "callout", title: "No anticipar", text: "La salida inicial es un hecho; la aceptación y la respuesta posterior determinan qué tipo de subasta se está formando." },
+  ],
+  "order-flow-foundations-22-failed-breakout": [
+    { type: "heading", level: 2, text: "Salir y no sostener" },
+    { type: "paragraph", text: "Un failed breakout comienza con desplazamiento fuera de un área, pero no consigue sostener negociación en el nuevo territorio y retorna hacia la estructura previa. Los agresores iniciales pueden quedar vulnerables, aunque esa condición se infiere y no identifica cada posición." },
+    { type: "list", items: ["Hay intento inicial de expansión.", "La actividad no se convierte en aceptación sostenida.", "El precio vuelve hacia el área anterior.", "La respuesta de liquidez y Delta debe leerse como secuencia."] },
+    { type: "callout", title: "Límite", text: "Un failed breakout no es simplemente una vela con mecha. Necesita observar la falta de sostenimiento del nuevo territorio." },
+  ],
+  "order-flow-foundations-23-continuation": [
+    { type: "heading", level: 2, text: "Seguir descubriendo precio" },
+    { type: "paragraph", text: "Continuation describe una subasta que mantiene su dirección y continúa descubriendo precios. Order Flow puede aportar evidencia mediante agresión persistente, liquidez consumida, respuesta del precio y aceptación de nuevas áreas." },
+    { type: "list", items: ["La agresión produce progreso observable.", "El mercado no vuelve inmediatamente a la estructura previa.", "La liquidez disponible cambia y puede ralentizar el avance.", "Una ráfaga aislada no prueba continuidad."] },
+    { type: "callout", title: "Sin checklist rígido", text: "Usa estas observaciones para describir el estado de la subasta, no para fabricar una entrada automática." },
+  ],
+  "order-flow-foundations-24-reversal": [
+    { type: "heading", level: 2, text: "Cambiar el comportamiento de la subasta" },
+    { type: "paragraph", text: "Una reversal es un cambio de comportamiento del mercado, no simplemente una vela grande en sentido contrario. Puede incluir pérdida de progreso de la agresión previa, aparición de actividad opuesta, rechazo del área anterior y aceptación de una nueva zona." },
+    { type: "list", items: ["La agresión anterior deja de producir avance.", "Aparece interacción opuesta con respuesta observable.", "La zona previa puede ser rechazada.", "La nueva dirección necesita sostener negociación para confirmarse como proceso."] },
+    { type: "callout", title: "Cierre", text: "Order Flow ayuda a estudiar el cambio de proceso. No convierte una impresión opuesta en una reversión confirmada ni en una orden." },
+  ],
+};
