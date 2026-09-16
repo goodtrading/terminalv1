@@ -7,6 +7,7 @@ export type BingXSubmissionObservation = Readonly<{
   clientOrderId?: string;
   brokerOrderId?: string;
   brokerOrderIdPrecisionTrusted: boolean;
+  executionId?: string;
   symbol?: string;
   side?: string;
   quantity?: string;
@@ -55,6 +56,7 @@ function observation(source: BingXReconciliationSource, row: Record<string, unkn
     clientOrderId: text(row, ["clientOrderId", "clientOrderID"]),
     brokerOrderId,
     brokerOrderIdPrecisionTrusted: typeof rawOrderId === "string",
+    executionId: text(row, ["executionId", "execId", "tradeId"]),
     symbol: text(row, ["symbol", "instrument"]),
     side: text(row, ["side", "positionSide"]),
     quantity: textualDecimal(row, ["quantity", "origQty", "qty", "volume", "filledQty"]),

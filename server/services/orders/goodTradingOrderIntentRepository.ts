@@ -170,6 +170,11 @@ export async function getAttemptByBrokerClientOrderId(brokerClientOrderId: strin
   return result.rows[0] ? mapAttempt(result.rows[0] as Record<string, unknown>) : null;
 }
 
+export async function getAttemptByAccountAndBrokerClientOrderId(accountUid: string, brokerClientOrderId: string): Promise<DurableSubmissionAttempt | null> {
+  const result = await requirePool().query(`SELECT a.* FROM goodtrading_order_submission_attempts a JOIN goodtrading_order_intents i ON i.id = a.intent_id WHERE i.goodtrading_account_uid = $1 AND a.broker_client_order_id = $2`, [accountUid, brokerClientOrderId]);
+  return result.rows[0] ? mapAttempt(result.rows[0] as Record<string, unknown>) : null;
+}
+
 export async function listAttemptsForIntent(intentId: string): Promise<DurableSubmissionAttempt[]> {
   const result = await requirePool().query(`SELECT ${attemptColumns} FROM goodtrading_order_submission_attempts WHERE intent_id = $1 ORDER BY attempt_number ASC`, [intentId]);
   return result.rows.map((row) => mapAttempt(row as Record<string, unknown>));

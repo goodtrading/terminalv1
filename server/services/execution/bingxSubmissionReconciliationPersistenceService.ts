@@ -38,6 +38,7 @@ function identitiesFor(result: ReconciliationResult): BrokerIdentity[] {
   for (const observation of result.observations) {
     if (observation.clientOrderId) identities.push(createBrokerIdentity({ kind: "CLIENT_ORDER_ID", value: observation.clientOrderId }));
     if (observation.brokerOrderId && observation.brokerOrderIdPrecisionTrusted) identities.push(createBrokerIdentity({ kind: "TRUSTED_BROKER_ORDER_ID", value: observation.brokerOrderId, precisionTrusted: true }));
+    if (observation.executionId) identities.push(createBrokerIdentity({ kind: "EXECUTION_ID", value: observation.executionId }));
   }
   return Array.from(new Map(identities.map(identity => [`${identity.kind}:${identity.value}`, identity])).values());
 }
