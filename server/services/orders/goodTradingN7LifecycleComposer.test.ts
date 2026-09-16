@@ -110,6 +110,12 @@ test("rejects missing canonical flags and incomplete partial quantity facts", ()
   assert.throws(() => composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [snapshot({ rawBrokerStatus: "PARTIALLY_FILLED" })] }), /PARTIAL_FILL_FACTS_INCOMPLETE/);
 });
 
+test("composes a factual partial fill before terminal fill", () => {
+  const partial = composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [snapshot({ id: "OPEN", rawBrokerStatus: "OPEN" }), snapshot({ id: "PARTIAL", rawBrokerStatus: "PARTIALLY_FILLED", quantity: "0.5", price: "65000", sourceTimestamp: new Date("2026-01-01T00:00:03Z") })] });
+  assert.equal(partial.state.status, "PARTIALLY_FILLED");
+  assert.equal(partial.state.filledQuantity, 0.5);
+  assert.equal(partial.state.remainingQuantity, 0.5);
+});
 test("deduplicates repeated lifecycle status and does not reopen after terminal evidence", () => {
   const result = composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [
     snapshot({ id: "FILLED", rawBrokerStatus: "FILLED", sourceTimestamp: new Date("2026-01-01T00:00:03Z") }),

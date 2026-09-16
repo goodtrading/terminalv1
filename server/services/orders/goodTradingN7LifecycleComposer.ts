@@ -186,9 +186,14 @@ export function composeGoodTradingN7Lifecycle(input: Input): GoodTradingN7Lifecy
   const ordered = lifecycleSnapshots(input.snapshots);
   const latest = ordered[ordered.length - 1]!;
   const mapped = statusMapping(latest.rawBrokerStatus);
-  if (mapped.status === "PARTIALLY_FILLED") throw new Error("PARTIAL_FILL_FACTS_INCOMPLETE");
   const requested = positiveNumber(input.intent.resolvedQuantity, "resolvedQuantity");
-  const state = createOrderState({ identity, intent: orderIntent, status: mapped.status, requestedQuantity: requested, filledQuantity: mapped.status === "FILLED" ? requested : 0, remainingQuantity: mapped.status === "FILLED" ? 0 : requested, averageFillPrice: mapped.status === "FILLED" && latest.price ? positiveNumber(latest.price, "price") : null, timestamps: { updatedAt: dateMs(latest.observedAt, "observedAt") }, executionReferences: [], relationships: [], syncQuality: "PARTIAL", provenance: { source: "GOODTRADING_BROKER_OBSERVATION", runtime: "durable-postgres", broker: input.intent.executionBroker, account: identity.account, market: identity.market, canonicalOrderId: identity.canonicalOrderId, clientOrderId: identity.clientOrderId, venueOrderId: identity.venueOrderId, nativeStatus: latest.rawBrokerStatus ?? undefined, sourceSnapshotId: latest.id } });
+  const partialFilled = mapped.status === "PARTIALLY_FILLED"
+    ? positiveNumber(latest.quantity ?? "", "partial fill quantity")
+    : 0;
+  if (mapped.status === "PARTIALLY_FILLED" && !latest.price) throw new Error("PARTIAL_FILL_FACTS_INCOMPLETE");
+  if (partialFilled >= requested) throw new Error("PARTIAL_FILL_FACTS_INCOMPLETE");
+  const filledQuantity = mapped.status === "FILLED" ? requested : partialFilled;
+  const state = createOrderState({ identity, intent: orderIntent, status: mapped.status, requestedQuantity: requested, filledQuantity, remainingQuantity: requested - filledQuantity, averageFillPrice: (mapped.status === "FILLED" || mapped.status === "PARTIALLY_FILLED") && latest.price ? positiveNumber(latest.price, "price") : null, timestamps: { updatedAt: dateMs(latest.observedAt, "observedAt") }, executionReferences: [], relationships: [], syncQuality: "PARTIAL", provenance: { source: "GOODTRADING_BROKER_OBSERVATION", runtime: "durable-postgres", broker: input.intent.executionBroker, account: identity.account, market: identity.market, canonicalOrderId: identity.canonicalOrderId, clientOrderId: identity.clientOrderId, venueOrderId: identity.venueOrderId, nativeStatus: latest.rawBrokerStatus ?? undefined, sourceSnapshotId: latest.id } });
   const records = ordered.map(snapshot => eventRecord(input, snapshot, identity));
   const stream = createOrderEventStream({ orderIdentity: identity, records, completeness: "PARTIAL", provenance: { source: "GOODTRADING_BROKER_OBSERVATION", runtime: "durable-postgres", broker: input.intent.executionBroker, orderIdentity: identity, sourceRangeStart: records[0]?.event.eventTime, sourceRangeEnd: records.at(-1)?.event.eventTime, eventIdPolicies: ["GOODTRADING_BROKER_SNAPSHOT_EVENT_V1"] } });
   const fills = uniqueEconomicFills([...input.snapshots].sort((a, b) => dateMs(a.observedAt, "observedAt") - dateMs(b.observedAt, "observedAt") || a.id.localeCompare(b.id)).map(snapshot => economicFill(input, snapshot)).filter((fill): fill is EconomicFillRecord => fill !== null));
