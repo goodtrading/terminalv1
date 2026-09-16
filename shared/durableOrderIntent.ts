@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createOrderDecisionEvidence, type OrderDecisionEvidence } from "./orderDecisionEvidence";
 
 export type DurableOrderSide = "buy" | "sell";
 export type DurableOrderType = "LIMIT";
@@ -49,6 +50,7 @@ export type DurableGoodTradingOrderIntent = Readonly<{
   postOnly: boolean | null;
   reduceOnly: boolean | null;
   requestIdempotencyKey: string | null;
+  decisionEvidence?: OrderDecisionEvidence | null;
 }>;
 
 export type DurableGoodTradingOrderIntentInput = DurableGoodTradingOrderIntent;
@@ -134,7 +136,10 @@ export function createDurableGoodTradingOrderIntent(
   if (input.postOnly !== null && typeof input.postOnly !== "boolean") throw new Error("postOnly is invalid");
   if (input.reduceOnly !== null && typeof input.reduceOnly !== "boolean") throw new Error("reduceOnly is invalid");
   if (input.requestIdempotencyKey !== null) text(input.requestIdempotencyKey, "requestIdempotencyKey");
-  return { ...input };
+  if (input.decisionEvidence !== undefined && input.decisionEvidence !== null) {
+    createOrderDecisionEvidence(input.decisionEvidence);
+  }
+  return { ...input, ...(input.decisionEvidence ? { decisionEvidence: createOrderDecisionEvidence(input.decisionEvidence) } : {}) };
 }
 
 export function createDurableSubmissionAttempt(

@@ -8,6 +8,7 @@ import {
   type DurableSubmissionAttempt,
   type DurableSubmissionAttemptInput,
 } from "../../../shared/durableOrderIntent";
+import { createOrderDecisionEvidence, type OrderDecisionEvidence } from "../../../shared/orderDecisionEvidence";
 
 export type CreateDurableIntentWithInitialAttemptInput = Readonly<{
   intent: DurableGoodTradingOrderIntentInput;
@@ -57,6 +58,7 @@ function mapIntent(row: Record<string, unknown>): DurableGoodTradingOrderIntent 
     postOnly: row.post_only == null ? null : Boolean(row.post_only),
     reduceOnly: row.reduce_only == null ? null : Boolean(row.reduce_only),
     requestIdempotencyKey: row.request_idempotency_key == null ? null : String(row.request_idempotency_key),
+    decisionEvidence: row.decision_at == null ? null : createOrderDecisionEvidence({ decisionAt: new Date(row.decision_at as string), marketSource: String(row.decision_market_source), marketSourceTimestamp: row.decision_market_source_timestamp == null ? null : new Date(row.decision_market_source_timestamp as string), bestBid: row.decision_best_bid == null ? null : String(row.decision_best_bid), bestAsk: row.decision_best_ask == null ? null : String(row.decision_best_ask), marketEvidenceQuality: String(row.decision_market_evidence_quality) as OrderDecisionEvidence["marketEvidenceQuality"] }),
   });
 }
 
@@ -89,7 +91,9 @@ const intentColumns = `
   market_metadata_source, market_mapping_policy, requested_side, order_type,
   requested_size, requested_size_unit, requested_sizing_mode, resolved_quantity,
   resolved_quantity_unit, limit_price, stop_loss_price, take_profit_price,
-  time_in_force, post_only, reduce_only, request_idempotency_key
+  time_in_force, post_only, reduce_only, request_idempotency_key,
+  decision_at, decision_market_source, decision_market_source_timestamp,
+  decision_best_bid, decision_best_ask, decision_market_evidence_quality
 `;
 
 const attemptColumns = `
@@ -101,7 +105,7 @@ const attemptColumns = `
 async function insertIntent(client: PoolClient, intent: DurableGoodTradingOrderIntent): Promise<void> {
   await client.query(
     `INSERT INTO goodtrading_order_intents (${intentColumns}) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38
     )`,
     [
       intent.logicalOrderUid, intent.logicalOrderUid, intent.goodTradingAccountUid,
@@ -114,6 +118,9 @@ async function insertIntent(client: PoolClient, intent: DurableGoodTradingOrderI
       intent.requestedSizingMode, intent.resolvedQuantity, intent.resolvedQuantityUnit,
       intent.limitPrice, intent.stopLossPrice, intent.takeProfitPrice, intent.timeInForce,
       intent.postOnly, intent.reduceOnly, intent.requestIdempotencyKey,
+      intent.decisionEvidence?.decisionAt ?? null, intent.decisionEvidence?.marketSource ?? null,
+      intent.decisionEvidence?.marketSourceTimestamp ?? null, intent.decisionEvidence?.bestBid ?? null,
+      intent.decisionEvidence?.bestAsk ?? null, intent.decisionEvidence?.marketEvidenceQuality ?? null,
     ],
   );
 }

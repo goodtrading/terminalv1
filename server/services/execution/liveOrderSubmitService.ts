@@ -42,6 +42,7 @@ import type {
   LiveOrderSubmitResult,
 } from "./liveOrderSubmitTypes";
 import type { LiveOrderPreviewResult } from "./liveOrderPreviewTypes";
+import { createOrderDecisionEvidence, unavailableDecisionMarketContext, type OrderDecisionEvidence } from "../../../shared/orderDecisionEvidence";
 import { assertBingxWriteNotFrozen } from "../exchanges/bingx/bingxReadOnlyFreeze";
 import { isLiveLimitTestMode } from "./riskGuard";
 import { getGoodTradingAccountByUserId } from "../accounts/goodTradingAccountRepository";
@@ -80,6 +81,7 @@ export type LiveSubmitDependencies = Readonly<{
   markResponseObserved?: typeof markSubmissionResponseObserved;
   markUnknownOutcome?: typeof markUnknownSubmissionOutcome;
   markReconciliation?: typeof markReconciliationRequired;
+  getDecisionMarketContext?: () => Omit<OrderDecisionEvidence, "decisionAt">;
 }>;
 
 function normalizeSymbol(symbol: string): string {
@@ -487,6 +489,9 @@ export async function submitBingXLiveLimitOrder(
 
   const logicalOrderUid = generateLogicalOrderUid();
   const brokerClientOrderId = generateBrokerClientOrderId();
+  const decisionAt = new Date();
+  const decisionMarketContext = dependencies.getDecisionMarketContext?.() ?? unavailableDecisionMarketContext();
+  const decisionEvidence = createOrderDecisionEvidence({ decisionAt, ...decisionMarketContext });
   const durableInput = {
     intent: {
       logicalOrderUid,
@@ -520,6 +525,7 @@ export async function submitBingXLiveLimitOrder(
       postOnly: false,
       reduceOnly: false,
       requestIdempotencyKey: request.requestIdempotencyKey,
+      decisionEvidence,
     },
     attempt: {
       attemptId: generateSubmissionAttemptId(),
