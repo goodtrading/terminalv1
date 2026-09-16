@@ -26,8 +26,7 @@ describePostgres("isolated concurrent live submit idempotency", () => {
     const userRow = await pool!.query("INSERT INTO users (email, password_hash, full_name) VALUES ($1, $2, $3) RETURNING id", [`${marker}@example.test`, "integration-hash", "B2T concurrent"]);
     const userId = Number(userRow.rows[0].id);
     const accountUid = (await ensureGoodTradingAccountForUser(userId)).accountUid;
-    const observer = await observerPool.connect();
-    await observer.query("SET statement_timeout = 10000");
+    let observer: pg.PoolClient | undefined;
     const { submitBingXLiveLimitOrder } = await import("./liveOrderSubmitService");
     const key = `key-${marker}`;
     let preReads = 0;
@@ -45,7 +44,7 @@ describePostgres("isolated concurrent live submit idempotency", () => {
       return found;
     };
     const listAttempts = async (intentId: string) => {
-      const r = await observer.query("SELECT id, intent_id, attempt_number, broker_client_order_id, submitted_quantity, transport_state, started_at, response_at, outcome_at, reconciliation_required_at, broker_order_id, raw_broker_status, http_status, error_code, error_class FROM goodtrading_order_submission_attempts WHERE intent_id = $1 ORDER BY attempt_number", [intentId]);
+      const r = await observerPool.query("SELECT id, intent_id, attempt_number, broker_client_order_id, submitted_quantity, transport_state, started_at, response_at, outcome_at, reconciliation_required_at, broker_order_id, raw_broker_status, http_status, error_code, error_class FROM goodtrading_order_submission_attempts WHERE intent_id = $1 ORDER BY attempt_number", [intentId]);
       return r.rows.map((row) => ({ attemptId: String(row.id), intentId: String(row.intent_id), attemptNumber: Number(row.attempt_number), brokerClientOrderId: String(row.broker_client_order_id), submittedQuantity: row.submitted_quantity == null ? null : String(row.submitted_quantity), transportState: row.transport_state, startedAt: row.started_at, responseAt: row.response_at, outcomeAt: row.outcome_at, reconciliationRequiredAt: row.reconciliation_required_at, brokerOrderId: row.broker_order_id, rawBrokerStatus: row.raw_broker_status, httpStatus: row.http_status, errorCode: row.error_code, errorClass: row.error_class } as any));
     };
     const deps = {
@@ -63,6 +62,8 @@ describePostgres("isolated concurrent live submit idempotency", () => {
         submitBingXLiveLimitOrder(userId, request(key), deps),
         submitBingXLiveLimitOrder(userId, request(key), deps),
       ]);
+      observer = await observerPool.connect();
+      await observer.query("SET statement_timeout = 10000");
       assert.equal(preReads, 2);
       assert.equal(results.every((r) => r.status === "fulfilled"), true);
       const durable = await observer.query("SELECT i.logical_order_uid, a.attempt_number, a.broker_client_order_id, a.transport_state FROM goodtrading_order_intents i JOIN goodtrading_order_submission_attempts a ON a.intent_id = i.id WHERE i.goodtrading_account_uid = $1 AND i.request_idempotency_key = $2", [accountUid, key]);
@@ -76,8 +77,10 @@ describePostgres("isolated concurrent live submit idempotency", () => {
       const counts = await observer.query("SELECT COUNT(*)::int AS count FROM goodtrading_order_intents WHERE goodtrading_account_uid = $1 AND request_idempotency_key = $2", [accountUid, key]);
       assert.equal(counts.rows[0].count, 1);
     } finally {
-      await cleanup(observer, userId, accountUid);
-      observer.release();
+      if (observer) {
+        await cleanup(observer, userId, accountUid);
+        observer.release();
+      }
     }
   });
 });
