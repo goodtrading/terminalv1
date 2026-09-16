@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { pool } from "../../db";
+import type { DurableBrokerEvidenceSnapshot } from "./goodTradingN7LifecycleComposer";
 import {
   createBrokerIdentity,
   createReconciliationRunInput,
@@ -103,6 +104,14 @@ export async function recordBrokerObservationIfNew(input: { brokerObjectId: stri
 
 export async function recordBrokerObservation(input: { brokerObjectId: string; snapshot: BrokerObservationSnapshot }): Promise<Record<string, unknown>> {
   const s = input.snapshot; const result = await database().query(`INSERT INTO goodtrading_broker_observation_snapshots (id,broker_object_id,source,client_order_id,broker_order_id,broker_order_id_precision_trusted,execution_id,symbol,side,quantity,price,raw_broker_status,source_timestamp,observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`, [id("BROKER-SNAPSHOT"), input.brokerObjectId, s.source, s.clientOrderId ?? null, s.brokerOrderId ?? null, s.brokerOrderIdPrecisionTrusted, s.executionId ?? null, s.symbol, s.side ?? null, s.quantity ?? null, s.price ?? null, s.rawBrokerStatus ?? null, s.sourceTimestamp ?? null, s.observedAt]); return result.rows[0] as Record<string, unknown>;
+}
+
+export async function listBrokerEvidenceForObject(brokerObjectId: string): Promise<DurableBrokerEvidenceSnapshot[]> {
+  const result = await database().query(`SELECT s.*, o.classification, o.broker_account_identity FROM goodtrading_broker_observation_snapshots s JOIN goodtrading_broker_objects o ON o.id=s.broker_object_id WHERE s.broker_object_id=$1 ORDER BY s.observed_at ASC, s.id ASC`, [brokerObjectId]);
+  return result.rows.map((row) => ({
+    id: String(row.id), brokerObjectId: String(row.broker_object_id), classification: String(row.classification) as DurableBrokerEvidenceSnapshot["classification"], brokerAccountIdentity: String(row.broker_account_identity),
+    source: String(row.source) as DurableBrokerEvidenceSnapshot["source"], clientOrderId: row.client_order_id == null ? null : String(row.client_order_id), brokerOrderId: row.broker_order_id == null ? null : String(row.broker_order_id), brokerOrderIdPrecisionTrusted: Boolean(row.broker_order_id_precision_trusted), executionId: row.execution_id == null ? null : String(row.execution_id), symbol: String(row.symbol), side: row.side == null ? null : String(row.side), quantity: row.quantity == null ? null : String(row.quantity), price: row.price == null ? null : String(row.price), rawBrokerStatus: row.raw_broker_status == null ? null : String(row.raw_broker_status), sourceTimestamp: row.source_timestamp == null ? null : new Date(row.source_timestamp as string), observedAt: new Date(row.observed_at as string),
+  }));
 }
 
 export async function persistMatchedReconciliation(input: { runId: string; brokerAccountIdentity: string; identities: BrokerIdentity[]; attemptId: string; intentId: string; snapshot: BrokerObservationSnapshot; snapshots?: BrokerObservationSnapshot[] }): Promise<BrokerObject> {

@@ -3,8 +3,15 @@ import { describe, it } from "node:test";
 import pg from "pg";
 import { pool } from "../../db";
 import { ensureGoodTradingAccountForUser } from "../accounts/goodTradingAccountRepository";
-import { getIntentByRequestIdempotencyKey } from "../orders/goodTradingOrderIntentRepository";
+import { getIntentByRequestIdempotencyKey, listAttemptsForIntent } from "../orders/goodTradingOrderIntentRepository";
 import { LIVE_LIMIT_CONFIRMATION_TEXT } from "./liveOrderSubmitTypes";
+
+// Mocked-live guards are explicit so this test cannot depend on the parent shell.
+process.env.BINGX_READ_ONLY_FREEZE = "false";
+process.env.BINGX_ENABLE_LIVE_TRADING = "true";
+process.env.BINGX_ENABLE_API_TRADING = "true";
+process.env.BINGX_ENABLE_ORDER_SUBMIT = "true";
+process.env.BINGX_LIVE_LIMIT_TEST_MODE = "true";
 
 const describePostgres = pool ? describe : describe.skip;
 const observerPool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1, connectionTimeoutMillis: 10000, statement_timeout: 10000 });
@@ -43,10 +50,6 @@ describePostgres("isolated concurrent live submit idempotency", () => {
       }
       return found;
     };
-    const listAttempts = async (intentId: string) => {
-      const r = await observerPool.query("SELECT id, intent_id, attempt_number, broker_client_order_id, submitted_quantity, transport_state, started_at, response_at, outcome_at, reconciliation_required_at, broker_order_id, raw_broker_status, http_status, error_code, error_class FROM goodtrading_order_submission_attempts WHERE intent_id = $1 ORDER BY attempt_number", [intentId]);
-      return r.rows.map((row) => ({ attemptId: String(row.id), intentId: String(row.intent_id), attemptNumber: Number(row.attempt_number), brokerClientOrderId: String(row.broker_client_order_id), submittedQuantity: row.submitted_quantity == null ? null : String(row.submitted_quantity), transportState: row.transport_state, startedAt: row.started_at, responseAt: row.response_at, outcomeAt: row.outcome_at, reconciliationRequiredAt: row.reconciliation_required_at, brokerOrderId: row.broker_order_id, rawBrokerStatus: row.raw_broker_status, httpStatus: row.http_status, errorCode: row.error_code, errorClass: row.error_class } as any));
-    };
     const deps = {
       getReadiness: async () => readiness,
       previewOrder: async () => preview,
@@ -54,7 +57,7 @@ describePostgres("isolated concurrent live submit idempotency", () => {
       getCredentials: () => ({ apiKey: "integration-key", secretKey: "integration-secret" }),
       getSymbolRules: async () => ({ symbol: "BTC-USDT", minQty: 0.0001, maxQty: 100, stepSize: 0.0001, quantityPrecision: 4, pricePrecision: 2, minNotional: 5 }),
       getExistingIntent: existing,
-      listIntentAttempts: listAttempts,
+      listIntentAttempts: listAttemptsForIntent,
       submitOrder: async (params: any) => { brokerCalls += 1; brokerClientIds.push(params.clientOrderId); return { orderId: "mock-order", clientOrderId: params.clientOrderId, protectiveSlAttached: false }; },
     };
     try {
