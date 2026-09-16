@@ -44,6 +44,11 @@ export const completeReconciliationConflict = (id: string, extra?: Parameters<ty
 export const completeReconciliationNoMatch = (id: string, extra?: Parameters<typeof complete>[2]) => complete(id, "NO_MATCH_IN_OBSERVED_WINDOW", extra);
 export const completeReconciliationUnresolved = (id: string, extra?: Parameters<typeof complete>[2]) => complete(id, "UNRESOLVED", extra);
 
+export async function getReconciliationRunByAttemptAndKey(attemptId: string, runKey: string): Promise<ReconciliationRun | null> {
+  const result = await database().query("SELECT * FROM goodtrading_order_reconciliation_runs WHERE attempt_id=$1 AND run_key=$2", [attemptId, runKey]);
+  return (result.rows[0] as ReconciliationRun | undefined) ?? null;
+}
+
 export async function getLatestReconciliationForAttempt(attemptId: string): Promise<ReconciliationRun | null> { const result = await database().query("SELECT * FROM goodtrading_order_reconciliation_runs WHERE attempt_id=$1 ORDER BY created_at DESC LIMIT 1", [attemptId]); return (result.rows[0] as ReconciliationRun | undefined) ?? null; }
 
 export async function findBrokerObjectByReliableIdentity(account: string, identity: BrokerIdentity): Promise<BrokerObject | null> { const safe = createBrokerIdentity(identity); const result = await database().query("SELECT o.* FROM goodtrading_broker_objects o JOIN goodtrading_broker_identity_aliases a ON a.broker_object_id=o.id WHERE a.broker_account_identity=$1 AND a.identity_kind=$2 AND a.identity_value=$3", [account, safe.kind, safe.value]); return result.rows[0] ? mapObject(result.rows[0]) : null; }
@@ -80,15 +85,32 @@ export async function recordBrokerObservation(input: { brokerObjectId: string; s
   const s = input.snapshot; const result = await database().query(`INSERT INTO goodtrading_broker_observation_snapshots (id,broker_object_id,source,client_order_id,broker_order_id,broker_order_id_precision_trusted,execution_id,symbol,side,quantity,price,raw_broker_status,source_timestamp,observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`, [id("BROKER-SNAPSHOT"), input.brokerObjectId, s.source, s.clientOrderId ?? null, s.brokerOrderId ?? null, s.brokerOrderIdPrecisionTrusted, s.executionId ?? null, s.symbol, s.side ?? null, s.quantity ?? null, s.price ?? null, s.rawBrokerStatus ?? null, s.sourceTimestamp ?? null, s.observedAt]); return result.rows[0] as Record<string, unknown>;
 }
 
-export async function persistMatchedReconciliation(input: { runId: string; brokerAccountIdentity: string; identities: BrokerIdentity[]; attemptId: string; intentId: string; snapshot: BrokerObservationSnapshot }): Promise<BrokerObject> {
+export async function persistMatchedReconciliation(input: { runId: string; brokerAccountIdentity: string; identities: BrokerIdentity[]; attemptId: string; intentId: string; snapshot: BrokerObservationSnapshot; snapshots?: BrokerObservationSnapshot[] }): Promise<BrokerObject> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { return await persistMatchedReconciliationOnce(input); }
+    catch (error) { if ((error as { code?: string }).code === "23505" && attempt === 0) continue; throw error; }
+  }
+  throw new Error("MATCHED_RECONCILIATION_RETRY_EXHAUSTED");
+}
+
+async function persistMatchedReconciliationOnce(input: { runId: string; brokerAccountIdentity: string; identities: BrokerIdentity[]; attemptId: string; intentId: string; snapshot: BrokerObservationSnapshot; snapshots?: BrokerObservationSnapshot[] }): Promise<BrokerObject> {
   return runQuery(async (client) => {
+    const runState = await client.query("SELECT run_status,result FROM goodtrading_order_reconciliation_runs WHERE id=$1 FOR UPDATE", [input.runId]);
+    if (!runState.rows[0]) throw new Error("RECONCILIATION_RUN_NOT_FOUND");
+    if (runState.rows[0].run_status === "COMPLETED") {
+      if (runState.rows[0].result !== "MATCHED") throw new Error("RECONCILIATION_RUN_IMMUTABLE");
+      const completedObject = await client.query("SELECT o.* FROM goodtrading_broker_objects o WHERE o.id IN (SELECT a.broker_object_id FROM goodtrading_broker_identity_aliases a WHERE a.broker_account_identity=$1 AND a.identity_kind=ANY($2::text[]) AND a.identity_value=ANY($3::text[]))", [input.brokerAccountIdentity, input.identities.map(x => createBrokerIdentity(x).kind), input.identities.map(x => createBrokerIdentity(x).value)]);
+      if (!completedObject.rows[0]) throw new Error("MATCHED_BROKER_OBJECT_NOT_FOUND");
+      return mapObject(completedObject.rows[0]);
+    }
     const found = await client.query("SELECT o.* FROM goodtrading_broker_objects o WHERE o.id IN (SELECT a.broker_object_id FROM goodtrading_broker_identity_aliases a WHERE a.broker_account_identity=$1 AND a.identity_kind=ANY($2::text[]) AND a.identity_value=ANY($3::text[])) FOR UPDATE", [input.brokerAccountIdentity, input.identities.map(x => createBrokerIdentity(x).kind), input.identities.map(x => createBrokerIdentity(x).value)]);
     const ids = new Set(found.rows.map(row => String(row.id))); if (ids.size > 1) throw conflict("multiple reliable identities resolve to different broker objects");
     const object = ids.size === 1 ? mapObject(found.rows[0]) : await createObjectInTransaction(client, input);
     if (object.attemptId && (object.attemptId !== input.attemptId || object.intentId !== input.intentId)) throw new Error("BROKER_OBJECT_LINKAGE_REASSIGNMENT_REJECTED");
     if (!object.attemptId) { const linked = await client.query("UPDATE goodtrading_broker_objects SET classification='GT_LINKED',attempt_id=$2,intent_id=$3 WHERE id=$1 AND attempt_id IS NULL AND intent_id IS NULL RETURNING *", [object.id, input.attemptId, input.intentId]); if (linked.rowCount !== 1) throw new Error("BROKER_OBJECT_LINKAGE_REASSIGNMENT_REJECTED"); }
     for (const identity of input.identities.map(createBrokerIdentity)) await client.query("INSERT INTO goodtrading_broker_identity_aliases (id,broker_object_id,broker_account_identity,identity_kind,identity_value,precision_trusted) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", [id("BROKER-ALIAS"), object.id, input.brokerAccountIdentity, identity.kind, identity.value, identity.precisionTrusted ?? true]);
-    const s = input.snapshot; await client.query("INSERT INTO goodtrading_broker_observation_snapshots (id,broker_object_id,source,client_order_id,broker_order_id,broker_order_id_precision_trusted,execution_id,symbol,side,quantity,price,raw_broker_status,source_timestamp,observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)", [id("BROKER-SNAPSHOT"), object.id, s.source, s.clientOrderId ?? null, s.brokerOrderId ?? null, s.brokerOrderIdPrecisionTrusted, s.executionId ?? null, s.symbol, s.side ?? null, s.quantity ?? null, s.price ?? null, s.rawBrokerStatus ?? null, s.sourceTimestamp ?? null, s.observedAt]);
+    const snapshots = [input.snapshot, ...(input.snapshots ?? [])];
+    for (const s of snapshots) await client.query("INSERT INTO goodtrading_broker_observation_snapshots (id,broker_object_id,source,client_order_id,broker_order_id,broker_order_id_precision_trusted,execution_id,symbol,side,quantity,price,raw_broker_status,source_timestamp,observed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)", [id("BROKER-SNAPSHOT"), object.id, s.source, s.clientOrderId ?? null, s.brokerOrderId ?? null, s.brokerOrderIdPrecisionTrusted, s.executionId ?? null, s.symbol, s.side ?? null, s.quantity ?? null, s.price ?? null, s.rawBrokerStatus ?? null, s.sourceTimestamp ?? null, s.observedAt]);
     const completed = await client.query("UPDATE goodtrading_order_reconciliation_runs SET run_status='COMPLETED',completed_at=now(),result='MATCHED' WHERE id=$1 AND run_status='STARTED'", [input.runId]);
     if (completed.rowCount !== 1) throw new Error("RECONCILIATION_RUN_COMPLETION_REJECTED");
     return { ...object, classification: "GT_LINKED", attemptId: input.attemptId, intentId: input.intentId };
