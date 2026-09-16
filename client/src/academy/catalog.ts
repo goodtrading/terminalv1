@@ -20,6 +20,7 @@ import { OPTIONS_FOUNDATIONS_CONTENT } from "@/academy/content/optionsFoundation
 import { EXECUTION_AND_RISK_CONTENT } from "@/academy/content/executionAndRisk";
 import { ORDER_FLOW_FOUNDATIONS_CONTENT } from "@/academy/content/orderFlowFoundations";
 import { FOOTPRINT_MASTERY_CONTENT } from "@/academy/content/footprintMastery";
+import { DOM_AND_LIQUIDITY_CONTENT } from "@/academy/content/domAndLiquidity";
 
 export type AcademyLesson = {
   id: string;
@@ -371,7 +372,8 @@ const editorialCatalog = ACADEMY_METADATA_CATALOG.map((course) => ({
         OPTIONS_FOUNDATIONS_CONTENT[lesson.slug] ??
         EXECUTION_AND_RISK_CONTENT[lesson.slug] ??
         ORDER_FLOW_FOUNDATIONS_CONTENT[lesson.slug] ??
-        FOOTPRINT_MASTERY_CONTENT[lesson.slug];
+        FOOTPRINT_MASTERY_CONTENT[lesson.slug] ??
+        DOM_AND_LIQUIDITY_CONTENT[lesson.slug];
       return content ? { ...lesson, content } : lesson;
     }),
   })),

@@ -25,6 +25,13 @@ const MEMBER_ROUTE_INDEX: ReadonlyMap<string, { lessonId: string }> = new Map([
   ["footprint-mastery/footprint-mastery-27-footprint-heatmap", { lessonId: "course-04-footprint-mastery-module-05-lesson-04" }],
   ["footprint-mastery/footprint-mastery-28-trade-wait-framework", { lessonId: "course-04-footprint-mastery-module-05-lesson-05" }],
   ["footprint-mastery/footprint-mastery-29-footprint-replay-lab", { lessonId: "course-04-footprint-mastery-module-05-lesson-06" }],
+  ["dom-and-liquidity/dom-and-liquidity-19-wall-defended-vs-wall-fake", { lessonId: "course-05-dom-and-liquidity-module-04-lesson-01" }],
+  ["dom-and-liquidity/dom-and-liquidity-20-pull-before-touch", { lessonId: "course-05-dom-and-liquidity-module-04-lesson-02" }],
+  ["dom-and-liquidity/dom-and-liquidity-21-real-replenishment", { lessonId: "course-05-dom-and-liquidity-module-04-lesson-03" }],
+  ["dom-and-liquidity/dom-and-liquidity-22-liquidity-migration-in-context", { lessonId: "course-05-dom-and-liquidity-module-04-lesson-04" }],
+  ["dom-and-liquidity/dom-and-liquidity-23-aggressor-passive-interaction", { lessonId: "course-05-dom-and-liquidity-module-04-lesson-05" }],
+  ["dom-and-liquidity/dom-and-liquidity-24-dom-execution-setups", { lessonId: "course-05-dom-and-liquidity-module-04-lesson-06" }],
+  ["dom-and-liquidity/dom-and-liquidity-25-dom-replay-lab", { lessonId: "course-05-dom-and-liquidity-module-04-lesson-07" }],
 ]);
 
 type AccessResolver = (userId: number) => Promise<AccessSnapshot>;
