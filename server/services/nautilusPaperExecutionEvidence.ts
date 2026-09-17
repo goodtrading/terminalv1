@@ -16,6 +16,7 @@ export type NautilusPaperExecutionEvidence = Readonly<{
   executionId: string;
   environment: "PAPER";
   source: "NAUTILUS_PAPER";
+  instrument: Readonly<{ venue: string; marketType: string; symbol: string }>;
   side: "BUY" | "SELL";
   price: string;
   quantity: string;
@@ -77,6 +78,11 @@ export function adaptNautilusPaperExecutionEvidence(
     executionId,
     environment: "PAPER",
     source: "NAUTILUS_PAPER",
+    instrument: {
+      venue: requiredText(instrument.venue, "instrument.venue"),
+      marketType: requiredText(instrument.marketType, "instrument.marketType"),
+      symbol: requiredText(instrument.symbol, "instrument.symbol"),
+    },
     side: input.side,
     price: positiveDecimal(input.price, "price"),
     quantity: positiveDecimal(input.quantity, "quantity"),

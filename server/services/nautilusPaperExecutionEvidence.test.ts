@@ -26,6 +26,7 @@ test("adapts exact factual Nautilus fill evidence with simulated provenance", ()
     executionId: "trade-1",
     environment: "PAPER",
     source: "NAUTILUS_PAPER",
+    instrument: { venue: "SIM", marketType: "perpetual", symbol: "BTCUSDT-PERP" },
     side: "BUY",
     price: "100.000000000000000001",
     quantity: "0.000000000000000123",
