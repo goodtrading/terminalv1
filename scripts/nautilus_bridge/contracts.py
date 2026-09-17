@@ -75,7 +75,7 @@ GT_ORDER_STATE_TO_EVENT_TYPE: dict[str, str] = {
 
 def _decimal_text(value: Any, field_name: str) -> str:
     try:
-        return str(Decimal(str(value)))
+        return format(Decimal(str(value)), "f")
     except (InvalidOperation, ValueError, TypeError) as exc:
         raise ContractBoundaryError(f"{field_name} must be a valid decimal") from exc
 

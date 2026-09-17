@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 from scripts.nautilus_bridge.contracts import (
@@ -10,6 +11,7 @@ from scripts.nautilus_bridge.contracts import (
     GTOrderIntentDTO,
     GTOrderStateDTO,
     GTPositionDTO,
+    GTFillDTO,
     GTTradingEventEnvelopeDTO,
     SimulationCoreJsonBoundary,
     _json_safe_recursive,
@@ -95,6 +97,51 @@ class SimulationCoreJsonContractTestCase(unittest.TestCase):
         self.assertEqual({item.clientOrderId for item in fills}, {"fill-order-1", "fill-order-2"})
         self.assertEqual(len({item.fillId for item in fills}), 2)
         self.assertNotEqual(first.clientOrderId, second.clientOrderId)
+
+    def test_fill_contract_preserves_exact_decimal_wire_values(self) -> None:
+        snapshot = {
+            "fill_id": "trade-precision",
+            "client_order_id": "client-precision",
+            "venue_order_id": "venue-precision",
+            "side": "BUY",
+            "price": "1.000000000000000001",
+            "quantity": "0.000000000000000123",
+            "timestamp": 1_700_000_000_123_000_000,
+            "fee": "0.000000000000000007",
+            "fee_asset": "USDT",
+            "liquidity": "TAKER",
+        }
+        fill = GTFillDTO.from_simulation_snapshot(self.core, snapshot)
+        payload = json.loads(json.dumps(fill.to_json_dict()))
+        self.assertEqual(payload["fillId"], "trade-precision")
+        self.assertEqual(payload["price"], "1.000000000000000001")
+        self.assertEqual(payload["quantity"], "0.000000000000000123")
+        self.assertEqual(payload["fee"], "0.000000000000000007")
+        self.assertEqual(payload["feeAsset"], "USDT")
+        self.assertEqual(payload["liquidity"], "TAKER")
+        self.assertEqual(payload["timestamp"], 1_700_000_000_123)
+
+        class CacheWithoutFillId:
+            def orders(self, **_: Any) -> list[Any]:
+                event = SimpleNamespace(
+                    last_qty=Decimal("0.000000000000000123"),
+                    last_px=Decimal("1.000000000000000001"),
+                    ts_event=1_700_000_000_123_000_000,
+                    trade_id=None,
+                    commission=None,
+                    liquidity_side=None,
+                )
+                return [SimpleNamespace(
+                    events=[event],
+                    client_order_id="order-level-id",
+                    venue_order_id="venue-order-id",
+                    instrument_id="BTCUSDT-PERP.SIM",
+                    side="BUY",
+                )]
+
+        self.core._cache = CacheWithoutFillId()  # noqa: SLF001 - boundary failure fixture
+        with self.assertRaisesRegex(Exception, "factual trade_id/fill_id"):
+            self.core.list_fills()
 
     def test_cancel_without_fill_exposes_no_fill(self) -> None:
         self._market()

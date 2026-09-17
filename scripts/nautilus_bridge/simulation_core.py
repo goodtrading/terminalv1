@@ -474,7 +474,9 @@ class SimulationCore:
                 if ts_event is None:
                     raise SimulationCoreError("fill event is missing ts_event")
                 trade_id = getattr(event, "trade_id", None)
-                fill_id = str(trade_id) if trade_id is not None else f"{order.client_order_id}:{int(ts_event)}:{quantity}:{price}"
+                if trade_id is None or not str(trade_id).strip():
+                    raise SimulationCoreError("fill event is missing factual trade_id/fill_id")
+                fill_id = str(trade_id)
                 commission = getattr(event, "commission", None)
                 fee_asset = getattr(getattr(commission, "currency", None), "code", None)
                 fills.append({
