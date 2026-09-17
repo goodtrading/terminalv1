@@ -143,6 +143,7 @@ export type PrivateFillTruth = Readonly<{
   priceSource?: string;
   feePresent: boolean;
   feeAssetPresent: boolean;
+  feeConflict?: boolean;
 }>;
 
 export type PrivateFillRow = BingxFillSnapshot & {
@@ -165,6 +166,23 @@ function optionalSourceIdentifier(row: Record<string, unknown>, key: string): st
   if (typeof value === "string" && value.trim()) return value;
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return undefined;
+}
+
+export type BingXFeeEvidence = Readonly<{ amount: string | null; asset: string | null; conflict: boolean }>;
+const FEE_DECIMAL = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+function exactFeeText(value: unknown): string | null {
+  if (typeof value === "string" && FEE_DECIMAL.test(value.trim())) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+function explicitAsset(value: unknown): string | null { return typeof value === "string" && value.trim() ? value : null; }
+export function extractBingXFeeEvidence(row: Record<string, unknown>): BingXFeeEvidence {
+  const primaryAmount = exactFeeText(row.commission); const fallbackAmount = exactFeeText(row.fee);
+  const primaryAsset = explicitAsset(row.commissionAsset); const fallbackAsset = explicitAsset(row.feeAsset);
+  const amountConflict = primaryAmount !== null && fallbackAmount !== null && primaryAmount !== fallbackAmount;
+  const assetConflict = primaryAsset !== null && fallbackAsset !== null && primaryAsset !== fallbackAsset;
+  if (amountConflict || assetConflict) return { amount: null, asset: null, conflict: true };
+  return { amount: primaryAmount ?? fallbackAmount, asset: primaryAsset ?? fallbackAsset, conflict: false };
 }
 function timestampOrigin(value: string | undefined): SourceTimestampOrigin {
   return value === undefined ? "MISSING" : "BROKER";
@@ -418,6 +436,7 @@ export function normalizeFills(
       const quantity = coerceNumber(
         node.qty ?? node.quantity ?? node.filledQty ?? node.volume,
       );
+      const feeEvidence = extractBingXFeeEvidence(node);
       if (price == null || quantity == null) return null;
       const exchangeOrderId =
         node.orderId != null ? String(node.orderId) : undefined;
@@ -437,13 +456,9 @@ export function normalizeFills(
         side: normalizeOrderSide(node.side),
         price,
         quantity,
-        fee: coerceNumber(node.commission ?? node.fee),
-        feeAsset:
-          node.commissionAsset != null
-            ? String(node.commissionAsset)
-            : node.feeAsset != null
-              ? String(node.feeAsset)
-              : undefined,
+        fee: feeEvidence.amount === null ? undefined : coerceNumber(feeEvidence.amount),
+        feeAmountExact: feeEvidence.amount ?? undefined,
+        feeAsset: feeEvidence.asset ?? undefined,
         realizedPnl: coerceNumber(node.realizedPnl ?? node.profit),
         timestamp: displayTimestamp,
         accountMode: MODE,
@@ -465,8 +480,9 @@ export function normalizeFills(
             ? "INDIVIDUAL_EXECUTION"
             : "UNKNOWN",
         priceSource,
-        feePresent: hasOwn(node, "commission") || hasOwn(node, "fee"),
-        feeAssetPresent: hasOwn(node, "commissionAsset") || hasOwn(node, "feeAsset"),
+        feePresent: feeEvidence.amount !== null,
+        feeAssetPresent: feeEvidence.asset !== null,
+        feeConflict: feeEvidence.conflict,
       });
     })
     .filter((f) => f != null)

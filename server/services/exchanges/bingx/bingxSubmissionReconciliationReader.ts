@@ -12,6 +12,9 @@ export type BingXSubmissionObservation = Readonly<{
   side?: string;
   quantity?: string;
   price?: string;
+  feeAmount?: string;
+  feeAsset?: string;
+  feeConflict?: boolean;
   rawStatus?: string;
   observedAt: string;
   sourceTimestamp?: string;
@@ -44,6 +47,15 @@ function textualDecimal(row: Record<string, unknown>, keys: string[]): string | 
   return text(row, keys);
 }
 
+function feeEvidence(row: Record<string, unknown>): { feeAmount?: string; feeAsset?: string; feeConflict?: boolean } {
+  const amount = (key: string) => typeof row[key] === "string" && /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test((row[key] as string).trim()) ? (row[key] as string).trim() : undefined;
+  const asset = (key: string) => typeof row[key] === "string" && (row[key] as string).trim() ? (row[key] as string).trim() : undefined;
+  const commission = amount("commission"); const fallback = amount("fee");
+  const commissionAsset = asset("commissionAsset"); const fallbackAsset = asset("feeAsset");
+  if ((commission && fallback && commission !== fallback) || (commissionAsset && fallbackAsset && commissionAsset !== fallbackAsset)) return { feeConflict: true };
+  return { feeAmount: commission ?? fallback, feeAsset: commissionAsset ?? fallbackAsset };
+}
+
 function observation(source: BingXReconciliationSource, row: Record<string, unknown>): BingXSubmissionObservation {
   const rawOrderId = row.orderId ?? row.orderID ?? row.id;
   const brokerOrderId = typeof rawOrderId === "string"
@@ -51,6 +63,7 @@ function observation(source: BingXReconciliationSource, row: Record<string, unkn
     : typeof rawOrderId === "number" && Number.isFinite(rawOrderId)
       ? String(rawOrderId)
       : undefined;
+  const fee = feeEvidence(row);
   return {
     source,
     clientOrderId: text(row, ["clientOrderId", "clientOrderID"]),
@@ -61,6 +74,9 @@ function observation(source: BingXReconciliationSource, row: Record<string, unkn
     side: text(row, ["side", "positionSide"]),
     quantity: textualDecimal(row, ["quantity", "origQty", "qty", "volume", "filledQty"]),
     price: textualDecimal(row, ["price", "limitPrice", "fillPrice"]),
+    feeAmount: fee.feeAmount,
+    feeAsset: fee.feeAsset,
+    feeConflict: fee.feeConflict,
     rawStatus: text(row, ["status", "orderStatus"]),
     observedAt: new Date().toISOString(),
     sourceTimestamp: text(row, ["updateTime", "updatedTime", "time", "createTime", "createdTime"]),

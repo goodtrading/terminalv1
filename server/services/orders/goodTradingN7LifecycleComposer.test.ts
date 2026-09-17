@@ -139,6 +139,42 @@ test("missing execution ID produces no EconomicFill even in fill history", () =>
   assert.equal(result.economicFills.length, 0);
 });
 
+test("reconstructs exact signed fee evidence and preserves asset per execution", () => {
+  const result = composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [
+    snapshot({ id: "FEE-1", source: "FILL_HISTORY", executionId: "FEE-E1", feeAmount: "-0.000000000000000123", feeAsset: "USDT", rawBrokerStatus: "FILLED" }),
+    snapshot({ id: "FEE-2", source: "FILL_HISTORY", executionId: "FEE-E2", feeAmount: "0.000000000000000987", feeAsset: "BTC", rawBrokerStatus: "FILLED" }),
+  ] });
+  assert.equal(result.economicFills[0]?.fee?.value, "-0.000000000000000123");
+  assert.equal(result.economicFills[0]?.fee?.currency, "USDT");
+  assert.equal(result.economicFills[1]?.fee?.value, "0.000000000000000987");
+  assert.equal(result.economicFills[1]?.fee?.currency, "BTC");
+});
+
+test("preserves fee amount while leaving missing asset unavailable", () => {
+  const result = composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [snapshot({ source: "FILL_HISTORY", executionId: "FEE-NO-ASSET", feeAmount: "0.000000000000000123", feeAsset: null, rawBrokerStatus: "FILLED" })] });
+  assert.equal(result.economicFills[0]?.fee?.value, "0.000000000000000123");
+  assert.equal(result.economicFills[0]?.fee?.currency, null);
+});
+
+test("does not expose conflicting durable fee evidence", () => {
+  const result = composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [snapshot({ source: "FILL_HISTORY", executionId: "FEE-CONFLICT", feeAmount: "1", feeAsset: "USDT", feeConflict: true, rawBrokerStatus: "FILLED" })] });
+  assert.equal(result.economicFills[0]?.fee, undefined);
+});
+
+test("fails closed when same execution has conflicting fee amount", () => {
+  assert.throws(() => composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [
+    snapshot({ id: "FEE-AMOUNT-A", source: "FILL_HISTORY", executionId: "FEE-CONFLICT-AMOUNT", feeAmount: "1", feeAsset: "USDT", rawBrokerStatus: "FILLED" }),
+    snapshot({ id: "FEE-AMOUNT-B", source: "FILL_HISTORY", executionId: "FEE-CONFLICT-AMOUNT", feeAmount: "2", feeAsset: "USDT", rawBrokerStatus: "FILLED" }),
+  ] }), /ECONOMIC_FILL_CONFLICT/);
+});
+
+test("fails closed when same execution has conflicting fee asset", () => {
+  assert.throws(() => composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [
+    snapshot({ id: "FEE-ASSET-A", source: "FILL_HISTORY", executionId: "FEE-CONFLICT-ASSET", feeAmount: "1", feeAsset: "USDT", rawBrokerStatus: "FILLED" }),
+    snapshot({ id: "FEE-ASSET-B", source: "FILL_HISTORY", executionId: "FEE-CONFLICT-ASSET", feeAmount: "1", feeAsset: "BTC", rawBrokerStatus: "FILLED" }),
+  ] }), /ECONOMIC_FILL_CONFLICT/);
+});
+
 test("rejects unlinked or mismatched evidence and never infers a broker order id", () => {
   assert.throws(() => composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "OTHER", snapshots: [snapshot()] }), /BROKER_EVIDENCE_SCOPE_MISMATCH/);
   assert.throws(() => composeGoodTradingN7Lifecycle({ intent, attempt: { ...attempt, brokerOrderId: null }, brokerObjectId: "BROKER-1", snapshots: [snapshot({ brokerOrderId: null })] }), /BROKER_ORDER_ID_REQUIRED/);

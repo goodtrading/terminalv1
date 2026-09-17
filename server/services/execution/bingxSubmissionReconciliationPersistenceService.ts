@@ -44,7 +44,7 @@ function identitiesFor(result: ReconciliationResult): BrokerIdentity[] {
 }
 
 function toSnapshot(observation: ReconciliationResult["observations"][number]): BrokerObservationSnapshot {
-  return { source: observation.source, clientOrderId: observation.clientOrderId, brokerOrderId: observation.brokerOrderId, brokerOrderIdPrecisionTrusted: observation.brokerOrderIdPrecisionTrusted, symbol: observation.symbol ?? "UNKNOWN", side: observation.side, quantity: observation.quantity, price: observation.price, rawBrokerStatus: observation.rawStatus, sourceTimestamp: observation.sourceTimestamp ? new Date(observation.sourceTimestamp) : undefined, observedAt: new Date(observation.observedAt) };
+  return { source: observation.source, clientOrderId: observation.clientOrderId, brokerOrderId: observation.brokerOrderId, brokerOrderIdPrecisionTrusted: observation.brokerOrderIdPrecisionTrusted, symbol: observation.symbol ?? "UNKNOWN", side: observation.side, quantity: observation.quantity, price: observation.price, feeAmount: observation.feeAmount, feeAsset: observation.feeAsset, feeConflict: observation.feeConflict, rawBrokerStatus: observation.rawStatus, sourceTimestamp: observation.sourceTimestamp ? new Date(observation.sourceTimestamp) : undefined, observedAt: new Date(observation.observedAt) };
 }
 
 async function persistDefault(result: ReconciliationResult, runId: string, accountIdentity: string, attemptId: string, intentId: string): Promise<void> {

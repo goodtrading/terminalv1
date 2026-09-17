@@ -22,6 +22,9 @@ export type BrokerObservationSnapshot = Readonly<{
   side?: string;
   quantity?: string;
   price?: string;
+  feeAmount?: string;
+  feeAsset?: string;
+  feeConflict?: boolean;
   rawBrokerStatus?: string;
   sourceTimestamp?: Date;
   observedAt: Date;

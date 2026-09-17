@@ -21,7 +21,7 @@ function identitiesFor(o: BingXSubmissionObservation): BrokerIdentity[] {
   return result;
 }
 function snapshot(o: BingXSubmissionObservation): BrokerObservationSnapshot {
-  return { source: o.source, clientOrderId: o.clientOrderId, brokerOrderId: o.brokerOrderId, brokerOrderIdPrecisionTrusted: o.brokerOrderIdPrecisionTrusted, symbol: o.symbol ?? "UNKNOWN", side: o.side, quantity: o.quantity, price: o.price, rawBrokerStatus: o.rawStatus, sourceTimestamp: o.sourceTimestamp ? new Date(o.sourceTimestamp) : undefined, observedAt: new Date(o.observedAt) };
+  return { source: o.source, clientOrderId: o.clientOrderId, brokerOrderId: o.brokerOrderId, brokerOrderIdPrecisionTrusted: o.brokerOrderIdPrecisionTrusted, symbol: o.symbol ?? "UNKNOWN", side: o.side, quantity: o.quantity, price: o.price, feeAmount: o.feeAmount, feeAsset: o.feeAsset, feeConflict: o.feeConflict, rawBrokerStatus: o.rawStatus, sourceTimestamp: o.sourceTimestamp ? new Date(o.sourceTimestamp) : undefined, observedAt: new Date(o.observedAt) };
 }
 
 export async function observeBingXBrokerObjects(deps: Deps): Promise<ExternalObservationSummary> {

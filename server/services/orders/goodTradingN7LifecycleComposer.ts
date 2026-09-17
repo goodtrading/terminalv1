@@ -34,6 +34,9 @@ export type DurableBrokerEvidenceSnapshot = Readonly<{
   side: string | null;
   quantity: string | null;
   price: string | null;
+  feeAmount?: string | null;
+  feeAsset?: string | null;
+  feeConflict?: boolean;
   rawBrokerStatus: string | null;
   sourceTimestamp: Date | null;
   observedAt: Date;
@@ -162,6 +165,8 @@ function economicFill(input: Input, snapshot: DurableBrokerEvidenceSnapshot): Ec
     side: snapshot.side.toUpperCase() as "BUY" | "SELL",
     quantity: positiveNumber(snapshot.quantity, "quantity"),
     price: positiveNumber(snapshot.price, "price"),
+    liquidityRole: "UNKNOWN",
+    fee: snapshot.feeAmount == null || snapshot.feeConflict ? undefined : { value: snapshot.feeAmount, currency: snapshot.feeAsset ?? null, quality: snapshot.feeAsset == null ? "PARTIAL" : "VALID", provenance: { source: "GOODTRADING_BROKER_OBSERVATION", snapshotIds: [snapshot.id] } },
     eventTime,
     receiveTime: dateMs(snapshot.observedAt, "observedAt"),
     orderReferences: { clientOrderId: input.attempt.brokerClientOrderId, venueOrderId: input.attempt.brokerOrderId! },

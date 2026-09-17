@@ -68,9 +68,10 @@ function eventTimeMs(sourceTimestamp: string | undefined): number | undefined {
 }
 
 function sourceFee(row: PrivateFillRow): EconomicFillRecord["fee"] {
+  if (row.privateTruth.feeConflict) return undefined;
   if (!row.privateTruth.feePresent) return undefined;
   return {
-    value: row.fee ?? null,
+    value: row.feeAmountExact ?? row.fee ?? null,
     currency: row.privateTruth.feeAssetPresent ? row.feeAsset ?? null : null,
     quality: "VALID",
     provenance: {

@@ -170,6 +170,8 @@ export const bingxFillSnapshotSchema = z.object({
   price: z.number().finite(),
   quantity: z.number().finite(),
   fee: z.number().finite().optional(),
+  /** Exact provider representation retained for durable fee evidence. */
+  feeAmountExact: z.string().optional(),
   feeAsset: z.string().max(32).optional(),
   realizedPnl: z.number().finite().optional(),
   timestamp: z.string().datetime(),

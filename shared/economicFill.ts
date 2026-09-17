@@ -5,7 +5,7 @@ export type EconomicFillSide = "BUY" | "SELL";
 export type EconomicFillLiquidityRole = "MAKER" | "TAKER" | "UNKNOWN";
 
 export type EconomicFillValue = Readonly<{
-  value: number | null;
+  value: number | string | null;
   currency: string | null;
   quality: PortfolioComponentQuality;
   provenance?: PortfolioProvenance;
@@ -81,7 +81,8 @@ function validateMarket(market: ExecutionMarketIdentity): void {
 
 function validateValue(value: EconomicFillValue | undefined, field: string): void {
   if (value === undefined) return;
-  if (value.value !== null && !Number.isFinite(value.value)) throw new Error(`${field}.value must be finite or null`);
+  if (typeof value.value === "number" && !Number.isFinite(value.value)) throw new Error(`${field}.value must be finite or null`);
+  if (typeof value.value === "string" && !/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value.value)) throw new Error(`${field}.value must be an exact decimal string`);
   if (value.currency !== null && value.currency !== undefined) requiredText(value.currency, `${field}.currency`);
   if (!["VALID", "PARTIAL", "STALE", "UNAVAILABLE"].includes(value.quality)) throw new Error(`${field}.quality is invalid`);
 }
