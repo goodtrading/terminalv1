@@ -38,7 +38,7 @@ export default function DownloadDesktopPage() {
             <button
               type="button"
               onClick={() => openDesktopDownload("download_page")}
-              className="rounded-xl bg-gradient-to-r from-[#ff3b3b] to-red-700 px-8 py-3 text-sm font-semibold text-white hover:opacity-90"
+              className="marketing-focus-ring marketing-motion-colors rounded-xl bg-gradient-to-r from-[#ff3b3b] to-red-700 px-8 py-3 text-sm font-semibold text-white hover:opacity-90"
             >
               Descargar v0.1.7
             </button>
@@ -46,13 +46,13 @@ export default function DownloadDesktopPage() {
               href={DESKTOP_RELEASE_PAGE}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center justify-center rounded-xl border border-white/15 px-8 py-3 text-sm font-semibold text-white hover:bg-white/[0.06]"
+              className="marketing-focus-ring marketing-motion-colors inline-flex items-center justify-center rounded-xl border border-white/15 px-8 py-3 text-sm font-semibold text-white hover:border-white/28 hover:bg-white/[0.06]"
             >
               Ver release en GitHub
             </a>
           </div>
 
-          <Link href="/products" className="mt-8 inline-block text-sm text-blue-400 hover:text-blue-300">
+          <Link href="/products" className="marketing-focus-ring marketing-motion-colors mt-8 inline-block text-sm text-blue-400 hover:text-blue-300">
             ← Ver todos los productos
           </Link>
         </div>

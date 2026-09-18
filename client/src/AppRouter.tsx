@@ -1,40 +1,47 @@
+import { lazy, Suspense } from "react";
 import { Switch, Route } from "wouter";
 import NotFound from "@/pages/not-found";
-import TerminalLayout from "@/pages/terminal/TerminalLayout";
-import BlockedAccessScreen from "@/pages/auth/BlockedAccessScreen";
-import DesktopEntryRedirect from "@/pages/auth/DesktopEntryRedirect";
-import AdminPage from "@/pages/admin/AdminPage";
-import { AdminRoute } from "@/pages/admin/AdminRoute";
-import CalibrationLabPage from "@/pages/admin/CalibrationLabPage";
-import KnowledgeInboxPage from "@/pages/admin/KnowledgeInboxPage";
-import KnowledgeHealthPage from "@/pages/admin/KnowledgeHealthPage";
-import MarketSnapshotDebugPage from "@/pages/admin/MarketSnapshotDebugPage";
-import DecisionGraphDebugPage from "@/pages/admin/DecisionGraphDebugPage";
-import HumanMethodologyReviewPage from "@/pages/admin/HumanMethodologyReviewPage";
-import CriticalCalibrationLabPage from "@/pages/admin/CriticalCalibrationLabPage";
-import KnowledgeDistillationPage from "@/pages/admin/KnowledgeDistillationPage";
-import KnowledgeEvolutionPage from "@/pages/admin/KnowledgeEvolutionPage";
-import KnowledgeProvenancePage from "@/pages/admin/KnowledgeProvenancePage";
+
+const TerminalLayout = lazy(() => import("@/pages/terminal/TerminalLayout"));
+const BlockedAccessScreen = lazy(() => import("@/pages/auth/BlockedAccessScreen"));
+const DesktopEntryRedirect = lazy(() => import("@/pages/auth/DesktopEntryRedirect"));
+const AdminPage = lazy(() => import("@/pages/admin/AdminPage"));
+const AdminRoute = lazy(() => import("@/pages/admin/AdminRoute").then((module) => ({ default: module.AdminRoute })));
+const CalibrationLabPage = lazy(() => import("@/pages/admin/CalibrationLabPage"));
+const KnowledgeInboxPage = lazy(() => import("@/pages/admin/KnowledgeInboxPage"));
+const KnowledgeHealthPage = lazy(() => import("@/pages/admin/KnowledgeHealthPage"));
+const MarketSnapshotDebugPage = lazy(() => import("@/pages/admin/MarketSnapshotDebugPage"));
+const DecisionGraphDebugPage = lazy(() => import("@/pages/admin/DecisionGraphDebugPage"));
+const HumanMethodologyReviewPage = lazy(() => import("@/pages/admin/HumanMethodologyReviewPage"));
+const CriticalCalibrationLabPage = lazy(() => import("@/pages/admin/CriticalCalibrationLabPage"));
+const KnowledgeDistillationPage = lazy(() => import("@/pages/admin/KnowledgeDistillationPage"));
+const KnowledgeEvolutionPage = lazy(() => import("@/pages/admin/KnowledgeEvolutionPage"));
+const KnowledgeProvenancePage = lazy(() => import("@/pages/admin/KnowledgeProvenancePage"));
 import HomePage from "@/pages/marketing/HomePage";
-import TerminalTradingCriptoPage from "@/pages/marketing/TerminalTradingCriptoPage";
-import OrderFlowBitcoinPage from "@/pages/marketing/OrderFlowBitcoinPage";
-import GammaExposureBitcoinPage from "@/pages/marketing/GammaExposureBitcoinPage";
-import HeatmapLiquidezBitcoinPage from "@/pages/marketing/HeatmapLiquidezBitcoinPage";
-import LoginPage from "@/pages/marketing/LoginPage";
-import RegisterPage from "@/pages/marketing/RegisterPage";
-import ForgotPasswordPage from "@/pages/marketing/ForgotPasswordPage";
-import PricingPage from "@/pages/marketing/PricingPage";
-import ProductsPage from "@/pages/marketing/ProductsPage";
-import DownloadDesktopPage from "@/pages/marketing/DownloadDesktopPage";
-import AccountPage from "@/pages/marketing/AccountPage";
-import MyAccountRedirect from "@/pages/marketing/MyAccountRedirect";
-import TermsPage from "@/pages/marketing/TermsPage";
-import PrivacyPage from "@/pages/marketing/PrivacyPage";
-import VerifyEmailPage from "@/pages/marketing/VerifyEmailPage";
-import ResetPasswordPage from "@/pages/marketing/ResetPasswordPage";
-import AcademyHomePage from "@/pages/academy/AcademyHomePage";
-import AcademyCoursePage from "@/pages/academy/AcademyCoursePage";
-import AcademyLessonPage from "@/pages/academy/AcademyLessonPage";
+const TerminalTradingCriptoPage = lazy(() => import("@/pages/marketing/TerminalTradingCriptoPage"));
+const OrderFlowBitcoinPage = lazy(() => import("@/pages/marketing/OrderFlowBitcoinPage"));
+const GammaExposureBitcoinPage = lazy(() => import("@/pages/marketing/GammaExposureBitcoinPage"));
+const HeatmapLiquidezBitcoinPage = lazy(() => import("@/pages/marketing/HeatmapLiquidezBitcoinPage"));
+const LoginPage = lazy(() => import("@/pages/marketing/LoginPage"));
+const RegisterPage = lazy(() => import("@/pages/marketing/RegisterPage"));
+const ForgotPasswordPage = lazy(() => import("@/pages/marketing/ForgotPasswordPage"));
+const PricingPage = lazy(() => import("@/pages/marketing/PricingPage"));
+const ProductsPage = lazy(() => import("@/pages/marketing/ProductsPage"));
+const DownloadDesktopPage = lazy(() => import("@/pages/marketing/DownloadDesktopPage"));
+const AboutPage = lazy(() => import("@/pages/marketing/AboutPage"));
+const DataSourcesMethodologyPage = lazy(() => import("@/pages/marketing/DataSourcesMethodologyPage"));
+const ClassificationMethodologyPage = lazy(() => import("@/pages/marketing/ClassificationMethodologyPage"));
+const GammaOptionsMethodologyPage = lazy(() => import("@/pages/marketing/GammaOptionsMethodologyPage"));
+const LimitationsMethodologyPage = lazy(() => import("@/pages/marketing/LimitationsMethodologyPage"));
+const AccountPage = lazy(() => import("@/pages/marketing/AccountPage"));
+const MyAccountRedirect = lazy(() => import("@/pages/marketing/MyAccountRedirect"));
+const TermsPage = lazy(() => import("@/pages/marketing/TermsPage"));
+const PrivacyPage = lazy(() => import("@/pages/marketing/PrivacyPage"));
+const VerifyEmailPage = lazy(() => import("@/pages/marketing/VerifyEmailPage"));
+const ResetPasswordPage = lazy(() => import("@/pages/marketing/ResetPasswordPage"));
+const AcademyHomePage = lazy(() => import("@/pages/academy/AcademyHomePage"));
+const AcademyCoursePage = lazy(() => import("@/pages/academy/AcademyCoursePage"));
+const AcademyLessonPage = lazy(() => import("@/pages/academy/AcademyLessonPage"));
 import { isDesktopRuntime } from "@/lib/runtimeFeatures";
 
 function AdminPageRoute() {
@@ -133,9 +140,14 @@ function TerminalRoute() {
   );
 }
 
+function RouteLoadingState() {
+  return <div className="min-h-screen bg-[#030303]" aria-busy="true" />;
+}
+
 function WebRouter() {
   return (
-    <Switch>
+    <Suspense fallback={<RouteLoadingState />}>
+      <Switch>
       <Route path="/login" component={LoginPage} />
       <Route path="/register" component={RegisterPage} />
       <Route path="/forgot-password" component={ForgotPasswordPage} />
@@ -145,6 +157,11 @@ function WebRouter() {
       <Route path="/checkout" component={PricingPage} />
       <Route path="/products" component={ProductsPage} />
       <Route path="/download/desktop" component={DownloadDesktopPage} />
+      <Route path="/about" component={AboutPage} />
+      <Route path="/methodology/data-sources" component={DataSourcesMethodologyPage} />
+      <Route path="/methodology/classification" component={ClassificationMethodologyPage} />
+      <Route path="/methodology/gamma-options" component={GammaOptionsMethodologyPage} />
+      <Route path="/methodology/limitations" component={LimitationsMethodologyPage} />
       <Route path="/terminal-trading-cripto" component={TerminalTradingCriptoPage} />
       <Route path="/order-flow-bitcoin" component={OrderFlowBitcoinPage} />
       <Route path="/gamma-exposure-bitcoin" component={GammaExposureBitcoinPage} />
@@ -170,14 +187,16 @@ function WebRouter() {
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/" component={HomePage} />
       <Route component={NotFound} />
-    </Switch>
+      </Switch>
+    </Suspense>
   );
 }
 
 /** Desktop: auth gate at `/` — no public marketing landing. */
 function DesktopRouter() {
   return (
-    <Switch>
+    <Suspense fallback={<RouteLoadingState />}>
+      <Switch>
       <Route path="/login" component={LoginPage} />
       <Route path="/register" component={RegisterPage} />
       <Route path="/forgot-password" component={ForgotPasswordPage} />
@@ -203,9 +222,15 @@ function DesktopRouter() {
       <Route path="/terminal" component={TerminalRoute} />
       <Route path="/products" component={DesktopEntryRedirect} />
       <Route path="/download/desktop" component={DesktopEntryRedirect} />
+      <Route path="/about" component={AboutPage} />
+      <Route path="/methodology/data-sources" component={DataSourcesMethodologyPage} />
+      <Route path="/methodology/classification" component={ClassificationMethodologyPage} />
+      <Route path="/methodology/gamma-options" component={GammaOptionsMethodologyPage} />
+      <Route path="/methodology/limitations" component={LimitationsMethodologyPage} />
       <Route path="/" component={DesktopEntryRedirect} />
       <Route component={DesktopEntryRedirect} />
-    </Switch>
+      </Switch>
+    </Suspense>
   );
 }
 

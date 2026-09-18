@@ -10,12 +10,12 @@ export type StatusBadgeVariant =
   | "development";
 
 const VARIANTS: Record<StatusBadgeVariant, string> = {
-  available: "border-emerald-500/35 bg-emerald-500/10 text-emerald-300",
-  desktop: "border-blue-500/35 bg-blue-500/10 text-blue-300",
+  available: "border-emerald-600/30 bg-emerald-500/[0.07] text-emerald-200",
+  desktop: "border-white/[0.12] bg-white/[0.04] text-[#c4cad4]",
   soon: "border-white/12 bg-white/[0.04] text-[#9ca3af]",
   limited: "border-amber-500/35 bg-amber-500/10 text-amber-200",
   not_included: "border-red-500/25 bg-red-500/8 text-red-300/90",
-  development: "border-violet-500/35 bg-violet-500/10 text-violet-300",
+  development: "border-white/[0.12] bg-white/[0.04] text-[#a7afb9]",
 };
 
 export function StatusBadge({

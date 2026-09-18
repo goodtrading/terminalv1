@@ -49,6 +49,12 @@ export async function setupVite(server: Server, app: Express) {
     if (req.path === "/health" || req.path.startsWith("/api")) {
       return next();
     }
+    // Let the route-specific HTML middleware below inject SEO metadata for
+    // document requests. Vite should handle only static/module asset paths here.
+    const isAssetRequest = path.extname(req.path) !== "";
+    if (req.method === "GET" && !isAssetRequest) {
+      return next();
+    }
     return vite.middlewares(req, res, next);
   });
 

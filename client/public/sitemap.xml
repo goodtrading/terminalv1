@@ -5,6 +5,31 @@
     <lastmod>2026-07-23</lastmod>
   </url>
   <url>
+    <loc>https://goodtrading.com.ar/about</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://goodtrading.com.ar/methodology/data-sources</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://goodtrading.com.ar/methodology/classification</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://goodtrading.com.ar/methodology/gamma-options</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://goodtrading.com.ar/methodology/limitations</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
     <loc>https://goodtrading.com.ar/terminal-trading-cripto</loc>
     <lastmod>2026-07-23</lastmod>
   </url>

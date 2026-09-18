@@ -41,4 +41,65 @@ describe("injectPublicSeoHtml", () => {
       assert.equal(out.includes('"@type": "Organization"'), false);
     }
   });
+
+  it("injects the AboutPage entity and the canonical organization", () => {
+    const out = injectPublicSeoHtml(indexHtml, "/about");
+    assert.match(out, /<title>Qué es GoodTrading \| Trading Technology, Order Flow y Bitcoin<\/title>/);
+    assert.ok(out.includes('property="og:url" content="https://goodtrading.com.ar/about"'));
+    assert.ok(out.includes('"@type": "Organization"'));
+    assert.ok(out.includes('"@id": "https://goodtrading.com.ar/#organization"'));
+    assert.ok(out.includes('"foundingDate": "2022"'));
+    assert.ok(out.includes('"@type": "AboutPage"'));
+    assert.ok(out.includes('"@id": "https://goodtrading.com.ar/about#webpage"'));
+    assert.equal((out.match(/application\/ld\+json/g) || []).length, 3);
+    assert.equal(out.includes("noindex"), false);
+  });
+
+  it("injects TechArticle metadata for the public data sources page", () => {
+    const out = injectPublicSeoHtml(indexHtml, "/methodology/data-sources");
+    assert.match(out, /<title>Fuentes de datos de GoodTrading \| Metodología y transparencia<\/title>/);
+    assert.ok(out.includes('property="og:type" content="article"'));
+    assert.ok(out.includes('property="og:url" content="https://goodtrading.com.ar/methodology/data-sources"'));
+    assert.ok(out.includes('"@type": "TechArticle"'));
+    assert.ok(out.includes('"@id": "https://goodtrading.com.ar/methodology/data-sources#article"'));
+    assert.ok(out.includes('"@type": "BreadcrumbList"'));
+    assert.equal((out.match(/application\/ld\+json/g) || []).length, 2);
+    assert.equal(out.includes("noindex"), false);
+  });
+
+  it("injects TechArticle metadata for the public classification page", () => {
+    const out = injectPublicSeoHtml(indexHtml, "/methodology/classification");
+    assert.ok(out.includes("Cómo clasifica GoodTrading sus datos y modelos | Metodología"));
+    assert.ok(out.includes('property="og:type" content="article"'));
+    assert.ok(out.includes('property="og:url" content="https://goodtrading.com.ar/methodology/classification"'));
+    assert.ok(out.includes('"@type": "TechArticle"'));
+    assert.ok(out.includes('"@id": "https://goodtrading.com.ar/methodology/classification#article"'));
+    assert.ok(out.includes('"@type": "BreadcrumbList"'));
+    assert.equal((out.match(/application\/ld\+json/g) || []).length, 2);
+    assert.equal(out.includes("noindex"), false);
+  });
+
+  it("injects TechArticle metadata for the public gamma and options page", () => {
+    const out = injectPublicSeoHtml(indexHtml, "/methodology/gamma-options");
+    assert.ok(out.includes("Cómo calcula GoodTrading Gamma y opciones | Metodología"));
+    assert.ok(out.includes('property="og:type" content="article"'));
+    assert.ok(out.includes('property="og:url" content="https://goodtrading.com.ar/methodology/gamma-options"'));
+    assert.ok(out.includes('"@type": "TechArticle"'));
+    assert.ok(out.includes('"@id": "https://goodtrading.com.ar/methodology/gamma-options#article"'));
+    assert.ok(out.includes('"@type": "BreadcrumbList"'));
+    assert.equal((out.match(/application\/ld\+json/g) || []).length, 2);
+    assert.equal(out.includes("noindex"), false);
+  });
+
+  it("injects TechArticle metadata for the public limitations page", () => {
+    const out = injectPublicSeoHtml(indexHtml, "/methodology/limitations");
+    assert.ok(out.includes("Limitaciones de GoodTrading | Riesgo de modelo y metodología"));
+    assert.ok(out.includes('property="og:type" content="article"'));
+    assert.ok(out.includes('property="og:url" content="https://goodtrading.com.ar/methodology/limitations"'));
+    assert.ok(out.includes('"@type": "TechArticle"'));
+    assert.ok(out.includes('"@id": "https://goodtrading.com.ar/methodology/limitations#article"'));
+    assert.ok(out.includes('"@type": "BreadcrumbList"'));
+    assert.equal((out.match(/application\/ld\+json/g) || []).length, 2);
+    assert.equal(out.includes("noindex"), false);
+  });
 });

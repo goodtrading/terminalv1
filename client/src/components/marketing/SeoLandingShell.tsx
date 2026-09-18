@@ -33,7 +33,7 @@ export function SeoLandingShell({
         <nav aria-label="Breadcrumb" className="mb-8 text-sm text-[#6b7280]">
           <ol className="flex flex-wrap items-center gap-2">
             <li>
-              <Link href="/" className="hover:text-white">
+              <Link href="/" className="marketing-focus-ring marketing-motion-colors hover:text-white">
                 Inicio
               </Link>
             </li>
@@ -62,24 +62,24 @@ export function SeoLandingShell({
           <h2 className="text-xl font-semibold text-white">Seguí explorando</h2>
           <ul className="mt-4 space-y-2">
             <li>
-              <Link href="/" className="text-sm font-medium text-[#ff8a8a] hover:text-white">
+              <Link href="/" className="marketing-focus-ring marketing-motion-colors text-sm font-medium text-[#ff8a8a] hover:text-white">
                 Volver al inicio de GoodTrading
               </Link>
             </li>
             {related.map((item) => (
               <li key={item.href}>
-                <Link href={item.href} className="text-sm font-medium text-[#ff8a8a] hover:text-white">
+                <Link href={item.href} className="marketing-focus-ring marketing-motion-colors text-sm font-medium text-[#ff8a8a] hover:text-white">
                   {item.label}
                 </Link>
               </li>
             ))}
             <li>
-              <Link href="/products" className="text-sm font-medium text-[#ff8a8a] hover:text-white">
+              <Link href="/products" className="marketing-focus-ring marketing-motion-colors text-sm font-medium text-[#ff8a8a] hover:text-white">
                 Ver productos GoodTrading
               </Link>
             </li>
             <li>
-              <Link href="/register" className="text-sm font-medium text-[#ff8a8a] hover:text-white">
+              <Link href="/register" className="marketing-focus-ring marketing-motion-colors text-sm font-medium text-[#ff8a8a] hover:text-white">
                 Crear cuenta en GoodTrading
               </Link>
             </li>

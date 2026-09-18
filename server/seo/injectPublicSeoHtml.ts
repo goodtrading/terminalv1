@@ -70,6 +70,160 @@ function replaceCanonical(html: string, href: string): string {
 
 function buildLandingJsonLd(page: PublicSeoLanding): string {
   const url = canonicalUrlForPath(page.path);
+  if (page.path === "/about") {
+    const organization = {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "@id": `${SEO_SITE_ORIGIN}/#organization`,
+      name: "GoodTrading",
+      url: `${SEO_SITE_ORIGIN}/`,
+      logo: `${SEO_SITE_ORIGIN}/logo.png`,
+      foundingDate: "2022",
+      description:
+        "GoodTrading es una empresa argentina de tecnología y educación aplicada al trading, especializada en Bitcoin, Order Flow, liquidez, opciones y microestructura de mercado.",
+      founder: {
+        "@type": "Person",
+        "@id": `${url}#ignacio-rabanal`,
+        name: "Ignacio Rabanal",
+      },
+    };
+    const aboutPage = {
+      "@context": "https://schema.org",
+      "@type": "AboutPage",
+      "@id": `${url}#webpage`,
+      url,
+      name: "Qué es GoodTrading",
+      description: page.description,
+      about: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+      isPartOf: { "@id": `${SEO_SITE_ORIGIN}/#website` },
+      inLanguage: "es-AR",
+    };
+    const breadcrumb = {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Inicio", item: `${SEO_SITE_ORIGIN}/` },
+        { "@type": "ListItem", position: 2, name: "Qué es GoodTrading", item: url },
+      ],
+    };
+    return [organization, aboutPage, breadcrumb]
+      .map((entity) => `<script type="application/ld+json">\n${JSON.stringify(entity, null, 2)}\n    </script>`)
+      .join("\n    ");
+  }
+  if (page.path === "/methodology/data-sources") {
+    const article = {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "@id": `${url}#article`,
+      url,
+      headline: page.title,
+      description: page.description,
+      about: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+      isPartOf: { "@id": `${SEO_SITE_ORIGIN}/#website` },
+      inLanguage: "es-AR",
+      author: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+      publisher: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+    };
+    const breadcrumb = {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Inicio", item: `${SEO_SITE_ORIGIN}/` },
+        { "@type": "ListItem", position: 2, name: "Qué es GoodTrading", item: `${SEO_SITE_ORIGIN}/about` },
+        { "@type": "ListItem", position: 3, name: page.breadcrumbName, item: url },
+      ],
+    };
+    return [article, breadcrumb]
+      .map((entity) => `<script type="application/ld+json">\n${JSON.stringify(entity, null, 2)}\n    </script>`)
+      .join("\n    ");
+  }
+  if (page.path === "/methodology/classification") {
+    const article = {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "@id": `${url}#article`,
+      url,
+      headline: page.title,
+      description: page.description,
+      about: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+      isPartOf: { "@id": `${SEO_SITE_ORIGIN}/#website` },
+      inLanguage: "es-AR",
+      author: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+      publisher: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+    };
+    const breadcrumb = {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Inicio", item: `${SEO_SITE_ORIGIN}/` },
+        { "@type": "ListItem", position: 2, name: "Qué es GoodTrading", item: `${SEO_SITE_ORIGIN}/about` },
+        { "@type": "ListItem", position: 3, name: "Fuentes de datos", item: `${SEO_SITE_ORIGIN}/methodology/data-sources` },
+        { "@type": "ListItem", position: 4, name: page.breadcrumbName, item: url },
+      ],
+    };
+    return [article, breadcrumb]
+      .map((entity) => `<script type="application/ld+json">\n${JSON.stringify(entity, null, 2)}\n    </script>`)
+      .join("\n    ");
+  }
+  if (page.path === "/methodology/gamma-options") {
+    const article = {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "@id": `${url}#article`,
+      url,
+      headline: page.title,
+      description: page.description,
+      about: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+      isPartOf: { "@id": `${SEO_SITE_ORIGIN}/#website` },
+      inLanguage: "es-AR",
+      author: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+      publisher: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+    };
+    const breadcrumb = {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Inicio", item: `${SEO_SITE_ORIGIN}/` },
+        { "@type": "ListItem", position: 2, name: "Qué es GoodTrading", item: `${SEO_SITE_ORIGIN}/about` },
+        { "@type": "ListItem", position: 3, name: "Fuentes de datos", item: `${SEO_SITE_ORIGIN}/methodology/data-sources` },
+        { "@type": "ListItem", position: 4, name: "Clasificación", item: `${SEO_SITE_ORIGIN}/methodology/classification` },
+        { "@type": "ListItem", position: 5, name: page.breadcrumbName, item: url },
+      ],
+    };
+    return [article, breadcrumb]
+      .map((entity) => `<script type="application/ld+json">\n${JSON.stringify(entity, null, 2)}\n    </script>`)
+      .join("\n    ");
+  }
+  if (page.path === "/methodology/limitations") {
+    const article = {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "@id": `${url}#article`,
+      url,
+      headline: page.title,
+      description: page.description,
+      about: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+      isPartOf: { "@id": `${SEO_SITE_ORIGIN}/#website` },
+      inLanguage: "es-AR",
+      author: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+      publisher: { "@id": `${SEO_SITE_ORIGIN}/#organization` },
+    };
+    const breadcrumb = {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Inicio", item: `${SEO_SITE_ORIGIN}/` },
+        { "@type": "ListItem", position: 2, name: "Qué es GoodTrading", item: `${SEO_SITE_ORIGIN}/about` },
+        { "@type": "ListItem", position: 3, name: "Fuentes de datos", item: `${SEO_SITE_ORIGIN}/methodology/data-sources` },
+        { "@type": "ListItem", position: 4, name: "Clasificación", item: `${SEO_SITE_ORIGIN}/methodology/classification` },
+        { "@type": "ListItem", position: 5, name: "Gamma y opciones", item: `${SEO_SITE_ORIGIN}/methodology/gamma-options` },
+        { "@type": "ListItem", position: 6, name: page.breadcrumbName, item: url },
+      ],
+    };
+    return [article, breadcrumb]
+      .map((entity) => `<script type="application/ld+json">\n${JSON.stringify(entity, null, 2)}\n    </script>`)
+      .join("\n    ");
+  }
   const webpage = {
     "@context": "https://schema.org",
     "@type": "WebPage",
@@ -127,7 +281,7 @@ export function injectPublicSeoHtml(html: string, rawPath: string): string {
   next = replaceMetaByName(next, "description", page.description);
   next = replaceMetaByName(next, "robots", SEO_ROBOTS);
   next = replaceCanonical(next, canonical);
-  next = replaceMetaByProperty(next, "og:type", "website");
+  next = replaceMetaByProperty(next, "og:type", page.path.startsWith("/methodology/") ? "article" : "website");
   next = replaceMetaByProperty(next, "og:site_name", "GoodTrading");
   next = replaceMetaByProperty(next, "og:title", page.ogTitle);
   next = replaceMetaByProperty(next, "og:description", page.ogDescription);

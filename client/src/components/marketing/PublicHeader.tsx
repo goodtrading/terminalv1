@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { usePlatformAccess } from "@/hooks/usePlatformAccess";
@@ -12,12 +12,24 @@ const NAV_ITEMS = [
 ];
 
 const navLinkClass =
-  "text-[15px] font-medium text-[#b0b8c4] hover:text-white transition-colors whitespace-nowrap";
+  "group relative text-[15px] font-medium text-[#a7afb9] transition-colors duration-200 motion-reduce:transition-none hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff303c]/70 focus-visible:ring-offset-4 focus-visible:ring-offset-[#030303] whitespace-nowrap";
 
 export function PublicHeader() {
   const [location, setLocation] = useLocation();
   const { authReady, isAuthenticated, hasActiveSubscription, terminalRedirect } = usePlatformAccess();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const nextScrolled = window.scrollY > 24;
+      setScrolled((current) => (current === nextScrolled ? current : nextScrolled));
+    };
+
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   const goTerminal = () => {
     setMobileOpen(false);
@@ -34,7 +46,14 @@ export function PublicHeader() {
   const isActiveLink = (href?: string) => Boolean(href && (location === href || location.startsWith(`${href}/`)));
 
   return (
-    <header className="sticky top-0 z-50 border-b border-white/[0.07] bg-[#030303]/95 backdrop-blur-xl">
+    <header
+      className={cn(
+        "sticky top-0 z-50 border-b transition-colors duration-200 motion-reduce:transition-none",
+        scrolled
+          ? "border-white/[0.08] bg-[#030303]/88 backdrop-blur-[10px]"
+          : "border-white/[0.04] bg-[#030303]/75 backdrop-blur-[4px]",
+      )}
+    >
       <div className="mx-auto flex h-[76px] max-w-7xl items-center gap-4 px-4 sm:px-6 lg:gap-8 lg:px-8">
         <Link href="/" className="flex shrink-0 items-center gap-2">
           <img
@@ -52,15 +71,22 @@ export function PublicHeader() {
             const isActive = item.type === "link" && isActiveLink(item.href);
             const content = <>
               {item.label}
-              <span aria-hidden="true" className={cn("absolute -bottom-2 left-0 h-px bg-[#ff303c]", isActive ? "w-full" : "w-0 group-hover:w-full")} />
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "absolute -bottom-2 left-0 h-px bg-[#ff303c] transition-[width] duration-200 ease-out motion-reduce:transition-none",
+                  isActive ? "w-full" : "w-0 group-hover:w-full",
+                )}
+              />
             </>;
+
             return item.type === "link" ? (
-              <Link key={item.label} href={item.href} className={`${navLinkClass} group relative`}>
+              <Link key={item.label} href={item.href} className={navLinkClass}>
                 {content}
               </Link>
             ) : (
               <button key={item.label} type="button" onClick={() => handleNav(item)} className={navLinkClass}>
-                {item.label}
+                {content}
               </button>
             );
           })}
@@ -75,7 +101,7 @@ export function PublicHeader() {
                 <button
                   type="button"
                   onClick={() => setLocation("/pricing")}
-                  className="hidden rounded-full border border-[#ff3b3b]/40 bg-[#ff3b3b]/10 px-3 py-1.5 text-xs font-medium text-[#ff8a8a] md:inline-flex"
+                  className="hidden rounded-full border border-[#ff303c]/30 bg-[#ff303c]/[0.08] px-3 py-1.5 text-xs font-medium text-[#ff6b73] md:inline-flex"
                 >
                   Activar acceso
                 </button>
@@ -113,9 +139,9 @@ export function PublicHeader() {
             type="button"
             onClick={goTerminal}
             className={cn(
-              "rounded-xl px-4 py-2.5 text-sm font-semibold transition-all sm:px-5",
+              "hidden rounded-xl px-4 py-2.5 text-sm font-semibold transition-all sm:inline-flex sm:px-5",
               hasActiveSubscription && isAuthenticated
-                ? "bg-gradient-to-r from-[#ff3b3b] via-red-600 to-violet-700 text-white shadow-[0_0_28px_rgba(255,59,59,0.22)] hover:opacity-90"
+                ? "bg-gradient-to-r from-[#b81523] via-[#ff303c] to-[#b81523] text-white shadow-[0_0_24px_rgba(255,48,60,0.18)] hover:opacity-90"
                 : "border border-white/20 bg-white/[0.06] text-white hover:border-white/30 hover:bg-white/10",
             )}
           >
@@ -124,9 +150,11 @@ export function PublicHeader() {
 
           <button
             type="button"
-            aria-label="Abrir menú"
+            aria-label={mobileOpen ? "Cerrar menú" : "Abrir menú"}
+            aria-expanded={mobileOpen}
+            aria-controls="marketing-mobile-menu"
             onClick={() => setMobileOpen((v) => !v)}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 text-white lg:hidden"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 text-white transition-colors hover:border-white/20 hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff303c]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030303] lg:hidden"
           >
             <span className="text-lg leading-none">{mobileOpen ? "×" : "☰"}</span>
           </button>
@@ -134,7 +162,10 @@ export function PublicHeader() {
       </div>
 
       {mobileOpen && (
-        <div className="border-t border-white/[0.06] bg-[#050505]/98 px-4 py-4 lg:hidden">
+        <div
+          id="marketing-mobile-menu"
+          className="border-t border-white/[0.06] bg-[#050505]/98 px-4 py-4 lg:hidden"
+        >
           <nav className="flex flex-col gap-1">
             {NAV_ITEMS.map((item) => item.type === "link" ? (
               <Link

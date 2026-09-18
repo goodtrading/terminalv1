@@ -2,6 +2,7 @@ import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { usePlatformAccess } from "@/hooks/usePlatformAccess";
 import { openDesktopDownload } from "@/lib/downloadDesktop";
+import { PremiumBorder } from "./PremiumBorder";
 
 const TOOLS = [
   "Gamma Exposure",
@@ -19,7 +20,7 @@ export function ProductCards() {
     <section className="mx-auto max-w-7xl px-4 pb-24 pt-4 sm:px-6 lg:px-8">
       <div className="mb-12 max-w-3xl">
         <h2 className="text-3xl font-bold text-white sm:text-4xl">Plataforma GoodTrading</h2>
-        <p className="mt-3 text-base leading-relaxed text-[#9ca3af] sm:text-lg">
+        <p className="mt-3 text-base leading-relaxed text-[#a7afb9] sm:text-lg">
           Web liviana para operar desde el navegador. Desktop para Bookmap, heatmap avanzado y
           procesamiento local.
         </p>
@@ -28,35 +29,36 @@ export function ProductCards() {
       <div className="grid gap-6 lg:grid-cols-4">
         <article className="flex min-h-[360px] flex-col rounded-[18px] border border-white/[0.08] bg-[#050505]/75 p-7">
           <h3 className="text-xl font-semibold text-white">Terminal Web</h3>
-          <p className="mt-5 text-sm leading-relaxed text-[#9ca3af]">
+          <p className="mt-5 text-sm leading-relaxed text-[#a7afb9]">
             Acceso rápido desde navegador. Gamma, opciones, estructura de mercado y herramientas
             esenciales sin instalar nada.
           </p>
-          <p className="mt-6 text-xs leading-relaxed text-[#6b7280]">
+          <p className="mt-6 text-xs leading-relaxed text-[#737b85]">
             Versión web liviana — sin Bookmap pesado.
           </p>
           <button
             type="button"
             onClick={() => setLocation(terminalRedirect)}
-            className="mt-auto rounded-xl bg-gradient-to-r from-[#ff3b3b] to-red-700 px-5 py-3 text-sm font-semibold text-white hover:opacity-90"
+            className="marketing-focus-ring marketing-motion-colors mt-auto rounded-xl bg-gradient-to-r from-[#b81523] to-[#ff303c] px-5 py-3 text-sm font-semibold text-white hover:opacity-90"
           >
             Entrar a Terminal Web
           </button>
         </article>
 
-        <article className="flex min-h-[360px] flex-col rounded-[18px] border border-white/[0.08] bg-[#050505]/75 p-7">
-          <h3 className="text-xl font-semibold text-white">App Desktop</h3>
-          <p className="mt-5 text-sm leading-relaxed text-[#9ca3af]">
+        <article className="relative isolate flex min-h-[360px] flex-col overflow-hidden rounded-[18px] border border-white/[0.08] bg-[#050505]/75 p-7">
+          <PremiumBorder />
+          <h3 className="relative z-20 text-xl font-semibold text-white">App Desktop</h3>
+          <p className="mt-5 text-sm leading-relaxed text-[#a7afb9]">
             Versión descargable para Windows con módulos avanzados: Bookmap, heatmap de liquidez,
             DOM avanzado y procesamiento local.
           </p>
-          <p className="mt-6 text-xs font-semibold text-blue-300">
+          <p className="mt-6 text-xs font-semibold text-[#a7afb9]">
             Incluye Bookmap / Heatmap completo.
           </p>
           <button
             type="button"
             onClick={() => openDesktopDownload("platform_panel")}
-            className="mt-auto rounded-xl border border-white/15 px-5 py-3 text-sm font-semibold text-white hover:bg-white/[0.06]"
+            className="marketing-focus-ring marketing-motion-colors mt-auto rounded-xl border border-white/15 px-5 py-3 text-sm font-semibold text-white hover:border-white/28 hover:bg-white/[0.06]"
           >
             Descargar App Desktop
           </button>
@@ -64,13 +66,13 @@ export function ProductCards() {
 
         <article className="flex min-h-[360px] flex-col rounded-[18px] border border-white/[0.08] bg-[#050505]/75 p-7">
           <h3 className="text-xl font-semibold text-white">App Móvil</h3>
-          <p className="mt-5 text-sm leading-relaxed text-[#9ca3af]">
+          <p className="mt-5 text-sm leading-relaxed text-[#a7afb9]">
             Alertas, watchlists y seguimiento de mercado. En desarrollo.
           </p>
           <button
             type="button"
             disabled
-            className="mt-auto cursor-not-allowed rounded-xl border border-white/10 px-5 py-3 text-sm font-semibold text-[#6b7280]"
+            className="mt-auto cursor-not-allowed rounded-xl border border-white/10 px-5 py-3 text-sm font-semibold text-[#737b85]"
           >
             Próximamente
           </button>
@@ -90,9 +92,15 @@ export function ProductCards() {
           </ul>
           <Link
             href="/products"
-            className={cn("mt-auto text-sm font-semibold text-blue-400 hover:text-blue-300")}
+            className={cn("marketing-focus-ring marketing-motion-colors group mt-auto text-sm font-semibold text-[#ff6b73] hover:text-[#ff303c]")}
           >
-            Ver todos los productos →
+            <span>Ver todos los productos</span>{" "}
+            <span
+              aria-hidden="true"
+              className="inline-block transition-transform duration-200 ease-out group-hover:translate-x-0.5 motion-reduce:transition-none"
+            >
+              →
+            </span>
           </Link>
         </article>
       </div>

@@ -3,6 +3,76 @@
 export const SEO_SITE_ORIGIN = "https://goodtrading.com.ar";
 export const SEO_OG_IMAGE = `${SEO_SITE_ORIGIN}/opengraph.jpg`;
 export const SEO_ROBOTS = "index,follow,max-image-preview:large";
+export const ABOUT_PAGE_SEO = {
+  path: "/about",
+  title: "Qué es GoodTrading | Trading Technology, Order Flow y Bitcoin",
+  description:
+    "Conocé qué es GoodTrading, quién lo fundó y cómo funciona su ecosistema de análisis de Bitcoin, Order Flow, liquidez, opciones y microestructura de mercado.",
+  ogTitle: "Qué es GoodTrading | Trading Technology, Order Flow y Bitcoin",
+  ogDescription:
+    "Conocé qué es GoodTrading, quién lo fundó y cómo funciona su ecosistema de análisis de Bitcoin, Order Flow, liquidez, opciones y microestructura de mercado.",
+  twitterTitle: "Qué es GoodTrading | Trading Technology, Order Flow y Bitcoin",
+  twitterDescription:
+    "La página oficial sobre GoodTrading, su fundador, GoodTrading Terminal y su foco en análisis de Bitcoin.",
+  breadcrumbName: "Qué es GoodTrading",
+  webpageName: "Qué es GoodTrading",
+} as const;
+export const DATA_SOURCES_PAGE_SEO = {
+  path: "/methodology/data-sources",
+  title: "Fuentes de datos de GoodTrading | Metodología y transparencia",
+  description:
+    "Conocé de dónde obtiene GoodTrading sus datos de Bitcoin, Order Flow, liquidez y opciones, y cómo distingue información observada de métricas calculadas y modelos estructurales.",
+  ogTitle: "Fuentes de datos de GoodTrading | Metodología y transparencia",
+  ogDescription:
+    "Fuentes de datos de Bitcoin, Order Flow, liquidez y opciones de GoodTrading, con una distinción clara entre observaciones y métricas calculadas.",
+  twitterTitle: "Fuentes de datos y metodología | GoodTrading",
+  twitterDescription:
+    "Cómo GoodTrading documenta fuentes, timestamps, transformaciones, unidades e interpretación de sus métricas.",
+  breadcrumbName: "Fuentes de datos",
+  webpageName: "Fuentes de datos y metodología",
+} as const;
+export const CLASSIFICATION_PAGE_SEO = {
+  path: "/methodology/classification",
+  title: "Cómo clasifica GoodTrading sus datos y modelos | Metodología",
+  description:
+    "Conocé la diferencia entre datos observados, métricas derivadas, proxies estructurales e interpretaciones de IA dentro de GoodTrading.",
+  ogTitle: "Cómo clasifica GoodTrading sus datos y modelos | Metodología",
+  ogDescription:
+    "La clasificación pública de GoodTrading: OBSERVED, DERIVED, STRUCTURAL PROXY y AI INTERPRETATION.",
+  twitterTitle: "Clasificación de datos y modelos | GoodTrading",
+  twitterDescription:
+    "Diferencias entre observación, cálculo, proxy estructural e interpretación de IA en GoodTrading.",
+  breadcrumbName: "Clasificación",
+  webpageName: "Cómo clasifica GoodTrading sus datos y modelos",
+} as const;
+export const GAMMA_OPTIONS_PAGE_SEO = {
+  path: "/methodology/gamma-options",
+  title: "Cómo calcula GoodTrading Gamma y opciones | Metodología",
+  description:
+    "Conocé cómo GoodTrading utiliza datos de opciones de Bitcoin para analizar Gamma, Vanna, Charm, Gamma Flip, niveles estructurales y posicionamiento del mercado.",
+  ogTitle: "Cómo calcula GoodTrading Gamma y opciones | Metodología",
+  ogDescription:
+    "Metodología pública de GoodTrading para interpretar opciones de Bitcoin, Gamma, Vanna, Charm y estructura de mercado.",
+  twitterTitle: "Gamma y opciones en GoodTrading | Metodología",
+  twitterDescription:
+    "Qué representan Gamma, Gamma Exposure, Gamma Flip, walls, magnets, Vanna y Charm en GoodTrading.",
+  breadcrumbName: "Gamma y opciones",
+  webpageName: "Gamma y opciones en GoodTrading",
+} as const;
+export const LIMITATIONS_PAGE_SEO = {
+  path: "/methodology/limitations",
+  title: "Limitaciones de GoodTrading | Riesgo de modelo y metodología",
+  description:
+    "Conocé las limitaciones de los datos, métricas derivadas, proxies estructurales e interpretaciones de IA utilizadas por GoodTrading.",
+  ogTitle: "Limitaciones de GoodTrading | Riesgo de modelo y metodología",
+  ogDescription:
+    "Cómo interpretar la incertidumbre, los supuestos y el riesgo de modelo en las analíticas de GoodTrading.",
+  twitterTitle: "Limitaciones y riesgo de modelo | GoodTrading",
+  twitterDescription:
+    "Limitaciones de datos observados, métricas derivadas, proxies estructurales e interpretaciones de IA.",
+  breadcrumbName: "Limitaciones",
+  webpageName: "Limitaciones y riesgo de modelo en GoodTrading",
+} as const;
 
 export type PublicSeoLanding = {
   path: string;
@@ -85,6 +155,11 @@ export function normalizePublicSeoPath(rawPath: string): string {
 
 export function getPublicSeoLanding(rawPath: string): PublicSeoLanding | null {
   const path = normalizePublicSeoPath(rawPath);
+  if (path === ABOUT_PAGE_SEO.path) return ABOUT_PAGE_SEO;
+  if (path === DATA_SOURCES_PAGE_SEO.path) return DATA_SOURCES_PAGE_SEO;
+  if (path === CLASSIFICATION_PAGE_SEO.path) return CLASSIFICATION_PAGE_SEO;
+  if (path === GAMMA_OPTIONS_PAGE_SEO.path) return GAMMA_OPTIONS_PAGE_SEO;
+  if (path === LIMITATIONS_PAGE_SEO.path) return LIMITATIONS_PAGE_SEO;
   return PUBLIC_SEO_LANDINGS.find((page) => page.path === path) ?? null;
 }
 

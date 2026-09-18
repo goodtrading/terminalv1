@@ -2,14 +2,21 @@ import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 import { useMarketingCta } from "@/hooks/useMarketingCta";
 import { openDesktopDownload } from "@/lib/downloadDesktop";
+import { PremiumShimmer } from "./PremiumShimmer";
 
 type DynamicCtaButtonsProps = {
   className?: string;
   size?: "default" | "large";
   source: string;
+  shimmerPrimary?: boolean;
 };
 
-export function DynamicCtaButtons({ className, size = "default", source }: DynamicCtaButtonsProps) {
+export function DynamicCtaButtons({
+  className,
+  size = "default",
+  source,
+  shimmerPrimary = false,
+}: DynamicCtaButtonsProps) {
   const [, setLocation] = useLocation();
   const {
     primaryLabel,
@@ -37,17 +44,25 @@ export function DynamicCtaButtons({ className, size = "default", source }: Dynam
         onClick={() => run(primaryAction, primaryTarget)}
         className={cn(
           btnBase,
-          "bg-gradient-to-r from-[#ff3b3b] via-red-600 to-violet-700 text-white shadow-[0_0_36px_rgba(255,59,59,0.28)] transition-opacity hover:opacity-90",
+          shimmerPrimary && "relative isolate overflow-hidden",
+          "marketing-focus-ring marketing-motion-colors bg-gradient-to-r from-[#b81523] via-[#ff303c] to-[#b81523] text-white shadow-[0_0_28px_rgba(255,48,60,0.20)] hover:opacity-90",
         )}
       >
-        {primaryLabel}
+        {shimmerPrimary ? (
+          <>
+            <PremiumShimmer />
+            <span className="relative z-10">{primaryLabel}</span>
+          </>
+        ) : (
+          primaryLabel
+        )}
       </button>
       <button
         type="button"
         onClick={() => run(secondaryAction, secondaryTarget)}
         className={cn(
           btnBase,
-          "border border-white/18 bg-white/[0.05] text-white transition-colors hover:border-white/28 hover:bg-white/10",
+          "marketing-focus-ring marketing-motion-colors border border-white/18 bg-white/[0.05] text-white hover:border-white/28 hover:bg-white/10",
         )}
       >
         {secondaryLabel}

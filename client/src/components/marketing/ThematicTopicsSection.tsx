@@ -1,4 +1,5 @@
 import { Link } from "wouter";
+import { TextReveal } from "@/components/ui/TextReveal";
 import { MarketingSectionShell } from "./MarketingSectionShell";
 
 const TOPICS = [
@@ -36,7 +37,7 @@ export function ThematicTopicsSection() {
   return (
     <MarketingSectionShell
       className="pb-6 pt-4 sm:pt-6"
-      title="Todo el contexto de Bitcoin en una sola terminal"
+      title={<TextReveal>Todo el contexto de Bitcoin en una sola terminal</TextReveal>}
       subtitle="GoodTrading Terminal reúne estructura de mercado, gamma, opciones, liquidez y herramientas de ejecución para que el análisis no dependa de una única señal aislada."
     >
       <div className="grid gap-4 sm:grid-cols-2">
@@ -46,10 +47,10 @@ export function ThematicTopicsSection() {
             className="flex flex-col rounded-[18px] border border-white/[0.09] bg-[#050505]/85 p-6"
           >
             <h3 className="text-lg font-semibold text-white">{topic.title}</h3>
-            <p className="mt-3 flex-1 text-sm leading-relaxed text-[#9ca3af]">{topic.description}</p>
+            <p className="mt-3 flex-1 text-sm leading-relaxed text-[#a7afb9]">{topic.description}</p>
             <Link
               href={topic.href}
-              className="mt-5 inline-flex text-sm font-semibold text-[#ff8a8a] transition-colors hover:text-white"
+              className="marketing-focus-ring marketing-motion-colors mt-5 inline-flex text-sm font-semibold text-[#ff6b73] hover:text-white"
             >
               {topic.anchor}
             </Link>

@@ -1,3 +1,4 @@
+import { ContainerScrollAnimation } from "@/components/ui/ContainerScrollAnimation";
 import { MarketingSectionShell } from "./MarketingSectionShell";
 
 const SCREENSHOTS = [
@@ -30,45 +31,55 @@ export function ProductScreenshotsSection() {
       subtitle="Una terminal sobria para leer Bitcoin, preparar escenarios y revisar ejecución sin saltar entre herramientas."
     >
       <div className="grid gap-6 lg:grid-cols-2">
-        {SCREENSHOTS.map((item) => (
-          <article
-            key={item.title}
-            className={`overflow-hidden rounded-[14px] border border-white/[0.10] bg-[#050505]/90 shadow-[0_24px_80px_rgba(0,0,0,0.36)] ${
-              item.featured ? "lg:col-span-2" : ""
-            }`}
-          >
-            <div
-              className={`relative border-b border-white/[0.08] bg-[#080808] ${
-                item.featured ? "aspect-[24/10]" : "aspect-[16/9]"
-              }`}
+        {SCREENSHOTS.map((item) => {
+          const card = (
+            <article
+              key={item.title}
+              className="h-full overflow-hidden rounded-[14px] border border-white/[0.10] bg-[#050505]/90 shadow-[0_24px_80px_rgba(0,0,0,0.36)]"
             >
-              <img
-                src={item.src}
-                alt={item.title}
-                className="h-full w-full object-contain"
-                onLoad={(event) => {
-                  const placeholder = event.currentTarget.nextElementSibling as HTMLElement | null;
-                  if (placeholder) placeholder.style.display = "none";
-                }}
-                onError={(event) => {
-                  event.currentTarget.style.display = "none";
-                }}
-              />
-              <div className="absolute inset-0 grid place-items-center bg-[#080808]">
-                <div className="rounded border border-white/[0.12] bg-black/70 px-4 py-2 text-center">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#9ca3af]">
-                    Screenshot pendiente
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-white">{item.placeholder}</p>
+              <div
+                className={`relative border-b border-white/[0.08] bg-[#080808] ${
+                  item.featured ? "aspect-[24/10]" : "aspect-[16/9]"
+                }`}
+              >
+                <img
+                  src={item.src}
+                  alt={item.title}
+                  loading="lazy"
+                  decoding="async"
+                  className="h-full w-full object-contain"
+                  onLoad={(event) => {
+                    const placeholder = event.currentTarget.nextElementSibling as HTMLElement | null;
+                    if (placeholder) placeholder.style.display = "none";
+                  }}
+                  onError={(event) => {
+                    event.currentTarget.style.display = "none";
+                  }}
+                />
+                <div className="absolute inset-0 grid place-items-center bg-[#080808]">
+                  <div className="rounded border border-white/[0.12] bg-black/70 px-4 py-2 text-center">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[#a7afb9]">
+                      Screenshot pendiente
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-white">{item.placeholder}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="p-5">
-              <h3 className="text-base font-semibold text-white">{item.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-[#9ca3af]">{item.description}</p>
-            </div>
-          </article>
-        ))}
+              <div className="p-5">
+                <h3 className="text-base font-semibold text-white">{item.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-[#a7afb9]">{item.description}</p>
+              </div>
+            </article>
+          );
+
+          return item.featured ? (
+            <ContainerScrollAnimation key={`${item.title}-scroll`} className="lg:col-span-2">
+              {card}
+            </ContainerScrollAnimation>
+          ) : (
+            card
+          );
+        })}
       </div>
     </MarketingSectionShell>
   );

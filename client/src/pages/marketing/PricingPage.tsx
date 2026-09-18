@@ -61,13 +61,13 @@ export default function PricingPage() {
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
             <Link
               href="/register"
-              className="rounded-xl bg-gradient-to-r from-[#ff3b3b] to-red-700 px-6 py-3 text-sm font-semibold text-white hover:opacity-90"
+              className="marketing-focus-ring marketing-motion-colors rounded-xl bg-gradient-to-r from-[#ff3b3b] to-red-700 px-6 py-3 text-sm font-semibold text-white hover:opacity-90"
             >
               Crear cuenta
             </Link>
             <Link
               href="/login"
-              className="rounded-xl border border-white/15 px-6 py-3 text-sm font-semibold text-white hover:bg-white/[0.06]"
+              className="marketing-focus-ring marketing-motion-colors rounded-xl border border-white/15 px-6 py-3 text-sm font-semibold text-white hover:border-white/28 hover:bg-white/[0.06]"
             >
               Entrar a Terminal Web
             </Link>

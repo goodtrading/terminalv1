@@ -15,7 +15,7 @@ function FooterLink({
   children: ReactNode;
 }) {
   const cls =
-    "text-sm text-[#9ca3af] transition-colors hover:text-white";
+    "marketing-focus-ring marketing-motion-colors text-sm text-[#a7afb9] hover:text-white";
 
   if (onClick) {
     return (
@@ -44,17 +44,22 @@ export function MarketingFooter() {
               <img src="/logo.png" alt="" className="h-8 w-8 rounded-md" aria-hidden />
               <span className="font-semibold text-white">GoodTrading</span>
             </div>
-            <p className="mt-4 max-w-xs text-sm leading-relaxed text-[#9ca3af]">
+            <p className="mt-4 max-w-xs text-sm leading-relaxed text-[#a7afb9]">
               Leé el mercado como una mesa institucional.
             </p>
           </div>
 
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#6b7280]">
+            <p className="text-xs font-semibold uppercase tracking-wider text-[#737b85]">
               Navegación
             </p>
             <nav className="mt-4 flex flex-col gap-2.5">
               <FooterLink href="/">Inicio</FooterLink>
+              <FooterLink href="/about">Qué es GoodTrading</FooterLink>
+              <FooterLink href="/methodology/data-sources">Fuentes de datos</FooterLink>
+              <FooterLink href="/methodology/classification">Clasificación pública</FooterLink>
+              <FooterLink href="/methodology/gamma-options">Gamma y opciones</FooterLink>
+              <FooterLink href="/methodology/limitations">Limitaciones y riesgo de modelo</FooterLink>
               <FooterLink href="/products">Productos</FooterLink>
               <FooterLink onClick={() => setLocation(terminalRedirect)}>Terminal Web</FooterLink>
               <FooterLink onClick={() => openDesktopDownload("footer")}>
@@ -65,7 +70,7 @@ export function MarketingFooter() {
           </div>
 
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#6b7280]">
+            <p className="text-xs font-semibold uppercase tracking-wider text-[#737b85]">
               Aprender
             </p>
             <nav className="mt-4 flex flex-col gap-2.5">
@@ -77,7 +82,7 @@ export function MarketingFooter() {
           </div>
 
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#6b7280]">
+            <p className="text-xs font-semibold uppercase tracking-wider text-[#737b85]">
               Legal / Soporte
             </p>
             <nav className="mt-4 flex flex-col gap-2.5">
@@ -85,7 +90,7 @@ export function MarketingFooter() {
               <FooterLink href="/privacy">Privacidad</FooterLink>
               <a
                 href={`mailto:${SUPPORT_EMAIL}`}
-                className="text-sm text-[#9ca3af] transition-colors hover:text-white"
+                className="marketing-focus-ring marketing-motion-colors text-sm text-[#a7afb9] hover:text-white"
               >
                 Soporte
               </a>
@@ -93,7 +98,7 @@ export function MarketingFooter() {
           </div>
         </div>
 
-        <div className="mt-12 border-t border-white/[0.06] pt-8 text-center text-xs text-[#6b7280]">
+        <div className="mt-12 border-t border-white/[0.06] pt-8 text-center text-xs text-[#737b85]">
           © 2026 GoodTrading. Todos los derechos reservados.
         </div>
       </div>

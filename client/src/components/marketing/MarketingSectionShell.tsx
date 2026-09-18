@@ -8,7 +8,7 @@ export function MarketingSectionShell({
   className,
   id,
 }: {
-  title: string;
+  title: ReactNode;
   subtitle?: string;
   children: ReactNode;
   className?: string;
@@ -19,7 +19,7 @@ export function MarketingSectionShell({
       <div className="mb-10 max-w-3xl">
         <h2 className="text-3xl font-bold leading-tight text-white sm:text-4xl">{title}</h2>
         {subtitle && (
-          <p className="mt-4 text-base leading-relaxed text-[#9ca3af] sm:text-lg">{subtitle}</p>
+          <p className="mt-4 text-base leading-relaxed text-[#a7afb9] sm:text-lg">{subtitle}</p>
         )}
       </div>
       {children}

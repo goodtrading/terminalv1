@@ -95,7 +95,7 @@ export default function ProductsPage() {
             <article
               key={product.id}
               className={cn(
-                "flex flex-col rounded-[22px] border bg-[#050505]/80 p-7 transition-all hover:border-white/[0.14]",
+                "marketing-motion-colors flex flex-col rounded-[22px] border bg-[#050505]/80 p-7 hover:border-white/[0.14]",
                 product.featured
                   ? "border-[#ff3b3b]/25 shadow-[0_0_40px_rgba(255,59,59,0.08)]"
                   : "border-white/[0.08]",
@@ -118,7 +118,7 @@ export default function ProductsPage() {
                 disabled={product.action === "disabled"}
                 onClick={() => handleAction(product.action)}
                 className={cn(
-                  "mt-6 rounded-xl py-3 text-sm font-semibold transition-colors",
+                  "marketing-focus-ring marketing-motion-colors mt-6 rounded-xl py-3 text-sm font-semibold",
                   product.action === "disabled"
                     ? "cursor-not-allowed border border-white/10 text-[#6b7280]"
                     : product.featured
@@ -176,21 +176,21 @@ export default function ProductsPage() {
         <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
           <Link
             href="/"
-            className="inline-flex items-center justify-center rounded-xl border border-white/15 px-6 py-3 text-sm font-semibold text-white hover:bg-white/[0.06]"
+            className="marketing-focus-ring marketing-motion-colors inline-flex items-center justify-center rounded-xl border border-white/15 px-6 py-3 text-sm font-semibold text-white hover:border-white/28 hover:bg-white/[0.06]"
           >
             ← Volver al inicio
           </Link>
           <button
             type="button"
             onClick={() => setLocation(terminalRedirect)}
-            className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#ff3b3b] to-red-700 px-6 py-3 text-sm font-semibold text-white hover:opacity-90"
+            className="marketing-focus-ring marketing-motion-colors inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-[#ff3b3b] to-red-700 px-6 py-3 text-sm font-semibold text-white hover:opacity-90"
           >
             Abrir Terminal Web
           </button>
           <button
             type="button"
             onClick={() => openDesktopDownload("products_footer")}
-            className="inline-flex items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 px-6 py-3 text-sm font-semibold text-blue-200 hover:bg-blue-500/15"
+            className="marketing-focus-ring marketing-motion-colors inline-flex items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 px-6 py-3 text-sm font-semibold text-blue-200 hover:bg-blue-500/15"
           >
             Descargar App Desktop v0.1.7
           </button>

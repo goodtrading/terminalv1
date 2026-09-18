@@ -39,6 +39,20 @@
 }
 
 :root {
+  --marketing-bg-primary: #030303;
+  --marketing-bg-secondary: #070809;
+  --marketing-surface: #0a0b0d;
+  --marketing-surface-elevated: #0e1013;
+  --marketing-text-primary: #f5f7fa;
+  --marketing-text-secondary: #a7afb9;
+  --marketing-text-muted: #737b85;
+  --marketing-border: rgba(255, 255, 255, 0.08);
+  --marketing-border-emphasis: rgba(255, 255, 255, 0.12);
+  --marketing-crimson: #ff303c;
+  --marketing-crimson-dark: #b81523;
+  --marketing-crimson-subtle: rgba(255, 48, 60, 0.12);
+  --marketing-crimson-border: rgba(255, 48, 60, 0.28);
+
   --background: 0 0% 4%;
   --foreground: 0 0% 90%;
   
@@ -179,4 +193,144 @@
 /* Ensure chart container stays black */
 .chart-container-root {
   background-color: #000000 !important;
+}
+
+@keyframes blur-fade-in {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(var(--blur-fade-translate, 16px));
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+.blur-fade-in {
+  animation: blur-fade-in var(--blur-fade-duration, 550ms) ease-out var(--blur-fade-delay, 0ms) both;
+  will-change: opacity, filter, transform;
+}
+
+.text-reveal-word {
+  opacity: var(--text-reveal-opacity, 0.24);
+}
+
+.card-spotlight::before,
+.card-spotlight::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.card-spotlight::before {
+  z-index: 0;
+  background: radial-gradient(
+    circle 280px at var(--card-spotlight-x, 50%) var(--card-spotlight-y, 50%),
+    rgba(243, 244, 246, 0.09) 0%,
+    rgba(255, 59, 59, 0.035) 42%,
+    transparent 76%
+  );
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
+.card-spotlight::after {
+  z-index: 2;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
+.card-spotlight[data-spotlight-active="true"]::before,
+.card-spotlight[data-spotlight-active="true"]::after {
+  opacity: 1;
+}
+
+.card-spotlight > * {
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 639px) {
+  .blur-fade-in {
+    --blur-fade-translate: 11px;
+  }
+}
+
+@keyframes goodtrading-premium-shimmer {
+  0%,
+  14% {
+    opacity: 0;
+    transform: translate3d(-120%, 0, 0) skewX(-14deg);
+  }
+  18% {
+    opacity: 0.72;
+  }
+  38% {
+    opacity: 0;
+    transform: translate3d(600%, 0, 0) skewX(-14deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(600%, 0, 0) skewX(-14deg);
+  }
+}
+
+.premium-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.08) 26%,
+    rgba(255, 255, 255, 0.24) 50%,
+    rgba(255, 48, 60, 0.1) 68%,
+    transparent 100%
+  );
+  animation: goodtrading-premium-shimmer 4.6s linear infinite;
+}
+
+@media (pointer: coarse), (max-width: 639px) {
+  .premium-shimmer {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+.marketing-motion-colors {
+  transition-property: color, background-color, border-color, opacity;
+  transition-duration: 200ms;
+  transition-timing-function: ease-out;
+}
+
+.marketing-focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--marketing-crimson-border), 0 0 0 4px var(--marketing-bg-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marketing-motion-colors {
+    transition-duration: 0s;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .premium-shimmer {
+    animation: none;
+    opacity: 0;
+  }
+
+  .blur-fade-in {
+    animation: none;
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+    will-change: auto;
+  }
+
+  .text-reveal-word {
+    opacity: 1;
+  }
 }

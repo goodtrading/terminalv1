@@ -45,8 +45,8 @@ function RoadmapColumn({
       <h3 className="mt-5 text-lg font-semibold text-white">{title}</h3>
       <ul className="mt-5 space-y-3">
         {items.map((item) => (
-          <li key={item} className="flex items-start gap-2 text-sm text-[#b0b8c4]">
-            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#ff3b3b]" />
+          <li key={item} className="flex items-start gap-2 text-sm text-[#a7afb9]">
+            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#ff303c]" />
             {item}
           </li>
         ))}
