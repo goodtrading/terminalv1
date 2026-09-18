@@ -637,6 +637,112 @@ class GTFillDTO:
 
 
 @dataclass(frozen=True, slots=True)
+class GTOrderEventEvidenceDTO:
+    eventId: str
+    eventType: str
+    tsEventNs: int
+    tsInitNs: int
+    clientOrderId: str | None = None
+    venueOrderId: str | None = None
+    tradeId: str | None = None
+    positionId: str | None = None
+    side: str | None = None
+    orderType: str | None = None
+    quantity: str | None = None
+    price: str | None = None
+    triggerPrice: str | None = None
+    liquiditySide: str | None = None
+    reduceOnly: bool | None = None
+    reduceOnlySource: str = "NOT_AVAILABLE"
+    tags: list[str] = field(default_factory=list)
+    tagsSource: str = "NOT_AVAILABLE"
+    contingencyType: str | None = None
+    orderListId: str | None = None
+    linkedOrderIds: list[str] = field(default_factory=list)
+    parentOrderId: str | None = None
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty_text(self.eventId, "eventId")
+        _require_non_empty_text(self.eventType, "eventType")
+        if not isinstance(self.tsEventNs, int) or self.tsEventNs < 0:
+            raise ContractBoundaryError("tsEventNs must be a non-negative exact integer")
+        if not isinstance(self.tsInitNs, int) or self.tsInitNs < 0:
+            raise ContractBoundaryError("tsInitNs must be a non-negative exact integer")
+        for field_name, value in (("quantity", self.quantity), ("price", self.price), ("triggerPrice", self.triggerPrice)):
+            if value is not None:
+                _exact_decimal_text(value, field_name)
+        if self.reduceOnlySource not in {"EVENT_FACTUAL", "ORDER_FACTUAL", "NOT_AVAILABLE"}:
+            raise ContractBoundaryError("invalid reduceOnlySource")
+        if self.tagsSource not in {"EVENT_FACTUAL", "ORDER_FACTUAL", "NOT_AVAILABLE"}:
+            raise ContractBoundaryError("invalid tagsSource")
+        if any(not isinstance(tag, str) for tag in self.tags + self.linkedOrderIds):
+            raise ContractBoundaryError("tags and linkedOrderIds must contain strings")
+
+    def to_json_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "eventId": self.eventId,
+            "eventType": self.eventType,
+            "tsEventNs": str(self.tsEventNs),
+            "tsInitNs": str(self.tsInitNs),
+            "environment": "PAPER",
+            "source": "NAUTILUS_PAPER",
+            "reduceOnlySource": self.reduceOnlySource,
+            "tags": list(self.tags),
+            "tagsSource": self.tagsSource,
+            "linkedOrderIds": list(self.linkedOrderIds),
+        }
+        optional = {
+            "clientOrderId": self.clientOrderId,
+            "venueOrderId": self.venueOrderId,
+            "tradeId": self.tradeId,
+            "positionId": self.positionId,
+            "side": self.side,
+            "orderType": self.orderType,
+            "quantity": self.quantity,
+            "price": self.price,
+            "triggerPrice": self.triggerPrice,
+            "liquiditySide": self.liquiditySide,
+            "reduceOnly": self.reduceOnly,
+            "contingencyType": self.contingencyType,
+            "orderListId": self.orderListId,
+            "parentOrderId": self.parentOrderId,
+            "reason": self.reason,
+        }
+        payload.update({key: value for key, value in optional.items() if value is not None})
+        _json_safe_recursive(payload)
+        return payload
+
+    @classmethod
+    def from_simulation_snapshot(cls, snapshot: Mapping[str, Any]) -> "GTOrderEventEvidenceDTO":
+        return cls(
+            eventId=_require_non_empty_text(snapshot.get("event_id"), "event_id"),
+            eventType=_require_non_empty_text(snapshot.get("event_type"), "event_type"),
+            tsEventNs=int(snapshot["ts_event_ns"]),
+            tsInitNs=int(snapshot["ts_init_ns"]),
+            clientOrderId=snapshot.get("client_order_id"),
+            venueOrderId=snapshot.get("venue_order_id"),
+            tradeId=snapshot.get("trade_id"),
+            positionId=snapshot.get("position_id"),
+            side=snapshot.get("side"),
+            orderType=snapshot.get("order_type"),
+            quantity=snapshot.get("quantity"),
+            price=snapshot.get("price"),
+            triggerPrice=snapshot.get("trigger_price"),
+            liquiditySide=snapshot.get("liquidity_side"),
+            reduceOnly=snapshot.get("reduce_only"),
+            reduceOnlySource=snapshot.get("reduce_only_source", "NOT_AVAILABLE"),
+            tags=list(snapshot.get("tags") or []),
+            tagsSource=snapshot.get("tags_source", "NOT_AVAILABLE"),
+            contingencyType=snapshot.get("contingency_type"),
+            orderListId=snapshot.get("order_list_id"),
+            linkedOrderIds=list(snapshot.get("linked_order_ids") or []),
+            parentOrderId=snapshot.get("parent_order_id"),
+            reason=snapshot.get("reason"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class GTExecutionEconomicsDTO:
     averageFillPrice: str | None = None
     fees: str | None = None
@@ -904,6 +1010,9 @@ class SimulationCoreJsonBoundary:
 
     def list_orders(self) -> list[GTOrderStateDTO]:
         return [GTOrderStateDTO.from_simulation_snapshot(self.core, order) for order in self.core.list_orders()]
+
+    def list_order_events(self) -> list[GTOrderEventEvidenceDTO]:
+        return [GTOrderEventEvidenceDTO.from_simulation_snapshot(event) for event in self.core.list_order_events()]
 
     def list_fills(self) -> list[GTFillDTO]:
         return [GTFillDTO.from_simulation_snapshot(self.core, fill) for fill in self.core.list_fills()]

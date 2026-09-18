@@ -247,6 +247,13 @@ class SimulationService:
         except SimulationCoreError as exc:
             raise self._map_core_error(exc) from exc
 
+    def list_order_events(self) -> list[dict[str, Any]]:
+        boundary = self._require_running_boundary()
+        try:
+            return [event.to_json_dict() for event in boundary.list_order_events()]
+        except SimulationCoreError as exc:
+            raise self._map_core_error(exc) from exc
+
     def list_fills(self) -> list[dict[str, Any]]:
         boundary = self._require_running_boundary()
         try:

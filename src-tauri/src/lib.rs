@@ -1,4 +1,5 @@
 pub mod candle_store;
+pub mod evidence_outbox;
 pub mod nautilus_daemon;
 pub mod nautilus_simulation;
 
@@ -448,6 +449,11 @@ pub fn run() {
             upsert_candle_history_batch,
             get_candle_history_stats,
             clear_candle_history_store,
+            evidence_outbox::enqueue_nautilus_evidence_outbox,
+            evidence_outbox::list_nautilus_evidence_outbox,
+            evidence_outbox::ack_nautilus_evidence_outbox,
+            evidence_outbox::mark_nautilus_evidence_outbox_failure,
+            evidence_outbox::nautilus_evidence_outbox_diagnostics,
             nautilus_daemon::nautilus_engine_start,
             nautilus_daemon::nautilus_engine_status,
             nautilus_daemon::nautilus_engine_ping,
@@ -464,6 +470,7 @@ pub fn run() {
             nautilus_simulation::nautilus_simulation_replace_order,
             nautilus_simulation::nautilus_simulation_get_order,
             nautilus_simulation::nautilus_simulation_list_orders,
+            nautilus_simulation::nautilus_simulation_list_order_events,
             nautilus_simulation::nautilus_simulation_list_fills,
             nautilus_simulation::nautilus_simulation_get_position,
             nautilus_simulation::nautilus_simulation_get_account,

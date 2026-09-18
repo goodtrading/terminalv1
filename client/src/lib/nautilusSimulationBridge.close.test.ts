@@ -14,11 +14,20 @@ test("canonical closePosition invokes native MARKET close with optional exact qu
     const calls: unknown[] = [];
     mockIPC((command, payload) => {
       calls.push({ command, payload });
+      if (command === "nautilus_simulation_list_order_events") return [];
       return order;
     });
-    const result = await nautilusSimulation.closePosition(instrument, "0.5");
-    assert.equal(result.quantity, "0.5");
-    assert.deepEqual(calls, [{ command: "nautilus_simulation_close_position", payload: { instrument, quantity: "0.5" } }]);
+    await assert.rejects(
+      () => nautilusSimulation.closePosition(instrument, "0.5"),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "NAUTILUS_EVIDENCE_EMPTY_AFTER_MUTATION");
+        return true;
+      },
+    );
+    assert.deepEqual(calls, [
+      { command: "nautilus_simulation_close_position", payload: { instrument, quantity: "0.5" } },
+      { command: "nautilus_simulation_list_order_events", payload: {} },
+    ]);
   } finally {
     clearMocks();
     if (hadWindow) (globalThis as { window?: unknown }).window = originalWindow;

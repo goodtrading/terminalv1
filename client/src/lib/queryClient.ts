@@ -2,6 +2,7 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { getAuthToken, clearAuthStorage } from "./authToken";
 import { apiUrl } from "./apiBase";
 import { getPaperExecutionBackendState } from "./paperExecutionBackendState";
+import { getPaperOwner } from "./paperOwnerContext";
 
 /** Safety guard: legacy Paper commands are forbidden in Nautilus mode. */
 function nautilusPaperWriteGuard(url: string, method: string): void {
@@ -9,6 +10,10 @@ function nautilusPaperWriteGuard(url: string, method: string): void {
 
   const pathname = new URL(url, "http://localhost").pathname;
   if (!pathname.startsWith("/api/paper/")) return;
+  if (pathname === "/api/paper/nautilus/order-events") {
+    if (!getPaperOwner()) throw new Error("PAPER_OWNER_NOT_BOUND");
+    return;
+  }
 
   if (method === "GET") return;
 

@@ -4,6 +4,7 @@ import test from "node:test";
 import { getPaperExecutionBackend, setPaperExecutionBackend } from "./paperExecutionBackendState";
 import { setPaperExecutionBackend as setThroughPort } from "./paperExecutionPort";
 import { apiRequest, getQueryFn } from "./queryClient";
+import { bindPaperOwner, resetPaperOwnerForTests } from "./paperOwnerContext";
 
 const originalFetch = globalThis.fetch;
 
@@ -21,6 +22,7 @@ function installFetchSpy() {
 
 test.afterEach(() => {
   setPaperExecutionBackend("legacy");
+  resetPaperOwnerForTests();
   globalThis.fetch = originalFetch;
 });
 
@@ -35,6 +37,17 @@ test("queryClient does not fabricate Nautilus Paper read responses", async () =>
   assert.deepEqual(await response.json(), { fromServer: true });
 });
 
+test("factual Nautilus evidence POST requires a bound owner", async () => {
+  installFetchSpy();
+  setThroughPort("nautilus");
+  await assert.rejects(
+    apiRequest("/api/paper/nautilus/order-events", { method: "POST" }),
+    /PAPER_OWNER_NOT_BOUND/,
+  );
+  bindPaperOwner(101);
+  const response = await apiRequest("/api/paper/nautilus/order-events", { method: "POST" });
+  assert.equal(response.status, 200);
+});
 test("queryClient keeps legacy Paper requests on the real transport", async () => {
   const calls = installFetchSpy();
   setThroughPort("legacy");

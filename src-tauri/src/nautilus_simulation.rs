@@ -589,6 +589,12 @@ pub fn simulation_list_orders(
     command_bridge(manager).list_orders().map_err(Into::into)
 }
 
+pub fn simulation_list_order_events(
+    manager: &Mutex<NautilusProcessManager>,
+) -> Result<Vec<Value>, SimulationCommandError> {
+    command_bridge(manager).list_order_events().map_err(Into::into)
+}
+
 pub fn simulation_list_fills(
     manager: &Mutex<NautilusProcessManager>,
 ) -> Result<Vec<FillDto>, SimulationCommandError> {
@@ -709,6 +715,13 @@ pub fn nautilus_simulation_list_orders(
     state: State<'_, Mutex<NautilusProcessManager>>,
 ) -> Result<Vec<OrderStateDto>, SimulationCommandError> {
     simulation_list_orders(state.inner())
+}
+
+#[tauri::command]
+pub fn nautilus_simulation_list_order_events(
+    state: State<'_, Mutex<NautilusProcessManager>>,
+) -> Result<Vec<Value>, SimulationCommandError> {
+    simulation_list_order_events(state.inner())
 }
 
 #[tauri::command]
@@ -869,6 +882,10 @@ impl<'a> NautilusSimulationBridge<'a> {
 
     pub fn list_orders(&self) -> Result<Vec<OrderStateDto>, NautilusSimulationError> {
         self.call("simulation.list_orders", None)
+    }
+
+    pub fn list_order_events(&self) -> Result<Vec<Value>, NautilusSimulationError> {
+        self.call("simulation.list_order_events", None)
     }
 
     pub fn list_fills(&self) -> Result<Vec<FillDto>, NautilusSimulationError> {

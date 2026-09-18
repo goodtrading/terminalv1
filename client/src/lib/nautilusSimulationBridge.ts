@@ -1,6 +1,7 @@
 import { isTauriRuntime } from "@/lib/desktopRuntime";
 import { apiUrl } from "@/lib/apiBase";
 import { apiRequest } from "@/lib/queryClient";
+import { assertPaperOwnerCurrent, capturePaperOwner } from "@/lib/paperOwnerContext";
 
 export type NautilusSimulationInstrumentWire = {
   venue: string;
@@ -94,6 +95,59 @@ export type NautilusSimulationFillWire = {
   fee?: string;
   feeAsset?: string;
   liquidity?: string;
+};
+
+export type NautilusEvidenceOutboxStatus = "PENDING" | "CONFLICT";
+
+export type NautilusEvidenceOutboxItem = {
+  accountId: string;
+  environment: string;
+  source: string;
+  eventId: string;
+  payload: NautilusPaperOrderEventEvidenceWire;
+  status: NautilusEvidenceOutboxStatus;
+  attempts: number;
+  lastError: string | null;
+};
+
+export type NautilusEvidenceOutboxDiagnostics = {
+  pendingCount: number;
+  conflictCount: number;
+  lastDeliveryFailure: string | null;
+};
+
+export type NautilusPaperOrderEventEvidenceWire = {
+  eventId: string;
+  eventType: string;
+  tsEventNs: string;
+  tsInitNs: string;
+  environment: "PAPER";
+  source: "NAUTILUS_PAPER";
+  clientOrderId?: string;
+  venueOrderId?: string;
+  tradeId?: string;
+  positionId?: string;
+  side?: string;
+  orderType?: string;
+  quantity?: string;
+  price?: string;
+  triggerPrice?: string;
+  liquiditySide?: string;
+  reduceOnly?: boolean;
+  reduceOnlySource: "EVENT_FACTUAL" | "ORDER_FACTUAL" | "NOT_AVAILABLE";
+  tags: string[];
+  tagsSource: "EVENT_FACTUAL" | "ORDER_FACTUAL" | "NOT_AVAILABLE";
+  contingencyType?: string;
+  orderListId?: string | null;
+  linkedOrderIds: string[];
+  parentOrderId?: string | null;
+  reason?: string | null;
+};
+
+export type NautilusEvidenceOutboxEnqueueResult = {
+  insertedCount: number;
+  duplicateCount: number;
+  pendingCount: number;
 };
 
 export type NautilusSimulationPositionWire = {
@@ -271,11 +325,17 @@ const COMMANDS = {
   replaceOrder: "nautilus_simulation_replace_order",
   getOrder: "nautilus_simulation_get_order",
   listOrders: "nautilus_simulation_list_orders",
+  listOrderEvents: "nautilus_simulation_list_order_events",
   listFills: "nautilus_simulation_list_fills",
   getPosition: "nautilus_simulation_get_position",
   getAccount: "nautilus_simulation_get_account",
   injectQuoteDiagnostic: "nautilus_simulation_inject_quote_diagnostic",
   applyMarketSnapshot: "nautilus_simulation_apply_market_snapshot",
+  outboxEnqueue: "enqueue_nautilus_evidence_outbox",
+  outboxList: "list_nautilus_evidence_outbox",
+  outboxAck: "ack_nautilus_evidence_outbox",
+  outboxFailure: "mark_nautilus_evidence_outbox_failure",
+  outboxDiagnostics: "nautilus_evidence_outbox_diagnostics",
 } as const;
 
 function nativeUnavailableError(details?: unknown): NautilusSimulationCommandError {
@@ -328,6 +388,12 @@ function readRequiredString(value: unknown, path: string): string {
 
 function readOptionalString(value: unknown, path: string): string | undefined {
   if (value === undefined) return undefined;
+  if (!isString(value)) throw malformedNativeRejectionError({ path, value });
+  return value;
+}
+
+function readOptionalNullableString(value: unknown, path: string): string | null | undefined {
+  if (value === undefined || value === null) return value;
   if (!isString(value)) throw malformedNativeRejectionError({ path, value });
   return value;
 }
@@ -480,6 +546,45 @@ function readFill(value: unknown): NautilusSimulationFillWire {
     if (item !== undefined) fill[key] = item;
   }
   return fill;
+}
+
+function readOrderEventEvidence(value: unknown): NautilusPaperOrderEventEvidenceWire {
+  if (!isRecord(value)) throw malformedNativeRejectionError({ path: "orderEvent", value });
+  const reduceOnlySource = readEnum(value.reduceOnlySource, ["EVENT_FACTUAL", "ORDER_FACTUAL", "NOT_AVAILABLE"], "orderEvent.reduceOnlySource");
+  const tagsSource = readEnum(value.tagsSource, ["EVENT_FACTUAL", "ORDER_FACTUAL", "NOT_AVAILABLE"], "orderEvent.tagsSource");
+  const tags = value.tags;
+  const linkedOrderIds = value.linkedOrderIds;
+  if (!Array.isArray(tags) || !tags.every(isString)) throw malformedNativeRejectionError({ path: "orderEvent.tags", value: tags });
+  if (!Array.isArray(linkedOrderIds) || !linkedOrderIds.every(isString)) throw malformedNativeRejectionError({ path: "orderEvent.linkedOrderIds", value: linkedOrderIds });
+  const event: NautilusPaperOrderEventEvidenceWire = {
+    eventId: readRequiredString(value.eventId, "orderEvent.eventId"),
+    eventType: readRequiredString(value.eventType, "orderEvent.eventType"),
+    tsEventNs: readRequiredString(value.tsEventNs, "orderEvent.tsEventNs"),
+    tsInitNs: readRequiredString(value.tsInitNs, "orderEvent.tsInitNs"),
+    environment: readEnum(value.environment, ["PAPER"], "orderEvent.environment"),
+    source: readEnum(value.source, ["NAUTILUS_PAPER"], "orderEvent.source"),
+    reduceOnlySource,
+    tags: [...tags],
+    tagsSource,
+    linkedOrderIds: [...linkedOrderIds],
+  };
+  for (const [key, path] of [
+    ["clientOrderId", "orderEvent.clientOrderId"], ["venueOrderId", "orderEvent.venueOrderId"],
+    ["tradeId", "orderEvent.tradeId"], ["positionId", "orderEvent.positionId"], ["side", "orderEvent.side"],
+    ["orderType", "orderEvent.orderType"], ["quantity", "orderEvent.quantity"], ["price", "orderEvent.price"],
+    ["triggerPrice", "orderEvent.triggerPrice"], ["liquiditySide", "orderEvent.liquiditySide"],
+    ["contingencyType", "orderEvent.contingencyType"], ["orderListId", "orderEvent.orderListId"],
+    ["parentOrderId", "orderEvent.parentOrderId"], ["reason", "orderEvent.reason"],
+  ] as const) {
+    const item = ["orderListId", "parentOrderId", "reason"].includes(key)
+      ? readOptionalNullableString(value[key], path)
+      : readOptionalString(value[key], path);
+    if (item !== undefined) (event as Record<string, unknown>)[key] = item;
+  }
+  const reduceOnly = value.reduceOnly;
+  if (reduceOnly !== undefined && typeof reduceOnly !== "boolean") throw malformedNativeRejectionError({ path: "orderEvent.reduceOnly", value: reduceOnly });
+  if (reduceOnly !== undefined) event.reduceOnly = reduceOnly;
+  return event;
 }
 
 function readPosition(value: unknown): NautilusSimulationPositionWire {
@@ -730,19 +835,166 @@ export async function reset(): Promise<NautilusSimulationLifecycleWire> {
   return invokeCommand(COMMANDS.reset, undefined, readLifecycle);
 }
 
+function readOutboxItem(value: unknown): NautilusEvidenceOutboxItem {
+  if (!isRecord(value)) throw malformedNativeRejectionError({ path: "outboxItem", value });
+  const status = readEnum(value.status, ["PENDING", "CONFLICT"], "outboxItem.status");
+  return {
+    accountId: readRequiredString(value.accountId, "outboxItem.accountId"),
+    environment: readRequiredString(value.environment, "outboxItem.environment"),
+    source: readRequiredString(value.source, "outboxItem.source"),
+    eventId: readRequiredString(value.eventId, "outboxItem.eventId"),
+    payload: readOrderEventEvidence(value.payload),
+    status,
+    attempts: readRequiredNumber(value.attempts, "outboxItem.attempts"),
+    lastError: value.lastError === null ? null : readRequiredString(value.lastError, "outboxItem.lastError"),
+  };
+}
+
+function readOutboxEnqueueResult(value: unknown): NautilusEvidenceOutboxEnqueueResult {
+  if (!isRecord(value)) throw malformedNativeRejectionError({ path: "outboxEnqueue", value });
+  return {
+    insertedCount: readRequiredNumber(value.insertedCount, "outboxEnqueue.insertedCount"),
+    duplicateCount: readRequiredNumber(value.duplicateCount, "outboxEnqueue.duplicateCount"),
+    pendingCount: readRequiredNumber(value.pendingCount, "outboxEnqueue.pendingCount"),
+  };
+}
+
+function readOutboxDiagnostics(value: unknown): NautilusEvidenceOutboxDiagnostics {
+  if (!isRecord(value)) throw malformedNativeRejectionError({ path: "outboxDiagnostics", value });
+  return {
+    pendingCount: readRequiredNumber(value.pendingCount, "outboxDiagnostics.pendingCount"),
+    conflictCount: readRequiredNumber(value.conflictCount, "outboxDiagnostics.conflictCount"),
+    lastDeliveryFailure:
+      value.lastDeliveryFailure === null
+        ? null
+        : readRequiredString(value.lastDeliveryFailure, "outboxDiagnostics.lastDeliveryFailure"),
+  };
+}
+
+export async function enqueueEvidenceOutbox(
+  accountId: number,
+  events: NautilusPaperOrderEventEvidenceWire[],
+): Promise<NautilusEvidenceOutboxEnqueueResult> {
+  return invokeCommand(
+    COMMANDS.outboxEnqueue,
+    { accountId: String(accountId), events },
+    readOutboxEnqueueResult,
+  );
+}
+
+export async function listEvidenceOutbox(accountId: number): Promise<NautilusEvidenceOutboxItem[]> {
+  return invokeCommand(COMMANDS.outboxList, { accountId: String(accountId) }, (value) => {
+    if (!Array.isArray(value)) throw malformedNativeRejectionError({ path: "outbox", value });
+    return value.map(readOutboxItem);
+  });
+}
+
+export async function getEvidenceOutboxDiagnostics(accountId: number): Promise<NautilusEvidenceOutboxDiagnostics> {
+  return invokeCommand(COMMANDS.outboxDiagnostics, { accountId: String(accountId) }, readOutboxDiagnostics);
+}
+
+async function markOutboxFailure(
+  accountId: number,
+  eventIds: string[],
+  status: NautilusEvidenceOutboxStatus,
+  error: string,
+): Promise<void> {
+  await invokeCommand(
+    COMMANDS.outboxFailure,
+    { accountId: String(accountId), eventIds, status, error: error.slice(0, 500) },
+    () => undefined,
+  );
+}
+
+export async function drainEvidenceOutbox(accountId: number): Promise<"EMPTY" | "ACKED" | "PENDING" | "CONFLICT"> {
+  const owner = capturePaperOwner();
+  if (owner.userId !== 0 && owner.userId !== accountId) {
+    throw new Error("PAPER_OWNER_ACCOUNT_MISMATCH");
+  }
+  assertPaperOwnerCurrent(owner);
+  const items = await listEvidenceOutbox(accountId);
+  const pending = items.filter((item) => item.status === "PENDING");
+  if (pending.length === 0) return items.some((item) => item.status === "CONFLICT") ? "CONFLICT" : "EMPTY";
+  const eventIds = pending.map((item) => item.eventId);
+  try {
+    assertPaperOwnerCurrent(owner);
+    const response = await apiRequest("/api/paper/nautilus/order-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: pending.map((item) => item.payload) }),
+      assertOk: false,
+    });
+    assertPaperOwnerCurrent(owner);
+    const raw = await response.text();
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(raw);
+      if (isRecord(parsed)) body = parsed;
+    } catch {
+      // Preserve the pending entry with a bounded transport diagnostic.
+    }
+    if (response.ok && body.acknowledged === true) {
+      await invokeCommand(COMMANDS.outboxAck, { accountId: String(accountId), eventIds }, () => undefined);
+      return "ACKED";
+    }
+    const conflict = response.status === 409 || body.code === "PAPER_ORDER_EVENT_EVIDENCE_CONFLICT";
+    await markOutboxFailure(
+      accountId,
+      eventIds,
+      conflict ? "CONFLICT" : "PENDING",
+      conflict ? "PAPER_ORDER_EVENT_EVIDENCE_CONFLICT" : `HTTP_${response.status || "NETWORK"}`,
+    );
+    return conflict ? "CONFLICT" : "PENDING";
+  } catch (error) {
+    if (error instanceof Error && error.message === "PAPER_OWNER_GENERATION_STALE") throw error;
+    assertPaperOwnerCurrent(owner);
+    await markOutboxFailure(accountId, eventIds, "PENDING", error instanceof Error ? error.message : "NETWORK_ERROR");
+    return "PENDING";
+  }
+}
+
+function emptyEvidenceAfterMutationError(): NautilusSimulationCommandError {
+  return new NautilusSimulationCommandError(
+    "TRANSPORT",
+    "NAUTILUS_EVIDENCE_EMPTY_AFTER_MUTATION",
+    "simulationMutation=SUCCEEDED evidenceCapture=FAILED/EMPTY localEvidenceDurability=NOT_COMMITTED",
+  );
+}
+
+async function persistObservedOrderEvents(owner: ReturnType<typeof capturePaperOwner>): Promise<void> {
+  const events = await listOrderEvents();
+  if (events.length === 0) throw emptyEvidenceAfterMutationError();
+  assertPaperOwnerCurrent(owner);
+  await enqueueEvidenceOutbox(owner.userId, events);
+  await drainEvidenceOutbox(owner.userId);
+}
+
+
+async function invokeMutationAndPersist<T>(
+  command: string,
+  args: Record<string, unknown>,
+  decode: (value: unknown) => T,
+): Promise<T> {
+  const owner = capturePaperOwner();
+  const result = await invokeCommand(command, args, decode);
+  assertPaperOwnerCurrent(owner);
+  await persistObservedOrderEvents(owner);
+  return result;
+}
+
 export async function submitOrder(intent: NautilusSimulationOrderIntentWire): Promise<NautilusSimulationOrderStateWire> {
-  return invokeCommand(COMMANDS.submitOrder, { intent }, readOrderState);
+  return invokeMutationAndPersist(COMMANDS.submitOrder, { intent }, readOrderState);
 }
 
 export async function closePosition(
   instrument: NautilusSimulationInstrumentWire,
   quantity?: string,
 ): Promise<NautilusSimulationOrderStateWire> {
-  return invokeCommand(COMMANDS.closePosition, { instrument, quantity }, readOrderState);
+  return invokeMutationAndPersist(COMMANDS.closePosition, { instrument, quantity }, readOrderState);
 }
 
 export async function cancelOrder(clientOrderId: string): Promise<NautilusSimulationOrderStateWire> {
-  return invokeCommand(COMMANDS.cancelOrder, { clientOrderId }, readOrderState);
+  return invokeMutationAndPersist(COMMANDS.cancelOrder, { clientOrderId }, readOrderState);
 }
 
 export async function replaceOrder(
@@ -750,7 +1002,7 @@ export async function replaceOrder(
   replacementClientOrderId: string,
   limitPrice: string,
 ): Promise<NautilusSimulationReplaceOrderWire> {
-  return invokeCommand(COMMANDS.replaceOrder, { clientOrderId, replacementClientOrderId, limitPrice }, (value) => {
+  return invokeMutationAndPersist(COMMANDS.replaceOrder, { clientOrderId, replacementClientOrderId, limitPrice }, (value) => {
     if (!isRecord(value) || value.operation !== "CANCEL_REPLACE") {
       throw malformedNativeRejectionError({ path: "replaceOrder", value });
     }
@@ -770,6 +1022,13 @@ export async function listOrders(): Promise<NautilusSimulationOrderStateWire[]> 
   return invokeCommand(COMMANDS.listOrders, undefined, (value) => {
     if (!Array.isArray(value)) throw malformedNativeRejectionError({ path: "orders", value });
     return value.map(readOrderState);
+  });
+}
+
+export async function listOrderEvents(): Promise<NautilusPaperOrderEventEvidenceWire[]> {
+  return invokeCommand(COMMANDS.listOrderEvents, undefined, (value) => {
+    if (!Array.isArray(value)) throw malformedNativeRejectionError({ path: "orderEvents", value });
+    return value.map(readOrderEventEvidence);
   });
 }
 
@@ -811,9 +1070,14 @@ export const nautilusSimulation = {
   replaceOrder,
   getOrder,
   listOrders,
+  listOrderEvents,
   listFills,
   getPosition,
   getAccount,
   injectQuoteDiagnostic,
   applyMarketSnapshot,
+  enqueueEvidenceOutbox,
+  listEvidenceOutbox,
+  drainEvidenceOutbox,
+  getEvidenceOutboxDiagnostics,
 } as const;

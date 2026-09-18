@@ -453,6 +453,97 @@ class SimulationCore:
         assert self._instrument is not None
         return [self._order_snapshot(order) for order in self._cache.orders(venue=self._venue, instrument_id=self._instrument.id)]
 
+    def list_order_events(self) -> list[dict[str, Any]]:
+        """Expose factual native order events without deriving lifecycle state."""
+        self._require_started()
+        assert self._cache is not None
+        assert self._venue is not None
+        assert self._instrument is not None
+        events: list[dict[str, Any]] = []
+        for order in self._cache.orders(venue=self._venue, instrument_id=self._instrument.id):
+            order_tags = list(getattr(order, "tags", None) or [])
+            for event in getattr(order, "events", ()):
+                native_id = getattr(event, "id", None)
+                if native_id is None or not str(native_id).strip():
+                    raise SimulationCoreError("order event is missing factual native id")
+                ts_event = getattr(event, "ts_event", None)
+                ts_init = getattr(event, "ts_init", None)
+                if ts_event is None or ts_init is None:
+                    raise SimulationCoreError("order event is missing factual nanosecond timestamp")
+
+                def decimal_text(value: Any | None, *, preserve_scale: bool = False) -> str | None:
+                    if value is None:
+                        return None
+                    if preserve_scale:
+                        return str(value)
+                    return str(value.as_decimal()) if hasattr(value, "as_decimal") else str(value)
+
+                def text(value: Any | None) -> str | None:
+                    if value is None:
+                        return None
+                    result = str(value)
+                    return result if result else None
+
+                def enum_text(value: Any | None) -> str | None:
+                    if value is None:
+                        return None
+                    result = self._enum_name(value)
+                    return result.upper() if result is not None else None
+
+                event_tags = list(getattr(event, "tags", None) or [])
+                reduce_only = getattr(event, "reduce_only", None)
+                reduce_only_source = "EVENT_FACTUAL" if isinstance(reduce_only, bool) else "NOT_AVAILABLE"
+                if reduce_only_source == "NOT_AVAILABLE":
+                    order_reduce_only = getattr(order, "is_reduce_only", None)
+                    if isinstance(order_reduce_only, bool):
+                        reduce_only = order_reduce_only
+                        reduce_only_source = "ORDER_FACTUAL"
+
+                tags = event_tags if event_tags else order_tags
+                tags_source = "EVENT_FACTUAL" if event_tags else ("ORDER_FACTUAL" if order_tags else "NOT_AVAILABLE")
+
+                def relation(name: str) -> str | None:
+                    value = getattr(event, name, None)
+                    if value is None:
+                        value = getattr(order, name, None)
+                    return text(value)
+
+                def order_value(name: str) -> Any | None:
+                    return getattr(order, name, None)
+
+                event_side = getattr(event, "order_side", None) or getattr(event, "side", None) or order_value("side")
+                event_order_type = getattr(event, "order_type", None) or order_value("order_type")
+                event_quantity = getattr(event, "quantity", None) or getattr(event, "last_qty", None) or order_value("quantity")
+                event_price = getattr(event, "price", None) or getattr(event, "last_px", None) or order_value("price")
+                event_trigger_price = getattr(event, "trigger_price", None) or order_value("trigger_price")
+
+                events.append({
+                    "event_id": str(native_id),
+                    "event_type": type(event).__name__,
+                    "ts_event_ns": int(ts_event),
+                    "ts_init_ns": int(ts_init),
+                    "venue_order_id": text(getattr(event, "venue_order_id", None) or order_value("venue_order_id")),
+                    "client_order_id": text(getattr(event, "client_order_id", None) or order_value("client_order_id")),
+                    "trade_id": text(getattr(event, "trade_id", None)),
+                    "position_id": text(getattr(event, "position_id", None) or order_value("position_id")),
+                    "side": enum_text(event_side),
+                    "order_type": enum_text(event_order_type),
+                    "quantity": decimal_text(event_quantity, preserve_scale=True),
+                    "price": decimal_text(event_price),
+                    "trigger_price": decimal_text(event_trigger_price, preserve_scale=True),
+                    "liquidity_side": enum_text(getattr(event, "liquidity_side", None)),
+                    "reduce_only": reduce_only,
+                    "reduce_only_source": reduce_only_source,
+                    "tags": tags,
+                    "tags_source": tags_source,
+                    "contingency_type": enum_text(getattr(event, "contingency_type", None) or getattr(order, "contingency_type", None)),
+                    "order_list_id": relation("order_list_id"),
+                    "linked_order_ids": [str(item) for item in (getattr(event, "linked_order_ids", None) or getattr(order, "linked_order_ids", None) or ())],
+                    "parent_order_id": relation("parent_order_id"),
+                    "reason": text(getattr(event, "reason", None)),
+                })
+        return events
+
     def list_fills(self) -> list[dict[str, Any]]:
         """Expose Nautilus execution events as the canonical fill read model."""
         self._require_started()

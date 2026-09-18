@@ -14,6 +14,7 @@ import {
   type NautilusSimulationPositionWire,
   type NautilusSimulationStatusWire,
   type NautilusQuoteCapabilityWire,
+  type NautilusPaperOrderEventEvidenceWire,
 } from "./nautilusSimulationBridge";
 
 function enableTauriRuntime() {
@@ -186,6 +187,7 @@ test("simulation lifecycle commands invoke exact Tauri commands with exact args"
     ] as const;
 
     mockIPC((command, payload: unknown) => {
+      if (command === "nautilus_simulation_list_order_events") return [];
       const next = expected.shift();
       assert.ok(next, `unexpected invoke: ${command}`);
       assert.equal(command, next.command);
@@ -303,6 +305,22 @@ test("simulation order commands preserve exact wire shapes and decimal strings",
       timestamp: 5,
     };
 
+    const evidence: NautilusPaperOrderEventEvidenceWire = {
+      eventId: "evt-test-1",
+      eventType: "OrderFilled",
+      tsEventNs: "1700000000000000001",
+      tsInitNs: "1700000000000000002",
+      environment: "PAPER",
+      source: "NAUTILUS_PAPER",
+      quantity: "0.00000001",
+      price: "100001.0",
+      reduceOnly: false,
+      reduceOnlySource: "EVENT_FACTUAL",
+      tags: [],
+      tagsSource: "EVENT_FACTUAL",
+      linkedOrderIds: [],
+    };
+
     const expected = [
       { command: "nautilus_simulation_submit_order", payload: { intent }, result: order },
       { command: "nautilus_simulation_cancel_order", payload: { clientOrderId: "gt-wire-1" }, result: order },
@@ -332,6 +350,10 @@ test("simulation order commands preserve exact wire shapes and decimal strings",
     ] as const;
 
     mockIPC((command, payload: unknown) => {
+      if (command === "nautilus_simulation_list_order_events") return [evidence];
+      if (command === "enqueue_nautilus_evidence_outbox") return { insertedCount: 1, duplicateCount: 0, pendingCount: 1 };
+      if (command === "list_nautilus_evidence_outbox") return [];
+      if (command === "ack_nautilus_evidence_outbox" || command === "mark_nautilus_evidence_outbox_failure") return undefined;
       const next = expected.shift();
       assert.ok(next, `unexpected invoke: ${command}`);
       assert.equal(command, next.command);
@@ -383,6 +405,7 @@ test("simulation command errors preserve structure and malformed rejections norm
     ] as const;
 
     mockIPC((command, payload: unknown) => {
+      if (command === "nautilus_simulation_list_order_events") return [];
       const next = expected.shift();
       assert.ok(next, `unexpected invoke: ${command}`);
       assert.equal(command, next.command);

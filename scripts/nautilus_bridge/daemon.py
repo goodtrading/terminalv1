@@ -188,6 +188,9 @@ def handle_request(request: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[st
     if op == "simulation.list_orders":
         return success_payload(request_id, simulation_service().list_orders())
 
+    if op == "simulation.list_order_events":
+        return success_payload(request_id, simulation_service().list_order_events())
+
     if op == "simulation.list_fills":
         return success_payload(request_id, simulation_service().list_fills())
 

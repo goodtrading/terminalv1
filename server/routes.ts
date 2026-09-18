@@ -1700,6 +1700,7 @@ export async function registerRoutes(
   const { registerLiveRoutes } = await import("./routes/live.routes");
   const { registerRiskMirrorRoutes } = await import("./routes/riskMirror.routes");
   const { paperTradingRouter } = await import("./routes/paperTrading.routes");
+  const { nautilusPaperOrderEventEvidenceRouter } = await import("./routes/nautilusPaperOrderEventEvidence.routes");
   const { reportsRouter } = await import("./routes/reports.routes");
   registerExchangeRoutes(app);
   registerExecutionRoutes(app);
@@ -1726,6 +1727,7 @@ export async function registerRoutes(
   registerRiskMirrorRoutes(app);
   console.log("[routes] risk mirror registered");
   app.use("/api/paper", paperTradingRouter);
+  app.use("/api/paper/nautilus", nautilusPaperOrderEventEvidenceRouter);
   app.use("/api/reports", reportsRouter);
 
   return httpServer;

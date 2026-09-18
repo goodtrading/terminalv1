@@ -16,6 +16,7 @@ import {
   getPaperOwner,
   invalidatePaperOwner,
 } from "./paperOwnerContext";
+import { drainEvidenceOutbox } from "./nautilusSimulationBridge";
 import {
   EXECUTION_WORKSPACE_CHANGED_EVENT,
   getExecutionWorkspace,
@@ -245,10 +246,10 @@ export class PaperStateController {
             if (this.ownerTransition) await this.ownerTransition;
           } catch (error) {
             this.setState({ availability: "UNAVAILABLE", loading: false, error: error instanceof Error ? error : new Error(String(error)) });
-            return;
           }
           if (this.runtime !== runtime && !this.runtimeMatches(runtime)) return;
           bindPaperOwner(runtime.authenticatedUserId as number);
+          void drainEvidenceOutbox(runtime.authenticatedUserId as number).catch(() => undefined);
           const portState = getPaperExecutionPortState();
           if (portState.availability === "AVAILABLE") this.startNautilusTimers();
         };
