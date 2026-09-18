@@ -79,7 +79,7 @@ test("Academy Member content returns safe 404 for invalid, missing, or FREE rout
 
 
 test("Execution & Risk Member registry serves lessons 20 through 26", async () => {
-  assert.equal(getMemberContentLessonCount(), 76);
+  assert.equal(getMemberContentLessonCount(), 94);
   __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   const slugs = [
@@ -217,7 +217,7 @@ const gammaMemberLessons = [
 ] as const;
 
 test("Gamma & Dealer Hedging serves all eleven protected lessons", async () => {
-  assert.equal(getMemberContentLessonCount(), 76);
+  assert.equal(getMemberContentLessonCount(), 94);
   __setSaasAuthResolverTestsForCourse09();
   for (const lesson of gammaMemberLessons) {
     const result = await request(`/api/academy/lessons/gamma-and-dealer-hedging/gamma-and-dealer-hedging-${lesson[0]}-${lesson[1]}/content`);
@@ -243,7 +243,7 @@ test("Gamma & Dealer Hedging preserves gates and rejects FREE content", async ()
 });
 
 test("Market Structure & Context serves all three protected lessons", async () => {
-  assert.equal(getMemberContentLessonCount(), 76);
+  assert.equal(getMemberContentLessonCount(), 94);
   __setSaasAuthResolverTestsForCourse09();
   for (const lesson of [
     [20, "market-state-classification"],
@@ -272,7 +272,7 @@ test("Market Structure & Context preserves gates and rejects FREE content", asyn
 });
 
 test("GoodTrading Playbook serves all fourteen protected lessons", async () => {
-  assert.equal(getMemberContentLessonCount(), 76);
+  assert.equal(getMemberContentLessonCount(), 94);
   __setSaasAuthResolverTestsForCourse09();
   const lessons = [
     [9, "goodtrading-market-scan"],
@@ -313,6 +313,54 @@ test("GoodTrading Playbook preserves gates and rejects FREE content", async () =
   const entitled = await request(memberPath);
   assert.equal(entitled.status, 200);
   assert.match(JSON.parse(entitled.body).content[0].text, /scan de evidencia/);
+});
+
+test("BTC Scalping serves all eighteen protected lessons", async () => {
+  assert.equal(getMemberContentLessonCount(), 94);
+  __setSaasAuthResolverTestsForCourse09();
+  const lessons = [
+    [8, "gamma-compression"],
+    [9, "absorption-entry"],
+    [10, "pulling"],
+    [11, "spoofing"],
+    [12, "entry-timing"],
+    [13, "stop-placement"],
+    [14, "invalidation"],
+    [15, "partial-management"],
+    [16, "full-tp"],
+    [17, "failed-setup"],
+    [18, "winning-long"],
+    [19, "winning-short"],
+    [20, "losing-long"],
+    [21, "losing-short"],
+    [22, "no-trade"],
+    [23, "good-decision-bad-outcome"],
+    [24, "bad-decision-good-outcome"],
+    [25, "btc-scalping-replay"],
+  ] as const;
+  for (const [lesson, slug] of lessons) {
+    const lessonSlug = String(lesson).padStart(2, "0");
+    const result = await request(`/api/academy/lessons/btc-scalping/btc-scalping-${lessonSlug}-${slug}/content`);
+    assert.equal(result.status, 200, `lesson ${lesson}`);
+    assert.ok(JSON.parse(result.body).content.length > 0);
+    assert.equal(result.cacheControl, "private, no-store");
+  }
+});
+
+test("BTC Scalping preserves gates and rejects FREE content", async () => {
+  const memberPath = "/api/academy/lessons/btc-scalping/btc-scalping-08-gamma-compression/content";
+  __setSaasAuthResolverForTests(() => null);
+  assert.equal((await request(memberPath)).status, 401);
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: false, reason: "no_subscription" }));
+  assert.equal((await request(memberPath)).status, 403);
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  assert.equal((await request("/api/academy/lessons/btc-scalping/btc-scalping-07-session-behavior/content")).status, 404);
+  assert.equal((await request("/api/academy/lessons/btc-scalping/btc-scalping-99-unknown/content")).status, 404);
+  assert.equal((await request("/api/academy/lessons/%2e%2e/btc-scalping-08-gamma-compression/content")).status, 404);
+  const entitled = await request(memberPath);
+  assert.equal(entitled.status, 200);
+  assert.match(JSON.parse(entitled.body).content[0].text, /Gamma y compresión/);
 });
 
 function __setSaasAuthResolverTestsForCourse09(): void {
