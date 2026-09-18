@@ -98,6 +98,22 @@ const MEMBER_ROUTE_INDEX: ReadonlyMap<string, { lessonId: string }> = new Map([
   ["btc-scalping/btc-scalping-23-good-decision-bad-outcome", { lessonId: "course-12-btc-scalping-module-03-lesson-06" }],
   ["btc-scalping/btc-scalping-24-bad-decision-good-outcome", { lessonId: "course-12-btc-scalping-module-03-lesson-07" }],
   ["btc-scalping/btc-scalping-25-btc-scalping-replay", { lessonId: "course-12-btc-scalping-module-04-lesson-01" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-16-create-a-strategy", { lessonId: "course-13-strategy-lab-and-research-module-03-lesson-01" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-17-conditions", { lessonId: "course-13-strategy-lab-and-research-module-03-lesson-02" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-18-triggers", { lessonId: "course-13-strategy-lab-and-research-module-03-lesson-03" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-19-filters", { lessonId: "course-13-strategy-lab-and-research-module-03-lesson-04" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-20-run-test", { lessonId: "course-13-strategy-lab-and-research-module-03-lesson-05" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-21-compare-versions", { lessonId: "course-13-strategy-lab-and-research-module-03-lesson-06" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-22-gamma-as-filter", { lessonId: "course-13-strategy-lab-and-research-module-04-lesson-01" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-23-oi-as-filter", { lessonId: "course-13-strategy-lab-and-research-module-04-lesson-02" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-24-liquidity-conditions", { lessonId: "course-13-strategy-lab-and-research-module-04-lesson-03" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-25-market-regime-filters", { lessonId: "course-13-strategy-lab-and-research-module-04-lesson-04" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-26-session-filters", { lessonId: "course-13-strategy-lab-and-research-module-04-lesson-05" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-27-volatility-filters", { lessonId: "course-13-strategy-lab-and-research-module-04-lesson-06" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-28-out-of-sample-validation", { lessonId: "course-13-strategy-lab-and-research-module-05-lesson-01" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-29-paper-deployment", { lessonId: "course-13-strategy-lab-and-research-module-05-lesson-02" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-30-strategy-iteration", { lessonId: "course-13-strategy-lab-and-research-module-05-lesson-03" }],
+  ["strategy-lab-and-research/strategy-lab-and-research-31-final-research-project", { lessonId: "course-13-strategy-lab-and-research-module-05-lesson-04" }],
 ]);
 
 type AccessResolver = (userId: number) => Promise<AccessSnapshot>;

@@ -27,6 +27,7 @@ import { GAMMA_AND_DEALER_HEDGING_CONTENT } from "@/academy/content/gammaAndDeal
 import { MARKET_STRUCTURE_AND_CONTEXT_CONTENT } from "@/academy/content/marketStructureAndContext";
 import { GOOD_TRADING_PLAYBOOK_CONTENT } from "@/academy/content/goodTradingPlaybook";
 import { BTC_SCALPING_CONTENT } from "@/academy/content/btcScalping";
+import { STRATEGY_LAB_AND_RESEARCH_CONTENT } from "@/academy/content/strategyLabAndResearch";
 
 export type AcademyLesson = {
   id: string;
@@ -385,7 +386,8 @@ const editorialCatalog = ACADEMY_METADATA_CATALOG.map((course) => ({
         GAMMA_AND_DEALER_HEDGING_CONTENT[lesson.slug] ??
         MARKET_STRUCTURE_AND_CONTEXT_CONTENT[lesson.slug] ??
         GOOD_TRADING_PLAYBOOK_CONTENT[lesson.slug] ??
-        BTC_SCALPING_CONTENT[lesson.slug];
+        BTC_SCALPING_CONTENT[lesson.slug] ??
+        STRATEGY_LAB_AND_RESEARCH_CONTENT[lesson.slug];
       return content ? { ...lesson, content } : lesson;
     }),
   })),

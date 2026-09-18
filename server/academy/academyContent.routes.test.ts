@@ -79,7 +79,7 @@ test("Academy Member content returns safe 404 for invalid, missing, or FREE rout
 
 
 test("Execution & Risk Member registry serves lessons 20 through 26", async () => {
-  assert.equal(getMemberContentLessonCount(), 94);
+  assert.equal(getMemberContentLessonCount(), 110);
   __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   const slugs = [
@@ -217,7 +217,7 @@ const gammaMemberLessons = [
 ] as const;
 
 test("Gamma & Dealer Hedging serves all eleven protected lessons", async () => {
-  assert.equal(getMemberContentLessonCount(), 94);
+  assert.equal(getMemberContentLessonCount(), 110);
   __setSaasAuthResolverTestsForCourse09();
   for (const lesson of gammaMemberLessons) {
     const result = await request(`/api/academy/lessons/gamma-and-dealer-hedging/gamma-and-dealer-hedging-${lesson[0]}-${lesson[1]}/content`);
@@ -243,7 +243,7 @@ test("Gamma & Dealer Hedging preserves gates and rejects FREE content", async ()
 });
 
 test("Market Structure & Context serves all three protected lessons", async () => {
-  assert.equal(getMemberContentLessonCount(), 94);
+  assert.equal(getMemberContentLessonCount(), 110);
   __setSaasAuthResolverTestsForCourse09();
   for (const lesson of [
     [20, "market-state-classification"],
@@ -272,7 +272,7 @@ test("Market Structure & Context preserves gates and rejects FREE content", asyn
 });
 
 test("GoodTrading Playbook serves all fourteen protected lessons", async () => {
-  assert.equal(getMemberContentLessonCount(), 94);
+  assert.equal(getMemberContentLessonCount(), 110);
   __setSaasAuthResolverTestsForCourse09();
   const lessons = [
     [9, "goodtrading-market-scan"],
@@ -316,7 +316,7 @@ test("GoodTrading Playbook preserves gates and rejects FREE content", async () =
 });
 
 test("BTC Scalping serves all eighteen protected lessons", async () => {
-  assert.equal(getMemberContentLessonCount(), 94);
+  assert.equal(getMemberContentLessonCount(), 110);
   __setSaasAuthResolverTestsForCourse09();
   const lessons = [
     [8, "gamma-compression"],
@@ -361,6 +361,52 @@ test("BTC Scalping preserves gates and rejects FREE content", async () => {
   const entitled = await request(memberPath);
   assert.equal(entitled.status, 200);
   assert.match(JSON.parse(entitled.body).content[0].text, /Gamma y compresión/);
+});
+
+test("Strategy Lab & Research serves all sixteen protected lessons", async () => {
+  assert.equal(getMemberContentLessonCount(), 110);
+  __setSaasAuthResolverTestsForCourse09();
+  const lessons = [
+    [16, "create-a-strategy"],
+    [17, "conditions"],
+    [18, "triggers"],
+    [19, "filters"],
+    [20, "run-test"],
+    [21, "compare-versions"],
+    [22, "gamma-as-filter"],
+    [23, "oi-as-filter"],
+    [24, "liquidity-conditions"],
+    [25, "market-regime-filters"],
+    [26, "session-filters"],
+    [27, "volatility-filters"],
+    [28, "out-of-sample-validation"],
+    [29, "paper-deployment"],
+    [30, "strategy-iteration"],
+    [31, "final-research-project"],
+  ] as const;
+  for (const [lesson, slug] of lessons) {
+    const lessonSlug = String(lesson).padStart(2, "0");
+    const result = await request(`/api/academy/lessons/strategy-lab-and-research/strategy-lab-and-research-${lessonSlug}-${slug}/content`);
+    assert.equal(result.status, 200, `lesson ${lesson}`);
+    assert.ok(JSON.parse(result.body).content.length > 0);
+    assert.equal(result.cacheControl, "private, no-store");
+  }
+});
+
+test("Strategy Lab & Research preserves gates and rejects FREE content", async () => {
+  const memberPath = "/api/academy/lessons/strategy-lab-and-research/strategy-lab-and-research-16-create-a-strategy/content";
+  __setSaasAuthResolverForTests(() => null);
+  assert.equal((await request(memberPath)).status, 401);
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: false, reason: "no_subscription" }));
+  assert.equal((await request(memberPath)).status, 403);
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  assert.equal((await request("/api/academy/lessons/strategy-lab-and-research/strategy-lab-and-research-15-drawdown/content")).status, 404);
+  assert.equal((await request("/api/academy/lessons/strategy-lab-and-research/strategy-lab-and-research-99-unknown/content")).status, 404);
+  assert.equal((await request("/api/academy/lessons/%2e%2e/strategy-lab-and-research-16-create-a-strategy/content")).status, 404);
+  const entitled = await request(memberPath);
+  assert.equal(entitled.status, 200);
+  assert.match(JSON.parse(entitled.body).content[0].text, /Especificación manual/);
 });
 
 function __setSaasAuthResolverTestsForCourse09(): void {

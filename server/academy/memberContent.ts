@@ -9,6 +9,7 @@ import { GAMMA_AND_DEALER_HEDGING_MEMBER_CONTENT } from "./content/gammaAndDeale
 import { MARKET_STRUCTURE_AND_CONTEXT_MEMBER_CONTENT } from "./content/marketStructureAndContext";
 import { GOOD_TRADING_PLAYBOOK_MEMBER_CONTENT } from "./content/goodTradingPlaybook";
 import { BTC_SCALPING_MEMBER_CONTENT } from "./content/btcScalping";
+import { STRATEGY_LAB_AND_RESEARCH_MEMBER_CONTENT } from "./content/strategyLabAndResearch";
 
 const MEMBER_CONTENT: ReadonlyMap<string, AcademyMemberContentResponse> = new Map(
   [
@@ -22,6 +23,7 @@ const MEMBER_CONTENT: ReadonlyMap<string, AcademyMemberContentResponse> = new Ma
     ...Array.from(MARKET_STRUCTURE_AND_CONTEXT_MEMBER_CONTENT.entries()),
     ...Array.from(GOOD_TRADING_PLAYBOOK_MEMBER_CONTENT.entries()),
     ...Array.from(BTC_SCALPING_MEMBER_CONTENT.entries()),
+    ...Array.from(STRATEGY_LAB_AND_RESEARCH_MEMBER_CONTENT.entries()),
   ],
 );
 
