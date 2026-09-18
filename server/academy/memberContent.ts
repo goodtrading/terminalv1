@@ -7,6 +7,7 @@ import { HEATMAP_AND_BOOKMAP_MEMBER_CONTENT } from "./content/heatmapAndBookmap"
 import { OPEN_INTEREST_AND_DERIVATIVES_MEMBER_CONTENT } from "./content/openInterestAndDerivatives";
 import { GAMMA_AND_DEALER_HEDGING_MEMBER_CONTENT } from "./content/gammaAndDealerHedging";
 import { MARKET_STRUCTURE_AND_CONTEXT_MEMBER_CONTENT } from "./content/marketStructureAndContext";
+import { GOOD_TRADING_PLAYBOOK_MEMBER_CONTENT } from "./content/goodTradingPlaybook";
 
 const MEMBER_CONTENT: ReadonlyMap<string, AcademyMemberContentResponse> = new Map(
   [
@@ -18,6 +19,7 @@ const MEMBER_CONTENT: ReadonlyMap<string, AcademyMemberContentResponse> = new Ma
     ...Array.from(OPEN_INTEREST_AND_DERIVATIVES_MEMBER_CONTENT.entries()),
     ...Array.from(GAMMA_AND_DEALER_HEDGING_MEMBER_CONTENT.entries()),
     ...Array.from(MARKET_STRUCTURE_AND_CONTEXT_MEMBER_CONTENT.entries()),
+    ...Array.from(GOOD_TRADING_PLAYBOOK_MEMBER_CONTENT.entries()),
   ],
 );
 

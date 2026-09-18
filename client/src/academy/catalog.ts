@@ -25,6 +25,7 @@ import { HEATMAP_AND_BOOKMAP_CONTENT } from "@/academy/content/heatmapAndBookmap
 import { OPEN_INTEREST_AND_DERIVATIVES_CONTENT } from "@/academy/content/openInterestAndDerivatives";
 import { GAMMA_AND_DEALER_HEDGING_CONTENT } from "@/academy/content/gammaAndDealerHedging";
 import { MARKET_STRUCTURE_AND_CONTEXT_CONTENT } from "@/academy/content/marketStructureAndContext";
+import { GOOD_TRADING_PLAYBOOK_CONTENT } from "@/academy/content/goodTradingPlaybook";
 
 export type AcademyLesson = {
   id: string;
@@ -381,7 +382,8 @@ const editorialCatalog = ACADEMY_METADATA_CATALOG.map((course) => ({
         HEATMAP_AND_BOOKMAP_CONTENT[lesson.slug] ??
         OPEN_INTEREST_AND_DERIVATIVES_CONTENT[lesson.slug] ??
         GAMMA_AND_DEALER_HEDGING_CONTENT[lesson.slug] ??
-        MARKET_STRUCTURE_AND_CONTEXT_CONTENT[lesson.slug];
+        MARKET_STRUCTURE_AND_CONTEXT_CONTENT[lesson.slug] ??
+        GOOD_TRADING_PLAYBOOK_CONTENT[lesson.slug];
       return content ? { ...lesson, content } : lesson;
     }),
   })),

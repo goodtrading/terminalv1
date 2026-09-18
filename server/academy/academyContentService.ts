@@ -66,6 +66,20 @@ const MEMBER_ROUTE_INDEX: ReadonlyMap<string, { lessonId: string }> = new Map([
   ["market-structure-and-context/market-structure-and-context-20-market-state-classification", { lessonId: "course-10-market-structure-and-context-module-05-lesson-01" }],
   ["market-structure-and-context/market-structure-and-context-21-building-context-before-entry", { lessonId: "course-10-market-structure-and-context-module-05-lesson-02" }],
   ["market-structure-and-context/market-structure-and-context-22-context-market-scan", { lessonId: "course-10-market-structure-and-context-module-05-lesson-03" }],
+  ["goodtrading-playbook/goodtrading-playbook-09-goodtrading-market-scan", { lessonId: "course-11-goodtrading-playbook-module-02-lesson-01" }],
+  ["goodtrading-playbook/goodtrading-playbook-10-trade-wait-invalid", { lessonId: "course-11-goodtrading-playbook-module-02-lesson-02" }],
+  ["goodtrading-playbook/goodtrading-playbook-11-gamma-flip-rejection", { lessonId: "course-11-goodtrading-playbook-module-03-lesson-01" }],
+  ["goodtrading-playbook/goodtrading-playbook-12-gamma-flip-acceptance", { lessonId: "course-11-goodtrading-playbook-module-03-lesson-02" }],
+  ["goodtrading-playbook/goodtrading-playbook-13-magnet-rotation", { lessonId: "course-11-goodtrading-playbook-module-03-lesson-03" }],
+  ["goodtrading-playbook/goodtrading-playbook-14-passive-compression-breakout", { lessonId: "course-11-goodtrading-playbook-module-03-lesson-04" }],
+  ["goodtrading-playbook/goodtrading-playbook-15-compression-failure", { lessonId: "course-11-goodtrading-playbook-module-03-lesson-05" }],
+  ["goodtrading-playbook/goodtrading-playbook-16-liquidity-wall-rejection", { lessonId: "course-11-goodtrading-playbook-module-03-lesson-06" }],
+  ["goodtrading-playbook/goodtrading-playbook-17-liquidity-pull-continuation", { lessonId: "course-11-goodtrading-playbook-module-03-lesson-07" }],
+  ["goodtrading-playbook/goodtrading-playbook-18-spoof-execution", { lessonId: "course-11-goodtrading-playbook-module-03-lesson-08" }],
+  ["goodtrading-playbook/goodtrading-playbook-19-absorption-reversal", { lessonId: "course-11-goodtrading-playbook-module-03-lesson-09" }],
+  ["goodtrading-playbook/goodtrading-playbook-20-failed-breakout", { lessonId: "course-11-goodtrading-playbook-module-03-lesson-10" }],
+  ["goodtrading-playbook/goodtrading-playbook-21-goodtrading-market-replay", { lessonId: "course-11-goodtrading-playbook-module-04-lesson-01" }],
+  ["goodtrading-playbook/goodtrading-playbook-22-complete-market-scan", { lessonId: "course-11-goodtrading-playbook-module-04-lesson-02" }],
 ]);
 
 type AccessResolver = (userId: number) => Promise<AccessSnapshot>;
