@@ -174,7 +174,7 @@ export default function AcademyLessonPage() {
               <span>{lesson.estimatedMinutes} min estimated</span>
               <span>{course.title}</span>
             </div>
-            <div className="mt-10">
+            <div className="mt-10 max-w-3xl">
               <AcademyLessonAccessBoundary courseSlug={course.slug} lesson={lesson}>
                 {(blocks) => (
                   <>

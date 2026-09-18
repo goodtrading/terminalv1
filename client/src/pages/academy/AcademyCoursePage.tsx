@@ -146,7 +146,7 @@ export default function AcademyCoursePage() {
           <div className="mb-6 flex items-end justify-between gap-4">
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#7f8794]">Course curriculum</div>
-              <p className="mt-2 text-sm text-[#929aa7]">Explore the full structure. Lesson content will be added in a later phase.</p>
+              <p className="mt-2 text-sm text-[#929aa7]">Explore the full structure, then open any lesson to read the available curriculum.</p>
             </div>
             {isFeatured ? <span className="rounded-full border border-[#ff3b3b]/30 bg-[#ff3b3b]/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#ffaaaa]">Featured playbook</span> : null}
           </div>

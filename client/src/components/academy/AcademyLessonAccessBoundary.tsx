@@ -80,13 +80,13 @@ export function AcademyLessonAccessBoundary({ courseSlug, lesson, children }: { 
       : "This lesson is part of the advanced GoodTrading curriculum.";
     const actionReason = decision.reason === "SIGNED_OUT" || decision.reason === "NO_ENTITLEMENT" ? decision.reason : "UNKNOWN";
     return (
-      <section className="rounded-2xl border border-violet-400/25 bg-violet-400/[0.06] p-6 sm:p-8" aria-label="Member lesson gate">
+      <section className="rounded-2xl border border-[#ff3b3b]/25 bg-[#0a0707]/80 p-6 shadow-[0_18px_60px_rgba(0,0,0,0.22)] sm:p-8" aria-label="Member lesson gate">
         <div className="flex items-start gap-4">
-          <div className="rounded-xl border border-violet-300/20 bg-violet-300/10 p-3 text-violet-200"><LockKeyhole className="h-5 w-5" aria-hidden="true" /></div>
+          <div className="rounded-xl border border-[#ff3b3b]/25 bg-[#ff3b3b]/10 p-3 text-[#ff9c9c]"><LockKeyhole className="h-5 w-5" aria-hidden="true" /></div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold text-white">Continue with GoodTrading Membership</h2><AccessBadge access="MEMBER" /></div>
             <p className="mt-3 text-sm leading-7 text-[#b9aeca]">{explanation}</p>
-            {!isFailure ? <p className="mt-2 text-xs leading-6 text-[#8f829e]">Member lessons may include operational frameworks, advanced confluences, market replays and GoodTrading playbooks.</p> : null}
+            {!isFailure ? <p className="mt-2 text-xs leading-6 text-[#9c858d]">Member lessons add advanced interpretation, replays and GoodTrading frameworks without exposing the protected lesson body.</p> : null}
             <GateAction reason={actionReason} />
           </div>
         </div>

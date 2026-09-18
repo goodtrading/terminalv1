@@ -189,9 +189,6 @@ function DesktopRouter() {
       <Route path="/my-account" component={MyAccountRedirect} />
       <Route path="/terms" component={TermsPage} />
       <Route path="/privacy" component={PrivacyPage} />
-      <Route path="/academy/:courseSlug/:lessonSlug" component={AcademyLessonPage} />
-      <Route path="/academy/:courseSlug" component={AcademyCoursePage} />
-      <Route path="/academy" component={AcademyHomePage} />
       <Route path="/admin" component={AdminPageRoute} />
       <Route path="/admin/ai-lab" component={CalibrationLabRoute} />
       <Route path="/admin/knowledge-inbox" component={KnowledgeInboxRoute} />

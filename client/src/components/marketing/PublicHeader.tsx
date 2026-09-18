@@ -6,6 +6,7 @@ import { openDesktopDownload } from "@/lib/downloadDesktop";
 
 const NAV_ITEMS = [
   { label: "Productos", href: "/products", type: "link" as const },
+  { label: "Academy", href: "/academy", type: "link" as const },
   { label: "Terminal Web", type: "terminal" as const },
   { label: "Descargar App Desktop", type: "download" as const },
 ];
@@ -30,6 +31,8 @@ export function PublicHeader() {
     if (item.type === "download") openDesktopDownload("header_nav");
   };
 
+  const isActiveLink = (href?: string) => Boolean(href && (location === href || location.startsWith(`${href}/`)));
+
   return (
     <header className="sticky top-0 z-50 border-b border-white/[0.07] bg-[#030303]/95 backdrop-blur-xl">
       <div className="mx-auto flex h-[76px] max-w-7xl items-center gap-4 px-4 sm:px-6 lg:gap-8 lg:px-8">
@@ -45,16 +48,22 @@ export function PublicHeader() {
         </Link>
 
         <nav className="hidden flex-1 items-center justify-center gap-7 xl:gap-9 lg:flex">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              onClick={() => handleNav(item)}
-              className={navLinkClass}
-            >
+          {NAV_ITEMS.map((item) => {
+            const isActive = item.type === "link" && isActiveLink(item.href);
+            const content = <>
               {item.label}
-            </button>
-          ))}
+              <span aria-hidden="true" className={cn("absolute -bottom-2 left-0 h-px bg-[#ff303c]", isActive ? "w-full" : "w-0 group-hover:w-full")} />
+            </>;
+            return item.type === "link" ? (
+              <Link key={item.label} href={item.href} className={`${navLinkClass} group relative`}>
+                {content}
+              </Link>
+            ) : (
+              <button key={item.label} type="button" onClick={() => handleNav(item)} className={navLinkClass}>
+                {item.label}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="ml-auto flex items-center gap-2.5 sm:gap-3">
@@ -127,7 +136,19 @@ export function PublicHeader() {
       {mobileOpen && (
         <div className="border-t border-white/[0.06] bg-[#050505]/98 px-4 py-4 lg:hidden">
           <nav className="flex flex-col gap-1">
-            {NAV_ITEMS.map((item) => (
+            {NAV_ITEMS.map((item) => item.type === "link" ? (
+              <Link
+                key={item.label}
+                href={item.href}
+                onClick={() => setMobileOpen(false)}
+                className={cn(
+                  "rounded-lg px-3 py-2.5 text-left text-sm font-medium hover:bg-white/[0.04] hover:text-white",
+                  isActiveLink(item.href) ? "bg-white/[0.06] text-white" : "text-[#d1d5db]",
+                )}
+              >
+                {item.label}
+              </Link>
+            ) : (
               <button
                 key={item.label}
                 type="button"
