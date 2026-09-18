@@ -79,7 +79,7 @@ test("Academy Member content returns safe 404 for invalid, missing, or FREE rout
 
 
 test("Execution & Risk Member registry serves lessons 20 through 26", async () => {
-  assert.equal(getMemberContentLessonCount(), 48);
+  assert.equal(getMemberContentLessonCount(), 59);
   __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   const slugs = [
@@ -201,3 +201,48 @@ test("Open Interest & Derivatives Member content preserves signed-out and entitl
   assert.equal(entitled.status, 200);
   assert.match(JSON.parse(entitled.body).content[0].text, /OI y agresión/);
 });
+
+const gammaMemberLessons = [
+  [29, "how-to-prioritize-expirations"],
+  [30, "how-to-prioritize-zones"],
+  [31, "gamma-flip-acceptance"],
+  [32, "gamma-flip-rejection"],
+  [33, "magnet-rotation"],
+  [34, "gamma-order-flow"],
+  [35, "gamma-liquidity"],
+  [36, "gamma-open-interest"],
+  [37, "when-to-ignore-gamma"],
+  [38, "gamma-invalidation"],
+  [39, "real-market-replay"],
+] as const;
+
+test("Gamma & Dealer Hedging serves all eleven protected lessons", async () => {
+  assert.equal(getMemberContentLessonCount(), 59);
+  __setSaasAuthResolverTestsForCourse09();
+  for (const lesson of gammaMemberLessons) {
+    const result = await request(`/api/academy/lessons/gamma-and-dealer-hedging/gamma-and-dealer-hedging-${lesson[0]}-${lesson[1]}/content`);
+    assert.equal(result.status, 200, `lesson ${lesson[0]}`);
+    assert.ok(JSON.parse(result.body).content.length > 0);
+    assert.equal(result.cacheControl, "private, no-store");
+  }
+});
+
+test("Gamma & Dealer Hedging preserves gates and rejects FREE content", async () => {
+  const memberPath = "/api/academy/lessons/gamma-and-dealer-hedging/gamma-and-dealer-hedging-29-how-to-prioritize-expirations/content";
+  __setSaasAuthResolverForTests(() => null);
+  assert.equal((await request(memberPath)).status, 401);
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: false, reason: "no_subscription" }));
+  assert.equal((await request(memberPath)).status, 403);
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  const free = await request("/api/academy/lessons/gamma-and-dealer-hedging/gamma-and-dealer-hedging-17-gamma-flip/content");
+  assert.equal(free.status, 404);
+  const entitled = await request(memberPath);
+  assert.equal(entitled.status, 200);
+  assert.match(JSON.parse(entitled.body).content[0].text, /Comparar expiraciones/);
+});
+
+function __setSaasAuthResolverTestsForCourse09(): void {
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+}

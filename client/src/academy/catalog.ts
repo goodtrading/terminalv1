@@ -23,6 +23,7 @@ import { FOOTPRINT_MASTERY_CONTENT } from "@/academy/content/footprintMastery";
 import { DOM_AND_LIQUIDITY_CONTENT } from "@/academy/content/domAndLiquidity";
 import { HEATMAP_AND_BOOKMAP_CONTENT } from "@/academy/content/heatmapAndBookmap";
 import { OPEN_INTEREST_AND_DERIVATIVES_CONTENT } from "@/academy/content/openInterestAndDerivatives";
+import { GAMMA_AND_DEALER_HEDGING_CONTENT } from "@/academy/content/gammaAndDealerHedging";
 
 export type AcademyLesson = {
   id: string;
@@ -377,7 +378,8 @@ const editorialCatalog = ACADEMY_METADATA_CATALOG.map((course) => ({
         FOOTPRINT_MASTERY_CONTENT[lesson.slug] ??
         DOM_AND_LIQUIDITY_CONTENT[lesson.slug] ??
         HEATMAP_AND_BOOKMAP_CONTENT[lesson.slug] ??
-        OPEN_INTEREST_AND_DERIVATIVES_CONTENT[lesson.slug];
+        OPEN_INTEREST_AND_DERIVATIVES_CONTENT[lesson.slug] ??
+        GAMMA_AND_DEALER_HEDGING_CONTENT[lesson.slug];
       return content ? { ...lesson, content } : lesson;
     }),
   })),

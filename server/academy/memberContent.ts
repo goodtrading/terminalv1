@@ -5,6 +5,7 @@ import { FOOTPRINT_MASTERY_MEMBER_CONTENT } from "./content/footprintMastery";
 import { DOM_AND_LIQUIDITY_MEMBER_CONTENT } from "./content/domAndLiquidity";
 import { HEATMAP_AND_BOOKMAP_MEMBER_CONTENT } from "./content/heatmapAndBookmap";
 import { OPEN_INTEREST_AND_DERIVATIVES_MEMBER_CONTENT } from "./content/openInterestAndDerivatives";
+import { GAMMA_AND_DEALER_HEDGING_MEMBER_CONTENT } from "./content/gammaAndDealerHedging";
 
 const MEMBER_CONTENT: ReadonlyMap<string, AcademyMemberContentResponse> = new Map(
   [
@@ -14,6 +15,7 @@ const MEMBER_CONTENT: ReadonlyMap<string, AcademyMemberContentResponse> = new Ma
     ...Array.from(DOM_AND_LIQUIDITY_MEMBER_CONTENT.entries()),
     ...Array.from(HEATMAP_AND_BOOKMAP_MEMBER_CONTENT.entries()),
     ...Array.from(OPEN_INTEREST_AND_DERIVATIVES_MEMBER_CONTENT.entries()),
+    ...Array.from(GAMMA_AND_DEALER_HEDGING_MEMBER_CONTENT.entries()),
   ],
 );
 

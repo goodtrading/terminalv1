@@ -52,6 +52,17 @@ const MEMBER_ROUTE_INDEX: ReadonlyMap<string, { lessonId: string }> = new Map([
   ["open-interest-and-derivatives/open-interest-and-derivatives-19-oi-breakout", { lessonId: "course-07-open-interest-and-derivatives-module-04-lesson-04" }],
   ["open-interest-and-derivatives/open-interest-and-derivatives-20-oi-gamma", { lessonId: "course-07-open-interest-and-derivatives-module-04-lesson-05" }],
   ["open-interest-and-derivatives/open-interest-and-derivatives-21-btc-positioning-case-studies", { lessonId: "course-07-open-interest-and-derivatives-module-04-lesson-06" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-29-how-to-prioritize-expirations", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-01" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-30-how-to-prioritize-zones", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-02" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-31-gamma-flip-acceptance", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-03" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-32-gamma-flip-rejection", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-04" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-33-magnet-rotation", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-05" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-34-gamma-order-flow", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-06" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-35-gamma-liquidity", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-07" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-36-gamma-open-interest", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-08" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-37-when-to-ignore-gamma", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-09" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-38-gamma-invalidation", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-10" }],
+  ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-39-real-market-replay", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-11" }],
 ]);
 
 type AccessResolver = (userId: number) => Promise<AccessSnapshot>;
