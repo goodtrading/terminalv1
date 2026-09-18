@@ -10,6 +10,7 @@ import { __setSaasAuthResolverForTests } from "../middleware/saasAuth";
 const fixturePath = "/api/academy/lessons/execution-and-risk/execution-and-risk-20-aggressive-vs-confirmed-entry/content";
 const orderFlowMember25Path = "/api/academy/lessons/order-flow-foundations/order-flow-foundations-25-absorption-context/content";
 const domMember19Path = "/api/academy/lessons/dom-and-liquidity/dom-and-liquidity-19-wall-defended-vs-wall-fake/content";
+const oiMember16Path = "/api/academy/lessons/open-interest-and-derivatives/open-interest-and-derivatives-16-oi-aggression/content";
 
 async function request(path: string): Promise<{ status: number; body: any; cacheControl: string | null }> {
   const app = express();
@@ -78,7 +79,7 @@ test("Academy Member content returns safe 404 for invalid, missing, or FREE rout
 
 
 test("Execution & Risk Member registry serves lessons 20 through 26", async () => {
-  assert.equal(getMemberContentLessonCount(), 42);
+  assert.equal(getMemberContentLessonCount(), 48);
   __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   const slugs = [
@@ -167,4 +168,36 @@ test("Heatmap & Bookmap Member content denies signed-out, non-entitled, and reje
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   const free = await request("/api/academy/lessons/heatmap-and-bookmap/heatmap-and-bookmap-01-what-the-heatmap-represents/content");
   assert.equal(free.status, 404);
+});
+
+test("Open Interest & Derivatives Member content serves all six protected lessons", async () => {
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  for (const lesson of [
+    [16, "oi-aggression"],
+    [17, "oi-absorption"],
+    [18, "oi-passive-compression"],
+    [19, "oi-breakout"],
+    [20, "oi-gamma"],
+    [21, "btc-positioning-case-studies"],
+  ] as const) {
+    const result = await request(`/api/academy/lessons/open-interest-and-derivatives/open-interest-and-derivatives-${lesson[0]}-${lesson[1]}/content`);
+    assert.equal(result.status, 200, `lesson ${lesson[0]}`);
+    assert.ok(JSON.parse(result.body).content.length > 0);
+    assert.equal(result.cacheControl, "private, no-store");
+  }
+  const free = await request("/api/academy/lessons/open-interest-and-derivatives/open-interest-and-derivatives-08-price-up-oi-up/content");
+  assert.equal(free.status, 404);
+});
+
+test("Open Interest & Derivatives Member content preserves signed-out and entitlement gates", async () => {
+  __setSaasAuthResolverForTests(() => null);
+  assert.equal((await request(oiMember16Path)).status, 401);
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: false, reason: "no_subscription" }));
+  assert.equal((await request(oiMember16Path)).status, 403);
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  const entitled = await request(oiMember16Path);
+  assert.equal(entitled.status, 200);
+  assert.match(JSON.parse(entitled.body).content[0].text, /OI y agresión/);
 });

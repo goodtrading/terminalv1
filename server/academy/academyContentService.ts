@@ -46,6 +46,12 @@ const MEMBER_ROUTE_INDEX: ReadonlyMap<string, { lessonId: string }> = new Map([
   ["heatmap-and-bookmap/heatmap-and-bookmap-33-aggressive-exhaustion", { lessonId: "course-06-heatmap-and-bookmap-module-05-lesson-05" }],
   ["heatmap-and-bookmap/heatmap-and-bookmap-34-failed-liquidity-defence", { lessonId: "course-06-heatmap-and-bookmap-module-05-lesson-06" }],
   ["heatmap-and-bookmap/heatmap-and-bookmap-35-goodtrading-heatmap-replay-lab", { lessonId: "course-06-heatmap-and-bookmap-module-06-lesson-01" }],
+  ["open-interest-and-derivatives/open-interest-and-derivatives-16-oi-aggression", { lessonId: "course-07-open-interest-and-derivatives-module-04-lesson-01" }],
+  ["open-interest-and-derivatives/open-interest-and-derivatives-17-oi-absorption", { lessonId: "course-07-open-interest-and-derivatives-module-04-lesson-02" }],
+  ["open-interest-and-derivatives/open-interest-and-derivatives-18-oi-passive-compression", { lessonId: "course-07-open-interest-and-derivatives-module-04-lesson-03" }],
+  ["open-interest-and-derivatives/open-interest-and-derivatives-19-oi-breakout", { lessonId: "course-07-open-interest-and-derivatives-module-04-lesson-04" }],
+  ["open-interest-and-derivatives/open-interest-and-derivatives-20-oi-gamma", { lessonId: "course-07-open-interest-and-derivatives-module-04-lesson-05" }],
+  ["open-interest-and-derivatives/open-interest-and-derivatives-21-btc-positioning-case-studies", { lessonId: "course-07-open-interest-and-derivatives-module-04-lesson-06" }],
 ]);
 
 type AccessResolver = (userId: number) => Promise<AccessSnapshot>;
