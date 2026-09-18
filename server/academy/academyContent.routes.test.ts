@@ -78,7 +78,7 @@ test("Academy Member content returns safe 404 for invalid, missing, or FREE rout
 
 
 test("Execution & Risk Member registry serves lessons 20 through 26", async () => {
-  assert.equal(getMemberContentLessonCount(), 28);
+  assert.equal(getMemberContentLessonCount(), 42);
   __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   const slugs = [
@@ -140,5 +140,31 @@ test("DOM & Liquidity Member content preserves 401 and rejects FREE content", as
   __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   const free = await request("/api/academy/lessons/dom-and-liquidity/dom-and-liquidity-01-what-is-the-dom/content");
+  assert.equal(free.status, 404);
+});
+
+test("Heatmap & Bookmap Member content serves lessons 19, 26, 28, and 35", async () => {
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  for (const lesson of [[19, "what-is-passive-compression"], [26, "compression-gamma"], [28, "entry-and-invalidation"], [35, "goodtrading-heatmap-replay-lab"]] as const) {
+    const path = "/api/academy/lessons/heatmap-and-bookmap/heatmap-and-bookmap-" + lesson[0] + "-" + lesson[1] + "/content";
+    const result = await request(path);
+    assert.equal(result.status, 200, "lesson " + lesson[0]);
+    assert.ok(JSON.parse(result.body).content.length > 0);
+    assert.equal(result.cacheControl, "private, no-store");
+  }
+});
+
+test("Heatmap & Bookmap Member content denies signed-out, non-entitled, and rejects FREE routes", async () => {
+  const memberPath = "/api/academy/lessons/heatmap-and-bookmap/heatmap-and-bookmap-19-what-is-passive-compression/content";
+  __setSaasAuthResolverForTests(() => null);
+  const signedOut = await request(memberPath);
+  assert.equal(signedOut.status, 401);
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: false, reason: "no_subscription" }));
+  const denied = await request(memberPath);
+  assert.equal(denied.status, 403);
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  const free = await request("/api/academy/lessons/heatmap-and-bookmap/heatmap-and-bookmap-01-what-the-heatmap-represents/content");
   assert.equal(free.status, 404);
 });

@@ -1,0 +1,130 @@
+import type { AcademyContentBlock } from "@shared/academy-content";
+
+export const HEATMAP_AND_BOOKMAP_CONTENT: Record<string, AcademyContentBlock[]> = {
+  "heatmap-and-bookmap-01-what-the-heatmap-represents": [
+    { type: "heading", level: 2, text: "Liquidez mostrada a través del tiempo" },
+    { type: "paragraph", text: "El Heatmap representa visualmente la liquidez resting que fue mostrada en distintos precios a lo largo del tiempo. El precio se organiza verticalmente y el tiempo horizontalmente; la intensidad expresa una magnitud relativa según la representación del renderer." },
+    { type: "list", items: ["Heatmap: liquidez mostrada/resting a través del tiempo.", "Footprint: transacciones ejecutadas organizadas por precio.", "La liquidez puede persistir, cambiar, ejecutarse o cancelarse.", "La imagen no revela directamente la intención de un participante."] },
+    { type: "callout", title: "Distinción central", text: "Una banda intensa describe liquidez visible en la historia del libro. No garantiza que siga disponible ni que vaya a ejecutarse." },
+  ],
+  "heatmap-and-bookmap-02-price": [
+    { type: "heading", level: 2, text: "El eje vertical de precio" },
+    { type: "paragraph", text: "Cada banda del Heatmap queda ubicada en un nivel o zona de precio. Comparar el precio actual con esas bandas permite observar dónde estuvo concentrada la liquidez y cómo cambió la relación con el mercado." },
+    { type: "list", items: ["Precio actual y bandas históricas son referencias distintas.", "Una banda puede quedar por encima, por debajo o cerca del precio.", "La distancia respecto del precio cambia con el movimiento del mercado.", "Una banda histórica no necesariamente sigue siendo relevante o ejecutable."] },
+    { type: "callout", title: "Precisión", text: "El eje de precio organiza la evidencia visual; no convierte una zona histórica en soporte, resistencia o destino obligatorio." },
+  ],
+  "heatmap-and-bookmap-03-time": [
+    { type: "heading", level: 2, text: "El eje temporal" },
+    { type: "paragraph", text: "El eje horizontal muestra cómo evoluciona la liquidez: aparece una banda, persiste, cambia de intensidad, desaparece o interactúa con ejecuciones. Esta secuencia añade contexto que un snapshot estático del DOM no conserva." },
+    { type: "list", items: ["Aparición: se muestra nueva liquidez.", "Persistencia: continúa visible durante un intervalo.", "Cambio: aumenta, disminuye o se desplaza.", "Interacción: el precio y las ejecuciones llegan a la zona.", "Desaparición: puede ser ejecución, cancelación o actualización."] },
+    { type: "callout", title: "Pregunta útil", text: "No preguntes solo qué tamaño hay. Pregunta cuánto tiempo persistió, qué cambió y qué ocurrió cuando el precio interactuó." },
+  ],
+  "heatmap-and-bookmap-04-intensity": [
+    { type: "heading", level: 2, text: "Intensidad relativa" },
+    { type: "paragraph", text: "La intensidad visual codifica liquidez mostrada relativa de acuerdo con el modelo y el renderer actuales. Una zona más intensa representa mayor relevancia visual dentro de la escala utilizada, no una señal automática." },
+    { type: "list", items: ["Compara intensidad con zonas cercanas.", "Considera escala, rango y contexto temporal.", "Una intensidad alta puede cambiar o desaparecer.", "El color no identifica participantes ni intención."] },
+    { type: "callout", title: "Límite", text: "Esta lesson no define fórmulas, thresholds propietarios ni una relación fija entre color y tamaño. Intensidad es contexto, no señal." },
+  ],
+  "heatmap-and-bookmap-05-historical-liquidity": [
+    { type: "heading", level: 2, text: "Lo que el libro mostró antes" },
+    { type: "paragraph", text: "Historical Liquidity conserva visualmente liquidez que estuvo mostrada aunque el libro live ya haya cambiado. Esa memoria ayuda a estudiar persistencia, migración e interacción previa." },
+    { type: "list", items: ["Permite comparar antes y después.", "Ayuda a ver si una zona persistió o se debilitó.", "Muestra cambios que un snapshot actual ya no contiene.", "No significa que la liquidez histórica siga ejecutable."] },
+    { type: "callout", title: "No confundir", text: "Una banda histórica es evidencia de lo que fue mostrado. No es una orden actual ni una garantía de que el precio vuelva a ella." },
+  ],
+  "heatmap-and-bookmap-06-live-liquidity": [
+    { type: "heading", level: 2, text: "El borde live del libro" },
+    { type: "paragraph", text: "Live Liquidity representa la parte actual del libro que se está mostrando en el edge live. A diferencia de la historia visual, esta cantidad todavía puede ejecutar, retirarse, cambiar o migrar." },
+    { type: "list", items: ["Histórica: lo que estuvo mostrado.", "Live: lo que aparece disponible ahora.", "Live no significa estable.", "El snapshot debe leerse junto con su frescura y contexto."] },
+    { type: "callout", title: "Regla", text: "No trates una banda histórica como liquidez actual ni una banda live como promesa de permanencia." },
+  ],
+  "heatmap-and-bookmap-07-walls": [
+    { type: "heading", level: 2, text: "Walls en el Heatmap" },
+    { type: "paragraph", text: "Una Wall aparece como concentración persistente o intensa de liquidez mostrada alrededor de un precio. El Heatmap permite observar no solo su tamaño relativo, sino también cuánto tiempo estuvo presente y cómo cambió." },
+    { type: "list", items: ["Compara la intensidad con el entorno.", "Observa aparición, persistencia y desaparición.", "Busca interacción y ejecución efectiva.", "Distingue una wall actual de una banda histórica."] },
+    { type: "callout", title: "Límite", text: "Wall no equivale automáticamente a soporte, resistencia, institución o intención. Persistencia e interacción agregan evidencia, no certeza." },
+  ],
+  "heatmap-and-bookmap-08-stacking": [
+    { type: "heading", level: 2, text: "Liquidez que se acumula" },
+    { type: "paragraph", text: "Stacking describe un aumento o acumulación de liquidez mostrada en un lado o en una zona a través del tiempo. En el Heatmap puede verse como bandas que se intensifican o como nueva cantidad que aparece en niveles relacionados." },
+    { type: "list", items: ["Identifica precio, lado y momento del aumento.", "Observa si la intensidad persiste.", "Separa una actualización aislada de una secuencia.", "Relaciona el cambio con precio y ejecución sin inferir intención."] },
+    { type: "callout", title: "Estado actual", text: "El Terminal no debe describirse como detector automático estable de stacking. Aquí se enseña observación visual del libro a través del tiempo." },
+  ],
+  "heatmap-and-bookmap-09-pulling": [
+    { type: "heading", level: 2, text: "Una banda que se debilita o desaparece" },
+    { type: "paragraph", text: "Pulling describe liquidez mostrada que se reduce o desaparece sin una ejecución equivalente contra esa cantidad. El Heatmap puede mostrar el debilitamiento de una banda, pero no prueba por sí solo por qué ocurrió." },
+    { type: "list", items: ["Pulling: retiro sin consumo equivalente.", "Consumption: ejecuciones agresivas contra la liquidez.", "La secuencia temporal ayuda a diferenciarlos.", "Una cancelación puede ser normal y no implica spoofing."] },
+    { type: "callout", title: "Alcance", text: "GoodTrading no debe presentarse aquí como detector estable user-visible de pulling. La banda observada es evidencia contextual, no una acusación." },
+  ],
+  "heatmap-and-bookmap-10-replenishment": [
+    { type: "heading", level: 2, text: "Liquidez que reaparece" },
+    { type: "paragraph", text: "Replenishment ocurre cuando existe interacción o consumo y luego vuelve a aparecer cantidad mostrada en el nivel o cerca de él. El Heatmap ayuda a observar la secuencia temporal de esa reposición." },
+    { type: "list", items: ["Debe haber interacción observable.", "La cantidad se reduce o se consume.", "Aparece nuevamente liquidez.", "La repetición puede aportar contexto.", "Una wall estática no es replenishment."] },
+    { type: "callout", title: "Límite", text: "Existe telemetry interna relacionada, pero no se confirma un flag estable del renderer principal. No se debe afirmar detección automática ni identificar una iceberg." },
+  ],
+  "heatmap-and-bookmap-11-liquidity-migration": [
+    { type: "heading", level: 2, text: "Cuando la concentración cambia de lugar" },
+    { type: "paragraph", text: "Liquidity Migration describe el traslado de la concentración visible entre áreas de precio. El rastro histórico del Heatmap permite comparar dónde estaba la liquidez y dónde aparece después." },
+    { type: "list", items: ["Compara ubicación anterior y nueva.", "Observa cancelaciones y nuevas adiciones.", "Distingue movimiento hacia, lejos o junto al precio.", "Revisa ambos lados del libro."] },
+    { type: "callout", title: "Observación", text: "La migración describe una secuencia del libro. No demuestra que un participante persiga el precio ni define dirección futura." },
+  ],
+  "heatmap-and-bookmap-12-cancellation": [
+    { type: "heading", level: 2, text: "Liquidez que deja de estar mostrada" },
+    { type: "paragraph", text: "Cancellation es la desaparición de una orden resting antes de su ejecución. En el Heatmap puede verse como una banda que se debilita o deja de continuar, pero la imagen no determina por sí sola el motivo." },
+    { type: "list", items: ["Puede afectar parte o todo el tamaño.", "Puede ocurrir por gestión normal del quote.", "Debe diferenciarse de consumo por trades.", "Puede formar parte de una migración."] },
+    { type: "callout", title: "Spoofing boundary", text: "Cancellation no equivale a spoofing. La intención es central en esa acusación y no se prueba desde una desaparición aislada." },
+  ],
+  "heatmap-and-bookmap-13-what-is-spoofing": [
+    { type: "heading", level: 2, text: "Spoofing como concepto" },
+    { type: "paragraph", text: "Spoofing describe conceptualmente liquidez mostrada con intención manipulativa de influir en la percepción del mercado en lugar de buscar genuinamente ejecución. La intención es parte central de la definición." },
+    { type: "list", items: ["El Heatmap puede mostrar aparición y retiro de liquidez.", "Ese patrón puede ser consistente con una hipótesis de spoofing.", "Una hipótesis no prueba intención.", "La cancelación ordinaria también puede producir patrones similares."] },
+    { type: "callout", title: "Lenguaje correcto", text: "Usa spoof-like behavior, posible spoofing o spoofing hypothesis. No atribuyas una conducta ilegal a un participante desde una sola vista." },
+  ],
+  "heatmap-and-bookmap-14-what-is-not-spoofing": [
+    { type: "heading", level: 2, text: "Lo que no debe etiquetarse automáticamente" },
+    { type: "paragraph", text: "No toda liquidez que desaparece es spoofing. Cancellation normal, repricing, gestión de riesgo, retiro de quotes stale, migration o un partial fill seguido de cancelación tienen explicaciones alternativas." },
+    { type: "list", items: ["Cancelación normal.", "Repricing por cambio de mercado.", "Quote management.", "Risk management.", "Stale order removal.", "Liquidity migration.", "Partial fill y cancelación posterior."] },
+    { type: "callout", title: "Disciplina", text: "Describe primero el evento observable. Reserva la hipótesis de spoofing para un contexto más amplio y nunca la presentes como certeza automática." },
+  ],
+  "heatmap-and-bookmap-15-spoof-lifetime": [
+    { type: "heading", level: 2, text: "Tiempo de vida de una banda" },
+    { type: "paragraph", text: "Lifetime es el tiempo durante el cual una cantidad mostrada permanece visible antes de ejecutarse, cancelarse o cambiar. Puede aportar contexto temporal a la lectura de una banda." },
+    { type: "list", items: ["Una vida corta puede ser informativa.", "Una vida larga tampoco garantiza ejecución.", "El tiempo debe combinarse con ubicación e interacción.", "Short-lived no significa spoofing."] },
+    { type: "callout", title: "Sin TTL propietario", text: "Esta lesson no publica thresholds, TTL ni reglas de clasificación de GoodTrading. El repositorio no confirma un detector estable dedicado de spoof lifetime." },
+  ],
+  "heatmap-and-bookmap-16-pull-before-touch": [
+    { type: "heading", level: 2, text: "Pull antes del touch" },
+    { type: "paragraph", text: "El patrón observable es: aparece liquidez, el precio se aproxima y la banda desaparece o se debilita antes de una interacción significativa. Después de eso, la evidencia de esa liquidez ya no debe tratarse como activa." },
+    { type: "list", items: ["Registra ubicación y tamaño inicial.", "Observa la aproximación.", "Comprueba si hubo ejecución.", "Compara el estado antes y después.", "Actualiza la lectura con el libro actual."] },
+    { type: "callout", title: "No es prueba", text: "Pull before touch puede ser consistente con una hipótesis de spoofing, pero no demuestra intención ni constituye un trigger." },
+  ],
+  "heatmap-and-bookmap-17-repeated-spoof": [
+    { type: "heading", level: 2, text: "Patrón repetido de retiro" },
+    { type: "paragraph", text: "Repeated Spoof conserva el título canónico, pero debe entenderse como repetición de comportamiento spoof-like: aparece liquidez, el mercado se aproxima, la liquidez se retira y el patrón vuelve a ocurrir." },
+    { type: "list", items: ["Repetición agrega dimensión temporal.", "La ubicación y el contexto siguen importando.", "La evidencia puede fortalecer una hipótesis.", "Repetición no prueba por sí sola intención manipulativa."] },
+    { type: "callout", title: "Límite", text: "No se enseñan scoring, lifetime threshold, TTL ni reglas de ejecución. La lectura sigue siendo una hipótesis contextual." },
+  ],
+  "heatmap-and-bookmap-18-spoof-as-information-not-a-signal": [
+    { type: "heading", level: 2, text: "Información contextual, no señal" },
+    { type: "paragraph", text: "Incluso una hipótesis fuerte de spoof-like behavior solo informa sobre la credibilidad cambiante de la liquidez mostrada. No define automáticamente entry, dirección, stop ni target." },
+    { type: "list", items: ["Observa la respuesta del precio.", "Compara liquidez histórica y live.", "Integra Order Flow y ejecución.", "Revisa la estructura de mercado.", "Mantén abierta la incertidumbre sobre intención."] },
+    { type: "callout", title: "Cierre FREE", text: "El Heatmap ayuda a describir liquidez a través del tiempo. La decisión requiere evidencia adicional y no sale de una banda aislada." },
+  ],
+  "heatmap-and-bookmap-29-liquidity-vacuum": [
+    { type: "heading", level: 2, text: "Una zona con poca liquidez mostrada" },
+    { type: "paragraph", text: "Liquidity Vacuum describe un área con profundidad mostrada relativamente baja frente a zonas cercanas. Menos cantidad resting visible puede permitir repricing más rápido o menor fricción pasiva." },
+    { type: "list", items: ["Compara la zona con su entorno.", "Considera spread y profundidad actual.", "La liquidez puede aparecer dentro del vacío.", "El vacío no garantiza movimiento ni recorrido completo."] },
+    { type: "callout", title: "Alcance actual", text: "Existe lógica interna relacionada con liquidity vacuum, pero no se afirma aquí una detección automática estable y user-visible del Terminal." },
+  ],
+  "heatmap-and-bookmap-30-liquidity-chase": [
+    { type: "heading", level: 2, text: "Liquidez que se relocaliza con el precio" },
+    { type: "paragraph", text: "Liquidity Chase describe, como concepto, liquidez mostrada que se relocaliza repetidamente mientras cambia el precio. El Heatmap ayuda a observar la secuencia sin atribuir automáticamente quién la mueve o por qué." },
+    { type: "list", items: ["Compara la ubicación de las bandas sucesivas.", "Observa cancelaciones y adiciones.", "Distingue seguir al precio de desaparecer.", "Revisa si hubo ejecución entre cambios."] },
+    { type: "callout", title: "Sin antropomorfismo", text: "Habla de relocalización observada. No afirmes que una entidad está persiguiendo el precio ni conviertas el patrón en una regla." },
+  ],
+  "heatmap-and-bookmap-31-liquidity-trap": [
+    { type: "heading", level: 2, text: "Cuando la lectura de una banda falla" },
+    { type: "paragraph", text: "Liquidity Trap describe una situación conceptual en la que participantes se apoyan demasiado en liquidez visible que luego se retira o no se comporta como esperaban. La pared no es automáticamente una trampa." },
+    { type: "list", items: ["La liquidez puede desaparecer antes de la interacción.", "Puede ejecutarse sin producir la respuesta esperada.", "Puede migrar a otra zona.", "La interpretación debe actualizarse con la evidencia real."] },
+    { type: "callout", title: "Límite", text: "No se enseñan reglas propietarias de trap, triggers ni setups. Visible liquidity es información, no garantía." },
+  ],
+};

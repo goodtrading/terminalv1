@@ -3,6 +3,7 @@ import { EXECUTION_AND_RISK_MEMBER_CONTENT } from "./content/executionAndRisk";
 import { ORDER_FLOW_FOUNDATIONS_MEMBER_CONTENT } from "./content/orderFlowFoundations";
 import { FOOTPRINT_MASTERY_MEMBER_CONTENT } from "./content/footprintMastery";
 import { DOM_AND_LIQUIDITY_MEMBER_CONTENT } from "./content/domAndLiquidity";
+import { HEATMAP_AND_BOOKMAP_MEMBER_CONTENT } from "./content/heatmapAndBookmap";
 
 const MEMBER_CONTENT: ReadonlyMap<string, AcademyMemberContentResponse> = new Map(
   [
@@ -10,6 +11,7 @@ const MEMBER_CONTENT: ReadonlyMap<string, AcademyMemberContentResponse> = new Ma
     ...Array.from(ORDER_FLOW_FOUNDATIONS_MEMBER_CONTENT.entries()),
     ...Array.from(FOOTPRINT_MASTERY_MEMBER_CONTENT.entries()),
     ...Array.from(DOM_AND_LIQUIDITY_MEMBER_CONTENT.entries()),
+    ...Array.from(HEATMAP_AND_BOOKMAP_MEMBER_CONTENT.entries()),
   ],
 );
 

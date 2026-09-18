@@ -32,6 +32,20 @@ const MEMBER_ROUTE_INDEX: ReadonlyMap<string, { lessonId: string }> = new Map([
   ["dom-and-liquidity/dom-and-liquidity-23-aggressor-passive-interaction", { lessonId: "course-05-dom-and-liquidity-module-04-lesson-05" }],
   ["dom-and-liquidity/dom-and-liquidity-24-dom-execution-setups", { lessonId: "course-05-dom-and-liquidity-module-04-lesson-06" }],
   ["dom-and-liquidity/dom-and-liquidity-25-dom-replay-lab", { lessonId: "course-05-dom-and-liquidity-module-04-lesson-07" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-19-what-is-passive-compression", { lessonId: "course-06-heatmap-and-bookmap-module-04-lesson-01" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-20-valid-compression", { lessonId: "course-06-heatmap-and-bookmap-module-04-lesson-02" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-21-bullish-passive-compression", { lessonId: "course-06-heatmap-and-bookmap-module-04-lesson-03" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-22-bearish-passive-compression", { lessonId: "course-06-heatmap-and-bookmap-module-04-lesson-04" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-23-compression-breakout", { lessonId: "course-06-heatmap-and-bookmap-module-04-lesson-05" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-24-compression-failure", { lessonId: "course-06-heatmap-and-bookmap-module-04-lesson-06" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-25-compression-oi", { lessonId: "course-06-heatmap-and-bookmap-module-04-lesson-07" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-26-compression-gamma", { lessonId: "course-06-heatmap-and-bookmap-module-04-lesson-08" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-27-compression-spoofing", { lessonId: "course-06-heatmap-and-bookmap-module-04-lesson-09" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-28-entry-and-invalidation", { lessonId: "course-06-heatmap-and-bookmap-module-04-lesson-10" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-32-absorption-around-walls", { lessonId: "course-06-heatmap-and-bookmap-module-05-lesson-04" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-33-aggressive-exhaustion", { lessonId: "course-06-heatmap-and-bookmap-module-05-lesson-05" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-34-failed-liquidity-defence", { lessonId: "course-06-heatmap-and-bookmap-module-05-lesson-06" }],
+  ["heatmap-and-bookmap/heatmap-and-bookmap-35-goodtrading-heatmap-replay-lab", { lessonId: "course-06-heatmap-and-bookmap-module-06-lesson-01" }],
 ]);
 
 type AccessResolver = (userId: number) => Promise<AccessSnapshot>;
