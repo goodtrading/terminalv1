@@ -63,6 +63,9 @@ const MEMBER_ROUTE_INDEX: ReadonlyMap<string, { lessonId: string }> = new Map([
   ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-37-when-to-ignore-gamma", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-09" }],
   ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-38-gamma-invalidation", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-10" }],
   ["gamma-and-dealer-hedging/gamma-and-dealer-hedging-39-real-market-replay", { lessonId: "course-09-gamma-and-dealer-hedging-module-07-lesson-11" }],
+  ["market-structure-and-context/market-structure-and-context-20-market-state-classification", { lessonId: "course-10-market-structure-and-context-module-05-lesson-01" }],
+  ["market-structure-and-context/market-structure-and-context-21-building-context-before-entry", { lessonId: "course-10-market-structure-and-context-module-05-lesson-02" }],
+  ["market-structure-and-context/market-structure-and-context-22-context-market-scan", { lessonId: "course-10-market-structure-and-context-module-05-lesson-03" }],
 ]);
 
 type AccessResolver = (userId: number) => Promise<AccessSnapshot>;

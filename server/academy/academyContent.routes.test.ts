@@ -79,7 +79,7 @@ test("Academy Member content returns safe 404 for invalid, missing, or FREE rout
 
 
 test("Execution & Risk Member registry serves lessons 20 through 26", async () => {
-  assert.equal(getMemberContentLessonCount(), 59);
+  assert.equal(getMemberContentLessonCount(), 62);
   __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
   __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
   const slugs = [
@@ -217,7 +217,7 @@ const gammaMemberLessons = [
 ] as const;
 
 test("Gamma & Dealer Hedging serves all eleven protected lessons", async () => {
-  assert.equal(getMemberContentLessonCount(), 59);
+  assert.equal(getMemberContentLessonCount(), 62);
   __setSaasAuthResolverTestsForCourse09();
   for (const lesson of gammaMemberLessons) {
     const result = await request(`/api/academy/lessons/gamma-and-dealer-hedging/gamma-and-dealer-hedging-${lesson[0]}-${lesson[1]}/content`);
@@ -240,6 +240,35 @@ test("Gamma & Dealer Hedging preserves gates and rejects FREE content", async ()
   const entitled = await request(memberPath);
   assert.equal(entitled.status, 200);
   assert.match(JSON.parse(entitled.body).content[0].text, /Comparar expiraciones/);
+});
+
+test("Market Structure & Context serves all three protected lessons", async () => {
+  assert.equal(getMemberContentLessonCount(), 62);
+  __setSaasAuthResolverTestsForCourse09();
+  for (const lesson of [
+    [20, "market-state-classification"],
+    [21, "building-context-before-entry"],
+    [22, "context-market-scan"],
+  ] as const) {
+    const result = await request(`/api/academy/lessons/market-structure-and-context/market-structure-and-context-${lesson[0]}-${lesson[1]}/content`);
+    assert.equal(result.status, 200, `lesson ${lesson[0]}`);
+    assert.ok(JSON.parse(result.body).content.length > 0);
+    assert.equal(result.cacheControl, "private, no-store");
+  }
+});
+
+test("Market Structure & Context preserves gates and rejects FREE content", async () => {
+  const memberPath = "/api/academy/lessons/market-structure-and-context/market-structure-and-context-20-market-state-classification/content";
+  __setSaasAuthResolverForTests(() => null);
+  assert.equal((await request(memberPath)).status, 401);
+  __setSaasAuthResolverForTests(() => ({ id: 7, email: "test@example.com", role: "user" }));
+  __setAcademyAccessResolverForTests(async () => ({ allowed: false, reason: "no_subscription" }));
+  assert.equal((await request(memberPath)).status, 403);
+  __setAcademyAccessResolverForTests(async () => ({ allowed: true }));
+  assert.equal((await request("/api/academy/lessons/market-structure-and-context/market-structure-and-context-12-acceptance/content")).status, 404);
+  const entitled = await request(memberPath);
+  assert.equal(entitled.status, 200);
+  assert.match(JSON.parse(entitled.body).content[0].text, /Clasificar/);
 });
 
 function __setSaasAuthResolverTestsForCourse09(): void {
