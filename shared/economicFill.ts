@@ -33,8 +33,8 @@ export type EconomicFillInput = Readonly<{
   accountIdentity: AccountIdentity;
   marketIdentity: ExecutionMarketIdentity;
   side: EconomicFillSide;
-  quantity: number;
-  price: number;
+  quantity: number | string;
+  price: number | string;
   fee?: EconomicFillValue;
   slippage?: EconomicFillValue;
   liquidityRole?: EconomicFillLiquidityRole;
@@ -79,6 +79,19 @@ function validateMarket(market: ExecutionMarketIdentity): void {
   if (market.marketType !== "Spot" && market.marketType !== "Perpetual") throw new Error("marketIdentity.marketType is invalid");
 }
 
+function validateExactDecimal(value: string, field: string): void {
+  if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) throw new Error(`${field} must be an exact decimal string`);
+}
+
+function validatePositiveAmount(value: number | string, field: string): void {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) throw new Error(`${field} must be finite and greater than zero`);
+    return;
+  }
+  validateExactDecimal(value, field);
+  if (/^-?0(?:\.0+)?$/.test(value) || value.startsWith("-")) throw new Error(`${field} must be greater than zero`);
+}
+
 function validateValue(value: EconomicFillValue | undefined, field: string): void {
   if (value === undefined) return;
   if (typeof value.value === "number" && !Number.isFinite(value.value)) throw new Error(`${field}.value must be finite or null`);
@@ -109,8 +122,8 @@ export function createEconomicFill(input: EconomicFillInput): EconomicFillRecord
   validateAccount(input.accountIdentity);
   validateMarket(input.marketIdentity);
   if (input.side !== "BUY" && input.side !== "SELL") throw new Error("side must be BUY or SELL");
-  if (!Number.isFinite(input.quantity) || input.quantity <= 0) throw new Error("quantity must be finite and greater than zero");
-  if (!Number.isFinite(input.price) || input.price <= 0) throw new Error("price must be finite and greater than zero");
+  validatePositiveAmount(input.quantity, "quantity");
+  validatePositiveAmount(input.price, "price");
   if (!Number.isFinite(input.eventTime) || input.eventTime < 0) throw new Error("eventTime must be finite and non-negative");
   validOptionalTime(input.receiveTime, "receiveTime");
   if (input.liquidityRole !== undefined && !["MAKER", "TAKER", "UNKNOWN"].includes(input.liquidityRole)) throw new Error("liquidityRole is invalid");
