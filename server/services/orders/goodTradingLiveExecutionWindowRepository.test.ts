@@ -17,7 +17,7 @@ function mockQuery(calls: { text: string; values: readonly unknown[] }[]) {
   return async (text: string, values: readonly unknown[] = []) => {
     calls.push({ text, values });
     if (calls.length === 1) return { rows: [candidate] };
-    if (calls.length === 2) return { rows: [{ unavailable_count: 0 }] };
+    if (calls.length === 2) return { rows: [{ unavailable_count: 2 }] };
     return { rows: [evidence] };
   };
 }
@@ -31,6 +31,7 @@ test("filters execution windows in SQL with exact supplied UTC boundaries", asyn
     query: mockQuery(calls),
   });
   assert.equal(result.eligibleExecutions.length, 1);
+  assert.equal(result.unavailable.missingSelectedTimestamp, 2);
   assert.equal(result.eligibleExecutions[0]!.quantity, "0.000000000000000123");
   assert.equal(result.eligibleExecutions[0]!.price, "1.000000000000000001");
   assert.equal(result.eligibleExecutions[0]!.feeAmount, "0.000000000000000007");

@@ -225,7 +225,7 @@ export async function selectLiveExecutionEvidence(input: Readonly<{
     accountUid,
     eligibleExecutions,
     conflicts,
-    unavailable: { missingSelectedTimestamp: 0 },
+    unavailable: { missingSelectedTimestamp },
     hasMore,
     nextCursor: hasMore && last ? JSON.stringify({ time: last.membershipTime, scopeKey: last.scopeKey }) : null,
   };
