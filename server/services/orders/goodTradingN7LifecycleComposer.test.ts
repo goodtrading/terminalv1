@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { composeGoodTradingN7Lifecycle, type DurableBrokerEvidenceSnapshot } from "./goodTradingN7LifecycleComposer";
+import { composeGoodTradingN7Lifecycle, composeGoodTradingN9LiveAnalyticsFills, type DurableBrokerEvidenceSnapshot } from "./goodTradingN7LifecycleComposer";
+import { buildOrderExecutionQuality } from "../../../shared/orderExecutionQuality";
 
 const intent = {
   logicalOrderUid: "GT-ORD-COMPOSE-1",
@@ -179,4 +180,51 @@ test("rejects unlinked or mismatched evidence and never infers a broker order id
   assert.throws(() => composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "OTHER", snapshots: [snapshot()] }), /BROKER_EVIDENCE_SCOPE_MISMATCH/);
   assert.throws(() => composeGoodTradingN7Lifecycle({ intent, attempt: { ...attempt, brokerOrderId: null }, brokerObjectId: "BROKER-1", snapshots: [snapshot({ brokerOrderId: null })] }), /BROKER_ORDER_ID_REQUIRED/);
   assert.throws(() => composeGoodTradingN7Lifecycle({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [snapshot({ classification: "BROKER_OBSERVED_ONLY" })] }), /BROKER_EVIDENCE_NOT_GT_LINKED/);
+});
+
+test("exact LIVE analytics projection preserves durable decimals through N9B", () => {
+  const highPrecision = snapshot({
+    source: "FILL_HISTORY",
+    executionId: "EXACT-LIVE-1",
+    quantity: "0.000000000000000123",
+    price: "1.000000000000000001",
+    feeAmount: "0.000000000000000007",
+    feeAsset: "USDT",
+    rawBrokerStatus: "FILLED",
+  });
+  const fills = composeGoodTradingN9LiveAnalyticsFills({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [highPrecision] });
+  assert.equal(fills.length, 1);
+  const fill = fills[0]!;
+  assert.equal(fill.quantity, "0.000000000000000123");
+  assert.equal(fill.price, "1.000000000000000001");
+  assert.equal(fill.fee?.value, "0.000000000000000007");
+  assert.equal(fill.fee?.currency, "USDT");
+  assert.equal(fill.executionId, "EXACT-LIVE-1");
+  assert.equal(fill.accountIdentity.accountId, intent.goodTradingAccountUid);
+  assert.equal(fill.accountIdentity.environment, "LIVE");
+  assert.equal(fill.orderReferences?.canonicalOrderId, intent.logicalOrderUid);
+  assert.equal(fill.liquidityRole, "UNKNOWN");
+  assert.equal(fill.provenance.executionId, "EXACT-LIVE-1");
+
+  const quality = buildOrderExecutionQuality({
+    intent: { requestedSize: intent.requestedSize, resolvedQuantity: intent.resolvedQuantity, limitPrice: "1.000000000000000001", decisionEvidence: null },
+    attempts: [attempt],
+    lifecycleStatus: "FILLED",
+    fills,
+    fillCompleteness: "COMPLETE",
+  });
+  assert.equal(quality.quantities.factualFilled, "0.000000000000000123");
+  assert.equal(quality.factualExecutionVwap, "1.000000000000000001");
+  assert.equal(quality.fees.perFill[0]?.amount, "0.000000000000000007");
+});
+
+test("exact LIVE analytics projection preserves identity, excludes unlinked evidence, and does not add context", () => {
+  const one = snapshot({ id: "EXACT-DUP-A", source: "FILL_HISTORY", executionId: "EXACT-DUP", rawBrokerStatus: "FILLED" });
+  const fills = composeGoodTradingN9LiveAnalyticsFills({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [one, { ...one, id: "EXACT-DUP-B" }] });
+  assert.deepEqual(fills.map((fill) => fill.executionId), ["EXACT-DUP"]);
+  assert.equal("decisionAt" in fills[0]!, false);
+  assert.equal("marketContext" in fills[0]!, false);
+  assert.equal(fills[0]!.liquidityRole, "UNKNOWN");
+  assert.throws(() => composeGoodTradingN9LiveAnalyticsFills({ intent, attempt, brokerObjectId: "BROKER-1", snapshots: [{ ...one, id: "UNLINKED", classification: "BROKER_OBSERVED_ONLY", executionId: "UNLINKED" }] }), /BROKER_EVIDENCE_NOT_GT_LINKED/);
+  assert.throws(() => composeGoodTradingN9LiveAnalyticsFills({ intent: { ...intent, executionEnvironment: "PAPER" }, attempt, brokerObjectId: "BROKER-1", snapshots: [one] }), /LIVE_ANALYTICS_REQUIRED/);
 });

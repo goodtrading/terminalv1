@@ -49,12 +49,14 @@ export type GoodTradingN7LifecycleComposition = Readonly<{
   economicFillIdentityKeys: readonly string[];
 }>;
 
-type Input = Readonly<{
+export type GoodTradingN7LifecycleInput = Readonly<{
   intent: DurableGoodTradingOrderIntent;
   attempt: DurableSubmissionAttempt;
   brokerObjectId: string;
   snapshots: readonly DurableBrokerEvidenceSnapshot[];
 }>;
+
+type Input = GoodTradingN7LifecycleInput;
 
 function positiveNumber(value: string, field: string): number {
   if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) || /^0(?:\.0+)?$/.test(value)) throw new Error(`${field} must be a positive decimal`);
@@ -172,6 +174,38 @@ function economicFill(input: Input, snapshot: DurableBrokerEvidenceSnapshot): Ec
     orderReferences: { clientOrderId: input.attempt.brokerClientOrderId, venueOrderId: input.attempt.brokerOrderId! },
     provenance: { source: "GOODTRADING_BROKER_OBSERVATION", executionId: snapshot.executionId, clientOrderId: input.attempt.brokerClientOrderId, venueOrderId: input.attempt.brokerOrderId!, tradeId: snapshot.executionId, upstreamEventType: snapshot.rawBrokerStatus ?? undefined, upstreamTimestamp: eventTime },
   });
+}
+
+function exactAnalyticsEconomicFill(input: Input, snapshot: DurableBrokerEvidenceSnapshot): EconomicFillRecord | null {
+  if (snapshot.executionId === null) return null;
+  if (!snapshot.side || !snapshot.quantity || !snapshot.price) throw new Error("ECONOMIC_FILL_FACTS_INCOMPLETE");
+  const eventTime = dateMs(snapshot.sourceTimestamp, "sourceTimestamp");
+  return createEconomicFill({
+    executionId: snapshot.executionId,
+    accountIdentity: { accountId: input.intent.goodTradingAccountUid, broker: input.intent.executionBroker, environment: "LIVE", baseCurrency: input.intent.canonicalSettlementAsset },
+    marketIdentity: { instrument: input.intent.executionMarketInstrument, venue: input.intent.executionMarketVenue, marketType: input.intent.executionMarketType },
+    side: snapshot.side.toUpperCase() as "BUY" | "SELL",
+    quantity: snapshot.quantity,
+    price: snapshot.price,
+    liquidityRole: "UNKNOWN",
+    fee: snapshot.feeAmount == null || snapshot.feeConflict ? undefined : { value: snapshot.feeAmount, currency: snapshot.feeAsset ?? null, quality: snapshot.feeAsset == null ? "PARTIAL" : "VALID", provenance: { source: "GOODTRADING_BROKER_OBSERVATION", snapshotIds: [snapshot.id] } },
+    eventTime,
+    receiveTime: dateMs(snapshot.observedAt, "observedAt"),
+    orderReferences: { clientOrderId: input.attempt.brokerClientOrderId, venueOrderId: input.attempt.brokerOrderId!, canonicalOrderId: input.intent.logicalOrderUid },
+    provenance: { source: "GOODTRADING_BROKER_OBSERVATION", executionId: snapshot.executionId, clientOrderId: input.attempt.brokerClientOrderId, venueOrderId: input.attempt.brokerOrderId!, tradeId: snapshot.executionId, upstreamEventType: snapshot.rawBrokerStatus ?? undefined, upstreamTimestamp: eventTime },
+  });
+}
+
+/** Exact LIVE analytics projection from the same GT-linked durable evidence used by N7. */
+export function composeGoodTradingN9LiveAnalyticsFills(input: Input): readonly EconomicFillRecord[] {
+  scope(input);
+  if (input.intent.executionEnvironment !== "LIVE") throw new Error("LIVE_ANALYTICS_REQUIRED");
+  return uniqueEconomicFills(
+    [...input.snapshots]
+      .sort((a, b) => dateMs(a.observedAt, "observedAt") - dateMs(b.observedAt, "observedAt") || a.id.localeCompare(b.id))
+      .map((snapshot) => exactAnalyticsEconomicFill(input, snapshot))
+      .filter((fill): fill is EconomicFillRecord => fill !== null),
+  );
 }
 
 export function composeGoodTradingN7Lifecycle(input: Input): GoodTradingN7LifecycleComposition {
