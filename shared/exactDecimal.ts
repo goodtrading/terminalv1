@@ -59,9 +59,10 @@ export function multiplyExactDecimal(a: ExactDecimal, b: ExactDecimal): ExactDec
 export function divideExactDecimal(a: ExactDecimal, b: ExactDecimal, fractionalPlaces = MAX_DECIMAL_SCALE): ExactDecimal {
   assertScale(fractionalPlaces, "fractionalPlaces");
   if (b.units === bigInt(0)) throw new Error("decimal denominator must not be zero");
-  const scale = a.scale + fractionalPlaces;
-  assertScale(scale, "division result");
-  return { units: (a.units * (bigInt(10) ** bigInt(fractionalPlaces + b.scale))) / b.units, scale };
+  const scaleDelta = fractionalPlaces + b.scale - a.scale;
+  const numerator = scaleDelta >= 0 ? a.units * (bigInt(10) ** bigInt(scaleDelta)) : a.units;
+  const denominator = scaleDelta >= 0 ? b.units : b.units * (bigInt(10) ** bigInt(-scaleDelta));
+  return { units: numerator / denominator, scale: fractionalPlaces };
 }
 
 export function serializeExactDecimal(value: ExactDecimal): string {
