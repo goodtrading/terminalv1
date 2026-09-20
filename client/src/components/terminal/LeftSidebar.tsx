@@ -14,6 +14,7 @@ import { formatTerminalDateTime } from "@/lib/timezone";
 import { useTimezonePreference } from "@/hooks/useTimezonePreference";
 import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
 import { formatGex } from "@/lib/formatGex";
+import { formatKeyLevelRange } from "@/lib/formatKeyLevelRange";
 
 const STALE_THRESHOLD_MIN = 10;
 
@@ -413,14 +414,14 @@ export function LeftSidebar() {
           <div className="p-1.5 bg-terminal-negative/10 border border-terminal-negative/20 rounded-sm">
             <div className="text-[8px] uppercase tracking-[0.2em] text-terminal-negative mb-0.5 font-bold">SHORT GAMMA POCKET</div>
             <div className="font-mono text-[10px] text-terminal-negative font-bold">
-              {levels ? `${levels.shortGammaPocketStart.toLocaleString()} – ${levels.shortGammaPocketEnd.toLocaleString()}` : "--"}
+              {formatKeyLevelRange(levels?.shortGammaPocketStart, levels?.shortGammaPocketEnd)}
             </div>
           </div>
 
           <div className="p-1.5 terminal-card">
             <div className="terminal-text-label mb-0.5 text-[8px]">DEEP RISK POCKET</div>
             <div className="font-mono text-[10px] terminal-text-secondary font-bold">
-              {levels ? `${levels.deepRiskPocketStart.toLocaleString()} – ${levels.deepRiskPocketEnd.toLocaleString()}` : "--"}
+              {formatKeyLevelRange(levels?.deepRiskPocketStart, levels?.deepRiskPocketEnd)}
             </div>
           </div>
         </div>
