@@ -42,13 +42,32 @@ export type LiveExecutionWindowSelection = Readonly<{
   accountUid: string;
   eligibleExecutions: readonly LiveExecutionEvidenceRow[];
   conflicts: readonly LiveExecutionConflict[];
+  candidateCount: number;
   unavailable: Readonly<{ missingSelectedTimestamp: number }>;
   hasMore: boolean;
   nextCursor: string | null;
 }>;
 
-type QueryResult = { rows: Record<string, unknown>[] };
-type Query = (text: string, values?: readonly unknown[]) => Promise<QueryResult>;
+export type LiveExecutionWindowCompleteSelection = Readonly<{
+  window: LiveExecutionWindow;
+  accountUid: string;
+  eligibleExecutions: readonly LiveExecutionEvidenceRow[];
+  conflicts: readonly LiveExecutionConflict[];
+  candidateCount: number;
+  unavailable: Readonly<{ missingSelectedTimestamp: number }>;
+  retrievalCoverage: "COMPLETE";
+  financialEvidence: "COMPLETE" | "PARTIAL" | "CONFLICT";
+}>;
+
+export type LiveExecutionEvidenceQueryResult = { rows: Record<string, unknown>[] };
+export type LiveExecutionEvidenceQuery = (text: string, values?: readonly unknown[]) => Promise<LiveExecutionEvidenceQueryResult>;
+export type LiveExecutionTransactionClient = Readonly<{
+  query: LiveExecutionEvidenceQuery;
+  release: () => void;
+}>;
+
+type QueryResult = LiveExecutionEvidenceQueryResult;
+type Query = LiveExecutionEvidenceQuery;
 
 const scopeExpression = `concat_ws(chr(31), i.goodtrading_account_uid, i.execution_environment, i.execution_broker, i.execution_market_instrument, i.execution_market_venue, i.execution_market_type, i.logical_order_uid, s.execution_id)`;
 
@@ -175,7 +194,7 @@ export async function selectLiveExecutionEvidence(input: Readonly<{
   const missingSelectedTimestamp = Number(unavailableResult.rows[0]?.unavailable_count ?? 0);
   if (!Number.isSafeInteger(missingSelectedTimestamp) || missingSelectedTimestamp < 0) throw new Error("INVALID_LIVE_EXECUTION_UNAVAILABLE_COUNT");
   if (pageCandidates.length === 0) {
-    return { window, accountUid, eligibleExecutions: [], conflicts: [], unavailable: { missingSelectedTimestamp }, hasMore: false, nextCursor: null };
+    return { window, accountUid, eligibleExecutions: [], conflicts: [], candidateCount: 0, unavailable: { missingSelectedTimestamp }, hasMore: false, nextCursor: null };
   }
   const scopeKeys = pageCandidates.map((candidate) => candidate.scopeKey);
   const evidenceResult = await query(`
@@ -225,8 +244,89 @@ export async function selectLiveExecutionEvidence(input: Readonly<{
     accountUid,
     eligibleExecutions,
     conflicts,
+    candidateCount: pageCandidates.length,
     unavailable: { missingSelectedTimestamp },
     hasMore,
     nextCursor: hasMore && last ? JSON.stringify({ time: last.membershipTime, scopeKey: last.scopeKey }) : null,
   };
+}
+
+export const LIVE_EXECUTION_WINDOW_RESULT_LIMIT_EXCEEDED = "LIVE_EXECUTION_WINDOW_RESULT_LIMIT_EXCEEDED";
+export const LIVE_EXECUTION_WINDOW_QUERY_TIMEOUT = "LIVE_EXECUTION_WINDOW_QUERY_TIMEOUT";
+
+export async function selectLiveExecutionEvidenceConsistent(input: Readonly<{
+  accountUid: string;
+  window: LiveExecutionWindow;
+  limits: LiveExecutionWindowLimits;
+  maximumExecutionCount: number;
+  queryTimeoutMs: number;
+  connect?: () => Promise<LiveExecutionTransactionClient>;
+}>): Promise<LiveExecutionWindowCompleteSelection> {
+  if (!Number.isSafeInteger(input.maximumExecutionCount) || input.maximumExecutionCount <= 0) {
+    throw new Error("INVALID_LIVE_EXECUTION_WINDOW_MAXIMUM_EXECUTION_COUNT");
+  }
+  if (!Number.isSafeInteger(input.queryTimeoutMs) || input.queryTimeoutMs <= 0) {
+    throw new Error("INVALID_LIVE_EXECUTION_WINDOW_QUERY_TIMEOUT");
+  }
+  if (input.limits.pageSize > input.maximumExecutionCount) {
+    throw new Error("INVALID_LIVE_EXECUTION_WINDOW_PAGE_SIZE");
+  }
+  if (!pool && !input.connect) throw new Error("DATABASE_UNAVAILABLE");
+
+  const client = await (input.connect ? input.connect() : pool!.connect());
+  let transactionStarted = false;
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+    await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
+    await client.query("SELECT set_config('statement_timeout', $1, true)", [`${input.queryTimeoutMs}ms`]);
+    const query: LiveExecutionEvidenceQuery = (text, values) => client.query(text, values as unknown[]);
+    const eligibleExecutions: LiveExecutionEvidenceRow[] = [];
+    const conflicts: LiveExecutionConflict[] = [];
+    let cursor: string | null = null;
+    let unavailableCount = 0;
+    let candidateCount = 0;
+    let lastPage: LiveExecutionWindowSelection | null = null;
+
+    for (;;) {
+      const page = await selectLiveExecutionEvidence({ ...input, cursor, query });
+      lastPage = page;
+      const pageEvidenceCount = page.eligibleExecutions.length + page.conflicts.length;
+      if (pageEvidenceCount !== page.candidateCount) throw new Error("LIVE_EXECUTION_WINDOW_EVIDENCE_INCOMPLETE");
+      if (candidateCount + page.candidateCount > input.maximumExecutionCount) {
+        throw new Error(LIVE_EXECUTION_WINDOW_RESULT_LIMIT_EXCEEDED);
+      }
+      candidateCount += page.candidateCount;
+      eligibleExecutions.push(...page.eligibleExecutions);
+      conflicts.push(...page.conflicts);
+      unavailableCount = page.unavailable.missingSelectedTimestamp;
+      if (!page.hasMore) break;
+      if (!page.nextCursor) throw new Error("LIVE_EXECUTION_WINDOW_CURSOR_MISSING");
+      cursor = page.nextCursor;
+    }
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+    const financialEvidence: LiveExecutionWindowCompleteSelection["financialEvidence"] = conflicts.length > 0
+      ? "CONFLICT"
+      : eligibleExecutions.some((row) => row.feeAmount === null || row.feeAsset === null || row.feeConflict)
+        ? "PARTIAL"
+        : "COMPLETE";
+    return {
+      window: lastPage?.window ?? createLiveExecutionWindow(input.window),
+      accountUid: input.accountUid.trim(),
+      eligibleExecutions,
+      conflicts,
+      candidateCount,
+      unavailable: { missingSelectedTimestamp: unavailableCount },
+      retrievalCoverage: "COMPLETE",
+      financialEvidence,
+    };
+  } catch (error) {
+    if (transactionStarted) await client.query("ROLLBACK").catch(() => undefined);
+    if ((error as { code?: string }).code === "57014") throw new Error(LIVE_EXECUTION_WINDOW_QUERY_TIMEOUT);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
