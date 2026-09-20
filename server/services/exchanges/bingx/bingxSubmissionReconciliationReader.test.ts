@@ -29,3 +29,10 @@ test("accepts clientOrderID spelling and ignores observations without a string c
   assert.equal(rows[0]?.clientOrderId, "GT-CLIENT-alias");
   assert.equal(rows[1]?.clientOrderId, undefined);
 });
+
+test("selects documented fill time for fill history without using order update time", () => {
+  const [fill] = normalizeBingXSubmissionObservations("FILL_HISTORY", [{ time: "1700000000000", updateTime: "1700000000999", tradeId: "fill-1" }]);
+  assert.equal(fill?.sourceTimestamp, "1700000000000");
+  const [order] = normalizeBingXSubmissionObservations("ORDER_HISTORY", [{ time: "1700000000000", updateTime: "1700000000999", orderId: "order-1" }]);
+  assert.equal(order?.sourceTimestamp, "1700000000999");
+});

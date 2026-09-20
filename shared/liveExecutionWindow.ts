@@ -1,4 +1,6 @@
 export type LiveExecutionWindowTimestampPolicy =
+  | "PROVIDER_REPORTED_TIMESTAMP"
+  /** @deprecated Compatibility alias; source_timestamp is not proven matching-engine time. */
   | "EXECUTION_EVENT_TIME"
   | "GOODTRADING_OBSERVATION_TIME";
 
@@ -25,7 +27,7 @@ function utcMillis(value: string, field: string): number {
 }
 
 export function createLiveExecutionWindow(input: LiveExecutionWindow): LiveExecutionWindow {
-  if (input.timestampPolicy !== "EXECUTION_EVENT_TIME" && input.timestampPolicy !== "GOODTRADING_OBSERVATION_TIME") {
+  if (input.timestampPolicy !== "PROVIDER_REPORTED_TIMESTAMP" && input.timestampPolicy !== "EXECUTION_EVENT_TIME" && input.timestampPolicy !== "GOODTRADING_OBSERVATION_TIME") {
     throw new Error("INVALID_LIVE_EXECUTION_WINDOW_TIMESTAMP_POLICY");
   }
   const start = utcMillis(input.startInclusive, "START_INCLUSIVE");
@@ -42,5 +44,5 @@ export function validateLiveExecutionWindowLimits(window: LiveExecutionWindow, l
 }
 
 export function windowTimestampColumn(policy: LiveExecutionWindowTimestampPolicy): "source_timestamp" | "observed_at" {
-  return policy === "EXECUTION_EVENT_TIME" ? "source_timestamp" : "observed_at";
+  return policy === "GOODTRADING_OBSERVATION_TIME" ? "observed_at" : "source_timestamp";
 }

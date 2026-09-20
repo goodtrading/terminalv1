@@ -79,7 +79,9 @@ function observation(source: BingXReconciliationSource, row: Record<string, unkn
     feeConflict: fee.feeConflict,
     rawStatus: text(row, ["status", "orderStatus"]),
     observedAt: new Date().toISOString(),
-    sourceTimestamp: text(row, ["updateTime", "updatedTime", "time", "createTime", "createdTime"]),
+    sourceTimestamp: text(row, source === "FILL_HISTORY"
+      ? ["filledTime", "time", "timestamp", "updateTime", "updatedTime"]
+      : ["updateTime", "updatedTime", "time", "createTime", "createdTime"]),
   };
 }
 
