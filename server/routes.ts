@@ -914,7 +914,7 @@ export async function registerRoutes(
   app.get("/api/orderbook", async (_req, res) => {
     try {
       const orderbook = getOrderBook();
-      
+
       if (DEBUG_ORDERBOOK) {
         console.debug("[API] Orderbook request:", {
           bidCount: orderbook.bids.length,
@@ -924,7 +924,7 @@ export async function registerRoutes(
           topAsk: orderbook.asks[0],
         });
       }
-      
+
       res.json(orderbook);
     } catch (error) {
       console.error("[API] Orderbook fetch error:", error);
@@ -936,7 +936,7 @@ export async function registerRoutes(
     try {
       const orderbook = getOrderBook();
       const isConnected = orderbook.timestamp && (Date.now() - orderbook.timestamp) < 5000; // Connected if data within 5 seconds
-      
+
       res.json({
         connected: isConnected,
         bidCount: orderbook.bids.length,
@@ -1401,77 +1401,77 @@ export async function registerRoutes(
   // --- Deribit Options Ticker Enrichment Endpoint ---
   app.post("/api/options/deribit/tickers", async (req: Request, res: Response) => {
     console.log("[TICKER_ENRICHMENT_FETCH] Request received");
-    
+
     try {
       // Validate body
       const { instrumentNames } = req.body;
-      
+
       if (!Array.isArray(instrumentNames)) {
         return res.status(400).json({ error: "instrumentNames must be an array" });
       }
-      
+
       if (instrumentNames.length === 0) {
         return res.json({ generatedAt: Date.now(), tickers: {}, errors: [] });
       }
-      
+
       if (instrumentNames.length > 60) {
         return res.status(400).json({ error: "Maximum 60 instruments per request" });
       }
-      
+
       // Filter and validate instrument names
       const validInstruments = Array.from(new Set(instrumentNames)) // Remove duplicates
         .filter(name => typeof name === 'string' && name.length > 0)
         .filter(name => name.startsWith('BTC-') || name.startsWith('ETH-'))
         .slice(0, 60); // Safety limit
-      
+
       if (validInstruments.length === 0) {
         return res.json({ generatedAt: Date.now(), tickers: {}, errors: [] });
       }
-      
+
       console.log(`[TICKER_ENRICHMENT_FETCH] Processing ${validInstruments.length} instruments`);
-      
+
       // Simple in-memory cache
       const CACHE_TTL_MS = 15000; // 15 seconds
       const tickerCache = new Map<string, { data: any; ts: number }>();
-      
+
       const results: Record<string, any> = {};
       const errors: string[] = [];
-      
+
       // Helper function to fetch single ticker with cache
       const fetchTickerWithCache = async (instrumentName: string): Promise<any> => {
         const cached = tickerCache.get(instrumentName);
         const now = Date.now();
-        
+
         if (cached && (now - cached.ts) < CACHE_TTL_MS) {
           console.log(`[TICKER_ENRICHMENT_CACHE_HIT] ${instrumentName}`);
           return cached.data;
         }
-        
+
         try {
           const response = await fetch(`https://www.deribit.com/api/v2/public/ticker?instrument_name=${encodeURIComponent(instrumentName)}`);
-          
+
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
           }
-          
+
           const data = await response.json();
-          
+
           if (data.error) {
             throw new Error(data.error.message);
           }
-          
+
           const ticker = data.result;
-          
+
           // Cache the result
           tickerCache.set(instrumentName, { data: ticker, ts: now });
-          
+
           return ticker;
         } catch (error) {
           console.error(`[TICKER_ENRICHMENT_ERROR] ${instrumentName}:`, error);
           throw error;
         }
       };
-      
+
       // Helper function for defensive mapping
       const toFiniteNumberOrNull = (...values: unknown[]): number | null => {
         for (const value of values) {
@@ -1509,12 +1509,12 @@ export async function registerRoutes(
           underlyingPrice: ticker.underlying_price ?? ticker.index_price ?? null
         };
       };
-      
+
       // Process with limited concurrency (batch of 5)
       const concurrency = 5;
       for (let i = 0; i < validInstruments.length; i += concurrency) {
         const batch = validInstruments.slice(i, i + concurrency);
-        
+
         await Promise.allSettled(
           batch.map(async (instrumentName) => {
             try {
@@ -1526,15 +1526,15 @@ export async function registerRoutes(
           })
         );
       }
-      
+
       console.log(`[TICKER_ENRICHMENT_OK] ${Object.keys(results).length} successful, ${errors.length} errors`);
-      
+
       res.json({
         generatedAt: Date.now(),
         tickers: results,
         errors
       });
-      
+
     } catch (error) {
       console.error('[TICKER_ENRICHMENT_ERROR] Unexpected error:', error);
       res.status(500).json({
@@ -1700,9 +1700,9 @@ export async function registerRoutes(
   const { registerLiveRoutes } = await import("./routes/live.routes");
   const { registerRiskMirrorRoutes } = await import("./routes/riskMirror.routes");
   const { paperTradingRouter } = await import("./routes/paperTrading.routes");
+  const { liveExecutionWindowRouter } = await import("./routes/liveExecutionWindow.routes");
   const { nautilusPaperOrderEventEvidenceRouter } = await import("./routes/nautilusPaperOrderEventEvidence.routes");
   const { reportsRouter } = await import("./routes/reports.routes");
-  const { liveExecutionWindowRouter } = await import("./routes/liveExecutionWindow.routes");
   registerExchangeRoutes(app);
   registerExecutionRoutes(app);
   registerBrokerRoutes(app);
@@ -1728,9 +1728,9 @@ export async function registerRoutes(
   registerRiskMirrorRoutes(app);
   console.log("[routes] risk mirror registered");
   app.use("/api/paper", paperTradingRouter);
+  app.use("/api/reports", liveExecutionWindowRouter);
   app.use("/api/paper/nautilus", nautilusPaperOrderEventEvidenceRouter);
   app.use("/api/reports", reportsRouter);
-  app.use("/api/reports", liveExecutionWindowRouter);
 
   return httpServer;
 }
