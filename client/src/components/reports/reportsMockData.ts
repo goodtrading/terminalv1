@@ -39,6 +39,7 @@ export const INSTITUTIONAL_TAKEAWAY =
 export const REPORTS_TABS: { id: ReportsTabId; label: string }[] = [
   { id: "session", label: "Session" },
   { id: "execution", label: "Execution" },
+  { id: "live-execution", label: "LIVE Window" },
   { id: "edge", label: "Edge" },
   { id: "playbook", label: "Playbook" },
   { id: "intelligence", label: "Intelligence" },

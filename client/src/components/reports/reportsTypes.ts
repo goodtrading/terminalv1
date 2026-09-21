@@ -1,4 +1,4 @@
-export type ReportsTabId = "session" | "execution" | "edge" | "playbook" | "intelligence";
+export type ReportsTabId = "session" | "execution" | "live-execution" | "edge" | "playbook" | "intelligence";
 
 export type ReportBadgeVariant =
   | "mock"

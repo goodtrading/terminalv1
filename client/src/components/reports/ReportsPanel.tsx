@@ -8,6 +8,7 @@ import { useSessionReportData } from "./session/useSessionReportData";
 import type { ReportsTabId } from "./reportsTypes";
 import { SessionTab } from "./tabs/SessionTab";
 import { ExecutionTab } from "./tabs/ExecutionTab";
+import { LiveExecutionWindowTab } from "./liveExecutionWindow/LiveExecutionWindowTab";
 import { TerminalErrorBoundary } from "@/components/common/TerminalErrorBoundary";
 import { EdgeTab } from "./tabs/EdgeTab";
 import { PlaybookTab } from "./tabs/PlaybookTab";
@@ -53,6 +54,8 @@ function ReportsTabContent({
           <ExecutionTab drilldownFilter={drilldownFilter} />
         </TerminalErrorBoundary>
       );
+    case "live-execution":
+      return <LiveExecutionWindowTab />;
     case "edge":
       return <EdgeTab />;
     case "playbook":
