@@ -33,7 +33,7 @@ export async function fetchLiveExecutionWindowReport(
     endExclusive: serializeUtcInput(endExclusive),
     timestampPolicy,
   });
-  const response = await fetch(apiUrl(`/api/reports/live-execution-window?${params}`), { signal });
+  const response = await fetch(apiUrl(`/api/reports/live-execution-window?${params}`), { credentials: "include", signal });
   const body = (await response.json()) as LiveExecutionReportApiResponse;
   if (!response.ok || !body.success) {
     throw new Error(body.success ? "LIVE_REPORT_FAILED" : body.code ?? "LIVE_REPORT_FAILED");

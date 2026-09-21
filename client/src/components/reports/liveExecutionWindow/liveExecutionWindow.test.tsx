@@ -58,14 +58,17 @@ test("rejects intervals longer than seven days", () => {
 test("calls only the authenticated LIVE execution-window endpoint and preserves policy", async () => {
   const originalFetch = globalThis.fetch;
   let requested = "";
-  globalThis.fetch = (async (input) => {
+  let requestCredentials: RequestCredentials | undefined;
+  globalThis.fetch = (async (input, init) => {
     requested = String(input);
+    requestCredentials = init?.credentials;
     return new Response(JSON.stringify({ success: true, report }), { status: 200, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
   try {
     const result = await fetchLiveExecutionWindowReport("2026-01-01T00:00", "2026-01-02T00:00", "GOODTRADING_OBSERVATION_TIME", new AbortController().signal);
     assert.match(requested, /\/api\/reports\/live-execution-window\?/);
     assert.match(requested, /timestampPolicy=GOODTRADING_OBSERVATION_TIME/);
+    assert.equal(requestCredentials, "include");
     assert.equal(result.groups[0]?.selectedExecutionVwap.value, "100.000000000000000000");
   } finally {
     globalThis.fetch = originalFetch;
