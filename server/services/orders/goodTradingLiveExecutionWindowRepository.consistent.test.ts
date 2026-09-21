@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  LIVE_EXECUTION_WINDOW_CANCELLED,
   LIVE_EXECUTION_WINDOW_QUERY_TIMEOUT,
   LIVE_EXECUTION_WINDOW_RESULT_LIMIT_EXCEEDED,
   selectLiveExecutionEvidenceConsistent,
@@ -81,3 +82,51 @@ test("statement timeout fails closed and releases the transaction", async () => 
 });
 
 type LiveExecutionQueryResult = LiveExecutionEvidenceQueryResult;
+
+test("disconnect cancellation aborts an in-flight later page, discards, and releases", async () => {
+  const controller = new AbortController();
+  const statements: string[] = [];
+  let candidateCalls = 0;
+  let cancelCalls = 0;
+  let released = false;
+  let discarded = false;
+  const client: LiveExecutionTransactionClient = {
+    query(text): Promise<LiveExecutionQueryResult> {
+      if (typeof text === "string") {
+        statements.push(text);
+        if (text === "BEGIN" || text === "ROLLBACK" || text.startsWith("SET TRANSACTION") || text.startsWith("SELECT set_config")) return Promise.resolve({ rows: [] });
+        throw new Error(`unexpected string query: ${text}`);
+      }
+      if (text.text === "BEGIN" || text.text === "ROLLBACK" || text.text.startsWith("SET TRANSACTION") || text.text.startsWith("SELECT set_config")) {
+        text.callback?.(null, { rows: [] });
+        return Promise.resolve({ rows: [] });
+      }
+      if (text.text.includes("WITH candidate")) {
+        candidateCalls += 1;
+        if (candidateCalls === 1) {
+          setTimeout(() => controller.abort(), 0);
+          text.callback?.(null, { rows: [1, 2, 3].map((n) => ({ scope_key: scope(n), membership_time: `2026-01-01 00:00:00.00000${n}+00` })) });
+          return Promise.resolve({ rows: [] });
+        }
+        return new Promise(() => undefined);
+      }
+      if (text.text.includes("unavailable_count")) {
+        text.callback?.(null, { rows: [{ unavailable_count: 0 }] });
+        return Promise.resolve({ rows: [] });
+      }
+      if (text.text.includes("SELECT concat_ws")) {
+        text.callback?.(null, { rows: [1, 2].map(evidence) });
+        return Promise.resolve({ rows: [] });
+      }
+      throw new Error(`unexpected query: ${text.text}`);
+    },
+    release: (destroy?: boolean) => { released = true; discarded = destroy === true; },
+    cancel: (_owner, active) => { cancelCalls += 1; (active as { callback?: (error: Error) => void }).callback?.(Object.assign(new Error("cancelled"), { code: "57014" })); },
+  } as LiveExecutionTransactionClient & { cancel: (owner: unknown, query: unknown) => void };
+  await assert.rejects(() => selectLiveExecutionEvidenceConsistent({ accountUid: account, window, limits, maximumExecutionCount: 3, queryTimeoutMs: 5000, connect: async () => client, signal: controller.signal }), { message: LIVE_EXECUTION_WINDOW_CANCELLED });
+  assert.equal(cancelCalls, 1);
+  assert.equal(candidateCalls, 2);
+  assert.equal(statements.some((statement) => statement === "ROLLBACK"), false);
+  assert.equal(released, true);
+  assert.equal(discarded, true);
+});

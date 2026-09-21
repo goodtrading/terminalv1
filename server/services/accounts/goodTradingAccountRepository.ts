@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import pg from "pg";
 import { pool } from "../../db";
 
 export type GoodTradingAccountRecord = Readonly<{
@@ -78,6 +79,60 @@ export async function getGoodTradingAccountByAccountUid(
     [normalized],
   );
   return result.rows[0] ? mapRow(result.rows[0] as Record<string, unknown>) : null;
+}
+
+export async function getGoodTradingAccountByUserIdReadOnly(
+  userId: number,
+  signal?: AbortSignal,
+): Promise<GoodTradingAccountRecord | null> {
+  const database = requirePool();
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("INVALID_USER_ID");
+  if (signal?.aborted) throw new Error("REPORT_CANCELLED");
+  const client = await database.connect();
+  let discardClient = false;
+  try {
+    const result = await new Promise<{ rows: Record<string, unknown>[] }>((resolve, reject) => {
+      let abortHandler: (() => void) | null = null;
+      const eventClient = client as pg.PoolClient & { on?: (event: string, listener: (error: Error) => void) => void; removeListener?: (event: string, listener: (error: Error) => void) => void };
+      const onClientError = (error: Error) => reject(error);
+      const cleanup = () => {
+        if (abortHandler) signal?.removeEventListener("abort", abortHandler);
+        eventClient.removeListener?.("error", onClientError);
+      };
+      const query = new pg.Query({
+        text: `SELECT id, account_uid, user_id, created_at
+                 FROM goodtrading_accounts
+                WHERE user_id = $1
+                LIMIT 1`,
+        values: [userId],
+      }, (error, queryResult) => {
+        cleanup();
+        if (error) reject(error);
+        else resolve(queryResult as { rows: Record<string, unknown>[] });
+      });
+      abortHandler = () => {
+        (eventClient as pg.PoolClient & { cancel?: (owner: unknown, active: unknown) => void }).cancel?.(client, query);
+      };
+      eventClient.on?.("error", onClientError);
+      signal?.addEventListener("abort", abortHandler, { once: true });
+      try {
+        client.query(query);
+        if (signal?.aborted) abortHandler();
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+    return result.rows[0] ? mapRow(result.rows[0]) : null;
+  } catch (error) {
+    if (signal?.aborted) {
+      discardClient = true;
+      throw new Error("REPORT_CANCELLED");
+    }
+    throw error;
+  } finally {
+    client.release(discardClient);
+  }
 }
 
 export async function ensureGoodTradingAccountForUser(

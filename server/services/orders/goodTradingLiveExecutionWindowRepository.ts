@@ -1,3 +1,4 @@
+import pg from "pg";
 import { pool } from "../../db";
 import {
   createLiveExecutionWindow,
@@ -60,10 +61,10 @@ export type LiveExecutionWindowCompleteSelection = Readonly<{
 }>;
 
 export type LiveExecutionEvidenceQueryResult = { rows: Record<string, unknown>[] };
-export type LiveExecutionEvidenceQuery = (text: string, values?: readonly unknown[]) => Promise<LiveExecutionEvidenceQueryResult>;
+export type LiveExecutionEvidenceQuery = (text: string | pg.Query, values?: readonly unknown[]) => Promise<LiveExecutionEvidenceQueryResult>;
 export type LiveExecutionTransactionClient = Readonly<{
   query: LiveExecutionEvidenceQuery;
-  release: () => void;
+  release: (destroy?: boolean) => void;
 }>;
 
 type QueryResult = LiveExecutionEvidenceQueryResult;
@@ -74,7 +75,7 @@ const scopeExpression = `concat_ws(chr(31), i.goodtrading_account_uid, i.executi
 function requireDatabaseQuery(): Query {
   const database = pool;
   if (!database) throw new Error("DATABASE_UNAVAILABLE");
-  return (text, values) => database.query(text, values as unknown[]);
+  return (text, values) => database.query(text as string, values as unknown[]);
 }
 
 function text(row: Record<string, unknown>, key: string): string {
@@ -253,6 +254,47 @@ export async function selectLiveExecutionEvidence(input: Readonly<{
 
 export const LIVE_EXECUTION_WINDOW_RESULT_LIMIT_EXCEEDED = "LIVE_EXECUTION_WINDOW_RESULT_LIMIT_EXCEEDED";
 export const LIVE_EXECUTION_WINDOW_QUERY_TIMEOUT = "LIVE_EXECUTION_WINDOW_QUERY_TIMEOUT";
+export const LIVE_EXECUTION_WINDOW_CANCELLED = "LIVE_EXECUTION_WINDOW_CANCELLED";
+
+async function queryWithCancellation(
+  client: LiveExecutionTransactionClient,
+  text: string,
+  values: readonly unknown[] | undefined,
+  signal?: AbortSignal,
+): Promise<LiveExecutionEvidenceQueryResult> {
+  if (!signal) return client.query(text, values);
+  if (signal.aborted) throw new Error(LIVE_EXECUTION_WINDOW_CANCELLED);
+  return await new Promise<LiveExecutionEvidenceQueryResult>((resolve, reject) => {
+    let abortHandler: (() => void) | null = null;
+    const eventClient = client as LiveExecutionTransactionClient & { cancel?: (owner: unknown, query: unknown) => void; on?: (event: string, listener: (error: Error) => void) => void; removeListener?: (event: string, listener: (error: Error) => void) => void };
+    const onClientError = (error: Error) => reject(error);
+    const cleanup = () => {
+      if (abortHandler) signal.removeEventListener("abort", abortHandler);
+      eventClient.removeListener?.("error", onClientError);
+    };
+    const query = new pg.Query({ text, values: values ? [...values] : undefined }, (error, result) => {
+      cleanup();
+      if (error) reject(error);
+      else resolve(result as LiveExecutionEvidenceQueryResult);
+    });
+    abortHandler = () => {
+      eventClient.cancel?.(client, query);
+    };
+    eventClient.on?.("error", onClientError);
+    signal.addEventListener("abort", abortHandler, { once: true });
+    try {
+      client.query(query);
+    } catch (error) {
+      cleanup();
+      reject(error);
+      return;
+    }
+    if (signal.aborted) abortHandler();
+  }).catch((error) => {
+    if (signal.aborted) throw new Error(LIVE_EXECUTION_WINDOW_CANCELLED);
+    throw error;
+  });
+}
 
 export async function selectLiveExecutionEvidenceConsistent(input: Readonly<{
   accountUid: string;
@@ -261,6 +303,7 @@ export async function selectLiveExecutionEvidenceConsistent(input: Readonly<{
   maximumExecutionCount: number;
   queryTimeoutMs: number;
   connect?: () => Promise<LiveExecutionTransactionClient>;
+  signal?: AbortSignal;
 }>): Promise<LiveExecutionWindowCompleteSelection> {
   if (!Number.isSafeInteger(input.maximumExecutionCount) || input.maximumExecutionCount <= 0) {
     throw new Error("INVALID_LIVE_EXECUTION_WINDOW_MAXIMUM_EXECUTION_COUNT");
@@ -275,12 +318,13 @@ export async function selectLiveExecutionEvidenceConsistent(input: Readonly<{
 
   const client = await (input.connect ? input.connect() : pool!.connect());
   let transactionStarted = false;
+  let discardClient = false;
   try {
-    await client.query("BEGIN");
+    const query: LiveExecutionEvidenceQuery = (text, values) => queryWithCancellation(client, text as string, values, input.signal);
+    await query("BEGIN");
     transactionStarted = true;
-    await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
-    await client.query("SELECT set_config('statement_timeout', $1, true)", [`${input.queryTimeoutMs}ms`]);
-    const query: LiveExecutionEvidenceQuery = (text, values) => client.query(text, values as unknown[]);
+    await query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
+    await query("SELECT set_config('statement_timeout', $1, true)", [`${input.queryTimeoutMs}ms`]);
     const eligibleExecutions: LiveExecutionEvidenceRow[] = [];
     const conflicts: LiveExecutionConflict[] = [];
     let cursor: string | null = null;
@@ -323,10 +367,14 @@ export async function selectLiveExecutionEvidenceConsistent(input: Readonly<{
       financialEvidence,
     };
   } catch (error) {
+    if (input.signal?.aborted) {
+      discardClient = true;
+      throw new Error(LIVE_EXECUTION_WINDOW_CANCELLED);
+    }
     if (transactionStarted) await client.query("ROLLBACK").catch(() => undefined);
     if ((error as { code?: string }).code === "57014") throw new Error(LIVE_EXECUTION_WINDOW_QUERY_TIMEOUT);
     throw error;
   } finally {
-    client.release();
+    client.release(discardClient);
   }
 }
