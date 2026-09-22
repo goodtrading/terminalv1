@@ -2,7 +2,7 @@
  * AI-6.4.1 — Redis client abstraction + FakeRedis (no network in CI).
  * Real client: official `redis` (node-redis). No KEYS/FLUSH/user EVAL exposed.
  */
-import { createClient, type RedisClientType } from "redis";
+import { createClient, type RedisClientType } from "@redis/client";
 import type { RedisTelemetryConfig } from "./redisConfig";
 
 export type RedisCasOutcome =

@@ -12,7 +12,6 @@ import { registerCalibrationRoutes } from "./routes/calibration.routes";
 import { registerAiProviderStatusRoutes } from "./routes/aiProviderStatus.routes";
 import { registerExtractorRoutes } from "./routes/extractor.routes";
 import { registerCurationRoutes } from "./routes/curation.routes";
-import { registerMarketSnapshotRoutes } from "./routes/marketSnapshot.routes";
 import { registerDecisionGraphRoutes } from "./routes/decisionGraph.routes";
 import { registerDecisionHumanReviewRoutes } from "./routes/decisionHumanReview.routes";
 import { registerCriticalCalibrationRoutes } from "./routes/criticalCalibration.routes";
@@ -28,6 +27,7 @@ import {
   getSpotOrderBookHealth,
   initializeFullDepth,
   resyncSpotOrderBook,
+  ensureSpotMarketDataAvailable,
 } from "./services/orderbookService";
 import { getPerpOrderBookHealth, initializePerpFullDepth } from "./services/orderbookServicePerp";
 import { getBookmapEngine, logBookmapMarketStateDiagnostics } from "./services/bookmapEngine";
@@ -282,28 +282,35 @@ async function probeBinanceDepth(
   }
 }
 
-// Initialize full depth on server start only when Bookmap/heatmap is enabled.
-if (HEATMAP_ENABLED) {
-  initializeFullDepth().catch(console.error);
-  initializePerpFullDepth().catch(console.error);
-  startBookmapRailwayDataDiag();
+// Route registration is intentionally side-effect free. Market-data and options
+// services start explicitly after the HTTP listener is active.
+let routeServicesStarted = false;
+
+export function startRouteServices(): void {
+  if (routeServicesStarted) return;
+  routeServicesStarted = true;
+  storage.startBootstrap();
+  startAggTradeBuffers();
+  if (HEATMAP_ENABLED) {
+    ensureSpotMarketDataAvailable();
+    initializeFullDepth().catch(console.error);
+    initializePerpFullDepth().catch(console.error);
+    startBookmapRailwayDataDiag();
+  }
+  startOptionsRefreshInterval();
 }
 
 // NOTE: Tests removed from auto-execution to prevent startup blocking
 // Use /api/vacuum/test and /api/scenarios/test endpoints for manual testing
 
-// Start spot + perp depth WebSocket feeds
-import "./services/orderbookService";
-import "./services/orderbookServicePerp";
 import {
   queryBufferedAggTrades,
   getTradesBufferHealth,
   subscribeAggTradeBuffer,
   trackAggTradeSseClient,
+  startAggTradeBuffers,
 } from "./services/aggTradeBufferService";
 import { startOptionsRefreshInterval } from "./options-engine";
-
-startOptionsRefreshInterval();
 
 export async function registerRoutes(
   httpServer: Server,
@@ -331,7 +338,6 @@ export async function registerRoutes(
   registerAiProviderStatusRoutes(app);
   registerExtractorRoutes(app);
   registerCurationRoutes(app);
-  registerMarketSnapshotRoutes(app);
   registerDecisionGraphRoutes(app);
   registerDecisionHumanReviewRoutes(app);
   registerCriticalCalibrationRoutes(app);
@@ -1733,4 +1739,17 @@ export async function registerRoutes(
   app.use("/api/reports", reportsRouter);
 
   return httpServer;
+}
+
+/**
+ * Register the AI market snapshot routes after the HTTP listener is active.
+ *
+ * The telemetry/Redis dependency graph is intentionally not part of the
+ * synchronous route-module bootstrap: importing it can perform expensive
+ * module initialization and must not prevent the normal application from
+ * reaching HTTP readiness.
+ */
+export async function registerDeferredRoutes(app: Express): Promise<void> {
+  const { registerMarketSnapshotRoutes } = await import("./routes/marketSnapshot.routes");
+  registerMarketSnapshotRoutes(app);
 }

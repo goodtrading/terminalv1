@@ -188,7 +188,7 @@ app.use((req, res, next) => {
   console.log("[BOOT] Runtime entrypoint: server/index.ts");
   
   console.log("[BOOT] Importing routes and endpoints...");
-  const { registerRoutes } = await import("./routes");
+  const { registerRoutes, registerDeferredRoutes, startRouteServices } = await import("./routes");
   const { serveStatic } = await import("./static");
   const { setupMobileDirectEndpoint } = await import("./mobile-direct-endpoint");
   const { registerMobileMarketStateV2Routes } = await import("./routes/mobileMarketStateV2.routes");
@@ -264,6 +264,7 @@ app.use((req, res, next) => {
         console.log(`[startup] listening on port ${port}`);
         console.log(`[BOOT] Server listening on port ${port}`);
         log(`serving on port ${port}`);
+        startRouteServices();
       },
     );
   };
@@ -274,20 +275,12 @@ app.use((req, res, next) => {
     startHttpServer();
   }
 
-  // Continue with async initialization AFTER server is listening
+  // Continue with async initialization. The heavy AI market/telemetry route
+  // module is registered only after the listener is active below.
   console.log("[BOOT] Registering API routes...");
   await registerRoutes(httpServer, app);
   setupMobileDirectEndpoint(app);
   registerMobileMarketStateV2Routes(app);
-  console.log("[BOOT] API routes registered");
-
-  app.use((req, res, next) => {
-    if (res.headersSent) return next();
-    const p = req.path ?? "";
-    if (!p.startsWith("/api")) return next();
-    jsonApiNotFound(res, req.method, p);
-  });
-  
   // Log all registered routes for debugging
   console.log("[Server] Registered API routes:");
   if (app._router && app._router.stack) {
@@ -339,12 +332,25 @@ app.use((req, res, next) => {
     startHttpServer();
   }
 
+  console.log("[BOOT] Registering deferred AI market routes...");
+  await registerDeferredRoutes(app);
+  console.log("[BOOT] Deferred AI market routes registered");
+  console.log("[BOOT] API routes registered");
+
+  app.use((req, res, next) => {
+    if (res.headersSent) return next();
+    const p = req.path ?? "";
+    if (!p.startsWith("/api")) return next();
+    jsonApiNotFound(res, req.method, p);
+  });
+
   // Background services (start after server is listening)
   void (async () => {
-    console.log("[BOOT] Starting mobile state cache...");
-    const { startMobileCache } = await import("./mobile-cache");
-    startMobileCache();
-    console.log("[BOOT] Mobile cache started");
+    // The cached mobile-state worker has no registered consumers; the
+    // supported mobile endpoint reads the direct state path instead. Starting
+    // this orphan worker here performs a long synchronous terminal-state build
+    // and starves the HTTP event loop during normal startup.
+    console.log("[BOOT] Mobile state cache worker not started: no registered consumer");
 
     console.log("[BOOT] Starting Replit push service...");
     try {

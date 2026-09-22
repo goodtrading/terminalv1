@@ -53,16 +53,9 @@ export async function setupVite(server: Server, app: Express) {
   });
 
   app.use((req, res, next) => {
-    if (req.path.startsWith("/api") || req.path === "/health") {
-      if (!res.headersSent) {
-        res.status(404).type("application/json").json({
-          success: false,
-          code: "API_NOT_FOUND",
-          message: `No API handler for ${req.method} ${req.path}`,
-        });
-      }
-      return;
-    }
+    // API and health fallbacks are installed by server/index.ts only after
+    // every API route, including deferred route modules, has registered.
+    if (req.path.startsWith("/api") || req.path === "/health") return next();
     return vite
       .transformIndexHtml(
         req.url,
