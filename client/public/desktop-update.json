@@ -1,13 +1,11 @@
 {
-  "latestVersion": "0.1.9",
-  "minSupportedVersion": "0.1.8",
+  "latestVersion": "0.1.11",
+  "minSupportedVersion": "0.1.11",
   "mandatory": false,
-  "downloadUrl": "https://github.com/goodtrading/terminalv1/releases/download/v0.1.9/GoodTrading-Terminal-0.1.9-x64-setup.exe",
+  "downloadUrl": "https://github.com/goodtrading/terminalv1/releases/download/v0.1.11/GoodTrading-Terminal-0.1.11-x64-setup.exe",
   "releaseNotes": [
-    "Desktop app update v0.1.9",
-    "Sistema unificado de alertas con centro de alertas y notificaciones nativas desktop",
-    "Mejoras en libro de opciones Deribit, persistencia de dibujos y selector de zona horaria",
-    "Endurecimiento BingX read-only, rate limits y preparación de live trading"
+    "Hotfix de estabilidad Desktop para Key Levels",
+    "Corrección de crash al recibir niveles nullable"
   ],
-  "publishedAt": "2026-07-03T00:00:00.000Z"
+  "publishedAt": "2026-09-25T07:43:53Z"
 }

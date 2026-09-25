@@ -10,6 +10,8 @@ export function generateDynamicScenarios(
   const magnets = levels.gammaMagnets.map(m => `${(m / 1000).toFixed(0)}k`);
   const firstMagnet = magnets[0] || "Target";
   const flip = market.gammaFlip != null ? market.gammaFlip.toLocaleString() : "N/A";
+  const formatPocketLevel = (value: number | null): string =>
+    value == null ? "N/A" : `${(value / 1000).toFixed(1)}k`;
   
   // Use numeric values for ALT CASE levels, not formatted strings
   const callWallNumeric = positioning.callWall.toString();
@@ -43,7 +45,7 @@ export function generateDynamicScenarios(
       type: "BASE",
       probability: 55,
       thesis: "Volatility Expansion into Short Gamma Pocket",
-      levels: [flip, `${(levels.shortGammaPocketStart / 1000).toFixed(1)}k`],
+      levels: [flip, formatPocketLevel(levels.shortGammaPocketStart)],
       confirmation: ["Increasing realized volatility", "Aggressive delta selling", "Spot price leading IV spike"],
       invalidation: `Sustained recovery and acceptance back above ${flip}`,
       timestamp: new Date()
@@ -70,7 +72,7 @@ export function generateDynamicScenarios(
     type: "VOL",
     probability: 15,
     thesis: "Tail Risk Acceleration / Gamma Squeeze Event",
-    levels: [`${(levels.deepRiskPocketStart / 1000).toFixed(1)}k`, "Extreme OTM levels"],
+    levels: [formatPocketLevel(levels.deepRiskPocketStart), "Extreme OTM levels"],
     confirmation: ["Massive wall pulling", "DVOL spike > 10%", "Bid/Ask spread expansion"],
     invalidation: "Orderflow stabilization and volatility mean reversion",
     timestamp: new Date()

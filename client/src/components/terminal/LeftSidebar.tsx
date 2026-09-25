@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import React, { useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TerminalPanel, TerminalValue } from "./TerminalPanel";
 import {
@@ -16,6 +16,23 @@ import { DesktopEmptyState } from "@/components/desktop/DesktopEmptyState";
 import { formatGex } from "@/lib/formatGex";
 
 const STALE_THRESHOLD_MIN = 10;
+const isDevelopment = typeof import.meta.env !== "undefined" && import.meta.env.DEV;
+
+export function formatKeyLevelRange(
+  start: number | null | undefined,
+  end: number | null | undefined,
+): string {
+  if (
+    start == null ||
+    end == null ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end)
+  ) {
+    return "--";
+  }
+
+  return `${start.toLocaleString()} – ${end.toLocaleString()}`;
+}
 
 function OptionsDataFreshness({ market }: { market: (MarketState & { optionsLastUpdated?: number }) | undefined }) {
   useTimezonePreference();
@@ -79,7 +96,7 @@ export function LeftSidebar() {
   const opts = terminalState?.options;
 
   // Debug logging for shortGammaPockets
-  if (import.meta.env.DEV) {
+  if (isDevelopment) {
     console.debug("[gamma-ui] shortGammaPockets", {
       hasOptions: Boolean(opts),
       status: opts?.shortGammaPockets?.status,
@@ -130,7 +147,7 @@ export function LeftSidebar() {
   }, [dealer?.vannaExposure, dealer?.charmExposure]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!isDevelopment) return;
     console.log("[GammaFlipTrace][UI][LeftSidebar][/api/market-state]", {
       gammaFlip: market?.gammaFlip ?? null,
       distanceToFlip: market?.distanceToFlip ?? null,
@@ -140,7 +157,7 @@ export function LeftSidebar() {
   }, [market?.gammaFlip, market?.distanceToFlip, market?.transitionZoneStart, market?.transitionZoneEnd]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!isDevelopment) return;
     console.log("[LeftSidebarLocalGamma]", {
       marketGammaFlip: market?.gammaFlip ?? null,
       optionsGammaFlipLocal: opts?.gammaFlipLocal ?? null,
@@ -150,7 +167,7 @@ export function LeftSidebar() {
   }, [market?.gammaFlip, opts?.gammaFlipLocal, opts?.gammaRegimeLocal, opts?.localFlipReason]);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!isDevelopment) return;
     console.warn("[LeftSidebarGammaFlipOrder]", {
       global: terminalState?.options?.gammaFlipGlobal,
       local: terminalState?.options?.gammaFlipLocal,
@@ -284,7 +301,7 @@ export function LeftSidebar() {
               <div className="space-y-2">
                 {pockets.slice(0, 3).map((pocket: any) => {
                   const center = (pocket.rangeLow + pocket.rangeHigh) / 2;
-                  const distancePct = spot > 0 ? ((center - spot) / spot * 100).toFixed(2) : "0.00";
+                  const distancePct = spot > 0 ? ((center - spot) / spot * 100) : 0;
                   const direction = center > spot ? "above" : "below";
                   return (
                     <div key={pocket.id} className="border-t border-white/[0.06] pt-2 mt-2">
@@ -292,7 +309,7 @@ export function LeftSidebar() {
                         {fmtK(pocket.rangeLow)} - {fmtK(pocket.rangeHigh)}
                       </div>
                       <div className="text-[9px] text-white/50 mb-1">
-                        {Math.abs(distancePct)}% {direction} spot
+                        {Math.abs(distancePct).toFixed(2)}% {direction} spot
                       </div>
                       <div className="flex items-center gap-2 mb-1">
                         <span className={`text-[9px] font-medium ${
@@ -413,14 +430,14 @@ export function LeftSidebar() {
           <div className="p-1.5 bg-terminal-negative/10 border border-terminal-negative/20 rounded-sm">
             <div className="text-[8px] uppercase tracking-[0.2em] text-terminal-negative mb-0.5 font-bold">SHORT GAMMA POCKET</div>
             <div className="font-mono text-[10px] text-terminal-negative font-bold">
-              {levels ? `${levels.shortGammaPocketStart.toLocaleString()} – ${levels.shortGammaPocketEnd.toLocaleString()}` : "--"}
+              {formatKeyLevelRange(levels?.shortGammaPocketStart, levels?.shortGammaPocketEnd)}
             </div>
           </div>
 
           <div className="p-1.5 terminal-card">
             <div className="terminal-text-label mb-0.5 text-[8px]">DEEP RISK POCKET</div>
             <div className="font-mono text-[10px] terminal-text-secondary font-bold">
-              {levels ? `${levels.deepRiskPocketStart.toLocaleString()} – ${levels.deepRiskPocketEnd.toLocaleString()}` : "--"}
+              {formatKeyLevelRange(levels?.deepRiskPocketStart, levels?.deepRiskPocketEnd)}
             </div>
           </div>
         </div>

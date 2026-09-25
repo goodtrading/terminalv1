@@ -95,7 +95,19 @@ export const insertDealerHedgingFlowSchema = createInsertSchema(dealerHedgingFlo
 export type MarketState = typeof marketState.$inferSelect;
 export type DealerExposure = typeof dealerExposure.$inferSelect;
 export type OptionsPositioning = typeof optionsPositioning.$inferSelect;
-export type KeyLevels = typeof keyLevels.$inferSelect;
+/** API/runtime may return unavailable key-level ranges as null. */
+export type KeyLevels = Omit<
+  typeof keyLevels.$inferSelect,
+  | "shortGammaPocketStart"
+  | "shortGammaPocketEnd"
+  | "deepRiskPocketStart"
+  | "deepRiskPocketEnd"
+> & {
+  shortGammaPocketStart: number | null;
+  shortGammaPocketEnd: number | null;
+  deepRiskPocketStart: number | null;
+  deepRiskPocketEnd: number | null;
+};
 export type TradingScenario = typeof tradingScenarios.$inferSelect;
 export type OptionData = typeof optionsData.$inferSelect;
 export type DealerHedgingFlow = typeof dealerHedgingFlow.$inferSelect;
@@ -164,6 +176,7 @@ export type Payment = typeof payments.$inferSelect;
 /** Optional Deribit summary fields surfaced on `GET /api/terminal/state` → `options`. */
 export type TerminalStateOptionsGammaExtras = {
   gammaFlipGlobal?: number | null;
+  totalGex?: number | null;
   gammaFlipGlobalSource?: "fresh_snapshot" | "none" | "legacy_structural_live";
   gammaFlipGlobalDebug?: {
     staleSnapshotFlip: number | null;
