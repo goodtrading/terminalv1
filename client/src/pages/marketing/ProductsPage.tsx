@@ -192,7 +192,7 @@ export default function ProductsPage() {
             onClick={() => openDesktopDownload("products_footer")}
             className="inline-flex items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 px-6 py-3 text-sm font-semibold text-blue-200 hover:bg-blue-500/15"
           >
-            Descargar App Desktop v0.1.7
+            Descargar App Desktop v0.1.11
           </button>
         </div>
       </div>
