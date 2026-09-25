@@ -10,7 +10,7 @@ export default function DownloadDesktopPage() {
       <div className="mx-auto max-w-2xl px-4 py-16 sm:px-6 lg:py-20">
         <div className="rounded-[22px] border border-white/[0.09] bg-[#050505]/85 p-8 sm:p-10">
           <StatusBadge variant="desktop" className="mb-4">
-            Desktop v0.1.7
+            Desktop v0.1.11
           </StatusBadge>
           <h1 className="text-3xl font-bold text-white sm:text-4xl">Descargar App Desktop</h1>
           <p className="mt-4 text-base leading-relaxed text-[#9ca3af]">
@@ -26,7 +26,7 @@ export default function DownloadDesktopPage() {
             </li>
             <li className="flex gap-2">
               <span className="text-[#ff3b3b]">•</span>
-              GoodTrading-Terminal-0.1.7-x64-setup.exe
+              GoodTrading-Terminal-0.1.11-x64-setup.exe
             </li>
             <li className="flex gap-2">
               <span className="text-[#ff3b3b]">•</span>
@@ -40,7 +40,7 @@ export default function DownloadDesktopPage() {
               onClick={() => openDesktopDownload("download_page")}
               className="rounded-xl bg-gradient-to-r from-[#ff3b3b] to-red-700 px-8 py-3 text-sm font-semibold text-white hover:opacity-90"
             >
-              Descargar v0.1.7
+              Descargar v0.1.11
             </button>
             <a
               href={DESKTOP_RELEASE_PAGE}
