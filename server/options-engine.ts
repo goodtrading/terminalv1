@@ -7,7 +7,7 @@ import { storage } from "./storage";
 import { DeribitOptionsGateway } from "./deribit-gateway";
 import { MarketDataGateway } from "./market-gateway";
 
-const REFRESH_INTERVAL_MS = 5 * 1000; // 5 seconds - make options/Vanna/Charm reactive
+const REFRESH_INTERVAL_MS = 3 * 60 * 1000; // Keep the production refresh cadence bounded to avoid starving HTTP work
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 

@@ -7,7 +7,7 @@ const ROADMAP = {
     "Gamma Exposure",
     "Options Panel",
     "Market Structure",
-    "App Desktop v0.1.7",
+    "App Desktop v0.1.11",
   ],
   desktop: [
     "Bookmap avanzado",

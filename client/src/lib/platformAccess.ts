@@ -1,10 +1,10 @@
-/** Direct installer asset — GoodTrading Desktop v0.1.7 */
+/** Direct installer asset — GoodTrading Desktop v0.1.11 */
 export const DESKTOP_INSTALLER_URL =
-  "https://github.com/goodtrading/terminalv1/releases/download/v0.1.7/GoodTrading-Terminal-0.1.7-x64-setup.exe";
+  "https://github.com/goodtrading/terminalv1/releases/download/v0.1.11/GoodTrading-Terminal-0.1.11-x64-setup.exe";
 
 /** Release page fallback if direct download fails. */
 export const DESKTOP_RELEASE_PAGE =
-  "https://github.com/goodtrading/terminalv1/releases/tag/v0.1.7";
+  "https://github.com/goodtrading/terminalv1/releases/tag/v0.1.11";
 
 /** @deprecated Use DESKTOP_INSTALLER_URL — kept for imports that expect a single URL. */
 export const DESKTOP_DOWNLOAD_URL = DESKTOP_INSTALLER_URL;

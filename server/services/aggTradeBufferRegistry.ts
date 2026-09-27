@@ -73,6 +73,7 @@ function createAggTradeBuffer(config: BufferConfig) {
   let lastRestSeedFetchedCount = 0;
   let lastRestSeedAcceptedCount = 0;
   let lastRestSeedMode: RestSeedMode | null = null;
+  let restSeedInFlight = false;
   const listeners = new Set<(trade: BufferedAggTrade) => void>();
   const wsUrl = `${wsBase}${wsPath}`;
   const backing: BufferedAggTrade[] = [];
@@ -595,6 +596,8 @@ function createAggTradeBuffer(config: BufferConfig) {
   }
 
   async function seedFromRest(): Promise<void> {
+    if (restSeedInFlight) return;
+    restSeedInFlight = true;
     const end = Date.now();
     const newest = bufferNewestTs();
     const isEmpty = backing.length <= start;
@@ -615,6 +618,8 @@ function createAggTradeBuffer(config: BufferConfig) {
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
       console.warn(`[${logTag}] REST seed failed:`, lastError);
+    } finally {
+      restSeedInFlight = false;
     }
   }
 
