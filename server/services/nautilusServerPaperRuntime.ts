@@ -7,6 +7,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { recordShadowAuthorityBoundary } from "./shadowTraderAuthorityObserver";
+import { awaitAutonomousPaperBarrier } from "./autonomousPaperTestBarrier";
 import {
   defaultServerPaperRegistryPath,
   ServerPaperSessionRegistry,
@@ -1021,6 +1022,7 @@ export class NautilusServerPaperRuntimeManager {
         throw new Error("entry_fill_or_position_not_fully_confirmed; unprotected exposure possible");
       }
       const qty = String(position.quantity);
+      await awaitAutonomousPaperBarrier("AFTER_CANONICAL_SUBMIT_BEFORE_N13B_RESULT");
       await this.options.protectedEntryBeforeLeg?.("STOP_LOSS");
       const stopResult = await this.submitOrderCommand(userId, legKeys.sl, {
         side: opposite, orderType: "STOP_MARKET", quantity: qty, triggerPrice: input.stopLoss, reduceOnly: true,
@@ -1033,6 +1035,7 @@ export class NautilusServerPaperRuntimeManager {
         metadata: { protectionType: "TAKE_PROFIT", protectionGroupId: groupId },
       });
       takeOrder = takeResult.command.response;
+      await awaitAutonomousPaperBarrier("AFTER_CANONICAL_FILL_BEFORE_RECONCILED");
       const orders = await this.readOrders(userId) as Array<Record<string, unknown>>;
       const slConfirmed = orders.some((order) => order.clientOrderId === stopOrder?.clientOrderId && order.status === "ACCEPTED" && order.positionId === positionId && order.protectionGroupId === groupId && Number(order.quantity) === openQty);
       const tpConfirmed = orders.some((order) => order.clientOrderId === takeOrder?.clientOrderId && order.status === "ACCEPTED" && order.positionId === positionId && order.protectionGroupId === groupId && Number(order.quantity) === openQty);
@@ -1320,7 +1323,6 @@ export class NautilusServerPaperRuntimeManager {
         registry.transition(record.durableRecordId, record.lifecycle, { reason: "supervisor_control_disconnect" });
       }
       record.inFlight?.reject(new Error("PAPER supervisor control connection closed."));
-      record.resolveExit();
     });
     if (!child.stderr) throw new Error("supervisor stderr pipe unavailable");
     child.stderr.on("data", (chunk: Buffer | string) => {

@@ -6,7 +6,7 @@ import { createNautilusServerPaperRuntimeRouter } from "./routes/nautilusServerP
 import { installBackendGracefulShutdown } from "./services/backendGracefulShutdown";
 import { NautilusServerPaperRuntimeManager, type ServerPaperQuoteObservation } from "./services/nautilusServerPaperRuntime";
 import { ServerPaperSessionRegistry } from "./services/serverPaperSessionRegistry";
-import { runAutonomousPaperCycle, pauseAutonomousPaperLoop, stopAutonomousPaperLoop, startAutonomousPaperLoop } from "./services/autonomousPaperAgent";
+import { runAutonomousPaperCycle, recoverAutonomousPaperExecution, pauseAutonomousPaperLoop, stopAutonomousPaperLoop, startAutonomousPaperLoop } from "./services/autonomousPaperAgent";
 import { createShadowTraderStore } from "./services/shadowTraderStore";
 import type { AIProvider } from "@shared/aiResearch";
 
@@ -14,6 +14,7 @@ import type { AIProvider } from "@shared/aiResearch";
 const runtimeRoot = process.env.GT_TEST_RUNTIME_ROOT;
 const registryPath = process.env.GT_TEST_REGISTRY_PATH;
 const ownerUserId = Number(process.env.GT_TEST_OWNER_ID ?? "901001");
+
 const mode = process.env.GT_TEST_MODE ?? "run";
 const shadowRoot = process.env.GT_TEST_SHADOW_ROOT ?? path.join(process.cwd(), "shadow");
 if (!runtimeRoot || !registryPath) throw new Error("Isolated test runtime paths are required.");
@@ -79,6 +80,10 @@ app.post("/__test/kill-daemon", (_request, response) => {
   if (accepted) process.kill(daemonPid);
   response.status(record ? 202 : 404).json({ accepted, daemonPid: accepted ? daemonPid : null });
 });
+app.get("/__test/canonical", async (_request, response) => {
+  try { response.json({ snapshot: await manager.readSnapshot(ownerUserId), orders: await manager.readOrders(ownerUserId), fills: await manager.readFills(ownerUserId) }); }
+  catch (error) { response.status(500).json({ message: String(error) }); }
+});
 app.get("/__test/daemon", (_request, response) => {
   const sessions = (manager as unknown as { sessions: Map<number, { child: { exitCode: number | null }; supervisorMetadata: Record<string, unknown> }> }).sessions;
   const record = sessions.get(ownerUserId);
@@ -143,6 +148,28 @@ app.post("/__test/autonomous/cycle", async (request, response) => {
     response.json({ session: updated, evidence: updated.paperSimulationSessionId ? manager.listAutonomousEvidence(ownerUserId, updated.paperSimulationSessionId) : [] });
   } catch (error) { response.status(500).json({ message: String(error) }); }
 });
+app.post("/__test/autonomous/recover", async (_request, response) => {
+  try {
+    const current = (await autonomousStore.list(ownerUserId))[0];
+    if (!current) throw new Error("PAPER_AUTONOMOUS_SESSION_NOT_FOUND");
+    const simulationSessionId = current.paperSimulationSessionId;
+    if (!simulationSessionId) throw new Error("PAPER_AUTONOMOUS_SIMULATION_SESSION_NOT_FOUND");
+    manager.grantOrderExecution(ownerUserId, simulationSessionId);
+    const session = await recoverAutonomousPaperExecution({ session: current, store: autonomousStore, manager });
+    response.json({ session, evidence: manager.listAutonomousEvidence(ownerUserId, simulationSessionId) });
+  } catch (error) { response.status(500).json({ message: String(error) }); }
+});
+
+app.post("/__test/autonomous/close-recovered", async (_request, response) => {
+  try {
+    const lifecycle = manager.getLifecycle(ownerUserId);
+    if (!lifecycle.simulationSessionId) throw new Error("PAPER_SESSION_NOT_AVAILABLE");
+    manager.grantOrderExecution(ownerUserId, lifecycle.simulationSessionId);
+    const result = await manager.closePositionCommand(ownerUserId, `n13b-recovery-close-${lifecycle.simulationSessionId}`);
+    response.json({ command: result.command });
+  } catch (error) { response.status(500).json({ message: String(error) }); }
+});
+
 app.post("/__test/autonomous/pause", async (_request, response) => {
   try { const current = (await autonomousStore.list(ownerUserId))[0]; if (!current) throw new Error("PAPER_AUTONOMOUS_SESSION_NOT_FOUND"); response.json({ session: await pauseAutonomousPaperLoop(current, autonomousStore) }); }
   catch (error) { response.status(500).json({ message: String(error) }); }
@@ -172,13 +199,18 @@ const backendShutdown = installBackendGracefulShutdown({
   disposePaperRuntime: () => manager.disconnect(),
   logError: (message, error) => console.error(message, String(error)),
 });
+app.post("/__test/backend-disconnect", (_request, response) => {
+  response.status(202).json({ accepted: true, backendPid: process.pid });
+  setImmediate(() => { void manager.disconnect(); });
+});
 app.post("/__test/backend-shutdown", (_request, response) => {
   response.status(202).json({ accepted: true });
   setTimeout(() => {
     void backendShutdown.shutdown().then(() => {
-      setInterval(() => undefined, 1_000);
-    }, () => {
-      setInterval(() => undefined, 1_000);
+      setTimeout(() => process.exit(0), 250);
+    }, (error) => {
+      console.error("ISOLATED_TEST_BACKEND_SHUTDOWN_FAILED", String(error));
+      setTimeout(() => process.exit(1), 250);
     });
   }, 25);
 });

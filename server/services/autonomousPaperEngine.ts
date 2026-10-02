@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ShadowAction, ShadowPosition } from "@shared/shadowTrader";
 import type { PaperBbo, PaperExecutionEvidence, PaperExecutionIntent, PaperRiskConfig } from "@shared/autonomousPaper";
+import { awaitAutonomousPaperBarrier } from "./autonomousPaperTestBarrier";
 
 export type PaperAutonomousSessionForEngine = {
   sessionId: string;
@@ -105,6 +106,7 @@ export function createAutonomousPaperEngine(boundary: PaperExecutionBoundary, se
         if (boundary.canExecute && !(await boundary.canExecute())) return rejected(session, "SESSION_NOT_RUNNING", bbo);
         await boundary.persistIntent?.(intent);
         await boundary.recordEvidence?.("SUBMISSION_STARTED", { executionIntentId: intent.executionIntentId, decisionId: intent.decisionId, submittedAt: null });
+        await awaitAutonomousPaperBarrier("AFTER_SUBMISSION_STARTED");
         if (boundary.canExecute && !(await boundary.canExecute())) return rejected(session, "SESSION_NOT_RUNNING", bbo);
         const response = await boundary.submitProtectedEntry({ ownerUserId: session.ownerUserId, simulationSessionId: session.paperSimulationSessionId, idempotencyKey: intent.idempotencyKey, side, quantity: intent.quantity, stopLoss: intent.stopLoss!, takeProfit: intent.takeProfit! });
         const submissionStatus = String(response.status ?? "ACKNOWLEDGED") === "ACKNOWLEDGED" ? "SUBMITTED" : "AMBIGUOUS";

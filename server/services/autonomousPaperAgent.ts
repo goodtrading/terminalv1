@@ -7,6 +7,7 @@ import type { PaperExecutionIntent } from "@shared/autonomousPaper";
 import { createAutonomousPaperEngine, type PaperExecutionBoundary } from "./autonomousPaperEngine";
 import type { ShadowTraderStore } from "./shadowTraderStore";
 import type { NautilusServerPaperRuntimeManager } from "./nautilusServerPaperRuntime";
+import { awaitAutonomousPaperBarrier } from "./autonomousPaperTestBarrier";
 
 const timers = new Map<string, NodeJS.Timeout>();
 const inFlight = new Set<string>();
@@ -73,7 +74,7 @@ export async function runAutonomousPaperCycle(input: { session: ShadowTraderSess
   const currentBeforeExecution = await input.store.get(input.session.sessionId, input.session.ownerUserId);
   if (!currentBeforeExecution || currentBeforeExecution.status !== "RUNNING") return currentBeforeExecution ?? input.session;
   const decisionId = randomUUID(); let currentIntent: PaperExecutionIntent | null = null;
-  const pendingIntent = async (intent: PaperExecutionIntent) => { currentIntent = intent; const reservation = input.manager.reserveAutonomousIntent({ ownerUserId: intent.ownerUserId, simulationSessionId: intent.simulationSessionId, n13bSessionId: intent.sessionId, decisionId: intent.decisionId, executionIntentId: intent.executionIntentId, idempotencyKey: intent.idempotencyKey, instrument: intent.instrument, action: intent.action, side: intent.side, quantity: intent.quantity, marketCapturedAt: intent.marketCapturedAt, evidenceHash: intent.evidenceHash, riskPolicyVersion: intent.riskPolicyVersion }); if (reservation.created) input.manager.appendAutonomousEvidence({ ownerUserId: intent.ownerUserId, simulationSessionId: intent.simulationSessionId, idempotencyKey: intent.idempotencyKey, status: "INTENT_CREATED", evidence: { intent } }); await input.store.update(input.session.sessionId, input.session.ownerUserId, (session) => ({ ...session, latestExecution: { status: "AMBIGUOUS", reason: "INTENT_DURABLY_PERSISTED_BEFORE_SUBMIT", executionIntent: intent, simulationSessionId: intent.simulationSessionId, orderIds: [], protectionGroupId: null, response: null, reconciledPosition: null, reconciledOrders: [] } })); };
+  const pendingIntent = async (intent: PaperExecutionIntent) => { currentIntent = intent; const reservation = input.manager.reserveAutonomousIntent({ ownerUserId: intent.ownerUserId, simulationSessionId: intent.simulationSessionId, n13bSessionId: intent.sessionId, decisionId: intent.decisionId, executionIntentId: intent.executionIntentId, idempotencyKey: intent.idempotencyKey, instrument: intent.instrument, action: intent.action, side: intent.side, quantity: intent.quantity, marketCapturedAt: intent.marketCapturedAt, evidenceHash: intent.evidenceHash, riskPolicyVersion: intent.riskPolicyVersion }); if (reservation.created) input.manager.appendAutonomousEvidence({ ownerUserId: intent.ownerUserId, simulationSessionId: intent.simulationSessionId, idempotencyKey: intent.idempotencyKey, status: "INTENT_CREATED", evidence: { intent } }); await input.store.update(input.session.sessionId, input.session.ownerUserId, (session) => ({ ...session, latestExecution: { status: "AMBIGUOUS", reason: "INTENT_DURABLY_PERSISTED_BEFORE_SUBMIT", executionIntent: intent, simulationSessionId: intent.simulationSessionId, orderIds: [], protectionGroupId: null, response: null, reconciledPosition: null, reconciledOrders: [] } })); await awaitAutonomousPaperBarrier("AFTER_INTENT_CREATED"); };
   const recordEvidence = async (status: "SUBMISSION_STARTED" | "SUBMITTED" | "AMBIGUOUS" | "RECONCILED", evidence: Record<string, unknown>) => { if (!currentIntent) throw new Error("AUTONOMOUS_INTENT_NOT_INITIALIZED"); input.manager.appendAutonomousEvidence({ ownerUserId: currentIntent.ownerUserId, simulationSessionId: currentIntent.simulationSessionId, idempotencyKey: currentIntent.idempotencyKey, status, evidence }); };
   const seedKeys = currentBeforeExecution.latestExecution?.executionIntent?.idempotencyKey ? [currentBeforeExecution.latestExecution.executionIntent.idempotencyKey] : [];
   const canExecute = async () => (await input.store.get(input.session.sessionId, input.session.ownerUserId))?.status === "RUNNING";
@@ -82,6 +83,48 @@ export async function runAutonomousPaperCycle(input: { session: ShadowTraderSess
   const now = new Date().toISOString(); const journal: ShadowJournalEntry = { decisionId, sessionId: input.session.sessionId, cycleId, requestId, timestamp: now, marketCapturedAt: bbo.capturedAt, instrument: "BTCUSDT", venue: "Binance", marketType: "Perpetual", action: payload.action, thesis: payload.thesis, keyEvidence: payload.keyEvidence, contradictions: payload.contradictions, invalidation: payload.invalidation, horizon: payload.horizon, dataLimitations: payload.dataLimitations, provider: provider.id, model: provider.model ?? input.session.model, evidenceRef: "paper-evidence:execution", evidenceHash: "", accepted: result.execution.status !== "REJECTED", rejectionReason: result.execution.reason, positionBefore: input.session.position, positionAfter: result.position, trade: null };
   const executionChanged = result.execution.status === "ACKNOWLEDGED";
   return (await input.store.update(input.session.sessionId, input.session.ownerUserId, (session) => ({ ...session, status: "RUNNING", failureReason: result.execution.status === "REJECTED" ? result.execution.reason : null, position: result.position, journal: [...session.journal, journal], decisionCount: session.decisionCount + 1, executionIntentCount: (session.executionIntentCount ?? 0) + (result.execution.executionIntent ? 1 : 0), executedOrderCount: (session.executedOrderCount ?? 0) + (executionChanged ? result.execution.orderIds.length : 0), lastExecutionAt: executionChanged ? now : session.lastExecutionAt, currentCanonicalPaperPosition: result.execution.reconciledPosition, latestExecution: result.execution, lastDecisionAt: now, lastMarketCapturedAt: bbo.capturedAt, nextEvaluationAt: new Date(Date.now() + session.cadenceMs).toISOString() })))!;
+}
+
+export async function recoverAutonomousPaperExecution(input: { session: ShadowTraderSession; store: ShadowTraderStore; manager: NautilusServerPaperRuntimeManager }): Promise<ShadowTraderSession> {
+  const current = await input.store.get(input.session.sessionId, input.session.ownerUserId);
+  const intent = current?.latestExecution?.executionIntent;
+  if (!current || !intent) throw new Error("AUTONOMOUS_EXECUTION_INTENT_NOT_FOUND");
+  const evidence = input.manager.listAutonomousEvidence(intent.ownerUserId, intent.simulationSessionId, intent.idempotencyKey);
+  let command = await input.manager.getProtectedEntryCommand(intent.ownerUserId, intent.idempotencyKey);
+  let snapshot = await input.manager.readSnapshot(intent.ownerUserId);
+  let orders = await input.manager.readOrders(intent.ownerUserId);
+  let fills = await input.manager.readFills(intent.ownerUserId);
+  const hasNativeEntry = orders.some((order) => {
+    const row = order as Record<string, unknown>;
+    return row.side === intent.side && String(row.orderType).toUpperCase() === "MARKET" && Number(row.filledQuantity ?? 0) > 0;
+  }) || fills.some((fill) => String((fill as Record<string, unknown>).side) === intent.side);
+  if (!command && !hasNativeEntry && intent.action !== "EXIT") {
+    const submitted = await input.manager.submitProtectedEntryCommand(intent.ownerUserId, intent.idempotencyKey, { side: intent.side as "BUY" | "SELL", quantity: intent.quantity, stopLoss: intent.stopLoss!, takeProfit: intent.takeProfit! });
+    command = submitted.command;
+    const response = command.response ?? {};
+    input.manager.appendAutonomousEvidence({ ownerUserId: intent.ownerUserId, simulationSessionId: intent.simulationSessionId, idempotencyKey: intent.idempotencyKey, status: "SUBMITTED", evidence: { executionIntentId: intent.executionIntentId, decisionId: intent.decisionId, response, recovery: "SAFE_SUBMIT_AFTER_CANONICAL_INSPECTION" } });
+    snapshot = await input.manager.readSnapshot(intent.ownerUserId);
+    orders = await input.manager.readOrders(intent.ownerUserId);
+    fills = await input.manager.readFills(intent.ownerUserId);
+  } else if (!evidence.some((row) => row.status === "AMBIGUOUS") && (command?.status === "AMBIGUOUS" || hasNativeEntry)) {
+    input.manager.appendAutonomousEvidence({ ownerUserId: intent.ownerUserId, simulationSessionId: intent.simulationSessionId, idempotencyKey: intent.idempotencyKey, status: "AMBIGUOUS", evidence: { executionIntentId: intent.executionIntentId, decisionId: intent.decisionId, recovery: "CANONICAL_STATE_INSPECTION_REQUIRED", commandStatus: command?.status ?? null } });
+  }
+  const response = command?.response ?? {};
+  const orderIds = orders.map((order) => (order as Record<string, unknown>).clientOrderId).filter((value): value is string => typeof value === "string");
+  const protectionGroupId = orders.map((order) => (order as Record<string, unknown>).protectionGroupId).find((value): value is string => typeof value === "string") ?? null;
+  if (!evidence.some((row) => row.status === "RECONCILED")) {
+    input.manager.appendAutonomousEvidence({ ownerUserId: intent.ownerUserId, simulationSessionId: intent.simulationSessionId, idempotencyKey: intent.idempotencyKey, status: "RECONCILED", evidence: { executionIntentId: intent.executionIntentId, decisionId: intent.decisionId, response, reconciledPosition: snapshot.position, reconciledOrders: orders, reconciledFills: fills, protectionGroupId } });
+  }
+  return (await input.store.update(current.sessionId, current.ownerUserId, (session) => ({
+    ...session,
+    position: {
+      ...session.position,
+      direction: String(snapshot.position.side).toUpperCase() === "LONG" ? "LONG" : String(snapshot.position.side).toUpperCase() === "SHORT" ? "SHORT" : "FLAT",
+      quantity: Number(snapshot.position.quantity ?? 0),
+      entryPrice: snapshot.position.averageEntryPrice ? Number(snapshot.position.averageEntryPrice) : session.position.entryPrice,
+    },
+    latestExecution: { ...session.latestExecution!, status: "ACKNOWLEDGED", reason: null, simulationSessionId: intent.simulationSessionId, orderIds, protectionGroupId, response, reconciledPosition: snapshot.position, reconciledOrders: orders },
+  })))!;
 }
 
 export async function startAutonomousPaperLoop(session: ShadowTraderSession, store: ShadowTraderStore, manager: NautilusServerPaperRuntimeManager): Promise<ShadowTraderSession> {
