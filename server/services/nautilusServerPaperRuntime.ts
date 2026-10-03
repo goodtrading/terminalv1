@@ -97,6 +97,9 @@ type RuntimeRecord = {
 export type NautilusServerPaperRuntimeOptions = Readonly<{
   runtimeRoot: string;
   maxSessions?: number;
+  /** Bounded cold supervisor/daemon bootstrap budget. */
+  startupTimeoutMs?: number;
+  /** @deprecated Use startupTimeoutMs. Kept for existing isolated harnesses. */
   startTimeoutMs?: number;
   requestTimeoutMs?: number;
   registryPath?: string;
@@ -117,6 +120,7 @@ export type NautilusServerPaperRuntimeOptions = Readonly<{
 
 const MAX_EXECUTION_QUOTE_AGE_MS = 3_000;
 const REAL_PERP_SOURCES = new Set(["BINANCE_FAPI_WS_DEPTH", "BINANCE_FAPI_REST_BOOKTICKER"]);
+export const DEFAULT_NAUTILUS_STARTUP_TIMEOUT_MS = 90_000;
 
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -194,7 +198,7 @@ export class NautilusServerPaperRuntimeManager {
   private readonly sessions = new Map<number, RuntimeRecord>();
   private readonly pendingStarts = new Map<number, Promise<{ simulationSessionId: string; alreadyRunning: boolean }>>();
   private readonly maxSessions: number;
-  private readonly startTimeoutMs: number;
+  private readonly startupTimeoutMs: number;
   private readonly requestTimeoutMs: number;
   private readonly maxQueuedRequests: number;
   private readonly ordersEnabled: boolean;
@@ -214,7 +218,7 @@ export class NautilusServerPaperRuntimeManager {
 
   constructor(private readonly options: NautilusServerPaperRuntimeOptions) {
     this.maxSessions = options.maxSessions ?? 4;
-    this.startTimeoutMs = options.startTimeoutMs ?? 60_000;
+    this.startupTimeoutMs = options.startupTimeoutMs ?? options.startTimeoutMs ?? DEFAULT_NAUTILUS_STARTUP_TIMEOUT_MS;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 5_000;
     this.maxQueuedRequests = options.maxQueuedRequests ?? 32;
     this.ordersEnabled = options.ordersEnabled === true;
@@ -301,7 +305,7 @@ export class NautilusServerPaperRuntimeManager {
       socket.destroy();
       throw new ServerPaperRuntimeError("PAPER_SUPERVISOR_IDENTITY_MISMATCH", "The PAPER supervisor identity does not match the persisted session.", 409);
     }
-    const health = await this.request(record, "health", this.startTimeoutMs);
+    const health = await this.request(record, "health", this.startupTimeoutMs);
     if (!health || typeof health !== "object" || (health as Record<string, unknown>).status !== "healthy") throw new Error("attached supervisor health failed");
     record.runtimeModules = await this.verifyLoadedRuntimeModules((health as Record<string, unknown>).runtimeModules, path.resolve(this.options.runtimeRoot));
     const status = await this.request(record, "simulation.status", this.requestTimeoutMs);
@@ -1206,7 +1210,7 @@ export class NautilusServerPaperRuntimeManager {
   }
 
   private async readSupervisorMetadata(metadataPath: string): Promise<Record<string, unknown>> {
-    const deadline = Date.now() + this.startTimeoutMs;
+    const deadline = Date.now() + this.startupTimeoutMs;
     while (Date.now() < deadline) {
       try {
         const parsed = JSON.parse(await readFile(metadataPath, "utf8")) as unknown;
@@ -1231,6 +1235,13 @@ export class NautilusServerPaperRuntimeManager {
   }
 
   private async createSession(userId: number): Promise<{ simulationSessionId: string; alreadyRunning: boolean }> {
+    const startupStartedAt = Date.now();
+    const startupTrace = (phase: string, details: Record<string, unknown> = {}) => {
+      if (process.env.GOODTRADING_NAUTILUS_STARTUP_TRACE === "1") {
+        console.info("[server-paper] startup phase", { phase, elapsedMs: Date.now() - startupStartedAt, ...details });
+      }
+    };
+    startupTrace("T0_supervisor_start_request", { ownerUserId: userId, startupTimeoutMs: this.startupTimeoutMs, requestTimeoutMs: this.requestTimeoutMs });
     if (this.activeSessionCount() >= this.maxSessions) {
       throw new ServerPaperRuntimeError("PAPER_RUNTIME_CAPACITY", "Server PAPER runtime capacity is full.", 429);
     }
@@ -1267,6 +1278,11 @@ export class NautilusServerPaperRuntimeManager {
     let socket: Socket;
     let supervisorMetadata: Record<string, unknown>;
     try {
+      // A prior failed spawn can leave identity metadata behind while its
+      // supervisor is already gone. Remove only that stale identity after the
+      // registry reservation has established that no live session is attachable;
+      // otherwise readSupervisorMetadata could connect to the previous port.
+      await rm(metadataPath, { force: true });
       cwd = await mkdtemp(path.join(tmpdir(), "gt-server-paper-supervisor-"));
       child = spawn(python, [supervisor, "--metadata", metadataPath, "--owner-user-id", String(userId), "--python", python, "--daemon", daemon, "--cwd", cwd], {
         cwd,
@@ -1276,7 +1292,9 @@ export class NautilusServerPaperRuntimeManager {
         detached: true,
       });
       supervisorMetadata = await this.readSupervisorMetadata(metadataPath);
+      startupTrace("T1_supervisor_metadata_published", { supervisorPid: supervisorMetadata.supervisorPid, supervisorPort: supervisorMetadata.supervisorPort });
       socket = await this.connectSupervisor(supervisorMetadata);
+      startupTrace("T1_supervisor_connected", { supervisorPid: supervisorMetadata.supervisorPid });
     } catch (error) {
       registry.transition(durableRecordId, "TERMINATED", { reason: "supervisor_spawn_failed_before_session_start" });
       throw error instanceof ServerPaperRuntimeError ? error : new ServerPaperRuntimeError("NAUTILUS_START_FAILED", "Nautilus PAPER supervisor could not be launched.");
@@ -1359,7 +1377,8 @@ export class NautilusServerPaperRuntimeManager {
     });
 
     try {
-      const started = await this.request(record, "supervisor.start", this.startTimeoutMs);
+      const started = await this.request(record, "supervisor.start", this.startupTimeoutMs);
+      startupTrace("T8_supervisor_start_response", { supervisorPid: record.supervisorMetadata.supervisorPid, daemonPid: record.supervisorMetadata.daemonPid });
       if (!started || typeof started !== "object") throw new ServerPaperRuntimeError("NAUTILUS_START_FAILED", "The PAPER supervisor returned no startup result.");
       const healthRecord = (started as Record<string, unknown>).health;
       if (!healthRecord || typeof healthRecord !== "object" || (healthRecord as Record<string, unknown>).status !== "healthy") {
@@ -1381,6 +1400,7 @@ export class NautilusServerPaperRuntimeManager {
       }
       record.lifecycle = "AVAILABLE";
       registry.transition(record.durableRecordId, "AVAILABLE", { simulationSessionId: sessionId, reason: null });
+      startupTrace("T7_runtime_ready", { supervisorPid: record.supervisorMetadata.supervisorPid, daemonPid: record.supervisorMetadata.daemonPid, simulationSessionId: sessionId });
       return { simulationSessionId: sessionId, alreadyRunning: false };
     } catch (error) {
       record.lifecycle = record.simulationSessionId ? "UNRECOVERED" : "UNAVAILABLE";

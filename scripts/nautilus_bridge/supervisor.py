@@ -22,6 +22,13 @@ from typing import Any
 
 PROTOCOL_VERSION = 1
 MAX_LINE = 1024 * 1024
+STARTUP_STARTED_AT = time.monotonic()
+
+
+def startup_trace(phase: str) -> None:
+    if os.environ.get("GOODTRADING_NAUTILUS_STARTUP_TRACE") == "1":
+        elapsed_ms = round((time.monotonic() - STARTUP_STARTED_AT) * 1000)
+        print(f"[paper-supervisor] startup phase={phase} elapsed_ms={elapsed_ms}", file=sys.stderr, flush=True)
 
 
 def atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -77,6 +84,7 @@ class Supervisor:
     def spawn_daemon(self) -> None:
         if self.daemon is not None and self.daemon.poll() is None:
             return
+        startup_trace("daemon_spawn_begin")
         self.daemon = subprocess.Popen(
             [self.args.python, self.args.daemon],
             cwd=self.args.cwd,
@@ -89,6 +97,7 @@ class Supervisor:
         )
         self.metadata["daemonPid"] = self.daemon.pid
         atomic_json(self.metadata_path, self.metadata)
+        startup_trace(f"daemon_spawned pid={self.daemon.pid}")
         threading.Thread(target=self._monitor_daemon, name="paper-supervisor-daemon-monitor", daemon=True).start()
 
     def _monitor_daemon(self) -> None:
@@ -112,7 +121,9 @@ class Supervisor:
 
     def start_runtime(self) -> dict[str, Any]:
         self.spawn_daemon()
+        startup_trace("health_request_begin")
         health = self.daemon_request({"id": "supervisor-health", "op": "health"})
+        startup_trace("health_response")
         if health.get("ok") is not True:
             raise RuntimeError(str(health.get("error") or "daemon health failed"))
         h = health.get("result") or {}
@@ -120,7 +131,9 @@ class Supervisor:
         self.metadata["runtimeVersion"] = h.get("runtimeVersion") or h.get("pythonVersion")
         self.metadata["nautilusVersion"] = h.get("nautilusVersion")
         self.metadata["pythonVersion"] = h.get("pythonVersion")
+        startup_trace("simulation_start_request_begin")
         started = self.daemon_request({"id": "supervisor-start", "op": "simulation.start"})
+        startup_trace("simulation_start_response")
         if started.get("ok") is not True:
             raise RuntimeError(str(started.get("error") or "simulation start failed"))
         result = started.get("result") or {}
@@ -203,6 +216,7 @@ class Supervisor:
         finally:
             file.close()
     def run(self) -> int:
+        startup_trace("supervisor_ready")
         try:
             while not self.stopping:
                 try:

@@ -50,3 +50,64 @@ test("supervised PAPER survives backend disconnect and reattaches by persisted i
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("cold startup uses a dedicated bounded startup deadline", { timeout: 20_000, skip: !existsSync(path.join(runtimeRoot, "python.exe")) }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "gt-n13b-startup-deadline-"));
+  const daemonScriptPath = path.join(root, "slow-daemon.py");
+  const moduleManifest: Record<string, { path: string; sha256: string }> = {};
+  for (const [name, relative] of Object.entries({ daemon: "daemon.py", contracts: "goodtrading/contracts.py", simulation_core: "goodtrading/simulation_core.py", simulation_service: "goodtrading/simulation_service.py", quote_stream: "goodtrading/quote_stream.py" })) {
+    const modulePath = path.join(runtimeRoot, relative);
+    moduleManifest[name] = { path: modulePath, sha256: createHash("sha256").update(await readFile(modulePath)).digest("hex") };
+  }
+  const slowSource = `import json,sys,time\nsession='slow-start-session'\nfor line in sys.stdin:\n r=json.loads(line); op=r.get('op')\n if op=='health': time.sleep(0.15); x={'status':'healthy','protocolVersion':1,'nautilusVersion':'1.231.0','runtimeVersion':'slow-runtime','pythonVersion':'slow-python','runtimeModules':${JSON.stringify(moduleManifest)}}\n elif op=='simulation.start': x={'simulationSessionId':session,'sessionLifecycle':'ACTIVE'}\n elif op=='simulation.stop': x={'simulationSessionId':session,'sessionLifecycle':'STOPPED'}\n elif op=='shutdown': x={'shutdown':True}\n else: x={'simulationSessionId':session}\n print(json.dumps({'id':r.get('id'),'ok':True,'result':x}),flush=True)\n if op=='shutdown': break\n`;
+  await writeFile(daemonScriptPath, slowSource);
+  const options = {
+    runtimeRoot,
+    daemonScriptPath,
+    supervisorScriptPath,
+    registryPath: path.join(root, "sessions.sqlite"),
+    startTimeoutMs: 2_000,
+    startupTimeoutMs: 2_000,
+    requestTimeoutMs: 2_000,
+    maxSessions: 1,
+  } as const;
+  const manager = new NautilusServerPaperRuntimeManager(options);
+  try {
+    const started = await manager.startForUser(732);
+    assert.equal(started.simulationSessionId, "slow-start-session");
+    await manager.stopForUser(732);
+  } finally {
+    await manager.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("startup deadline expiry fails closed without a session identity", { timeout: 20_000, skip: !existsSync(path.join(runtimeRoot, "python.exe")) }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "gt-n13b-startup-expiry-"));
+  const daemonScriptPath = path.join(root, "too-slow-daemon.py");
+  const moduleManifest: Record<string, { path: string; sha256: string }> = {};
+  for (const [name, relative] of Object.entries({ daemon: "daemon.py", contracts: "goodtrading/contracts.py", simulation_core: "goodtrading/simulation_core.py", simulation_service: "goodtrading/simulation_service.py", quote_stream: "goodtrading/quote_stream.py" })) {
+    const modulePath = path.join(runtimeRoot, relative);
+    moduleManifest[name] = { path: modulePath, sha256: createHash("sha256").update(await readFile(modulePath)).digest("hex") };
+  }
+  const slowSource = `import json,sys,time\nsession='never-reached-session'\nfor line in sys.stdin:\n r=json.loads(line); op=r.get('op')\n if op=='health': time.sleep(0.2); x={'status':'healthy','protocolVersion':1,'nautilusVersion':'1.231.0','runtimeVersion':'slow-runtime','pythonVersion':'slow-python','runtimeModules':${JSON.stringify(moduleManifest)}}\n elif op=='simulation.start': x={'simulationSessionId':session,'sessionLifecycle':'ACTIVE'}\n elif op=='shutdown': x={'shutdown':True}\n else: x={'simulationSessionId':session}\n print(json.dumps({'id':r.get('id'),'ok':True,'result':x}),flush=True)\n if op=='shutdown': break\n`;
+  await writeFile(daemonScriptPath, slowSource);
+  const options = {
+    runtimeRoot,
+    daemonScriptPath,
+    supervisorScriptPath,
+    registryPath: path.join(root, "sessions.sqlite"),
+    startTimeoutMs: 2_000,
+    startupTimeoutMs: 50,
+    requestTimeoutMs: 2_000,
+    maxSessions: 1,
+  } as const;
+  const manager = new NautilusServerPaperRuntimeManager(options);
+  try {
+    await assert.rejects(() => manager.startForUser(733));
+    assert.equal(manager.getLifecycle(733).simulationSessionId, null);
+  } finally {
+    await manager.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
