@@ -57,6 +57,29 @@ export type PaperOrderFeedback = {
   detail?: string;
 };
 
+type PaperTicketSubmitStateInput = {
+  marketReady: boolean;
+  tradingBlocked: boolean;
+  blockReason?: string | null;
+};
+
+export function resolvePaperTicketSubmitState({
+  marketReady,
+  tradingBlocked,
+  blockReason,
+}: PaperTicketSubmitStateInput): { disabled: boolean; reason: string | null } {
+  if (tradingBlocked) {
+    return {
+      disabled: true,
+      reason: blockReason ?? "PAPER execution is blocked.",
+    };
+  }
+  return {
+    disabled: !marketReady,
+    reason: null,
+  };
+}
+
 export function resolveNautilusPaperTicketQuantityText(
   source: "usdt" | "btc",
   rawQuantityText: string,
@@ -479,7 +502,11 @@ export function PaperOrderTicket({
   );
 
   const submit = async (apiSide: "buy" | "sell", type: "market" | "limit") => {
-    if (submitInFlight.current || busy || executionUnavailable || tradingBlocked) return;
+    if (busy || executionUnavailable || tradingBlocked) {
+      onMessage(blockReason ?? "PAPER execution is blocked.");
+      return;
+    }
+    if (submitInFlight.current) return;
     submitInFlight.current = true;
     const backend = paperExecutionPort.getBackend();
     const isNautilus = backend === "nautilus";
@@ -838,7 +865,7 @@ export function PaperOrderTicket({
       <div className="grid grid-cols-2 gap-1">
         <button
           type="button"
-          disabled={!marketReady}
+          disabled={resolvePaperTicketSubmitState({ marketReady, tradingBlocked: tradingBlocked || executionUnavailable, blockReason }).disabled}
           onClick={() => void submit("buy", "market")}
           className="py-1.5 text-[9px] font-bold uppercase rounded border border-emerald-500/45 bg-emerald-600/20 text-emerald-200 disabled:opacity-50"
         >
@@ -846,7 +873,7 @@ export function PaperOrderTicket({
         </button>
         <button
           type="button"
-          disabled={!marketReady}
+          disabled={resolvePaperTicketSubmitState({ marketReady, tradingBlocked: tradingBlocked || executionUnavailable, blockReason }).disabled}
           onClick={() => void submit("sell", "market")}
           className="py-1.5 text-[9px] font-bold uppercase rounded border border-red-500/45 bg-red-600/20 text-red-200 disabled:opacity-50"
         >
@@ -854,7 +881,7 @@ export function PaperOrderTicket({
         </button>
         <button
           type="button"
-          disabled={!limitReady}
+          disabled={resolvePaperTicketSubmitState({ marketReady: limitReady, tradingBlocked: tradingBlocked || executionUnavailable, blockReason }).disabled}
           onClick={() => void submit("buy", "limit")}
           className="py-1.5 text-[9px] font-bold uppercase rounded border border-cyan-500/35 text-cyan-200 disabled:opacity-50"
         >
@@ -862,7 +889,7 @@ export function PaperOrderTicket({
         </button>
         <button
           type="button"
-          disabled={!limitReady}
+          disabled={resolvePaperTicketSubmitState({ marketReady: limitReady, tradingBlocked: tradingBlocked || executionUnavailable, blockReason }).disabled}
           onClick={() => void submit("sell", "limit")}
           className="py-1.5 text-[9px] font-bold uppercase rounded border border-cyan-500/35 text-cyan-200 disabled:opacity-50"
         >
